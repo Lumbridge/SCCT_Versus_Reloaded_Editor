@@ -4,6 +4,7 @@
 #include "Hooks.h"
 #include "MapRecovery.h"
 #include "WindowDriftFix.h"
+#include "RebuildAllMaps.h"
 
 INIT_HOOKS;
 
@@ -145,6 +146,17 @@ static void InjectReloadedMenuItems(HWND frame)
                         MF_BYPOSITION | MF_STRING,
                         MapRecovery::kRecoverEditableCommandId,
                         "Recover Compiled Map as &Editable... (Experimental)");
+    }
+
+    // -UnlockPackages is what lets it save over the stock maps.
+    if (RebuildAllMaps::Available())
+    {
+        HMENU build = SubMenuWithCommand(bar, 40038); // "&Build All" lives in Build
+        if (build && MenuPosByCommand(build, 40902) < 0)
+        {
+            AppendMenuA(build, MF_SEPARATOR, 0, nullptr);
+            AppendMenuA(build, MF_STRING, 40902, "Rebuild &All Maps...");
+        }
     }
 
     HMENU help = SubMenuWithCommand(bar, 40480); // "Unreal Developer Network" lives in Help

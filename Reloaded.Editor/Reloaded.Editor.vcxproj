@@ -169,8 +169,14 @@
     <ClInclude Include="MapRecovery.h" />
     <ClInclude Include="StaticMeshCollisionFix.h" />
     <ClInclude Include="DdsImportFix.h" />
+    <ClInclude Include="LightCullFix.h" />
     <ClInclude Include="ProjectorDetachFix.h" />
     <ClInclude Include="SizingBoxFix.h" />
+    <ClInclude Include="EngineLog.h" />
+    <ClInclude Include="LightmapPacker.h" />
+    <ClInclude Include="MapCheckLog.h" />
+    <ClInclude Include="RebuildAllMaps.h" />
+    <ClInclude Include="ViewportConfigFix.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AmbientSoundZone.cpp" />
@@ -204,8 +210,14 @@
     <ClCompile Include="MapRecovery.cpp" />
     <ClCompile Include="StaticMeshCollisionFix.cpp" />
     <ClCompile Include="DdsImportFix.cpp" />
+    <ClCompile Include="LightCullFix.cpp" />
     <ClCompile Include="ProjectorDetachFix.cpp" />
     <ClCompile Include="SizingBoxFix.cpp" />
+    <ClCompile Include="EngineLog.cpp" />
+    <ClCompile Include="LightmapPacker.cpp" />
+    <ClCompile Include="MapCheckLog.cpp" />
+    <ClCompile Include="RebuildAllMaps.cpp" />
+    <ClCompile Include="ViewportConfigFix.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Reloaded.Editor.rc" />

@@ -9,6 +9,7 @@
 #include "AnimationBrowser.h"
 #include "MapRecovery.h"
 #include "WindowDriftFix.h"
+#include "RebuildAllMaps.h"
 #include <mimalloc.h>
 #include <cstring>
 #include <unordered_map>
@@ -178,6 +179,11 @@ static bool __cdecl HandleRecoveredMapSave(UINT commandId)
 static bool __cdecl IsControlKeyDown()
 {
     return (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+}
+
+static void __cdecl OpenRebuildAllMaps()
+{
+    RebuildAllMaps::Show(GetActiveWindow());
 }
 
 // Game View (J) - Simulates the in-game view in the viewport
@@ -507,19 +513,21 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         je   do_reloaded_options
         cmp  dword ptr [esp+4], 40067 // Show Animation Browser
         je   do_anim_browser
-        cmp  dword ptr [esp+4], 40906 // Reset Property Window Positions
+        cmp  dword ptr [esp+4], 40907 // Reset Property Window Positions
         je   do_reset_property_windows
+        cmp  dword ptr [esp+4], 40902 // Rebuild All Maps
+        je   do_rebuild_all
         cmp  dword ptr [esp+4], 40900 // Reloaded Github
         je   do_github
         cmp  dword ptr [esp+4], 40901 // Reloaded Wiki
         je   do_wiki
-        cmp  dword ptr [esp+4], 40902 // Recover Compiled Map
+        cmp  dword ptr [esp+4], 40903 // Recover Compiled Map
         je   do_recover_map
-        cmp  dword ptr [esp+4], 40903 // Open Recovered Map
+        cmp  dword ptr [esp+4], 40904 // Open Recovered Map
         je   do_open_recovered_map
-        cmp  dword ptr [esp+4], 40904 // Export Recovered BSP as Brushes
+        cmp  dword ptr [esp+4], 40905 // Export Recovered BSP as Brushes
         je   do_export_recovered_brushes
-        cmp  dword ptr [esp+4], 40905 // Recover Compiled Map as Editable
+        cmp  dword ptr [esp+4], 40906 // Recover Compiled Map as Editable
         je   do_recover_editable_map
         cmp  dword ptr [esp+4], 40007 // File > Save
         je   maybe_save_recovered_map
@@ -543,6 +551,10 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
 
     do_reset_property_windows:
         call ResetPropertyWindows
+        retn 4
+
+    do_rebuild_all:
+        call OpenRebuildAllMaps
         retn 4
 
     do_github:
@@ -584,36 +596,6 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         cmp  byte ptr [s_recoverySaveHandled], 0
         je   continue_stock_command
         retn 4
-    }
-}
-
-// Opening a map while a blank viewport is active can leave its viewport actor
-// null. The stock layout-save path dereferences that actor before replacing the
-// map. Skip saving that viewport's transient state, but still run the stock
-// cleanup path. Writing Active=0 here would permanently hide the viewport on
-// the next launch; valid viewports retain the original RendMap/ShowFlags path.
-JMP_HOOK(0x10E436A3, NullSafeViewportLayoutSave)
-{
-    static int s_valid = 0x10E436B9;
-    static int s_cleanup = 0x10E4384A;
-
-    __asm
-    {
-        mov  edx, dword ptr ds:[1165E8D4h]
-        mov  edx, dword ptr [esi + edx + 24h]
-        test edx, edx
-        jz   invalid_viewport
-        mov  edx, dword ptr [edx + 3Ch]
-        test edx, edx
-        jz   invalid_viewport
-        mov  edx, dword ptr [edx + 30h]
-        test edx, edx
-        jz   invalid_viewport
-        mov  edx, dword ptr [edx + 4FCh]
-        jmp  dword ptr [s_valid]
-
-    invalid_viewport:
-        jmp  dword ptr [s_cleanup]
     }
 }
 

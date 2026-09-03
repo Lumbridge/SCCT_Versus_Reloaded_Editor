@@ -2,10 +2,10 @@
 
 namespace MapRecovery
 {
-    constexpr UINT kCommandId = 40902;
-    constexpr UINT kOpenRecoveredCommandId = 40903;
-    constexpr UINT kExportBrushesCommandId = 40904;
-    constexpr UINT kRecoverEditableCommandId = 40905;
+    constexpr UINT kCommandId = 40903;
+    constexpr UINT kOpenRecoveredCommandId = 40904;
+    constexpr UINT kExportBrushesCommandId = 40905;
+    constexpr UINT kRecoverEditableCommandId = 40906;
 
     void Run(HWND owner);
     void RunEditable(HWND owner);
