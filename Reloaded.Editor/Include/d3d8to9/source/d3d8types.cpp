@@ -25,6 +25,47 @@ bool IsDepthStencil(D3DFORMAT &Format) {
 		|| Format == D3DFMT_D24X8;
 }
 
+DWORD GetDepthStencilBitCount(D3DFORMAT Format)
+{
+	switch (Format)
+	{
+	case D3DFMT_D15S1:
+		return 15;
+	case D3DFMT_D16_LOCKABLE:
+	case D3DFMT_D16:
+		return 16;
+	case D3DFMT_D24X4S4:
+	case D3DFMT_D24S8:
+	case D3DFMT_D24X8:
+		return 24;
+	case D3DFMT_D32:
+		return 32;
+	}
+	return 0;
+}
+
+DWORD CalcDepthBias(DWORD ZBias, DWORD DepthBitCount)
+{
+	float DepthEpsilon;
+	switch (DepthBitCount)
+	{
+	case 32:
+	case 24:
+		// Bit shifting by 24 is too small for float precision. A shift of 20 seems to work best.
+		DepthEpsilon = -1.0f / ((1 << 20) - 1);
+		break;
+	default:
+	case 16:
+		DepthEpsilon = -1.0f / ((1 << 16) - 1);
+		break;
+	case 15:
+		DepthEpsilon = -1.0f / ((1 << 15) - 1);
+		break;
+	}
+	float DepthBias = std::min(ZBias, 16UL) * DepthEpsilon;
+	return *reinterpret_cast<DWORD*>(&DepthBias);
+}
+
 static UINT CalcTextureSize(UINT Width, UINT Height, UINT Depth, D3DFORMAT Format)
 {
 	switch (static_cast<DWORD>(Format))
@@ -132,6 +173,7 @@ void ConvertPresentParameters(D3DPRESENT_PARAMETERS8 &Input, D3DPRESENT_PARAMETE
 	Output.BackBufferFormat = Input.BackBufferFormat;
 	Output.BackBufferCount = Input.BackBufferCount;
 	Output.MultiSampleType = Input.MultiSampleType;
+	// MultiSampleQuality is only used in conjunction with D3DMULTISAMPLE_NONMASKABLE, which is not available in D3D8
 	Output.MultiSampleQuality = 0;
 	Output.SwapEffect = Input.SwapEffect;
 	Output.hDeviceWindow = Input.hDeviceWindow;

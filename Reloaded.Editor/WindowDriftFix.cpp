@@ -3,6 +3,8 @@
 #include "Hooks.h"
 #include "MemoryWriter.h"
 
+#include <cstring>
+
 INIT_HOOKS;
 
 // Windows 10/11 fix for the maximized "window drift" bug.
@@ -48,6 +50,90 @@ JMP_HOOK(0x10f81f50, WWindowOnActivateHook)
         call    VerifyPositionFixed
         ret     4
     }
+}
+
+static bool ContainsTextIgnoreCase(const char* value, const char* token)
+{
+    const size_t valueLength = std::strlen(value);
+    const size_t tokenLength = std::strlen(token);
+    if (tokenLength == 0 || tokenLength > valueLength)
+        return false;
+
+    for (size_t i = 0; i <= valueLength - tokenLength; ++i)
+        if (_strnicmp(value + i, token, tokenLength) == 0)
+            return true;
+
+    return false;
+}
+
+static bool IsPropertyWindow(HWND hwnd)
+{
+    char className[128] = {};
+    char title[256] = {};
+    GetClassNameA(hwnd, className, static_cast<int>(sizeof(className)));
+    GetWindowTextA(hwnd, title, static_cast<int>(sizeof(title)));
+
+    // The stock editors use several top-level WWindow classes for these:
+    // WObjectProperties covers Actor/Level Properties, while Surface and
+    // texture properties use property-sheet/dialog variants.
+    return ContainsTextIgnoreCase(className, "propert")
+        || ContainsTextIgnoreCase(className, "propsheet")
+        || _stricmp(className, "WDlgTexProp") == 0
+        || _stricmp(className, "WDlgUseProperties") == 0
+        || ContainsTextIgnoreCase(title, " properties");
+}
+
+struct PropertyWindowResetContext
+{
+    RECT workArea;
+    int resetCount;
+};
+
+static BOOL CALLBACK ResetPropertyWindowProc(HWND hwnd, LPARAM lParam)
+{
+    if (!IsWindow(hwnd) || !IsPropertyWindow(hwnd))
+        return TRUE;
+
+    PropertyWindowResetContext* context =
+        reinterpret_cast<PropertyWindowResetContext*>(lParam);
+
+    RECT windowRect = {};
+    if (!GetWindowRect(hwnd, &windowRect))
+        return TRUE;
+
+    const LONG windowWidth = windowRect.right - windowRect.left;
+    const LONG windowHeight = windowRect.bottom - windowRect.top;
+    const LONG workWidth = context->workArea.right - context->workArea.left;
+    const LONG workHeight = context->workArea.bottom - context->workArea.top;
+
+    // Centre each window in the current editor monitor's usable area. Keep
+    // its size and visibility unchanged so hidden singleton property windows
+    // are also repaired without unexpectedly opening them.
+    const LONG x = context->workArea.left
+        + (windowWidth < workWidth ? (workWidth - windowWidth) / 2 : 0);
+    const LONG y = context->workArea.top
+        + (windowHeight < workHeight ? (workHeight - windowHeight) / 2 : 0);
+
+    if (SetWindowPos(hwnd, nullptr, x, y, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE))
+        ++context->resetCount;
+
+    return TRUE;
+}
+
+int WindowDriftFix::ResetPropertyWindowPositions(HWND referenceWindow)
+{
+    HMONITOR monitor = MonitorFromWindow(referenceWindow,
+                                         MONITOR_DEFAULTTOPRIMARY);
+    MONITORINFO monitorInfo = {};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (!GetMonitorInfoA(monitor, &monitorInfo))
+        return 0;
+
+    PropertyWindowResetContext context = { monitorInfo.rcWork, 0 };
+    EnumThreadWindows(GetCurrentThreadId(), ResetPropertyWindowProc,
+                      reinterpret_cast<LPARAM>(&context));
+    return context.resetCount;
 }
 
 void WindowDriftFix::Initialize()

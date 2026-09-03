@@ -47,7 +47,8 @@ HRESULT STDMETHODCALLTYPE Direct3DSwapChain8::Present(const RECT *pSourceRect, c
 {
 	UNREFERENCED_PARAMETER(pDirtyRegion);
 
-	return ProxyInterface->Present(pSourceRect, pDestRect, hDestWindowOverride, nullptr, 0);
+	return ProxyInterface->Present(pSourceRect, pDestRect,
+		ResolveProcessWindow(hDestWindowOverride), nullptr, 0);
 }
 HRESULT STDMETHODCALLTYPE Direct3DSwapChain8::GetBackBuffer(UINT iBackBuffer, D3DBACKBUFFER_TYPE Type, IDirect3DSurface8 **ppBackBuffer)
 {

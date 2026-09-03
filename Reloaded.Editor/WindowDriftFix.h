@@ -3,5 +3,8 @@
 class WindowDriftFix
 {
 public:
-    static void Initialize();
+    static constexpr UINT kResetPropertyWindowsCommandId = 40906;
+
+	static void Initialize();
+    static int ResetPropertyWindowPositions(HWND referenceWindow);
 };

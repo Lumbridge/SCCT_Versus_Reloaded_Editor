@@ -53,3 +53,35 @@ The Reloaded Editor increases all selectable lightmap resolutions by 2x. The pre
 
 ### Increase Audio File Size Limit
 In the stock editor, importing WAV audio files larger than 200KB would immediately crash the editor. The Reloaded Editor removes that limitation and allows larger WAV files to be imported.
+
+### BSP and Crash Diagnostics
+
+Reloaded keeps a lightweight journal while geometry, BSP, and lighting builds
+are running. It records each CSG brush, its source-polygon preflight results,
+temporary BSP array sizes, and a fixed-size flight recorder of the most recent
+polygon splits and vertex lookups. Normal hot-path events remain in memory, so
+the diagnostics do not turn every polygon operation into disk I/O.
+
+If the legacy editor faults during a build, Reloaded captures the first-chance
+exception before Unreal's guard history hides the original state. The
+`System/Diagnostics` directory then contains:
+
+- `BspBuildSession_*.log`: the map, build stages, brushes, and preflight warnings.
+- `BspCrash_*.log`: the active brush/source polygon, BSP indices and array
+  bounds, polygon vertices, registers, stack words, and recent flight-recorder
+  events.
+- `BspCrash_*.dmp`: a WinDbg/Visual Studio minidump for native debugging.
+- `BspInvariant_*.log`: an early snapshot when Reloaded detects a bad BSP index
+  or malformed transient polygon immediately before the stock code uses it.
+- `EditorCrash_*.log` and `.dmp`: equivalent artifacts for unhandled faults
+  outside a BSP build.
+
+The diagnostics report suspicious geometry but do not silently modify brushes
+or continue past invalid BSP data, avoiding damaged map output. Reloaded also
+applies fingerprint-checked compatibility fixes to every verified
+`FVert::pVertex` reader used by model rendering and the CSG filter, adjacency,
+remap, optimization, and `FindNearestVertex` paths. The stock editor
+sign-extends these 16-bit point indices and crashes or corrupts lookup tables
+once a rebuild passes 32,767 BSP points. Reloaded treats the fields as unsigned,
+retains the format's `0xFFFF` invalid-index sentinel, extends the usable range
+to 65,535, and journals when either threshold is crossed.

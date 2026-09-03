@@ -2,6 +2,8 @@
 #include "UI.h"
 
 #include "Hooks.h"
+#include "MapRecovery.h"
+#include "WindowDriftFix.h"
 
 INIT_HOOKS;
 
@@ -98,6 +100,51 @@ static void InjectReloadedMenuItems(HWND frame)
         pos = MenuPosByCommand(view, 40065);     // after "Advanced Options"
         if (pos >= 0 && MenuPosByCommand(view, 40066) < 0)
             InsertMenuA(view, pos + 1, MF_BYPOSITION | MF_STRING, 40066, "Reloaded Options\tF12");
+
+        pos = MenuPosByCommand(view, 40066);     // after "Reloaded Options"
+        if (pos >= 0
+            && MenuPosByCommand(view,
+                                WindowDriftFix::kResetPropertyWindowsCommandId) < 0)
+            InsertMenuA(view, pos + 1, MF_BYPOSITION | MF_STRING,
+                        WindowDriftFix::kResetPropertyWindowsCommandId,
+                        "Reset &Property Window Positions");
+    }
+
+    HMENU file = GetSubMenu(bar, 0);
+    if (file)
+    {
+        // File starts with New, Open, then a separator in the stock editor.
+        if (MenuPosByCommand(file, MapRecovery::kCommandId) < 0)
+            InsertMenuA(file, 2, MF_BYPOSITION | MF_STRING,
+                        MapRecovery::kCommandId,
+                        "&Recover Compiled Map... (Experimental)");
+
+        const int recoveryPos =
+            MenuPosByCommand(file, MapRecovery::kCommandId);
+        if (recoveryPos >= 0
+            && MenuPosByCommand(file, MapRecovery::kOpenRecoveredCommandId) < 0)
+            InsertMenuA(file, recoveryPos + 1,
+                        MF_BYPOSITION | MF_STRING,
+                        MapRecovery::kOpenRecoveredCommandId,
+                        "&Open Recovered Map... (Experimental)");
+
+        const int openRecoveredPos =
+            MenuPosByCommand(file, MapRecovery::kOpenRecoveredCommandId);
+        if (openRecoveredPos >= 0
+            && MenuPosByCommand(file, MapRecovery::kExportBrushesCommandId) < 0)
+            InsertMenuA(file, openRecoveredPos + 1,
+                        MF_BYPOSITION | MF_STRING,
+                        MapRecovery::kExportBrushesCommandId,
+                        "Export Recovered &BSP as Brushes... (Experimental)");
+
+        const int exportBrushesPos =
+            MenuPosByCommand(file, MapRecovery::kExportBrushesCommandId);
+        if (exportBrushesPos >= 0
+            && MenuPosByCommand(file, MapRecovery::kRecoverEditableCommandId) < 0)
+            InsertMenuA(file, exportBrushesPos + 1,
+                        MF_BYPOSITION | MF_STRING,
+                        MapRecovery::kRecoverEditableCommandId,
+                        "Recover Compiled Map as &Editable... (Experimental)");
     }
 
     HMENU help = SubMenuWithCommand(bar, 40480); // "Unreal Developer Network" lives in Help

@@ -166,6 +166,44 @@ HMONITOR STDMETHODCALLTYPE Direct3D8::GetAdapterMonitor(UINT Adapter)
 {
 	return ProxyInterface->GetAdapterMonitor(Adapter);
 }
+
+static BOOL CALLBACK FindCurrentProcessWindow(HWND window, LPARAM result)
+{
+	DWORD processId = 0;
+	GetWindowThreadProcessId(window, &processId);
+	if (processId != GetCurrentProcessId() || GetWindow(window, GW_OWNER) != nullptr)
+		return TRUE;
+
+	*reinterpret_cast<HWND *>(result) = window;
+	return FALSE;
+}
+
+static bool IsWindowOwnedByCurrentProcess(HWND window)
+{
+	DWORD processId = 0;
+	if (window != nullptr)
+		GetWindowThreadProcessId(window, &processId);
+	return processId == GetCurrentProcessId();
+}
+
+static HWND GetCurrentProcessWindow()
+{
+	HWND window = nullptr;
+	EnumWindows(FindCurrentProcessWindow, reinterpret_cast<LPARAM>(&window));
+	return window;
+}
+
+HWND ResolveProcessWindow(HWND window)
+{
+	if (window == nullptr || IsWindowOwnedByCurrentProcess(window))
+		return window;
+
+	if (const HWND processWindow = GetCurrentProcessWindow())
+		return processWindow;
+
+	return window;
+}
+
 HRESULT STDMETHODCALLTYPE Direct3D8::CreateDevice(UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow, DWORD BehaviorFlags, D3DPRESENT_PARAMETERS8 *pPresentationParameters, IDirect3DDevice8 **ppReturnedDeviceInterface)
 {
 #ifndef D3D8TO9NOLOG
@@ -180,20 +218,13 @@ HRESULT STDMETHODCALLTYPE Direct3D8::CreateDevice(UINT Adapter, D3DDEVTYPE Devic
 	D3DPRESENT_PARAMETERS PresentParams;
 	ConvertPresentParameters(*pPresentationParameters, PresentParams);
 
-	// Get multisample quality level
-	if (PresentParams.MultiSampleType != D3DMULTISAMPLE_NONE)
-	{
-		DWORD QualityLevels = 0;
-		if (ProxyInterface->CheckDeviceMultiSampleType(Adapter,
-			DeviceType, PresentParams.BackBufferFormat, PresentParams.Windowed,
-			PresentParams.MultiSampleType, &QualityLevels) == S_OK &&
-			ProxyInterface->CheckDeviceMultiSampleType(Adapter,
-				DeviceType, PresentParams.AutoDepthStencilFormat, PresentParams.Windowed,
-				PresentParams.MultiSampleType, &QualityLevels) == S_OK)
-		{
-			PresentParams.MultiSampleQuality = (QualityLevels != 0) ? QualityLevels - 1 : 0;
-		}
-	}
+	// The SCCT editor's Play Level command passes an HWND owned by the editor
+	// process. Direct3D 8 accepted that arrangement, while Direct3D 9 device
+	// creation/presentation is unreliable with a foreign-process window. Keep
+	// the handle in the game's command line for its editor protocol, but present
+	// through the game's own top-level window.
+	hFocusWindow = ResolveProcessWindow(hFocusWindow);
+	PresentParams.hDeviceWindow = ResolveProcessWindow(PresentParams.hDeviceWindow);
 
 	IDirect3DDevice9 *DeviceInterface = nullptr;
 
@@ -201,7 +232,7 @@ HRESULT STDMETHODCALLTYPE Direct3D8::CreateDevice(UINT Adapter, D3DDEVTYPE Devic
 	if (FAILED(hr))
 		return hr;
 
-	*ppReturnedDeviceInterface = new Direct3DDevice8(this, DeviceInterface, BehaviorFlags, (PresentParams.Flags & D3DPRESENTFLAG_DISCARD_DEPTHSTENCIL) != 0);
+	*ppReturnedDeviceInterface = new Direct3DDevice8(this, DeviceInterface, BehaviorFlags, PresentParams.EnableAutoDepthStencil ? PresentParams.AutoDepthStencilFormat : D3DFMT_UNKNOWN, (PresentParams.Flags & D3DPRESENTFLAG_DISCARD_DEPTHSTENCIL) != 0);
 
 	// Set default vertex declaration
 	DeviceInterface->SetFVF(D3DFVF_XYZ);

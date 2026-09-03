@@ -7,7 +7,10 @@
 #pragma comment(lib, "shell32.lib")
 #include "MemoryWriter.h"
 #include "AnimationBrowser.h"
+#include "MapRecovery.h"
+#include "WindowDriftFix.h"
 #include <mimalloc.h>
+#include <cstring>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -50,12 +53,78 @@ static void InstallMinimizeOnPlayHook()
     MemoryWriter::WriteBytes(0x11AF23CC, &fn_ptr, sizeof(fn_ptr));
 }
 
-// Force Play Map's launch HWND argument to 0 so the game opens in its own
-// window instead of reparenting into the editor.
-static void InstallNoEmbedOnPlayPatch()
+// The Enhanced SCCT launcher injects Reloaded.Core.dll before the game starts.
+// That DLL expects the normal front-end startup path and crashes when UnrealEd
+// launches the special Editeur=true URL.  For Play Level only, start the
+// underlying game executable directly; normal ShellExecute calls are untouched.
+static HINSTANCE WINAPI ReloadedShellExecuteA(HWND hwnd, LPCSTR operation,
+                                               LPCSTR file, LPCSTR parameters,
+                                               LPCSTR directory, INT showCommand)
 {
-    const uint8_t patch[] = { 0xB9, 0x00, 0x00, 0x00, 0x00, 0x90 };
-    MemoryWriter::WriteBytes(0x10E2131A, patch, sizeof(patch));
+    const char* fileName = file;
+    if (fileName)
+    {
+        const char* slash = std::strrchr(fileName, '\\');
+        const char* forwardSlash = std::strrchr(fileName, '/');
+        if (!slash || (forwardSlash && forwardSlash > slash))
+            slash = forwardSlash;
+        if (slash)
+            fileName = slash + 1;
+    }
+
+    if (fileName && parameters
+        && _stricmp(fileName, "SCCT_Versus.exe") == 0
+        && std::strstr(parameters, "Editeur=true"))
+    {
+        std::string gameDirectory;
+        if (file && fileName != file)
+            gameDirectory.assign(file, static_cast<size_t>(fileName - file - 1));
+        else if (directory && *directory)
+            gameDirectory = directory;
+        else
+        {
+            char editorPath[MAX_PATH] = {};
+            GetModuleFileNameA(nullptr, editorPath, MAX_PATH);
+            const char* lastSlash = std::strrchr(editorPath, '\\');
+            if (lastSlash)
+                gameDirectory.assign(editorPath,
+                                     static_cast<size_t>(lastSlash - editorPath));
+        }
+
+        if (!gameDirectory.empty())
+        {
+            std::string gamePath = gameDirectory + "\\SCCT Versus";
+            if (GetFileAttributesA(gamePath.c_str()) != INVALID_FILE_ATTRIBUTES)
+            {
+                std::string commandLine = "\"" + gamePath + "\" "
+                                        + parameters;
+                STARTUPINFOA startupInfo = {};
+                startupInfo.cb = sizeof(startupInfo);
+                PROCESS_INFORMATION processInfo = {};
+
+                if (CreateProcessA(gamePath.c_str(), commandLine.data(), nullptr,
+                                   nullptr, FALSE, 0, nullptr,
+                                   gameDirectory.c_str(), &startupInfo,
+                                   &processInfo))
+                {
+                    CloseHandle(processInfo.hThread);
+                    CloseHandle(processInfo.hProcess);
+                    return reinterpret_cast<HINSTANCE>(static_cast<INT_PTR>(33));
+                }
+
+                return reinterpret_cast<HINSTANCE>(
+                    static_cast<INT_PTR>(SE_ERR_ACCESSDENIED));
+            }
+        }
+    }
+
+    return ShellExecuteA(hwnd, operation, file, parameters, directory, showCommand);
+}
+
+static void InstallPlayLevelLaunchHook()
+{
+    uintptr_t fn_ptr = reinterpret_cast<uintptr_t>(ReloadedShellExecuteA);
+    MemoryWriter::WriteBytes(0x11AF228C, &fn_ptr, sizeof(fn_ptr));
 }
 
 static const char s_github_url[] = "https://github.com/AllyPal/SCCT_Versus_Reloaded_Editor";
@@ -76,9 +145,45 @@ static void __cdecl OpenAnimationBrowser()
     AnimationBrowser::Show(GetActiveWindow());
 }
 
+static void __cdecl ResetPropertyWindows()
+{
+    WindowDriftFix::ResetPropertyWindowPositions(GetActiveWindow());
+}
+
+static void __cdecl RecoverCompiledMap()
+{
+    MapRecovery::Run(GetActiveWindow());
+}
+
+static void __cdecl OpenRecoveredMap()
+{
+    MapRecovery::OpenRecovered(GetActiveWindow());
+}
+
+static void __cdecl ExportRecoveredBrushes()
+{
+    MapRecovery::ExportRecoveredBrushes(GetActiveWindow());
+}
+
+static void __cdecl RecoverCompiledMapAsEditable()
+{
+    MapRecovery::RunEditable(GetActiveWindow());
+}
+
+static bool __cdecl HandleRecoveredMapSave(UINT commandId)
+{
+    return MapRecovery::HandleSaveCommand(commandId);
+}
+
+static bool __cdecl IsControlKeyDown()
+{
+    return (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+}
+
 // Game View (J) - Simulates the in-game view in the viewport
 // Copies bHidden to bHiddenEd and only clears the flags it set when disabled
 static const uint32_t kGEditor            = 0x1165dfa0;
+static const uint32_t kGWarn              = 0x115befb0;
 static const uint32_t kEditor_Level       = 0x130;
 static const uint32_t kEditor_RedrawVtbl  = 0xE8;   // RedrawLevel(ULevel*)
 static const uint32_t kLevel_ActorsData   = 0x2C;
@@ -100,6 +205,27 @@ static const char* const kGameViewKeep[] = { "SComputerObjectiveTrigger" };
 
 // Visible in game (corona, light beam, rain) but the editor also billboards their icon
 static const char* const kGameViewIconOnly[] = { "Light", "ERainVolume" };
+
+static void __cdecl DuplicateSelection()
+{
+    static constexpr char kCommand[] = "ACTOR DUPLICATE";
+
+    void* editor = *reinterpret_cast<void**>(kGEditor);
+    void* output = *reinterpret_cast<void**>(kGWarn);
+    if (!editor || !output)
+        return;
+
+    // UUnrealEdEngine exposes its FExec interface at +0x28. Calling the
+    // interface's first virtual method mirrors the editor's Duplicate menu
+    // command, including transactions, multi-selection and brush handling.
+    void* execInterface = static_cast<char*>(editor) + 0x28;
+    void** vtable = *reinterpret_cast<void***>(execInterface);
+    if (!vtable || !vtable[0])
+        return;
+
+    using ExecFn = int(__thiscall*)(void*, const char*, void*);
+    reinterpret_cast<ExecFn>(vtable[0])(execInterface, kCommand, output);
+}
 
 static bool g_gameView = false;
 static std::unordered_set<void*> g_gameViewHidden;          // compared only, never dereferenced
@@ -304,12 +430,29 @@ static void __cdecl GameViewClearForSave()
     if (actors) GV_Restore(actors, count);
 }
 
+static void __cdecl BeginRecoverySavePackage(uintptr_t returnAddress)
+{
+    MapRecovery::BeginSavePackage(returnAddress);
+}
+
+static uintptr_t __cdecl EndRecoverySavePackage()
+{
+    return MapRecovery::EndSavePackage();
+}
+
 JMP_HOOK(0x10fb2610, SavePackageGameViewHook)
 {
     static int s_resume = 0x10fb2615;
+    static uintptr_t s_recoveryReturnAddress = 0;
 
     __asm
     {
+        mov  eax, dword ptr [esp]
+        push eax
+        call BeginRecoverySavePackage
+        add  esp, 4
+        mov  dword ptr [esp], offset recovery_save_complete
+
         pushad
         call GameViewClearForSave
         popad
@@ -318,6 +461,14 @@ JMP_HOOK(0x10fb2610, SavePackageGameViewHook)
         mov  ebp, esp
         push -1
         jmp  dword ptr [s_resume]
+
+    recovery_save_complete:
+        pushad
+        call EndRecoverySavePackage
+        mov  dword ptr [s_recoveryReturnAddress], eax
+        popad
+        push dword ptr [s_recoveryReturnAddress]
+        ret
     }
 }
 
@@ -349,18 +500,34 @@ static void __cdecl ToggleGameView()
 JMP_HOOK(0x10e57b30, MenuBarDispatch)
 {
     static int s_continue = 0x10e57b35;
+    static bool s_recoverySaveHandled = false;
 
     __asm {
         cmp  dword ptr [esp+4], 40066 // Reloaded Options
         je   do_reloaded_options
         cmp  dword ptr [esp+4], 40067 // Show Animation Browser
         je   do_anim_browser
+        cmp  dword ptr [esp+4], 40906 // Reset Property Window Positions
+        je   do_reset_property_windows
         cmp  dword ptr [esp+4], 40900 // Reloaded Github
         je   do_github
         cmp  dword ptr [esp+4], 40901 // Reloaded Wiki
         je   do_wiki
+        cmp  dword ptr [esp+4], 40902 // Recover Compiled Map
+        je   do_recover_map
+        cmp  dword ptr [esp+4], 40903 // Open Recovered Map
+        je   do_open_recovered_map
+        cmp  dword ptr [esp+4], 40904 // Export Recovered BSP as Brushes
+        je   do_export_recovered_brushes
+        cmp  dword ptr [esp+4], 40905 // Recover Compiled Map as Editable
+        je   do_recover_editable_map
+        cmp  dword ptr [esp+4], 40007 // File > Save
+        je   maybe_save_recovered_map
+        cmp  dword ptr [esp+4], 40008 // File > Save As
+        je   maybe_save_recovered_map
 
         // Fallthrough: replay overwritten prologue then continue
+    continue_stock_command:
         push ebp
         mov  ebp, esp
         push -1
@@ -374,6 +541,10 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         call OpenAnimationBrowser
         retn 4
 
+    do_reset_property_windows:
+        call ResetPropertyWindows
+        retn 4
+
     do_github:
         push offset s_github_url
         call OpenURL
@@ -385,6 +556,516 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         call OpenURL
         add  esp, 4
         retn 4
+
+    do_recover_map:
+        call RecoverCompiledMap
+        retn 4
+
+    do_open_recovered_map:
+        call OpenRecoveredMap
+        retn 4
+
+    do_export_recovered_brushes:
+        call ExportRecoveredBrushes
+        retn 4
+
+    do_recover_editable_map:
+        call RecoverCompiledMapAsEditable
+        retn 4
+
+    maybe_save_recovered_map:
+        pushad
+        mov  eax, dword ptr [esp+36]
+        push eax
+        call HandleRecoveredMapSave
+        add  esp, 4
+        mov  byte ptr [s_recoverySaveHandled], al
+        popad
+        cmp  byte ptr [s_recoverySaveHandled], 0
+        je   continue_stock_command
+        retn 4
+    }
+}
+
+// Opening a map while a blank viewport is active can leave its viewport actor
+// null. The stock layout-save path dereferences that actor before replacing the
+// map. Skip saving that viewport's transient state, but still run the stock
+// cleanup path. Writing Active=0 here would permanently hide the viewport on
+// the next launch; valid viewports retain the original RendMap/ShowFlags path.
+JMP_HOOK(0x10E436A3, NullSafeViewportLayoutSave)
+{
+    static int s_valid = 0x10E436B9;
+    static int s_cleanup = 0x10E4384A;
+
+    __asm
+    {
+        mov  edx, dword ptr ds:[1165E8D4h]
+        mov  edx, dword ptr [esi + edx + 24h]
+        test edx, edx
+        jz   invalid_viewport
+        mov  edx, dword ptr [edx + 3Ch]
+        test edx, edx
+        jz   invalid_viewport
+        mov  edx, dword ptr [edx + 30h]
+        test edx, edx
+        jz   invalid_viewport
+        mov  edx, dword ptr [edx + 4FCh]
+        jmp  dword ptr [s_valid]
+
+    invalid_viewport:
+        jmp  dword ptr [s_cleanup]
+    }
+}
+
+// Cooked maps retain the builder brush actor slot but strip its editor-only
+// UModel. During compiled-map recovery, provide the blank editor map's model
+// before UnrealEd's GetBrush() invariant is evaluated.
+static void* __fastcall ResolveRecoveryBuilderBrush(void* level, void*)
+{
+    return MapRecovery::ResolveBuilderBrushActor(level);
+}
+
+JMP_HOOK(0x10E632B0, RecoveryBuilderBrushHook)
+{
+    __asm
+    {
+        jmp ResolveRecoveryBuilderBrush
+    }
+}
+
+static bool __cdecl IsRecoveredBspModelForHooks(void* model)
+{
+    return MapRecovery::IsRecoveredBspModel(model);
+}
+
+static bool __cdecl UseRecoveredBspSurfaceLayoutForHooks()
+{
+    return MapRecovery::UsesRecoveredBspLayout();
+}
+
+static bool __cdecl SkipRecoveredEditorPolyForHooks()
+{
+    return MapRecovery::ShouldSkipRecoveredEditorPoly();
+}
+
+// MouseDelta snapshots every affected editor object on the first mouse hit,
+// before it has decided whether the gesture is only a viewport pan. A compiled
+// level can be reached through those object references, causing the undo
+// archive to traverse cooked BSP with source-editor serialization rules. Keep
+// that one MouseDelta snapshot disabled for recovered maps; its following null
+// check already supports running without an undo archive.
+JMP_HOOK(0x10EC6F92, RecoveredMouseDeltaTransactionHook)
+{
+    static int s_continue = 0x10EC6F98;
+
+    __asm
+    {
+        pushad
+        call UseRecoveredBspSurfaceLayoutForHooks
+        test al, al
+        popad
+        jnz  without_undo
+
+        // Replay the overwritten six-byte GUndo load for normal source maps.
+        mov  ecx, dword ptr ds:[11691D6Ch]
+        jmp  dword ptr [s_continue]
+
+    without_undo:
+        xor  ecx, ecx
+        jmp  dword ptr [s_continue]
+    }
+}
+
+// FBspSurf::Serialize shares its common fields between source and PC-runtime
+// layouts, then selects whether to serialize the editor-only FPoly pointer.
+// MouseDelta starts transactions before it knows whether a click will pan or
+// select. That path can therefore serialize a cooked surface without going
+// through UModel::ModifySurf, where the narrower transaction guard below
+// lives. Transactions can serialize temporary copies rather than exact
+// elements of the model's surface array, so use the PC-runtime branch for all
+// BSP surface serialization while a recovered map is active. Otherwise the
+// cooked +0x20 field is mistaken for an FPoly pointer and UnModel.cpp asserts
+// while deserializing its vertex count.
+JMP_HOOK(0x110CDADB, RecoveredBspSurfaceLayoutHook)
+{
+    static int s_loadConfiguredPlatform = 0x110CDAE1;
+    static int s_comparePlatform = 0x110CDAE7;
+
+    __asm
+    {
+        pushad
+        call UseRecoveredBspSurfaceLayoutForHooks
+        test al, al
+        popad
+        jnz  use_runtime_layout
+
+        // Replay the complete overwritten six-byte instruction. The five-byte
+        // jump replaces its first five bytes, so resume at the next boundary.
+        mov  ecx, dword ptr ds:[11691D7Ch]
+        jmp  dword ptr [s_loadConfiguredPlatform]
+
+    use_runtime_layout:
+        mov  eax, 1
+        jmp  dword ptr [s_comparePlatform]
+    }
+}
+
+// PC-runtime surfaces with either of the two editor-poly flags can contain an
+// attached FPoly in the package, so MAP LOAD must follow the normal flag test.
+// Later editor transactions can serialize temporary 0x2c-byte cooked-surface
+// copies whose attached pointer is not safe to traverse. Skip the editor poly
+// only after the recovered level has finished loading.
+JMP_HOOK(0x110CDAF6, RecoveredBspSurfaceEditorPolyHook)
+{
+    static int s_testEditorPolyFlags = 0x110CDAFD;
+    static int s_skipEditorPoly = 0x110CDAFF;
+
+    __asm
+    {
+        pushad
+        call SkipRecoveredEditorPolyForHooks
+        test al, al
+        popad
+        jnz  skip_editor_poly
+
+        // Replay the overwritten seven-byte flag test and resume at the
+        // conditional branch which consumes its result.
+        test dword ptr [ebx+14h], 0C000000h
+        jmp  dword ptr [s_testEditorPolyFlags]
+
+    skip_editor_poly:
+        jmp  dword ptr [s_skipEditorPoly]
+    }
+}
+
+// UModel::ModifySurf normally snapshots the selected FBspSurf through GUndo
+// before changing it. Recovered maps contain the cooked 0x2c-byte surface
+// layout, while the editor transaction serializer expects the larger source
+// layout; attempting that snapshot reads stripped fields and crashes. Skip
+// only the undo snapshot for the active recovered level, then resume the rest
+// of ModifySurf so selection and master-surface propagation still work.
+JMP_HOOK(0x110D0E37, RecoveredBspSurfaceTransactionHook)
+{
+    static int s_continue = 0x110D0E3D;
+    static int s_skipTransaction = 0x110D0E66;
+
+    __asm
+    {
+        pushad
+        lea  eax, [edi-94h]
+        push eax
+        call IsRecoveredBspModelForHooks
+        add  esp, 4
+        test al, al
+        popad
+        jnz  skip_transaction
+
+        // Replay the overwritten UModel::ModifySurf instruction.
+        mov  ecx, dword ptr ds:[11691D6Ch]
+        jmp  dword ptr [s_continue]
+
+    skip_transaction:
+        jmp  dword ptr [s_skipTransaction]
+    }
+}
+
+// Cooked packages already contain render data that the runtime loader can use.
+// Surface selection clears that cache before UModel::BuildRenderData rebuilds
+// it through editor-only assumptions; recovered maps no longer have all of
+// that source state. Preserve both the loaded cache and its geometry whenever
+// the viewport requests a rebuild. Normal source maps remain unchanged.
+JMP_HOOK(0x110D1230, RecoveredBspClearRenderDataHook)
+{
+    static int s_continue = 0x110D1235;
+
+    __asm
+    {
+        pushad
+        push ecx
+        call IsRecoveredBspModelForHooks
+        add  esp, 4
+        test al, al
+        popad
+        jnz  keep_cooked_render_data
+
+        // Replay the complete five-byte UModel::ClearRenderData prologue.
+        push ebp
+        mov  ebp, esp
+        push -1
+        jmp  dword ptr [s_continue]
+
+    keep_cooked_render_data:
+        ret  4
+    }
+}
+
+JMP_HOOK(0x110D13D0, RecoveredBspRenderDataHook)
+{
+    static int s_continue = 0x110D13D5;
+
+    __asm
+    {
+        pushad
+        push ecx
+        call IsRecoveredBspModelForHooks
+        add  esp, 4
+        test al, al
+        popad
+        jnz  keep_cooked_render_data
+
+        // Replay the complete five-byte UModel::BuildRenderData prologue.
+        push ebp
+        mov  ebp, esp
+        push -1
+        jmp  dword ptr [s_continue]
+
+    keep_cooked_render_data:
+        ret
+    }
+}
+
+static void __fastcall RepairRecoveredZoneInfo(void* actor, void*)
+{
+    MapRecovery::RepairZoneInfoAssignment(actor);
+}
+
+// Cooked UModel serialization can omit the editor-side ZoneActor reference.
+// AZoneInfo::CheckForErrors assumes every nonzero zone already has that link
+// and dereferences it while formatting an error message. Restore a missing
+// association immediately before the stock validator runs.
+JMP_HOOK(0x111906F0, RecoveredZoneInfoValidationHook)
+{
+    static int s_continue = 0x111906F5;
+
+    __asm
+    {
+        pushad
+        call RepairRecoveredZoneInfo
+        popad
+
+        // Replay the overwritten five-byte function prologue.
+        push ebp
+        mov  ebp, esp
+        push -1
+        jmp  dword ptr [s_continue]
+    }
+}
+
+// The build dialog's geometry, BSP and lighting stages consume editor-only
+// brush/FPoly state which a compiled recovery cannot contain. MAP REBUILD
+// otherwise replaces the valid cooked BSP with an empty wireframe result.
+// Preserve the recovered geometry and lightmaps; the following path stage is
+// still allowed to validate actors and rebuild navigation data.
+JMP_HOOK(0x10E10C00, RecoveredBuildGeometryHook)
+{
+    static int s_continue = 0x10E10C05;
+
+    __asm
+    {
+        pushad
+        call UseRecoveredBspSurfaceLayoutForHooks
+        test al, al
+        popad
+        jnz  skip_build
+
+        push ebp
+        mov  ebp, esp
+        push -1
+        jmp  dword ptr [s_continue]
+
+    skip_build:
+        ret
+    }
+}
+
+JMP_HOOK(0x10E10CC0, RecoveredBuildBspHook)
+{
+    static int s_continue = 0x10E10CC5;
+
+    __asm
+    {
+        pushad
+        call UseRecoveredBspSurfaceLayoutForHooks
+        test al, al
+        popad
+        jnz  skip_build
+
+        push ebp
+        mov  ebp, esp
+        push -1
+        jmp  dword ptr [s_continue]
+
+    skip_build:
+        ret
+    }
+}
+
+JMP_HOOK(0x10E10D80, RecoveredBuildLightingHook)
+{
+    static int s_continue = 0x10E10D85;
+
+    __asm
+    {
+        pushad
+        call UseRecoveredBspSurfaceLayoutForHooks
+        test al, al
+        popad
+        jnz  skip_build
+
+        push ebp
+        mov  ebp, esp
+        push -1
+        jmp  dword ptr [s_continue]
+
+    skip_build:
+        ret
+    }
+}
+
+static void __cdecl BeginRecoveredActorTick(void* actor, int actorIndex)
+{
+    MapRecovery::RecordActorTick(actor, actorIndex);
+}
+
+static void __cdecl EndRecoveredActorTick()
+{
+    MapRecovery::ClearActorTick();
+}
+
+static void __cdecl BeginRecoveredActorTickLoop(void* level)
+{
+    MapRecovery::BeginActorTickLoop(level);
+}
+
+static void __cdecl EndRecoveredActorTickLoop()
+{
+    MapRecovery::EndActorTickLoop();
+}
+
+// ULevel::Tick has a normal actor-array pass and a deferred linked-list pass.
+// Bracket both virtual Tick calls so a first-chance AV can be attributed to
+// the actor which owns the invalid reconstructed runtime state.
+JMP_HOOK(0x11184ADF, RecoveredActorTickLoopBeginHook)
+{
+    static int s_resume = 0x11184AE4;
+
+    __asm
+    {
+        pushad
+        mov  eax, dword ptr [ebp-14h]
+        push eax
+        call BeginRecoveredActorTickLoop
+        add  esp, 4
+        popad
+        // Replay: mov eax, [ebp-14h]; xor ebx, ebx
+        mov  eax, dword ptr [ebp-14h]
+        xor  ebx, ebx
+        jmp  dword ptr [s_resume]
+    }
+}
+
+// Capture the array slot before ULevel::Tick reads any native AActor fields.
+// The previous diagnostic started later, after the unsafe flag read.
+JMP_HOOK(0x11184B03, RecoveredActorArrayFetchHook)
+{
+    static int s_resume = 0x11184B08;
+
+    __asm
+    {
+        mov  eax, dword ptr [ecx + esi*4]
+        pushad
+        push esi
+        push eax
+        call BeginRecoveredActorTick
+        add  esp, 8
+        popad
+        test eax, eax
+        jmp  dword ptr [s_resume]
+    }
+}
+
+JMP_HOOK(0x11184B53, RecoveredActorArrayTickBeginHook)
+{
+    static int s_resume = 0x11184B58;
+
+    __asm
+    {
+        // Replay: mov ecx, [ecx + esi*4]; mov edx, [ecx]
+        mov  ecx, dword ptr [ecx + esi*4]
+        pushad
+        push esi
+        push ecx
+        call BeginRecoveredActorTick
+        add  esp, 8
+        popad
+        mov  edx, dword ptr [ecx]
+        jmp  dword ptr [s_resume]
+    }
+}
+
+JMP_HOOK(0x11184B66, RecoveredActorArrayTickEndHook)
+{
+    static int s_resume = 0x11184B6B;
+
+    __asm
+    {
+        pushad
+        call EndRecoveredActorTick
+        popad
+        // Replay: mov edx, [ecx + esi*4]; add ebx, eax
+        mov  edx, dword ptr [ecx + esi*4]
+        add  ebx, eax
+        jmp  dword ptr [s_resume]
+    }
+}
+
+JMP_HOOK(0x11184BE0, RecoveredDeferredActorTickBeginHook)
+{
+    static int s_resume = 0x11184BE5;
+
+    __asm
+    {
+        pushad
+        push -1
+        push ecx
+        call BeginRecoveredActorTick
+        add  esp, 8
+        popad
+        // Replay: mov eax, [ebp+8]; mov edx, [ecx]
+        mov  eax, dword ptr [ebp+8]
+        mov  edx, dword ptr [ecx]
+        jmp  dword ptr [s_resume]
+    }
+}
+
+JMP_HOOK(0x11184BED, RecoveredDeferredActorTickEndHook)
+{
+    static int s_resume = 0x11184BF2;
+
+    __asm
+    {
+        pushad
+        call EndRecoveredActorTick
+        popad
+        // Replay: mov edx, [ebp-14h]; add ebx, eax
+        mov  edx, dword ptr [ebp-14h]
+        add  ebx, eax
+        jmp  dword ptr [s_resume]
+    }
+}
+
+JMP_HOOK(0x11184C30, RecoveredActorTickLoopEndHook)
+{
+    static int s_resume = 0x11184C35;
+
+    __asm
+    {
+        pushad
+        call EndRecoveredActorTickLoop
+        popad
+        // Replay: mov eax, dword ptr ds:[11825244h]
+        mov  eax, dword ptr ds:[11825244h]
+        jmp  dword ptr [s_resume]
     }
 }
 
@@ -394,6 +1075,17 @@ JMP_HOOK(0x10f00d10, ViewportKeyUpHook)
 
     __asm
     {
+        // Ctrl+D: duplicate the current actor/brush selection. This hook is
+        // viewport-only, so text fields keep their normal Ctrl+D behaviour.
+        cmp  dword ptr [esp + 4], 0x44
+        jne  check_f12
+        push ecx
+        call IsControlKeyDown
+        pop  ecx
+        test al, al
+        jnz  do_duplicate
+
+    check_f12:
         // F12: Reloaded Options
         cmp  dword ptr [esp + 4], 0x7B
         je   do_f12
@@ -413,6 +1105,10 @@ JMP_HOOK(0x10f00d10, ViewportKeyUpHook)
 
     do_game_view:
         call ToggleGameView
+        ret  8
+
+    do_duplicate:
+        call DuplicateSelection
         ret  8
 
     do_f12:
@@ -482,5 +1178,5 @@ void General::Initialize()
     INSTALL_HOOKS;
     InstallMemoryHooks();
     InstallMinimizeOnPlayHook();
-    InstallNoEmbedOnPlayPatch();
+    InstallPlayLevelLaunchHook();
 }

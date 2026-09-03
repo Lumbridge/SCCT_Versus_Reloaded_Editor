@@ -72,11 +72,13 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <DisableSpecificWarnings>4733;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
+      <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <AdditionalOptions>%(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>$(SolutionDir)bin\</AdditionalLibraryDirectories>
       <AdditionalDependencies>zlibd.lib;Advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -107,6 +109,7 @@
       <DebugInformationFormat>None</DebugInformationFormat>
       <InlineFunctionExpansion>Default</InlineFunctionExpansion>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <DisableSpecificWarnings>4733;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -114,6 +117,7 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
+      <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <AdditionalOptions>%(AdditionalOptions)</AdditionalOptions>
       <SetChecksum>true</SetChecksum>
       <AdditionalLibraryDirectories>$(SolutionDir)bin\</AdditionalLibraryDirectories>
@@ -133,6 +137,8 @@
     <ClInclude Include="AmbientSoundZone.h" />
     <ClInclude Include="AnimationBrowser.h" />
     <ClInclude Include="BrowserOpenDir.h" />
+    <ClInclude Include="BspDiagnostics.h" />
+    <ClInclude Include="CrashDiagnostics.h" />
     <ClInclude Include="Debug.h" />
     <ClInclude Include="dllmain.h" />
     <ClInclude Include="framework.h" />
@@ -160,6 +166,7 @@
     <ClInclude Include="WindowDriftFix.h" />
     <ClInclude Include="DeintersectFix.h" />
     <ClInclude Include="MapUnlock.h" />
+    <ClInclude Include="MapRecovery.h" />
     <ClInclude Include="StaticMeshCollisionFix.h" />
     <ClInclude Include="DdsImportFix.h" />
     <ClInclude Include="ProjectorDetachFix.h" />
@@ -169,6 +176,8 @@
     <ClCompile Include="AmbientSoundZone.cpp" />
     <ClCompile Include="AnimationBrowser.cpp" />
     <ClCompile Include="BrowserOpenDir.cpp" />
+    <ClCompile Include="BspDiagnostics.cpp" />
+    <ClCompile Include="CrashDiagnostics.cpp" />
     <ClCompile Include="Debug.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="GEKeybindSwap.cpp" />
@@ -192,6 +201,7 @@
     <ClCompile Include="WindowDriftFix.cpp" />
     <ClCompile Include="DeintersectFix.cpp" />
     <ClCompile Include="MapUnlock.cpp" />
+    <ClCompile Include="MapRecovery.cpp" />
     <ClCompile Include="StaticMeshCollisionFix.cpp" />
     <ClCompile Include="DdsImportFix.cpp" />
     <ClCompile Include="ProjectorDetachFix.cpp" />

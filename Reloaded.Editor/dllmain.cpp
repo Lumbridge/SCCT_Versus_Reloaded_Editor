@@ -25,6 +25,9 @@
 #include "DdsImportFix.h"
 #include "ProjectorDetachFix.h"
 #include "SizingBoxFix.h"
+#include "MapRecovery.h"
+#include "CrashDiagnostics.h"
+#include "BspDiagnostics.h"
 
 INIT_ONCE g_InitOnce = INIT_ONCE_STATIC_INIT;
 HINSTANCE g_hReloadedDll = nullptr;
@@ -60,48 +63,23 @@ void RedirectToConsole()
     std::cout << "SCCT Versus Reloaded injected successfully" << "\n";
 }
 
-void LogStackTrace(std::wofstream& logFile, DWORD* stackPointer) {
-    logFile << "Stack Trace:\n";
-    for (int i = 0; i < 40; ++i) {
-        DWORD returnAddress = 0;
-        if (IsBadReadPtr(stackPointer + i, sizeof(DWORD))) break;
-
-        returnAddress = stackPointer[i];
-        logFile << std::format(L"Stack [{}]: 0x{:08X}\n", i, returnAddress);
-    }
-    logFile << "\n";
-}
-
-void LogException(EXCEPTION_POINTERS* exceptionInfo) {
-    std::wofstream logFile("SCCT_Versus_Editor_crash.log", std::ios::trunc);
-
-    if (logFile.is_open()) {
-        logFile << "Exception Code: 0x" << std::hex << exceptionInfo->ExceptionRecord->ExceptionCode << '\n';
-        logFile << "Exception Address: 0x" << exceptionInfo->ExceptionRecord->ExceptionAddress << '\n';
-
-        // Log register values
-        CONTEXT* context = exceptionInfo->ContextRecord;
-        logFile << "Registers:\n";
-        logFile << "EIP: 0x" << context->Eip << '\n';
-        logFile << "ESP: 0x" << context->Esp << '\n';
-        logFile << "EBP: 0x" << context->Ebp << '\n';
-        logFile << "EAX: 0x" << context->Eax << '\n';
-        logFile << "EBX: 0x" << context->Ebx << '\n';
-        logFile << "ECX: 0x" << context->Ecx << '\n';
-        logFile << "EDX: 0x" << context->Edx << '\n';
-
-        LogStackTrace(logFile, reinterpret_cast<DWORD*>(context->Esp));
-
-        logFile << "End of exception details\n\n";
-        logFile.close();
-    }
-}
-
 // Custom unhandled exception filter
 LONG WINAPI CustomUnhandledExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
-    LogException(exceptionInfo);
-    // Optionally, you can terminate or continue the process.
+    // The BSP handler normally captures these faults at first chance, before
+    // Unreal's guard/unguard chain consumes them. Calling it again here is a
+    // safe fallback for failures raised outside that guarded path.
+    BspDiagnostics::LogException(exceptionInfo);
+    CrashDiagnostics::LogUnhandledException(exceptionInfo);
     return EXCEPTION_EXECUTE_HANDLER;
+}
+
+LONG CALLBACK RecoveryActorTickExceptionHandler(
+    EXCEPTION_POINTERS* exceptionInfo)
+{
+    BspDiagnostics::LogException(exceptionInfo);
+    MapRecovery::LogActorTickException(exceptionInfo);
+    MapRecovery::LogViewportException(exceptionInfo);
+    return EXCEPTION_CONTINUE_SEARCH;
 }
 
 const int BaseAddress = 0x10900000;
@@ -114,6 +92,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
 
     Logger::Initialize(dllPath);
     Logger::log("");
+    CrashDiagnostics::Initialize(dllPath);
 
     Rendering::Initialize();
     UI::Initialize();
@@ -137,11 +116,14 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     DdsImportFix::Initialize();
     ProjectorDetachFix::Initialize();
     SizingBoxFix::Initialize();
+    BspDiagnostics::Initialize(dllPath);
 
 #ifdef _DEBUG
     Debug::Initialize();
 #endif
 
+    AddVectoredExceptionHandler(1, RecoveryActorTickExceptionHandler);
+    MapRecovery::ArmActorTickDiagnostic();
     SetUnhandledExceptionFilter(CustomUnhandledExceptionFilter);
 
     return TRUE;

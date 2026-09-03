@@ -84,6 +84,9 @@
     <ClInclude Include="MapUnlock.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="MapRecovery.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="StaticMeshCollisionFix.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -115,6 +118,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="AmbientSoundZone.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="BspDiagnostics.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="CrashDiagnostics.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -170,6 +179,9 @@
     <ClCompile Include="MapUnlock.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="MapRecovery.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="StaticMeshCollisionFix.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -198,6 +210,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="AmbientSoundZone.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="BspDiagnostics.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="CrashDiagnostics.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
