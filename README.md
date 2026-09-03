@@ -54,6 +54,9 @@ The Reloaded Editor increases all selectable lightmap resolutions by 2x. The pre
 ### Increase Audio File Size Limit
 In the stock editor, importing WAV audio files larger than 200KB would immediately crash the editor. The Reloaded Editor removes that limitation and allows larger WAV files to be imported.
 
+### Texture Browser Favorites
+The Texture Browser includes a **Favorites** tab alongside Full, In Use, and Recent. Right-click a material and choose **Add to Favorites** or **Remove from Favorites**. Favorites use the native thumbnail browser and are saved in `Reloaded_Editor.ini`, so they persist between editor sessions whenever their packages are loaded.
+
 ### BSP and Crash Diagnostics
 
 Reloaded keeps a lightweight journal while geometry, BSP, and lighting builds
