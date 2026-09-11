@@ -145,6 +145,8 @@
     <ClInclude Include="GameStructs.h" />
     <ClInclude Include="GEKeybindSwap.h" />
     <ClInclude Include="General.h" />
+    <ClInclude Include="PlayLevelCommand.h" />
+    <ClInclude Include="PlayLevelConfig.h" />
     <ClInclude Include="PropertyGrid.h" />
     <ClInclude Include="Rendering.h" />
     <ClInclude Include="Hooks.h" />

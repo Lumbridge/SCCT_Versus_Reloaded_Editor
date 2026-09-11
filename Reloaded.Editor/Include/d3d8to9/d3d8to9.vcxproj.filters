@@ -36,6 +36,12 @@
     <ClInclude Include="source\d3d8types.hpp">
       <Filter>helpers</Filter>
     </ClInclude>
+    <ClInclude Include="source\PlayLevelPresentation.h">
+      <Filter>helpers</Filter>
+    </ClInclude>
+    <ClInclude Include="source\PlayLevelWindow.h">
+      <Filter>helpers</Filter>
+    </ClInclude>
     <ClInclude Include="source\d3dx9.hpp">
       <Filter>helpers</Filter>
     </ClInclude>

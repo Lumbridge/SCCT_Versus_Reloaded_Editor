@@ -10,6 +10,8 @@
 #include "MapRecovery.h"
 #include "WindowDriftFix.h"
 #include "RebuildAllMaps.h"
+#include "PlayLevelCommand.h"
+#include "PlayLevelConfig.h"
 #include <mimalloc.h>
 #include <cstring>
 #include <unordered_map>
@@ -54,10 +56,11 @@ static void InstallMinimizeOnPlayHook()
     MemoryWriter::WriteBytes(0x11AF23CC, &fn_ptr, sizeof(fn_ptr));
 }
 
-// The Enhanced SCCT launcher injects Reloaded.Core.dll before the game starts.
-// That DLL expects the normal front-end startup path and crashes when UnrealEd
-// launches the special Editeur=true URL.  For Play Level only, start the
-// underlying game executable directly; normal ShellExecute calls are untouched.
+// Reloaded's launcher injects the full runtime, including input and frame
+// timing fixes. It forwards its parameters as the child's complete command
+// line, so they must start with the raw game's executable token. Otherwise
+// native appInit discards the entire Autoplay URL as argv[0]. Retain HWND=0
+// for the editor protocol while giving the game its own independent window.
 static HINSTANCE WINAPI ReloadedShellExecuteA(HWND hwnd, LPCSTR operation,
                                                LPCSTR file, LPCSTR parameters,
                                                LPCSTR directory, INT showCommand)
@@ -75,7 +78,7 @@ static HINSTANCE WINAPI ReloadedShellExecuteA(HWND hwnd, LPCSTR operation,
 
     if (fileName && parameters
         && _stricmp(fileName, "SCCT_Versus.exe") == 0
-        && std::strstr(parameters, "Editeur=true"))
+        && PlayLevelCommand::IsEditorPlayLevelCommand(parameters))
     {
         std::string gameDirectory;
         if (file && fileName != file)
@@ -95,24 +98,64 @@ static HINSTANCE WINAPI ReloadedShellExecuteA(HWND hwnd, LPCSTR operation,
         if (!gameDirectory.empty())
         {
             std::string gamePath = gameDirectory + "\\SCCT Versus";
+            const std::string launcherPath = gameDirectory + "\\SCCT_Versus.exe";
+            const std::string corePath = gameDirectory + "\\Reloaded.Core.dll";
             if (GetFileAttributesA(gamePath.c_str()) != INVALID_FILE_ATTRIBUTES)
             {
-                std::string commandLine = "\"" + gamePath + "\" "
-                                        + parameters;
+                if (GetFileAttributesA(corePath.c_str()) == INVALID_FILE_ATTRIBUTES)
+                {
+                    Logger::log("Play Level: Reloaded.Core.dll is missing; Reloaded is required.");
+                    return reinterpret_cast<HINSTANCE>(static_cast<INT_PTR>(SE_ERR_DLLNOTFOUND));
+                }
+                // Keep the playtest marker for diagnostics. Reloaded uses its
+                // own renderer and the user's Reloaded borderless setting.
+                std::string playParameters =
+                    PlayLevelCommand::UseOwnGameWindow(parameters)
+                    + " -ReloadedEditorPlay";
+                if (!PlayLevelCommand::HasConfigurationOverride(parameters))
+                {
+                    const std::string optionsPath = gameDirectory + "\\Reloaded_Editor.ini";
+                    const auto resolution = PlayLevelConfig::SelectResolution(
+                        GetPrivateProfileIntA("PlayLevel", "ResolutionX", 0, optionsPath.c_str()),
+                        GetPrivateProfileIntA("PlayLevel", "ResolutionY", 0, optionsPath.c_str()),
+                        PlayLevelConfig::CurrentDisplayResolution(hwnd ? hwnd : GetActiveWindow()));
+                    const std::string sourceIni = gameDirectory + "\\Default.ini";
+                    const std::string playIni = gameDirectory + "\\Reloaded_PlayLevel.ini";
+                    if (!PlayLevelConfig::WriteConfiguration(sourceIni.c_str(), playIni.c_str(), resolution))
+                    {
+                        const DWORD error = GetLastError();
+                        Logger::log("Play Level: could not prepare resolution settings, error "
+                            + std::to_string(error));
+                        return reinterpret_cast<HINSTANCE>(static_cast<INT_PTR>(SE_ERR_ACCESSDENIED));
+                    }
+                    // INI= is parsed before WinDrv loads its viewport defaults.
+                    // This changes the engine's resolution as well as D3D's.
+                    playParameters += " INI=\"" + playIni + "\"";
+                    Logger::log("Play Level: render resolution "
+                        + std::to_string(resolution.width) + "x" + std::to_string(resolution.height));
+                }
+                std::string commandLine = PlayLevelCommand::BuildReloadedLaunchCommand(
+                    launcherPath, gamePath, playParameters);
                 STARTUPINFOA startupInfo = {};
                 startupInfo.cb = sizeof(startupInfo);
                 PROCESS_INFORMATION processInfo = {};
 
-                if (CreateProcessA(gamePath.c_str(), commandLine.data(), nullptr,
+                if (CreateProcessA(launcherPath.c_str(), commandLine.data(), nullptr,
                                    nullptr, FALSE, 0, nullptr,
                                    gameDirectory.c_str(), &startupInfo,
                                    &processInfo))
                 {
+                    Logger::log("Play Level: Reloaded launcher PID "
+                        + std::to_string(processInfo.dwProcessId) + " with "
+                        + commandLine);
                     CloseHandle(processInfo.hThread);
                     CloseHandle(processInfo.hProcess);
                     return reinterpret_cast<HINSTANCE>(static_cast<INT_PTR>(33));
                 }
 
+                const DWORD error = GetLastError();
+                Logger::log("Play Level: CreateProcess failed with error "
+                    + std::to_string(error));
                 return reinterpret_cast<HINSTANCE>(
                     static_cast<INT_PTR>(SE_ERR_ACCESSDENIED));
             }

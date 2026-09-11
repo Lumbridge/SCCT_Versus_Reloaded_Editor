@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include "d3d8.hpp"
 #include "interface_query.hpp"
+#include "PlayLevelWindow.h"
 
 HWND ResolveProcessWindow(HWND window);
 
@@ -164,6 +165,7 @@ public:
 private:
 	void ApplyClipPlanes();
 	void ReleaseShadersAndStateBlocks();
+	PlayLevelWindow::Window PlayWindow;
 
 	Direct3D8 *const D3D;
 	IDirect3DDevice9 *const ProxyInterface;
@@ -206,6 +208,7 @@ public:
 private:
 	Direct3DDevice8 *const Device;
 	IDirect3DSwapChain9 *const ProxyInterface;
+	PlayLevelWindow::Window PlayWindow;
 };
 
 class Direct3DTexture8 : public IDirect3DTexture8, public AddressLookupTableObject

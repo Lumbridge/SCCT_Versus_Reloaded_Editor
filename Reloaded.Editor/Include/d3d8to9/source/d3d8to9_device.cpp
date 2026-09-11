@@ -215,6 +215,7 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice8::Reset(D3DPRESENT_PARAMETERS8 *pPresen
 
 	if (SUCCEEDED(hr))
 	{
+		PlayWindow.OnReset();
 		// The default value of D3DRS_POINTSIZE_MIN is 0.0f in D3D8,
 		// whereas in D3D9 it is 1.0f, so adjust it as needed
 		ProxyInterface->SetRenderState(D3DRS_POINTSIZE_MIN, (DWORD) 0.0f);
@@ -230,8 +231,12 @@ HRESULT STDMETHODCALLTYPE Direct3DDevice8::Present(const RECT *pSourceRect, cons
 {
 	UNREFERENCED_PARAMETER(pDirtyRegion);
 
-	return ProxyInterface->Present(pSourceRect, pDestRect,
-		ResolveProcessWindow(hDestWindowOverride), nullptr);
+	const HWND destination = ResolveProcessWindow(hDestWindowOverride);
+	const HRESULT hr = ProxyInterface->Present(pSourceRect,
+		PlayWindow.DestinationRect(pDestRect, destination), destination, nullptr);
+	if (SUCCEEDED(hr))
+		PlayWindow.AfterPresent(ProxyInterface, destination);
+	return hr;
 }
 HRESULT STDMETHODCALLTYPE Direct3DDevice8::GetBackBuffer(UINT iBackBuffer, D3DBACKBUFFER_TYPE Type, IDirect3DSurface8 **ppBackBuffer)
 {
