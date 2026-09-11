@@ -46,7 +46,17 @@ Release builds also include Sound Browser diagnostics: hold **Shift** when openi
 
 Recovery is a one-time conversion. Its output uses the normal editor format: use **File > Open**, edit brushes or actors, rebuild, and save as usual.
 
-Recovery targets the PC version of a map. It retains common and PC-only actors and excludes Xbox-only actors.
+Recovery targets the PC version of a map. It uses the compiled PC level's actual actor list to retain content, including effects whose old editor platform labels say Xbox-only. Those stale labels are cleared so normal PC saves retain the actors. Xbox-only content without confirmed PC membership is excluded.
+
+Zone/portal divider brushes are retained and hidden by default. Their boundaries preserve where ZoneInfo lighting, fog and sound settings apply, without cluttering the initial editing view. They remain ordinary editable brushes and participate in normal rebuilds. ZoneInfo actors and occlusion volumes are retained too.
+
+Recovery commits rebuilt per-object lighting to the editor's platform cache before saving, then checks that the baked mesh lighting survives ordinary reopening.
+
+Supported procedural strip-curtain doors are regenerated from their editable settings. Recovery checks their point connections, rest lengths, fixed anchors and physical settings against the original; moving cloth starts from its rest pose. Unsupported custom cloth constraints stop conversion. Embedded occlusion volumes are retained in the recovered asset package.
+
+Normal visibility builds also share identical lighting lists when needed to stay within the stock game's signed index limit. Each region retains the same lights in the same order; this applies to later ordinary builds and saves too.
+
+Recovery also checks the PC engine's collision-bound index limit before navigation building and saving. Maps which exceed it stop conversion with their T3D retained; they need further collision-data support. This remains a known limitation for ClarD.
 
 The **File** menu provides two commands:
 
@@ -55,7 +65,7 @@ The **File** menu provides two commands:
 | **Recover Compiled Map...** | Convert a compiled `.sdc` into a uniquely named normal source map in `Packages/MapsEd` and its playable copy in `Packages/Maps`. |
 | **Convert Legacy Recovered Map...** | Convert a map saved by the earlier cooked-layout recovery mode into the same normal source format. |
 
-The converter reads the final BSP tree and reconstructs closed convex brush volumes representing its empty or solid space. It merges compatible adjacent volumes and groups decorative fragments by their original surface to reduce the number of brushes. Coplanar faces are partitioned to retain their materials and texture alignment. Surviving actors, supported embedded assets, authored actor relationships, level settings, and GE ledges/pipes are transferred to the new map. The original construction-brush names, grouping, pivots and editing history cannot be recovered.
+The converter reads the final BSP tree and reconstructs closed convex brush volumes representing its empty or solid space. It merges compatible adjacent volumes and groups decorative fragments by their original surface to reduce the number of brushes. Coplanar faces are partitioned to retain their materials and texture alignment. Very small texture divisions are simplified within the native BSP builder's 0.25-unit distance band; shared structural corners and collapsed bevels are reconciled at the editor's 0.002-unit point precision. Surviving actors, supported embedded assets, authored actor relationships, level settings, and GE ledges/pipes are transferred to the new map. The original construction-brush names, grouping, pivots and editing history cannot be recovered.
 
 Recovery rebuilds geometry, BSP, lighting and paths, checks solid/empty space samples and retained actor/gameplay data, saves normally, and verifies ordinary reopening. It stops with an explanation when the input has unsupported references, unbounded or invalid structural geometry, exceeds reconstruction limits, or fails verification. These checks do not replace visual inspection and a gameplay test; reconstructed brushes can be more fragmented than the original source.
 
@@ -107,7 +117,9 @@ Reloaded uses its own renderer and the existing `SCCT_Versus.config` settings. I
 
 The tested Reloaded v3.0a build needs guards for three recorded null dereferences: the scoreboard query, overlay callback and controller callback assume `SPlayerProfile` and its player owner exist. `tools/patch_reloaded_play_level.py` guards the query and defers the two callbacks until the level context, profile and owner are available. When they are available, the callbacks use their original implementations. During direct Play Level startup the profile remains absent, so those callbacks remain deferred.
 
-With the game closed, run `python tools/patch_reloaded_play_level.py "<System>/Reloaded.Core.dll" --check` to verify compatibility, then use `--apply` to install the guards. The script accepts the supported original build or either earlier guard revision, verifies the entire original DLL hash, preserves an unmodified `.before-play-level-guard.bak` backup, and refuses unknown builds. It does not change `SCCT_Versus.config`. Restore the backup with the game closed to undo the guards. This is a separate, manual step: building the editor does not patch Reloaded Core automatically. The repository contains the patch script, not a redistributed Core DLL.
+The same patch fixes three unsafe filename copies in Reloaded's normal map selector. Longer custom map names could overwrite buffers allocated for a previously selected short name and crash during selection or loading. The selector now uses the stock game's string assignment to resize each buffer and update its length, including when selecting recovered maps.
+
+With the game closed, run `python tools/patch_reloaded_play_level.py "<System>/Reloaded.Core.dll" --check` to verify compatibility, then use `--apply` to install the fixes. The script accepts the supported original build or earlier guard revisions, verifies the entire original DLL hash, preserves an unmodified `.before-play-level-guard.bak` backup, and refuses unknown builds. It does not change `SCCT_Versus.config`. Restore the backup with the game closed to undo the fixes. This is a separate, manual step: building the editor does not patch Reloaded Core automatically. The repository contains the patch script, not a redistributed Core DLL.
 
 Validation includes 24 isolated CPU checks for the recorded failures, scoreboard behavior and callback readiness transitions, plus timed launches under a debugger. These establish the current partial behavior; they do not establish parity with normal Reloaded startup. See [test instructions](tests/README.md).
 

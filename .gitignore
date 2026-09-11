@@ -47,3 +47,7 @@ x86/
 /Reloaded.Editor.Launcher/bin/
 /Reloaded.Editor.vcxproj.user
 /Reloaded.Editor.Launcher.vcxproj.user
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]

@@ -196,6 +196,40 @@ int main(int argc, char** argv)
     assert(bad.externalizedAssets.size() == 1);
     assert(bad.externalizedAssets[0].className == "Material");
     assert(bad.actorsT3d.find("Texture=RecoveryAssets_Test.EmbeddedWall") != std::string::npos);
+    const auto antiportals=Replace(kRecovered,"End Map",
+        "Begin Actor Class=AntiPortalActor Name=Occluder0\n"
+        "AntiPortal=ConvexVolume'MyLevel.SharedOccluder'\nEnd Actor\n"
+        "Begin Actor Class=StaticMeshActor Name=Occluder1\n"
+        "AntiPortal=ConvexVolume'MyLevel.SharedOccluder'\nEnd Actor\nEnd Map");
+    assert(!Prepare(antiportals,bad,error));
+    assert(Prepare(antiportals,bad,error,"RecoveredAssets"));
+    assert(bad.externalizedAssets.size()==1);
+    assert(bad.externalizedAssets[0].className=="ConvexVolume");
+    assert(bad.externalizedAssets[0].externalPath=="RecoveredAssets.SharedOccluder");
+    assert(ComposeSourceMap(bad,kFresh,kGeometry,composed,error));
+    assert(VerifySourceMap(bad,composed,error));
+    assert(!VerifySourceMap(bad,Replace(composed,
+        "AntiPortal=ConvexVolume'RecoveredAssets.SharedOccluder'","AntiPortal=None"),error));
+    const auto stripDoor=Replace(kRecovered,"End Map",
+        "Begin Actor Class=SoftBody.ESBStripDoorActor Name=Door0\n"
+        "ULength=24\nVLength=48\nnbU=6\nnbV=12\nprevTopFixed=True\n"
+        "windMin=(Y=-100)\nTexture=Shader'External.Glass'\n"
+        "SoftBody=ESBStripDoor'MyLevel.MyLevel.OriginalDoor'\nEnd Actor\nEnd Map");
+    assert(Prepare(stripDoor,bad,error));
+    assert(bad.regeneratedStripDoors==std::vector<std::string>{"Door0"});
+    assert(bad.actorsT3d.find("OriginalDoor")==std::string::npos);
+    assert(bad.actorsT3d.find("prevTopFixed=True")!=std::string::npos);
+    assert(ComposeSourceMap(bad,kFresh,kGeometry,composed,error));
+    assert(!VerifySourceMap(bad,composed,error)); // A null simulation is never successful recovery.
+    const auto regenerated=Replace(composed,"SoftBody=None","SoftBody=ESBStripDoor'MyLevel.MyLevel.NewDoor'");
+    assert(VerifySourceMap(bad,regenerated,error));
+    assert(!VerifySourceMap(bad,Replace(regenerated,"ULength=24","ULength=25"),error));
+    assert(!VerifySourceMap(bad,Replace(regenerated,"windMin=(Y=-100)","windMin=(Y=-200)"),error));
+    assert(!VerifySourceMap(bad,Replace(regenerated,"ESBStripDoor'MyLevel.MyLevel.NewDoor'",
+        "ESBPatch'MyLevel.MyLevel.NewDoor'"),error));
+    assert(!Prepare(Replace(stripDoor,"Class=SoftBody.ESBStripDoorActor","Class=Trigger"),bad,error));
+    assert(!Prepare(Replace(stripDoor,"ESBStripDoor'MyLevel.MyLevel.OriginalDoor'",
+        "ESBPatch'MyLevel.MyLevel.OriginalDoor'"),bad,error));
     assert(!Prepare(Replace(kRecovered, "Owner=Trigger'MyLevel.Trigger0'",
                                         "Owner=Trigger'MyLevel.MissingTrigger'"),
                     bad, error, "RecoveryAssets_Test"));
@@ -347,6 +381,31 @@ int main(int argc, char** argv)
     const auto nestedXboxProperty = Replace(kRecovered, "Owner=42", "Owner=42\nPlatform=PLF_XBOX_Only");
     assert(Prepare(nestedXboxProperty, bad, error));
     assert(bad.skippedXboxActorCount == 0);
+
+    // Cooked PC membership wins over stale Xbox labels, for every actor
+    // class. Preserve its references and nested effect, and make later
+    // ordinary saves keep it in the PC map. Unconfirmed actors stay excluded.
+    const auto mislabeledPc = Replace(Replace(xboxMap,
+        "SoftBody=ESBPatch'MyLevel.MyLevel.UnexportedXboxCloth'",
+        "Begin Object Class=SpriteEmitter Name=Flame0\nMaxParticles=30\n"
+        "Platform=PLF_XBOX_Only\nEnd Object\nEmitters(0)=SpriteEmitter'MyLevel.Flame0'"),
+        "End Map", "Begin Actor Class=Emitter Name=ConsoleEffect\n"
+        "Platform=PLF_XBOX_Only\nEnd Actor\nEnd Map");
+    assert(Prepare(mislabeledPc, bad, error, "", {}, {"MyLevel.Xbox0"}));
+    assert(bad.correctedPcActorPlatformCount == 1 && bad.skippedXboxActorCount == 1);
+    assert(bad.clearedXboxActorReferenceCount == 0);
+    assert(bad.actorsT3d.find("Owner=Trigger'MyLevel.Xbox0'") != std::string::npos);
+    assert(bad.actorsT3d.find("MaxParticles=30") != std::string::npos);
+    assert(bad.actorsT3d.find("ConsoleEffect") == std::string::npos);
+    assert(ComposeSourceMap(bad, kFresh, kGeometry, composed, error));
+    assert(VerifySourceMap(bad, composed, error));
+    assert(!VerifySourceMap(bad, Replace(composed, "MaxParticles=30", "MaxParticles=0"), error));
+    assert(!Prepare(mislabeledPc, bad, error, "", {}, {"External.Xbox0"}));
+    assert(!Prepare(mislabeledPc, bad, error, "", {"MyLevel.Xbox0"}, {"mylevel.xbox0"}));
+    // Actual PC content with unsupported data must fail explicitly, rather
+    // than be silently lost because of an old label.
+    assert(!Prepare(xboxMap, bad, error, "", {}, {"MyLevel.Xbox0"}));
+    assert(error.find("UnexportedXboxCloth") != std::string::npos);
 
     const auto deletedMap = Replace(Replace(kRecovered,
         "Owner=Trigger'MyLevel.Trigger0'", "Owner=Trigger'MyLevel.Deleted0'"),

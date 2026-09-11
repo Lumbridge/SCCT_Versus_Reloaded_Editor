@@ -29,6 +29,13 @@ namespace RecoveredSurfacePartition
         double epsilon = 0.000001;
         double planeTolerance = 0.02;
         double normalTolerance = 0.00001;
+        // Optional authoring mode: adjust only material divisions that the
+        // native importer or BSP builder cannot retain. Structural face
+        // coverage is kept. Cut endpoints can move to existing boundary
+        // vertices within the native 0.25-unit BSP distance band; narrower
+        // paint fragments can be absorbed by a neighbouring material.
+        // Exact mode is the default.
+        bool matchEditorPrecision = false;
     };
 
     // Candidates describe visible polygons. Float32 vertex welding
@@ -47,6 +54,15 @@ namespace RecoveredSurfacePartition
                    const std::vector<Surface>& candidates,
                    int fallbackMaterialIndex, std::vector<Piece>& result,
                    std::string& error, const Limits& limits = {});
+
+    // Join adjacent coplanar convex pieces only when they have the same
+    // materialIndex (which must also identify their UV basis and flags).
+    // Opposing shared edges are removed without moving any boundary vertex;
+    // concave unions, holes and gaps remain separate. Subdivided shared edges
+    // are matched explicitly. Output is cleared on failure.
+    bool CoalesceCoplanarPieces(const std::vector<Piece>& pieces, const Vec3& normal,
+                               std::vector<Piece>& result, std::string& error,
+                               const Limits& limits = {});
 
     // Encode all subdivisions of one structural face together. Vertices in
     // the result are exactly representable by the editor's float32 storage.
@@ -71,6 +87,13 @@ namespace RecoveredSurfacePartition
     bool ValidateEditorBrush(const RecoveredBspGeometry::Brush& brush,
                              std::vector<bool>& collapsedFaces,std::string& error,
                              const Limits& limits = {});
+
+    // Resolve native-coincident vertices consistently across every face of
+    // one brush, before material subdivision. A collapsed bevel is removed
+    // only after the remaining faces prove closed, planar and positive-volume.
+    // Retained supporting planes are unchanged. Failure leaves the brush intact.
+    bool CanonicalizeBrushForEditor(RecoveredBspGeometry::Brush& brush,
+                                    std::string& error,const Limits& limits = {});
 
     // Convex planar sheets with at most 16 float vertices remain one polygon;
     // planarity uses the stricter of epsilon and planeTolerance. Ordinary

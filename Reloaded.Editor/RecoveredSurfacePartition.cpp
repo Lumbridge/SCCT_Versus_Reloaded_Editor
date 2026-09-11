@@ -1,9 +1,11 @@
 #include "RecoveredSurfacePartition.h"
+#include "RecoveredPolygonImport.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <new>
 #include <sstream>
 #include <stdexcept>
@@ -437,7 +439,7 @@ namespace RecoveredSurfacePartition
 
         // A single complementary split, using the SAME exact zero decision
         // and intersection for both sides. Epsilon is never applied twice.
-        bool Split(const Polygon& polygon, const Point& a, const Point& b,
+        bool SplitExact(const Polygon& polygon, const Point& a, const Point& b,
                    Polygon& inside, Polygon& outside, Work& work)
         {
             if (!work.Spend(polygon.size()))
@@ -476,6 +478,140 @@ namespace RecoveredSurfacePartition
             return true;
         }
 
+        bool NativeStable(const Polygon& polygon,const Frame& frame,const Work& work)
+        {
+            if (polygon.empty()) return true;
+            // FPoly::SplitWithPlane uses a 0.25-unit distance band during
+            // ordinary BSP construction (0x110BFFF7 in the supported editor).
+            // A narrow paint fragment can import successfully, then become
+            // coplanar with a crossing splitter and disappear in the rebuild.
+            // Keep material divisions wider than both sides of that band.
+            // This only guides complementary material cuts, never the shape
+            // or width of an original structural face.
+            constexpr double minimumSplitWidth=0.5;
+            for (std::size_t i=0;i<polygon.size();++i)
+            {
+                const Point a=polygon[i],b=polygon[(i+1)%polygon.size()];
+                const double length=std::hypot(b.x-a.x,b.y-a.y);
+                if (!length) return false;
+                double low=0,high=0;
+                for (const Point& point:polygon)
+                {
+                    const double distance=Side(point,a,b)/length;
+                    low=(std::min)(low,distance);
+                    high=(std::max)(high,distance);
+                }
+                if (high-low<minimumSplitWidth) return false;
+            }
+            // Larger polygons are divided during the final encoding pass.
+            if (polygon.size()>RecoveredPolygonImport::kMaximumVertices) return true;
+            std::vector<Vec3> vertices;
+            vertices.reserve(polygon.size());
+            for (const Point point:polygon)
+            {
+                const Vec3 restored=frame.Restore(point);
+                vertices.push_back({static_cast<float>(restored.x),static_cast<float>(restored.y),
+                    static_cast<float>(restored.z)});
+            }
+            const auto imported=RecoveredPolygonImport::Prepare(vertices);
+            return imported.accepted() && RecoveredPolygonImport::PreservesOutline(vertices,imported)
+                && Dot(imported.normal,frame.normal)>=1-work.limits.normalTolerance;
+        }
+
+        bool Split(const Polygon& polygon,const Point& a,const Point& b,
+                   Polygon& inside,Polygon& outside,Work& work,const Frame& frame)
+        {
+            if (!SplitExact(polygon,a,b,inside,outside,work)) return false;
+            if (!work.limits.matchEditorPrecision) return true;
+            if (inside.empty() || outside.empty())
+            {
+                if (inside.empty()) outside=polygon;
+                else inside=polygon;
+                return true;
+            }
+            if (NativeStable(inside,frame,work) && NativeStable(outside,frame,work)) return true;
+
+            // A cut close to an existing corner can be lost during either
+            // import cleanup or BSP splitting. Move its material endpoint to
+            // that corner, keeping the complete structural face unchanged.
+            std::vector<Point> intersections;
+            bool adjusted=false;
+            const double tolerance=0.25; // Native BSP split distance band.
+            auto near=[&](const Point& first,const Point& second)
+            {
+                const Vec3 start=frame.Restore(first),end=frame.Restore(second);
+                const Vec3 delta{double(static_cast<float>(start.x))-static_cast<float>(end.x),
+                    double(static_cast<float>(start.y))-static_cast<float>(end.y),
+                    double(static_cast<float>(start.z))-static_cast<float>(end.z)};
+                return std::fabs(delta.x)<tolerance && std::fabs(delta.y)<tolerance
+                    && std::fabs(delta.z)<tolerance;
+            };
+            for (std::size_t i=0;i<polygon.size();++i)
+            {
+                if (!work.Spend(1)) return false;
+                const Point p=polygon[i],q=polygon[(i+1)%polygon.size()];
+                const double dp=Side(p,a,b),dq=Side(q,a,b);
+                if (dp==0) intersections.push_back(p);
+                if ((dp<0 && dq>0) || (dp>0 && dq<0))
+                {
+                    const double t=dp/(dp-dq);
+                    Point cut{p.x+(q.x-p.x)*t,p.y+(q.y-p.y)*t};
+                    if (near(cut,p)) { cut=p; adjusted=true; }
+                    else if (near(cut,q)) { cut=q; adjusted=true; }
+                    intersections.push_back(cut);
+                }
+            }
+            if (adjusted && intersections.size()>=2)
+            {
+                const auto along=[&](const Point& point)
+                {
+                    return (point.x-a.x)*(b.x-a.x)+(point.y-a.y)*(b.y-a.y);
+                };
+                const auto ends=std::minmax_element(intersections.begin(),intersections.end(),
+                    [&](const Point& first,const Point& second) { return along(first)<along(second); });
+                if (ends.first->x!=ends.second->x || ends.first->y!=ends.second->y)
+                {
+                    inside.clear(); outside.clear();
+                    if (!SplitExact(polygon,*ends.first,*ends.second,inside,outside,work)) return false;
+                }
+            }
+            if (inside.empty() || outside.empty())
+            {
+                if (inside.empty()) outside=polygon;
+                else inside=polygon;
+                return true;
+            }
+            if (NativeStable(inside,frame,work) && NativeStable(outside,frame,work)) return true;
+
+            // Preserve a representable parent instead of producing a paint
+            // fragment below native import/build precision. This changes
+            // material assignment only; the two sides still cover the parent.
+            // The area bound is tied to native split and normal limits,
+            // so a large region with one short edge cannot be reassigned.
+            auto microscopic=[&](const Polygon& piece)
+            {
+                double perimeter=0;
+                for (std::size_t i=0;i<piece.size();++i)
+                    perimeter+=std::hypot(piece[i].x-piece[(i+1)%piece.size()].x,
+                                          piece[i].y-piece[(i+1)%piece.size()].y);
+                const double minimumArea=std::sqrt(
+                    static_cast<double>(RecoveredPolygonImport::kMinimumNormalSquared))*0.5;
+                return Area(piece)<=(std::max)(minimumArea,perimeter*tolerance*std::sqrt(3.0));
+            };
+            if (NativeStable(polygon,frame,work))
+            {
+                if (Area(inside)<=Area(outside) && microscopic(inside))
+                {
+                    inside.clear(); outside=polygon;
+                }
+                else if (microscopic(outside))
+                {
+                    outside.clear(); inside=polygon;
+                }
+            }
+            return true;
+        }
+
         bool AppendPiece(const Polygon& polygon, int material, const Frame& frame,
                          std::vector<Piece>& output, Work& work)
         {
@@ -499,6 +635,204 @@ namespace RecoveredSurfacePartition
             output.push_back(std::move(piece));
             return true;
         }
+
+        struct PaintedPolygon { Polygon vertices; int material; };
+        using VertexMap=std::map<std::pair<double,double>,Vec3>;
+
+        bool SamePoint(const Point& a,const Point& b)
+        {
+            return a.x==b.x && a.y==b.y;
+        }
+
+        void RemoveExactRedundancy(Polygon& polygon,const VertexMap* sourceVertices)
+        {
+            bool changed=true;
+            while (changed && polygon.size()>=3)
+            {
+                changed=false;
+                for (std::size_t i=0;i<polygon.size();++i)
+                {
+                    const Point a=polygon[(i+polygon.size()-1)%polygon.size()];
+                    const Point b=polygon[i],c=polygon[(i+1)%polygon.size()];
+                    bool collinear3D=true;
+                    if (sourceVertices)
+                    {
+                        const Vec3& pa=sourceVertices->at({a.x,a.y});
+                        const Vec3& pb=sourceVertices->at({b.x,b.y});
+                        const Vec3& pc=sourceVertices->at({c.x,c.y});
+                        const Vec3 cross=Cross(Sub(pb,pa),Sub(pc,pa));
+                        collinear3D=cross.x==0 && cross.y==0 && cross.z==0;
+                    }
+                    // The a,b,a case cancels another segment of the shared
+                    // boundary after joining two polygons along one edge.
+                    if (SamePoint(a,b) || SamePoint(a,c)
+                        || (collinear3D && Side(b,a,c)==0
+                            && (b.x-a.x)*(c.x-b.x)+(b.y-a.y)*(c.y-b.y)>=0))
+                    {
+                        polygon.erase(polygon.begin()+i);
+                        changed=true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        bool SubdivideSharedEdges(const Polygon& input,const Polygon& other,
+                                  Polygon& output,Work& work)
+        {
+            for (std::size_t edge=0;edge<input.size();++edge)
+            {
+                if (!work.Spend(other.size()+1)) return false;
+                const Point a=input[edge],b=input[(edge+1)%input.size()];
+                Append(output,a);
+                const bool xAxis=std::fabs(b.x-a.x)>=std::fabs(b.y-a.y);
+                const double length=xAxis ? b.x-a.x : b.y-a.y;
+                if (length==0) continue;
+                std::vector<std::pair<double,Point>> points;
+                for (const Point point:other)
+                {
+                    if (Side(point,a,b)!=0) continue;
+                    const double t=(xAxis ? point.x-a.x : point.y-a.y)/length;
+                    if (t>0 && t<1) points.emplace_back(t,point);
+                }
+                std::sort(points.begin(),points.end(),[](const auto& first,const auto& second)
+                {
+                    return first.first<second.first;
+                });
+                for (const auto& point:points) Append(output,point.second);
+            }
+            return true;
+        }
+
+        bool StrictlyConvex(const Polygon& polygon,Work& work,bool& convex)
+        {
+            convex=false;
+            if (polygon.size()<3 || Area(polygon)<=0) return true;
+            for (std::size_t edge=0;edge<polygon.size();++edge)
+            {
+                if (!work.Spend(polygon.size())) return false;
+                const Point a=polygon[edge],b=polygon[(edge+1)%polygon.size()];
+                if (SamePoint(a,b)) return true;
+                for (const Point point:polygon)
+                    if (Side(point,a,b)<0) return true;
+            }
+            convex=true;
+            return true;
+        }
+
+        bool JoinConvex(const Polygon& first,const Polygon& second,
+                        Polygon& joined,Work& work,const VertexMap* sourceVertices)
+        {
+            if (sourceVertices)
+            {
+                if (!work.Spend(first.size()+second.size())) return false;
+                const Vec3 origin=sourceVertices->at({first.front().x,first.front().y});
+                Vec3 geometricNormal{};
+                for (std::size_t i=1;i+1<first.size();++i)
+                {
+                    geometricNormal=Cross(Sub(sourceVertices->at({first[i].x,first[i].y}),origin),
+                        Sub(sourceVertices->at({first[i+1].x,first[i+1].y}),origin));
+                    if (geometricNormal.x!=0 || geometricNormal.y!=0 || geometricNormal.z!=0) break;
+                }
+                if (!Finite(geometricNormal)
+                    || (geometricNormal.x==0 && geometricNormal.y==0 && geometricNormal.z==0)) return true;
+                for (const Polygon* polygon:{&first,&second}) for (const Point point:*polygon)
+                    if (Dot(geometricNormal,Sub(sourceVertices->at({point.x,point.y}),origin))!=0)
+                        return true;
+            }
+            Polygon a,b;
+            if (!SubdivideSharedEdges(first,second,a,work)
+                || !SubdivideSharedEdges(second,first,b,work)) return false;
+            for (std::size_t i=0;i<a.size();++i)
+            {
+                if (!work.Spend(b.size())) return false;
+                for (std::size_t j=0;j<b.size();++j)
+                {
+                    if (!SamePoint(a[i],b[(j+1)%b.size()])
+                        || !SamePoint(a[(i+1)%a.size()],b[j])) continue;
+                    Polygon boundary;
+                    for (std::size_t k=1;k<=a.size();++k)
+                        Append(boundary,a[(i+k)%a.size()]);
+                    for (std::size_t k=2;k<b.size();++k)
+                        Append(boundary,b[(j+k)%b.size()]);
+                    RemoveExactRedundancy(boundary,sourceVertices);
+                    if (boundary.size()>work.limits.maxVertices) continue;
+                    bool convex=false;
+                    if (!StrictlyConvex(boundary,work,convex)) return false;
+                    if (!convex) continue;
+                    // This is boundary splicing, not a convex-hull fill.
+                    // Only shared/retraced edges and exactly collinear
+                    // vertices were removed. Check the area identity as an
+                    // additional guard, allowing arithmetic error only.
+                    const double before=Area(first)+Area(second),after=Area(boundary);
+                    const double roundoff=std::numeric_limits<double>::epsilon()*64
+                        *static_cast<double>(first.size()+second.size())*std::fabs(before);
+                    if (!std::isfinite(after) || std::fabs(after-before)>roundoff) continue;
+                    joined=std::move(boundary);
+                    return true;
+                }
+            }
+            return true;
+        }
+
+        bool Coalesce(std::vector<PaintedPolygon>& polygons,Work& work,
+                      const VertexMap* sourceVertices=nullptr,const Frame* nativeFrame=nullptr)
+        {
+            // Small subdivisions are most vulnerable to the editor's
+            // vertex/normal cleanup. Absorb those first when an exact convex
+            // union exists; no rejected fragment is discarded here.
+            auto bounds=[](const Polygon& polygon)
+            {
+                std::array<double,4> box{polygon[0].x,polygon[0].y,polygon[0].x,polygon[0].y};
+                for (const Point point:polygon)
+                {
+                    box[0]=(std::min)(box[0],point.x); box[1]=(std::min)(box[1],point.y);
+                    box[2]=(std::max)(box[2],point.x); box[3]=(std::max)(box[3],point.y);
+                }
+                return box;
+            };
+            std::vector<std::array<double,4>> boxes;
+            for (const PaintedPolygon& polygon:polygons) boxes.push_back(bounds(polygon.vertices));
+            bool changed=true;
+            while (changed)
+            {
+                changed=false;
+                std::vector<std::size_t> order;
+                for (std::size_t i=0;i<polygons.size();++i)
+                    if (!polygons[i].vertices.empty()) order.push_back(i);
+                std::stable_sort(order.begin(),order.end(),[&](std::size_t a,std::size_t b)
+                {
+                    return Area(polygons[a].vertices)<Area(polygons[b].vertices);
+                });
+                for (std::size_t i:order)
+                {
+                    if (polygons[i].vertices.empty()) continue;
+                    for (std::size_t j:order)
+                    {
+                        if (!work.Spend(1)) return false;
+                        if (i==j || polygons[j].vertices.empty()
+                            || polygons[i].material!=polygons[j].material) continue;
+                        const auto& a=boxes[i]; const auto& b=boxes[j];
+                        if (a[2]<b[0] || b[2]<a[0] || a[3]<b[1] || b[3]<a[1]) continue;
+                        Polygon joined;
+                        if (!JoinConvex(polygons[i].vertices,polygons[j].vertices,joined,work,sourceVertices)) return false;
+                        if (joined.empty()) continue;
+                        if (nativeFrame && (joined.size()>RecoveredPolygonImport::kMaximumVertices
+                            || !NativeStable(joined,*nativeFrame,work))) continue;
+                        polygons[j].vertices=std::move(joined);
+                        boxes[j]=bounds(polygons[j].vertices);
+                        polygons[i].vertices.clear();
+                        changed=true;
+                        break;
+                    }
+                }
+            }
+            polygons.erase(std::remove_if(polygons.begin(),polygons.end(),[](const PaintedPolygon& p)
+            {
+                return p.vertices.empty();
+            }),polygons.end());
+            return true;
+        }
     }
 
     bool Partition(const RecoveredBspGeometry::Face& face,
@@ -519,7 +853,7 @@ namespace RecoveredSurfacePartition
         }
         const double originalArea = Area(original);
         std::vector<Polygon> remaining{original};
-        std::vector<Piece> output;
+        std::vector<PaintedPolygon> output;
         double totalArea = 0;
         for (const Surface& candidate : candidates)
         {
@@ -581,7 +915,7 @@ namespace RecoveredSurfacePartition
                     for (std::size_t edge = 0; edge < mask.size() && !piece.empty(); ++edge)
                     {
                         Polygon inside, cutOff;
-                        if (!Split(piece,mask[edge],mask[(edge+1)%mask.size()],inside,cutOff,work))
+                        if (!Split(piece,mask[edge],mask[(edge+1)%mask.size()],inside,cutOff,work,frame))
                         {
                             error="Material candidate "+std::to_string(&candidate-candidates.data())
                                 +" (materialIndex="+std::to_string(candidate.materialIndex)+"): "+error;
@@ -595,7 +929,7 @@ namespace RecoveredSurfacePartition
                     else
                     {
                         totalArea += Area(piece);
-                        if (!AppendPiece(piece,candidate.materialIndex,frame,output,work)) return false;
+                        output.push_back({std::move(piece),candidate.materialIndex});
                         for (Polygon& uncovered : outside)
                             nextRemaining.push_back(std::move(uncovered));
                     }
@@ -612,7 +946,7 @@ namespace RecoveredSurfacePartition
         for (const Polygon& fragment : remaining)
         {
             totalArea += Area(fragment);
-            if (!AppendPiece(fragment,fallbackMaterialIndex,frame,output,work)) return false;
+            output.push_back({fragment,fallbackMaterialIndex});
         }
         if (!std::isfinite(totalArea)
             || std::fabs(totalArea-originalArea) > (std::max)(limits.epsilon*limits.epsilon,originalArea*1e-10))
@@ -620,7 +954,27 @@ namespace RecoveredSurfacePartition
             error = "Material partitioning could not preserve the source face area.";
             return false;
         }
-        result = std::move(output);
+        if (output.empty() || output.size()>limits.maxPieces)
+        {
+            error="Surface reconstruction exceeded its polygon budget.";
+            return false;
+        }
+        if (std::all_of(output.begin(),output.end(),[&](const PaintedPolygon& piece)
+            { return piece.material==output.front().material; }))
+        {
+            // The completed partition has proved full coverage. Boundaries
+            // between identical material/UV assignments have no meaning;
+            // retaining the original face avoids native cleanup of slivers.
+            result.push_back({face.vertices,output.front().material});
+            return true;
+        }
+        if (!Coalesce(output,work,nullptr,limits.matchEditorPrecision ? &frame : nullptr)) return false;
+        for (const PaintedPolygon& piece:output)
+            if (!AppendPiece(piece.vertices,piece.material,frame,result,work))
+            {
+                result.clear();
+                return false;
+            }
         return true;
     }
     catch (const std::bad_alloc&)
@@ -630,6 +984,79 @@ namespace RecoveredSurfacePartition
     catch (const std::length_error&)
     {
         result.clear(); error = "The recovered surface partition exceeds container capacity."; return false;
+    }
+
+    bool CoalesceCoplanarPieces(const std::vector<Piece>& pieces,const Vec3& normal,
+                               std::vector<Piece>& result,std::string& error,const Limits& limits)
+    try
+    {
+        result.clear(); error.clear();
+        if (!ValidLimits(limits,error)) return false;
+        if (pieces.size()>limits.maxPieces)
+        {
+            error="Surface coalescing exceeded its polygon budget.";
+            return false;
+        }
+        if (pieces.empty()) return true;
+        Work work{limits,0,error};
+        Frame frame;
+        Polygon first;
+        if (!MakeFrame(pieces.front().vertices,normal,frame,first,work)) return false;
+        VertexMap sourceVertices;
+        std::vector<PaintedPolygon> polygons;
+        for (const Piece& piece:pieces)
+        {
+            Frame checkFrame;
+            Polygon checked;
+            if (!MakeFrame(piece.vertices,normal,checkFrame,checked,work)) return false;
+            PaintedPolygon projected{{},piece.materialIndex};
+            for (const Vec3& vertex:piece.vertices)
+            {
+                if (std::fabs(Dot(frame.normal,Sub(vertex,frame.origin)))>limits.epsilon*8)
+                {
+                    error="Surface coalescing requires coplanar pieces.";
+                    return false;
+                }
+                const Point point=frame.Project(vertex);
+                const auto inserted=sourceVertices.emplace(std::make_pair(point.x,point.y),vertex);
+                const Vec3& existing=inserted.first->second;
+                if (!inserted.second && (existing.x!=vertex.x || existing.y!=vertex.y || existing.z!=vertex.z))
+                {
+                    error="Coplanar surface projection maps distinct 3D vertices to the same point.";
+                    return false;
+                }
+                Append(projected.vertices,point);
+            }
+            Clean(projected.vertices);
+            polygons.push_back(std::move(projected));
+        }
+        if (!Coalesce(polygons,work,&sourceVertices)) return false;
+        std::vector<Piece> output;
+        for (const PaintedPolygon& polygon:polygons)
+        {
+            Piece piece{{},polygon.material};
+            for (const Point point:polygon.vertices)
+            {
+                const auto found=sourceVertices.find({point.x,point.y});
+                if (found==sourceVertices.end())
+                {
+                    error="Surface coalescing introduced an unexpected boundary vertex.";
+                    return false;
+                }
+                piece.vertices.push_back(found->second);
+            }
+            output.push_back(std::move(piece));
+        }
+        result=std::move(output);
+        return true;
+    }
+    catch (const std::bad_alloc&)
+    {
+        result.clear(); error="There is insufficient memory to coalesce recovered surfaces."; return false;
+    }
+    catch (const std::length_error&)
+    {
+        result.clear(); error="Surface coalescing exceeds container capacity."; return false;
     }
 
     bool PrepareForEditor(const RecoveredBspGeometry::Face& face,
@@ -797,6 +1224,142 @@ namespace RecoveredSurfacePartition
     catch (const std::length_error&)
     {
         result.clear(); error="Editor surface preparation exceeds container capacity."; return false;
+    }
+
+    bool CanonicalizeBrushForEditor(RecoveredBspGeometry::Brush& brush,
+                                    std::string& error,const Limits& limits)
+    try
+    {
+        error.clear();
+        if (!ValidLimits(limits,error)) return false;
+        if (brush.faces.empty())
+        {
+            error="A structural brush has no faces to prepare.";
+            return false;
+        }
+        Work work{limits,0,error};
+        RecoveredBspGeometry::Brush prepared;
+        prepared.subtractive=brush.subtractive;
+        std::vector<Vec3> anchors;
+        const double tolerance=RecoveredPolygonImport::kCoincidentVertexTolerance;
+        for (const auto& face:brush.faces)
+        {
+            RecoveredBspGeometry::Face result{{},face.normal,face.surfaceIndex};
+            for (const Vec3& original:face.vertices)
+            {
+                if (!Finite(original)
+                    || std::fabs(original.x)>(std::numeric_limits<float>::max)()
+                    || std::fabs(original.y)>(std::numeric_limits<float>::max)()
+                    || std::fabs(original.z)>(std::numeric_limits<float>::max)())
+                {
+                    error="A structural brush vertex exceeds native float coordinates.";
+                    return false;
+                }
+                if (!work.Spend(anchors.size()+1)) return false;
+                const Vec3 encoded{static_cast<float>(original.x),static_cast<float>(original.y),
+                    static_cast<float>(original.z)};
+                auto found=std::find_if(anchors.begin(),anchors.end(),[&](const Vec3& anchor)
+                {
+                    return std::fabs(double(static_cast<float>(anchor.x))-encoded.x)<tolerance
+                        && std::fabs(double(static_cast<float>(anchor.y))-encoded.y)<tolerance
+                        && std::fabs(double(static_cast<float>(anchor.z))-encoded.z)<tolerance;
+                });
+                Vec3 point;
+                if (found==anchors.end())
+                {
+                    if (anchors.size()>=limits.maxVertices)
+                    {
+                        error="Native brush preparation exceeded its vertex budget.";
+                        return false;
+                    }
+                    anchors.push_back(original);
+                    point=original;
+                }
+                else point=*found;
+                if (result.vertices.empty() || point.x!=result.vertices.back().x
+                    || point.y!=result.vertices.back().y || point.z!=result.vertices.back().z)
+                    result.vertices.push_back(point);
+            }
+            if (result.vertices.size()>1 && result.vertices.front().x==result.vertices.back().x
+                && result.vertices.front().y==result.vertices.back().y
+                && result.vertices.front().z==result.vertices.back().z)
+                result.vertices.pop_back();
+            if (result.vertices.size()>=3) prepared.faces.push_back(face);
+        }
+        if (prepared.faces.size()==brush.faces.size()) return true;
+        if (prepared.faces.empty() || anchors.empty())
+        {
+            error="A structural brush collapses at native editor precision.";
+            return false;
+        }
+        // Removing a sub-precision bevel must not bend adjoining planes.
+        // Recompute their intersections from the retained original planes,
+        // then prove the expansion stays within native point precision.
+        std::vector<RecoveredBspGeometry::Node> planes;
+        for (std::size_t index=0;index<prepared.faces.size();++index)
+        {
+            const auto& face=prepared.faces[index];
+            const int next=index+1==prepared.faces.size() ? -1 : static_cast<int>(index+1);
+            planes.push_back({Scale(face.normal,-1),-Dot(face.normal,face.vertices.front()),
+                next,-1,true,face.surfaceIndex});
+        }
+        RecoveredBspGeometry::Bounds bounds{anchors.front(),anchors.front()};
+        for (const Vec3& point:anchors)
+        {
+            bounds.minimum.x=(std::min)(bounds.minimum.x,point.x);
+            bounds.minimum.y=(std::min)(bounds.minimum.y,point.y);
+            bounds.minimum.z=(std::min)(bounds.minimum.z,point.z);
+            bounds.maximum.x=(std::max)(bounds.maximum.x,point.x);
+            bounds.maximum.y=(std::max)(bounds.maximum.y,point.y);
+            bounds.maximum.z=(std::max)(bounds.maximum.z,point.z);
+        }
+        const Vec3 margin{64,64,64};
+        bounds.minimum=Sub(bounds.minimum,margin); bounds.maximum=Add(bounds.maximum,margin);
+        RecoveredBspGeometry::Result rebuilt;
+        if (!RecoveredBspGeometry::Reconstruct(planes,false,bounds,rebuilt,error)
+            || rebuilt.brushes.size()!=1)
+        {
+            error="Native precision cannot retain a closed structural brush: "+error;
+            return false;
+        }
+        for (const auto& face:rebuilt.brushes.front().faces)
+            for (const Vec3& point:face.vertices)
+            {
+                const bool inside=std::all_of(brush.faces.begin(),brush.faces.end(),[&](const auto& oldFace)
+                {
+                    return Dot(oldFace.normal,Sub(point,oldFace.vertices.front()))<=limits.epsilon;
+                });
+                if (inside) continue;
+                const bool near=std::any_of(anchors.begin(),anchors.end(),[&](const Vec3& old)
+                {
+                    return std::fabs(double(static_cast<float>(old.x))-static_cast<float>(point.x))<tolerance
+                        && std::fabs(double(static_cast<float>(old.y))-static_cast<float>(point.y))<tolerance
+                        && std::fabs(double(static_cast<float>(old.z))-static_cast<float>(point.z))<tolerance;
+                });
+                if (!near)
+                {
+                    error="Removing a collapsed brush bevel would exceed native point precision.";
+                    return false;
+                }
+            }
+        prepared=std::move(rebuilt.brushes.front());
+        prepared.subtractive=brush.subtractive;
+        std::vector<bool> collapsed;
+        if (!ValidateEditorBrush(prepared,collapsed,error)) return false;
+        std::vector<RecoveredBspGeometry::Face> faces;
+        for (std::size_t index=0;index<prepared.faces.size();++index)
+            if (!collapsed[index]) faces.push_back(std::move(prepared.faces[index]));
+        prepared.faces=std::move(faces);
+        brush=std::move(prepared);
+        return true;
+    }
+    catch (const std::bad_alloc&)
+    {
+        error="There is insufficient memory to prepare native brush vertices."; return false;
+    }
+    catch (const std::length_error&)
+    {
+        error="Native brush preparation exceeds container capacity."; return false;
     }
 
     bool ValidateEditorBrush(const RecoveredBspGeometry::Brush& brush,
@@ -1009,6 +1572,51 @@ namespace RecoveredSurfacePartition
         }
         std::vector<Polygon> triangles;
         if (!TriangulateSimple(boundary,triangles,work)) return false;
+        // Convex validation above is only a fast-path probe. Successful
+        // triangulation has independently validated a concave boundary;
+        // discard that probe's diagnostic before testing native ear orders.
+        error.clear();
+        auto nativeTriangles = [&](const std::vector<Polygon>& trial)
+        {
+            for (const auto& triangle : trial)
+            {
+                std::vector<Vec3> points;
+                for (const Point point : triangle)
+                {
+                    if (!work.Spend(vertices.size())) return false;
+                    const auto found = std::find_if(vertices.begin(), vertices.end(), [&](const Vec3& vertex)
+                    {
+                        const auto projected = frame.Project(vertex);
+                        return projected.x == point.x && projected.y == point.y;
+                    });
+                    if (found == vertices.end()) return false;
+                    points.push_back(*found);
+                }
+                const auto area = Cross(Sub(points[1],points[0]),Sub(points[2],points[0]));
+                if (area.x == 0 && area.y == 0 && area.z == 0) continue;
+                const auto native = RecoveredPolygonImport::Prepare(points);
+                if (!native.accepted() || !RecoveredPolygonImport::PreservesOutline(points,native)) return false;
+            }
+            return true;
+        };
+        if (!nativeTriangles(triangles))
+        {
+            // A slightly nonplanar cooked sheet can have almost-collinear
+            // edge vertices. One valid 2D ear order isolates them as a tiny
+            // 3D triangle that native import discards. Try other cyclic ear
+            // orders, retaining every original boundary vertex and edge.
+            // This changes diagonals only; it never drops a sliver or fills
+            // a notch. Work remains covered by the shared triangulation cap.
+            Polygon rotated = boundary;
+            for (std::size_t attempt = 1; attempt < boundary.size(); ++attempt)
+            {
+                std::rotate(rotated.begin(),rotated.begin()+1,rotated.end());
+                std::vector<Polygon> trial;
+                if (!TriangulateSimple(rotated,trial,work)) return false;
+                if (nativeTriangles(trial)) { triangles = std::move(trial); break; }
+            }
+            if (!error.empty()) return false;
+        }
         std::vector<Surface> output;
         for (const Polygon& triangle:triangles)
         {

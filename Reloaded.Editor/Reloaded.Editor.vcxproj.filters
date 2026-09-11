@@ -18,6 +18,12 @@
     <ClInclude Include="resource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="BspLeafLightFix.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="BspLeafLightTable.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="StringOperations.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -97,6 +103,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="RecoveredSurfacePartition.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="RecoveredPolygonImport.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="RecoveredActorImport.h">
@@ -225,6 +234,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="RecoveredSurfacePartition.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RecoveredPolygonImport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="BspLeafLightFix.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="RecoveredActorImport.cpp">

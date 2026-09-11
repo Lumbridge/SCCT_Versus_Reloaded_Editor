@@ -621,6 +621,53 @@ namespace RecoveredBspGeometry
         error="Convex brush merging exceeds container capacity."; return false;
     }
 
+    bool OrderForRebuild(Result& result,std::string& error)
+    try
+    {
+        error.clear();
+        std::vector<std::pair<double,std::size_t>> order;
+        order.reserve(result.brushes.size());
+        for (std::size_t index=0;index<result.brushes.size();++index)
+        {
+            const Brush& brush=result.brushes[index];
+            if (brush.subtractive!=result.brushes.front().subtractive)
+            {
+                error="Mixed additive and subtractive brushes cannot be reordered safely.";
+                return false;
+            }
+            if (brush.faces.empty() || brush.faces.front().vertices.empty())
+            {
+                error="A recovered brush has no geometry for rebuild ordering.";
+                return false;
+            }
+            const double volume=BrushVolume(brush,brush.faces.front().vertices.front());
+            if (!std::isfinite(volume) || volume<=0)
+            {
+                error="A recovered brush has invalid volume for rebuild ordering.";
+                return false;
+            }
+            order.emplace_back(volume,index);
+        }
+        std::stable_sort(order.begin(),order.end(),[](const auto& a,const auto& b)
+        {
+            return a.first>b.first;
+        });
+        std::vector<Brush> ordered;
+        ordered.reserve(result.brushes.size());
+        for (const auto& entry:order)
+            ordered.push_back(std::move(result.brushes[entry.second]));
+        result.brushes=std::move(ordered);
+        return true;
+    }
+    catch (const std::bad_alloc&)
+    {
+        error="There is insufficient memory to order the recovered brushes."; return false;
+    }
+    catch (const std::length_error&)
+    {
+        error="Rebuild brush ordering exceeds container capacity."; return false;
+    }
+
     bool Reconstruct(const std::vector<Node>& input, bool rootOutside,
                      const Bounds& extractionBounds, Result& result,
                      std::string& error, const Limits& limits)

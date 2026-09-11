@@ -26,14 +26,19 @@ namespace RecoveredActorImport
         std::size_t removedBrushCount = 0;
         std::size_t removedRuntimePropertyCount = 0;
         std::size_t skippedXboxActorCount = 0;
+        std::size_t correctedPcActorPlatformCount = 0;
         std::size_t clearedXboxActorReferenceCount = 0;
         std::size_t clearedDeletedActorReferenceCount = 0;
         std::vector<std::string> unsupportedReferences;
         std::vector<ExternalizedAsset> externalizedAssets;
+        // Native procedural strip doors rebuild their level-owned simulation
+        // from actor settings. Callers must also verify their native topology.
+        std::vector<std::string> regeneratedStripDoors;
     };
 
-    // Targets PC: skips actors explicitly marked Platform=PLF_XBOX_Only and
-    // clears references only to those confirmed skipped actor identities.
+    // Targets PC: native PC runtime actor membership overrides stale platform
+    // labels. Confirmed PC actors labelled Xbox-only use the common default; without
+    // that evidence Xbox-only actors and references to them are excluded.
     // Also removes exact structural Brush actors and transient actor fields.
     // Nested objects/volume brushes and authored actor relationships survive.
     // Inline particle bindings use native map-root names, with deterministic
@@ -44,7 +49,8 @@ namespace RecoveredActorImport
     // level actor arrays; only exact typed references to those paths are cleared.
     bool Prepare(std::string_view exportedMap, PreparedMap& prepared,
                  std::string& error, std::string_view externalAssetPackage = {},
-                 const std::vector<std::string>& confirmedDeletedActorPaths = {});
+                 const std::vector<std::string>& confirmedDeletedActorPaths = {},
+                 const std::vector<std::string>& confirmedPcActorPaths = {});
 
     // freshMap must be the complete MAP EXPORT of a fresh normal MAP NEW.
     // Keeps its builder brush and a canonical LevelInfo0, applies recovered level

@@ -172,12 +172,15 @@
     <ClInclude Include="MapRecovery.h" />
     <ClInclude Include="RecoveredBspGeometry.h" />
     <ClInclude Include="RecoveredSurfacePartition.h" />
+    <ClInclude Include="RecoveredPolygonImport.h" />
     <ClInclude Include="RecoveredActorImport.h" />
     <ClInclude Include="RecoveredAssetPackage.h" />
     <ClInclude Include="StaticMeshCollisionFix.h" />
     <ClInclude Include="StaticMeshBrowserFavorites.h" />
     <ClInclude Include="DdsImportFix.h" />
     <ClInclude Include="LightCullFix.h" />
+    <ClInclude Include="BspLeafLightFix.h" />
+    <ClInclude Include="BspLeafLightTable.h" />
     <ClInclude Include="ProjectorDetachFix.h" />
     <ClInclude Include="SizingBoxFix.h" />
     <ClInclude Include="EngineLog.h" />
@@ -225,6 +228,9 @@
     <ClCompile Include="RecoveredSurfacePartition.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="RecoveredPolygonImport.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="RecoveredActorImport.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -235,6 +241,7 @@
     <ClCompile Include="StaticMeshBrowserFavorites.cpp" />
     <ClCompile Include="DdsImportFix.cpp" />
     <ClCompile Include="LightCullFix.cpp" />
+    <ClCompile Include="BspLeafLightFix.cpp" />
     <ClCompile Include="ProjectorDetachFix.cpp" />
     <ClCompile Include="SizingBoxFix.cpp" />
     <ClCompile Include="EngineLog.cpp" />

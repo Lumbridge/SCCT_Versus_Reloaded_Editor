@@ -733,6 +733,10 @@ namespace
             "materialswitch", "materialsequence", "materialfade", "particlematerial",
             "fluidtexture", "firetexture", "wettexture", "wavetexture", "icetexture",
             "sound", "music", "font",
+            // AntiPortalActor and mesh actors can share map-local occlusion
+            // volumes. Native T3D exports their reference, not their geometry;
+            // preserve the complete native object in the asset dependency.
+            "convexvolume",
             // ZoneInfo.ZoneEffect instances are authored audio environment
             // settings, stored as package-root objects in the compiled map.
             "i3dl2listener", "effect_hangar", "effect_bathroom", "effect_stonecorridor",
@@ -976,7 +980,8 @@ namespace
 
 bool RecoveredActorImport::Prepare(std::string_view exportedMap, PreparedMap& prepared,
                                    std::string& error, std::string_view externalAssetPackage,
-                                   const std::vector<std::string>& confirmedDeletedActorPaths)
+                                   const std::vector<std::string>& confirmedDeletedActorPaths,
+                                   const std::vector<std::string>& confirmedPcActorPaths)
 {
     prepared = {};
     error.clear();
@@ -989,6 +994,17 @@ bool RecoveredActorImport::Prepare(std::string_view exportedMap, PreparedMap& pr
         return false;
     }
     std::set<std::string> skippedXboxActors, deletedActors;
+    std::set<std::string> pcActors;
+    for (const auto& path : confirmedPcActorPaths)
+    {
+        const auto key = Lower(path);
+        if (key.size() <= 8 || key.compare(0, 8, "mylevel.") != 0)
+        {
+            error = "Confirmed PC actor paths must name objects in MyLevel: " + path;
+            return false;
+        }
+        pcActors.insert(key);
+    }
     for (const auto& path : confirmedDeletedActorPaths)
     {
         const auto key = Lower(path);
@@ -998,6 +1014,11 @@ bool RecoveredActorImport::Prepare(std::string_view exportedMap, PreparedMap& pr
             return false;
         }
         deletedActors.insert(key);
+        if (pcActors.count(key))
+        {
+            error = "An actor cannot be both confirmed PC content and deleted: " + path;
+            return false;
+        }
     }
     for (auto& actor : parsed)
     {
@@ -1020,7 +1041,28 @@ bool RecoveredActorImport::Prepare(std::string_view exportedMap, PreparedMap& pr
         }
         const auto properties = RootProperties(actor);
         const auto platform = properties.find("platform");
-        if (platform != properties.end() && Lower(Trim(platform->second)) == "plf_xbox_only")
+        if (platform != properties.end() && Lower(Trim(platform->second)) == "plf_xbox_only"
+            && pcActors.count(Lower("MyLevel." + actor.name)))
+        {
+            // This object is actually in the compiled PC level. Correct only
+            // its root platform property, leaving nested components intact.
+            std::size_t depth = 0;
+            for (auto& line : actor.lines)
+            {
+                std::string verb, kind;
+                if (Boundary(Trim(line), verb, kind))
+                {
+                    if (verb == "begin") ++depth; else --depth;
+                    continue;
+                }
+                const auto equals = line.find('=');
+                if (depth == 1 && equals != std::string::npos
+                    && Lower(Trim(std::string_view(line).substr(0, equals))) == "platform")
+                    line.clear(); // Native default: common content, included in PC saves.
+            }
+            ++prepared.correctedPcActorPlatformCount;
+        }
+        else if (platform != properties.end() && Lower(Trim(platform->second)) == "plf_xbox_only")
         {
             if (className == "levelinfo")
             {
@@ -1037,6 +1079,33 @@ bool RecoveredActorImport::Prepare(std::string_view exportedMap, PreparedMap& pr
     {
         ClearKnownActorReferences(actor, skippedXboxActors, prepared.clearedXboxActorReferenceCount);
         ClearKnownActorReferences(actor, deletedActors, prepared.clearedDeletedActorReferenceCount);
+        if (ClassLeaf(actor.className) == "esbstripdooractor")
+        {
+            std::size_t depth = 0;
+            for (auto& line : actor.lines)
+            {
+                std::string verb, kind;
+                if (Boundary(Trim(line), verb, kind))
+                {
+                    if (verb == "begin") ++depth; else --depth;
+                    continue;
+                }
+                const auto equals = line.find('=');
+                if (depth != 1 || equals == std::string::npos
+                    || Lower(Trim(std::string_view(line).substr(0, equals))) != "softbody") continue;
+                const auto value = Trim(std::string_view(line).substr(equals + 1));
+                const auto quote = value.find('\'');
+                if (quote == std::string_view::npos || value.back() != '\''
+                    || ClassLeaf(value.substr(0, quote)) != "esbstripdoor") continue;
+                const auto path = ObjectReferencePath(value.substr(quote + 1, value.size() - quote - 2));
+                if (Lower(path).compare(0, 16, "mylevel.mylevel.") != 0) continue;
+                // Native PostEditChange regenerates a null simulation even
+                // when all previous-value caches match. Keep every authored
+                // setting; the native caller verifies springs and anchors.
+                line = "    SoftBody=None";
+                prepared.regeneratedStripDoors.push_back(actor.name);
+            }
+        }
     }
     if (!NormalizeInlineEmitterReferences(kept, error)
         || !ExternalizeAssets(kept, externalAssetPackage, prepared.externalizedAssets, error))
@@ -1199,8 +1268,22 @@ bool RecoveredActorImport::VerifySourceMap(const PreparedMap& prepared,
         RewriteLevelInfo(actor, prepared.levelInfoName, actualLevel->name);
         const auto originalProperties = RootProperties(actor);
         const auto importedProperties = RootProperties(*found->second);
+        const bool regenerated = std::any_of(prepared.regeneratedStripDoors.begin(),
+            prepared.regeneratedStripDoors.end(), [&](const auto& name) { return Lower(name) == Lower(actor.name); });
+        if (regenerated)
+        {
+            const auto body = importedProperties.find("softbody");
+            if (body == importedProperties.end()
+                || Lower(body->second).compare(0, 29, "esbstripdoor'mylevel.mylevel.") != 0
+                || body->second.back() != '\'')
+            {
+                error = "The imported source did not regenerate the strip-door simulation on actor " + actor.name + ".";
+                return false;
+            }
+        }
         for (const auto& property : originalProperties)
         {
+            if (regenerated && (property.first == "softbody" || property.first == "name")) continue;
             // Confirm authored asset/actor bindings as well as actor presence.
             // Runtime-only instance/region bindings were removed by Prepare.
             const bool reference = property.second.find('\'') != std::string::npos
@@ -1210,7 +1293,7 @@ bool RecoveredActorImport::VerifySourceMap(const PreparedMap& prepared,
             const bool hasEmptyReference = std::any_of(tokens.begin(), tokens.end(), [](const auto& token) {
                 return !token.numeric && token.text == "none";
             });
-            if (!reference && !hasEmptyReference && !authoredActorProperties.count(property.first)) continue;
+            if (!regenerated && !reference && !hasEmptyReference && !authoredActorProperties.count(property.first)) continue;
             const auto imported = importedProperties.find(property.first);
             // Native export omits default null object properties after import.
             if (emptyReference && imported == importedProperties.end()) continue;

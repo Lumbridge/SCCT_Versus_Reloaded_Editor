@@ -11,6 +11,7 @@
 #include <iomanip>
 #include <vector>
 #include <fstream>
+#include <map>
 
 namespace {
 HMODULE self;
@@ -25,9 +26,25 @@ using ExecFn = int(__thiscall*)(void*, const char*, void*);
 ExecFn originalExec;
 using CsgFn = int(__thiscall*)(void*,void*,void*,unsigned int,int,int,int);
 CsgFn originalCsg;
+using BspBuildFn = void(__thiscall*)(void*,void*,int,int,int,int,int);
+BspBuildFn originalBspBuild;
+using BspRefreshFn = void(__thiscall*)(void*,void*,int);
+BspRefreshFn originalBspRefresh;
+unsigned buildTraceSequence;
 int maximumPointSlots;
 int compactionCount;
 bool startupFailed;
+bool compactionEnabled;
+bool traceSoftBodies;
+bool traceLeafLights;
+bool inspectCookedOnly;
+bool inspectedCooked;
+void Snapshot(const char* stage);
+struct ProbePoint { float x{}, y{}, z{}; };
+bool EmptyAt(unsigned char* model, ProbePoint point);
+ProbePoint tracedPoint;
+bool tracePointEnabled;
+std::string tracedActor;
 
 void Record(const char* stage, const char* detail = "") {
     fprintf(report, "%s %s\n", stage, detail);
@@ -78,6 +95,87 @@ void DumpNativeBsp(const char* filename) {
     output << "]}";
 }
 
+void DumpLeafLights(const char* stage) {
+    if (!traceLeafLights) return;
+    auto editor=*reinterpret_cast<unsigned char**>(kEditor);
+    auto level=editor ? *reinterpret_cast<unsigned char**>(editor+0x130) : nullptr;
+    auto model=level ? *reinterpret_cast<unsigned char**>(level+0x13C) : nullptr;
+    if (!model) return;
+    auto leaves=*reinterpret_cast<unsigned short**>(model+0xBC);
+    int leafCount=*reinterpret_cast<int*>(model+0xC0);
+    auto lights=*reinterpret_cast<uintptr_t**>(model+0xC8);
+    int lightCount=*reinterpret_cast<int*>(model+0xCC);
+    fprintf(report,"leaf_lights stage=%s model=%p leaves=%d lights=%d\n",stage,model,leafCount,lightCount);
+    fflush(report);
+    if (leafCount<0 || leafCount>1000000 || lightCount<0 || lightCount>10000000) return;
+    static unsigned sequence=0;
+    std::ofstream output(directory/("LeafLights_"+std::to_string(++sequence)+".json"));
+    output << "{\"stage\":\"" << stage << "\",\"leaves\":[";
+    for(int i=0;i<leafCount;++i) {
+        if(i) output << ',';
+        output << '[' << leaves[i*2] << ',' << leaves[i*2+1] << ']';
+    }
+    output << "],\"lights\":[";
+    for(int i=0;i<lightCount;++i) {if(i) output << ','; output << lights[i];}
+    output << "]}";
+}
+
+bool IsTracedModel(void* editor,void* model) {
+    auto level=*reinterpret_cast<unsigned char**>(static_cast<unsigned char*>(editor)+0x130);
+    return tracePointEnabled && level && *reinterpret_cast<void**>(level+0x13C)==model;
+}
+
+void __fastcall TraceBspBuild(void* editor,void*,void* rawModel,int quality,int balance,
+                              int portalBias,int rebuildSimplePolys,int rootNode) {
+    auto model=static_cast<unsigned char*>(rawModel);
+    bool tracing=IsTracedModel(editor,model);
+    unsigned sequence=tracing ? ++buildTraceSequence : 0;
+    if(tracing) {
+        fprintf(report,"trace_build_begin sequence=%u empty=%d nodes=%d args=%d,%d,%d,%d,%d\n",
+            sequence,EmptyAt(model,tracedPoint),*reinterpret_cast<int*>(model+0x58),
+            quality,balance,portalBias,rebuildSimplePolys,rootNode);
+        fflush(report);
+        DumpNativeBsp(("TraceBuildBefore_"+std::to_string(sequence)+".json").c_str());
+    }
+    originalBspBuild(editor,model,quality,balance,portalBias,rebuildSimplePolys,rootNode);
+    if(tracing) {
+        fprintf(report,"trace_build_end sequence=%u empty=%d nodes=%d\n",sequence,
+            EmptyAt(model,tracedPoint),*reinterpret_cast<int*>(model+0x58));
+        fflush(report);
+        DumpNativeBsp(("TraceBuildAfter_"+std::to_string(sequence)+".json").c_str());
+    }
+}
+
+void __fastcall TraceBspRefresh(void* editor,void*,void* rawModel,int noRemapSurfs) {
+    auto model=static_cast<unsigned char*>(rawModel);
+    bool tracing=IsTracedModel(editor,model);
+    bool before=tracing && EmptyAt(model,tracedPoint);
+    originalBspRefresh(editor,model,noRemapSurfs);
+    if(tracing && before!=EmptyAt(model,tracedPoint)) {
+        fprintf(report,"trace_refresh_changed before_empty=%d after_empty=%d nodes=%d\n",
+            before,EmptyAt(model,tracedPoint),*reinterpret_cast<int*>(model+0x58));
+        fflush(report);
+        DumpNativeBsp("TraceRefreshChanged.json");
+    }
+}
+
+void ProbeNativeNormalThreshold() {
+    unsigned short controlWord=0;
+    __asm fnstcw controlWord
+    fprintf(report,"native_fpu_control word=%04X\n",controlWord);
+    for(float height : {0.009999f,0.01f,0.010001f}) {
+        alignas(4) unsigned char polygon[0x14C]={};
+        auto vertices=reinterpret_cast<float*>(polygon+0x18);
+        vertices[3]=1.0f; vertices[7]=height;
+        *reinterpret_cast<unsigned short*>(polygon+0x148)=3;
+        using CalcNormal=int(__thiscall*)(void*,int);
+        int result=reinterpret_cast<CalcNormal>(0x110C0970)(polygon,1);
+        fprintf(report,"native_calc_normal height=%.9g result=%d normal_z=%.9g\n",
+            height,result,*reinterpret_cast<float*>(polygon+0x14));
+    }
+    fflush(report);
+}
+
 int ReferencedPointCount(unsigned char* model) {
     int pointCount = *reinterpret_cast<int*>(model+0x88);
     int nodeCount = *reinterpret_cast<int*>(model+0x58);
@@ -110,9 +208,12 @@ int ReferencedPointCount(unsigned char* model) {
 int __fastcall CompactBeforeCsg(void* editor, void*, void* actor, void* rawModel,
                                unsigned int flags,int operation,int rebuildBounds,int mergePolys) {
     auto model = static_cast<unsigned char*>(rawModel);
+    auto level=*reinterpret_cast<unsigned char**>(static_cast<unsigned char*>(editor)+0x130);
+    bool traceThis=tracePointEnabled && level && *reinterpret_cast<void**>(level+0x13C)==model;
+    bool emptyBefore=traceThis && EmptyAt(model,tracedPoint);
     int before = *reinterpret_cast<int*>(model+0x88);
     if (before>maximumPointSlots) maximumPointSlots=before;
-    if (before>=32768) {
+    if (compactionEnabled && before>=32768) {
         int referenced = ReferencedPointCount(model);
         if (referenced<0) {
             Record("FAIL","Test compaction rejected out-of-range point references before a CSG operation.");
@@ -130,7 +231,17 @@ int __fastcall CompactBeforeCsg(void* editor, void*, void* actor, void* rawModel
             *reinterpret_cast<int*>(model+0x58));
         fflush(report);
     }
-    return originalCsg(editor,actor,model,flags,operation,rebuildBounds,mergePolys);
+    int result=originalCsg(editor,actor,model,flags,operation,rebuildBounds,mergePolys);
+    if (traceThis) {
+        bool emptyAfter=EmptyAt(model,tracedPoint);
+        if (emptyBefore!=emptyAfter || tracedActor==ObjectName(actor)) {
+            fprintf(report,"trace_csg actor=%s operation=%d before_empty=%d after_empty=%d nodes=%d\n",
+                ObjectName(actor),operation,emptyBefore,emptyAfter,*reinterpret_cast<int*>(model+0x58));
+            fflush(report);
+            DumpNativeBsp(("TraceAfter_"+std::string(ObjectName(actor))+".json").c_str());
+        }
+    }
+    return result;
 }
 
 void ObserveCsgCompaction() {
@@ -144,7 +255,19 @@ void ObserveCsgCompaction() {
     *slot = reinterpret_cast<void*>(&CompactBeforeCsg);
     DWORD ignored;
     VirtualProtect(slot,sizeof(void*),protection,&ignored);
-    Record("test_compaction","Native bspRefresh enabled before CSG when point slots reach32768.");
+    if(compactionEnabled) Record("test_compaction","Native bspRefresh enabled before CSG when point slots reach32768.");
+    if(tracePointEnabled) {
+        auto vtable=*reinterpret_cast<void***>(editor);
+        auto buildSlot=vtable+0x1C4/4;
+        auto refreshSlot=vtable+0x1C8/4;
+        if(VirtualProtect(buildSlot,sizeof(void*)*2,PAGE_READWRITE,&protection)) {
+            originalBspBuild=reinterpret_cast<BspBuildFn>(*buildSlot);
+            originalBspRefresh=reinterpret_cast<BspRefreshFn>(*refreshSlot);
+            *buildSlot=reinterpret_cast<void*>(&TraceBspBuild);
+            *refreshSlot=reinterpret_cast<void*>(&TraceBspRefresh);
+            VirtualProtect(buildSlot,sizeof(void*)*2,protection,&ignored);
+        }
+    }
 }
 
 unsigned char* FindStaticMeshActor(unsigned char* level, const char* name=nullptr) {
@@ -213,6 +336,58 @@ void DescribeActorFields(unsigned char* actor) {
     }
 }
 
+void DescribeSoftBodies(const char* stage) {
+    if (!traceSoftBodies) return;
+    auto editor=*reinterpret_cast<unsigned char**>(kEditor);
+    auto level=editor ? *reinterpret_cast<unsigned char**>(editor+0x130) : nullptr;
+    auto actors=level ? *reinterpret_cast<unsigned char***>(level+0x2C) : nullptr;
+    int count=level ? *reinterpret_cast<int*>(level+0x30) : 0;
+    for(int i=0;actors && i<count;++i) {
+        auto actor=actors[i];
+        auto binding=actor ? FindProperty(actor,"SoftBody") : nullptr;
+        if(!binding) continue;
+        auto body=*reinterpret_cast<unsigned char**>(actor+*reinterpret_cast<unsigned*>(binding+0x3C));
+        fprintf(report,"soft_body stage=%s actor=%s class=%s body=%s body_class=%s vtable=%p\n",
+            stage,ObjectName(actor),ObjectName(*reinterpret_cast<void**>(actor+0x24)),ObjectName(body),
+            body ? ObjectName(*reinterpret_cast<void**>(body+0x24)) : "<null>",
+            body ? *reinterpret_cast<void**>(body) : nullptr);
+        if(body && !strcmp(ObjectName(*reinterpret_cast<void**>(body+0x24)),"ESBStripDoor")) {
+            const auto stem=std::string(stage)+"_"+ObjectName(actor);
+            std::ofstream raw(directory/(stem+"_body.bin"),std::ios::binary);
+            raw.write(reinterpret_cast<char*>(body),0x1A4);
+            std::ofstream actorRaw(directory/(stem+"_actor.bin"),std::ios::binary);
+            actorRaw.write(reinterpret_cast<char*>(actor),0x3D0);
+            for(const auto entry : {std::pair<unsigned,unsigned>{0x70,0x48},{0x7C,0xC}}) {
+                const auto data=*reinterpret_cast<char**>(body+entry.first);
+                const auto size=*reinterpret_cast<int*>(body+entry.first+4);
+                if(size>=0 && size<=100000 && (!size || data)) {
+                    std::ofstream array(directory/(stem+"_array_"+std::to_string(entry.first)+".bin"),std::ios::binary);
+                    if(size) array.write(data,static_cast<std::streamsize>(size)*entry.second);
+                }
+            }
+        }
+        for(auto object : {actor,body}) {
+            if(!object) continue;
+            auto type=*reinterpret_cast<unsigned char**>(object+0x24);
+            for(auto property=*reinterpret_cast<unsigned char**>(type+0x58); property;
+                property=*reinterpret_cast<unsigned char**>(property+0x40)) {
+                const auto offset=*reinterpret_cast<unsigned*>(property+0x3C);
+                const auto propertyClass=ObjectName(*reinterpret_cast<void**>(property+0x24));
+                fprintf(report,"soft_property object=%s name=%s class=%s offset=%x",ObjectName(object),ObjectName(property),propertyClass,offset);
+                if(!strcmp(propertyClass,"BoolProperty") || !strcmp(propertyClass,"IntProperty")
+                    || !strcmp(propertyClass,"FloatProperty") || !strcmp(propertyClass,"ByteProperty")) {
+                    char value[512]={};
+                    using ExportItem=void(__thiscall*)(void*,char*,const void*,const void*,unsigned);
+                    reinterpret_cast<ExportItem>((*reinterpret_cast<void***>(property))[0x90/4])(property,value,object+offset,nullptr,0);
+                    fprintf(report," value=%s",value);
+                }
+                fprintf(report,"\n");
+            }
+        }
+    }
+    fflush(report);
+}
+
 int __fastcall ObserveExec(void* exec, void*, const char* command, void* output) {
     if (command && strstr(command,"MAP EXPORT")
         && (strstr(command,"Actors.t3d") || strstr(command,"Imported.t3d"))) {
@@ -233,6 +408,35 @@ int __fastcall ObserveExec(void* exec, void*, const char* command, void* output)
         }
     }
     if (command && strstr(command, "MAP EXPORT") && strstr(command, "Actors.t3d")) {
+        if (inspectCookedOnly) {
+            Snapshot("inspected_cooked");
+            auto editor = *reinterpret_cast<unsigned char**>(kEditor);
+            auto level = *reinterpret_cast<unsigned char**>(editor+0x130);
+            auto model = *reinterpret_cast<unsigned char**>(level+0x13C);
+            std::ofstream(directory/"CookedModel.bin",std::ios::binary).write(reinterpret_cast<char*>(model),0x518);
+            struct Field {const char* name;int offset,stride;};
+            for (auto field : {Field{"Nodes",0x54,0x5C},Field{"Verts",0x64,8},Field{"Points",0x84,12},
+                               Field{"Surfs",0x94,0x2C},Field{"Hulls",0xB0,4},Field{"Leaves",0xBC,4}}) {
+                auto data=*reinterpret_cast<char**>(model+field.offset);
+                int count=*reinterpret_cast<int*>(model+field.offset+4);
+                fprintf(report,"cooked_array name=%s count=%d\n",field.name,count);
+                if(count>=0 && count<=1000000 && (!count || data))
+                    std::ofstream(directory/(std::string("Cooked")+field.name+".bin"),std::ios::binary).write(data,static_cast<std::streamsize>(count)*field.stride);
+            }
+            auto actors=*reinterpret_cast<unsigned char***>(level+0x2C);
+            int count=*reinterpret_cast<int*>(level+0x30);
+            for(int i=0;actors && i<count;++i) if(actors[i]) {
+                auto actor=actors[i];
+                if(strcmp(ObjectName(*reinterpret_cast<void**>(actor+0x24)),"PlayerStart")) continue;
+                auto property=FindProperty(actor,"Location");
+                if(!property) continue;
+                auto location=reinterpret_cast<float*>(actor+*reinterpret_cast<unsigned*>(property+0x3C));
+                fprintf(report,"cooked_spawn name=%s location=%.9g,%.9g,%.9g empty=%d\n",ObjectName(actor),
+                    location[0],location[1],location[2],EmptyAt(model,{location[0],location[1],location[2]}));
+            }
+            fflush(report);
+        }
+        DescribeSoftBodies("cooked");
         DumpNativeBsp("NativeCookedBsp.json");
         auto editor = *reinterpret_cast<unsigned char**>(kEditor);
         auto level = *reinterpret_cast<unsigned char**>(editor+0x130);
@@ -262,7 +466,24 @@ int __fastcall ObserveExec(void* exec, void*, const char* command, void* output)
             }
         }
     }
-    return originalExec(exec, command, output);
+    int result=originalExec(exec, command, output);
+    if (inspectCookedOnly && result && command && strstr(command,"MAP EXPORT") && strstr(command,"Actors.t3d")) {
+        // Keep the native cooked export, then deliberately stop conversion
+        // before reconstruction. Production cleanup disposes of the level.
+        inspectedCooked=true;
+        return 0;
+    }
+    if (command && (!strcmp(command,"MAP REBUILD") || !strcmp(command,"BSP REBUILD") || !strcmp(command,"LIGHT APPLY")))
+        DumpLeafLights(command);
+    if (tracePointEnabled && command && (!strcmp(command,"MAP REBUILD") || !strcmp(command,"BSP REBUILD"))) {
+        auto editor=*reinterpret_cast<unsigned char**>(kEditor);
+        auto level=*reinterpret_cast<unsigned char**>(editor+0x130);
+        auto model=*reinterpret_cast<unsigned char**>(level+0x13C);
+        fprintf(report,"trace_build command=%s empty=%d\n",command,EmptyAt(model,tracedPoint));
+        fflush(report);
+        DumpNativeBsp(!strcmp(command,"MAP REBUILD") ? "TraceAfterMapRebuild.json" : "TraceAfterBspRebuild.json");
+    }
+    return result;
 }
 
 void ObserveEditorExec() {
@@ -278,6 +499,7 @@ void ObserveEditorExec() {
 }
 
 void Snapshot(const char* stage) {
+    DumpLeafLights(stage);
     auto editor = *reinterpret_cast<unsigned char**>(kEditor);
     auto level = editor ? *reinterpret_cast<unsigned char**>(editor + 0x130) : nullptr;
     auto model = level ? *reinterpret_cast<unsigned char**>(level + 0x13C) : nullptr;
@@ -305,6 +527,49 @@ void Snapshot(const char* stage) {
         data[0], *reinterpret_cast<void**>(data[0]), *reinterpret_cast<void**>(data[0]+0x24),
         *reinterpret_cast<unsigned int*>(data[0]+0x1C), *reinterpret_cast<void**>(level+0x3A50));
     fflush(report);
+}
+
+bool RestoreSourceNormals(const char* source) {
+    std::ifstream input(source);
+    std::map<std::string,std::vector<ProbePoint>> normals;
+    std::string line,actor;
+    while(std::getline(input,line)) {
+        const auto first=line.find_first_not_of(" \t\r");
+        if(first==std::string::npos) continue;
+        line.erase(0,first);
+        if(line.rfind("Begin Actor Class=Brush Name=RecoveredVolume",0)==0) {
+            actor=line.substr(line.find("Name=")+5);
+            actor.erase(actor.find_last_not_of(" \r\t")+1);
+        } else if(line=="End Actor" || line=="End Actor\r") actor.clear();
+        else if(!actor.empty() && line.rfind("Normal ",0)==0) {
+            ProbePoint value;
+            if(sscanf_s(line.c_str()+6,"%f,%f,%f",&value.x,&value.y,&value.z)!=3) return false;
+            normals[actor].push_back(value);
+        }
+    }
+    auto editor=*reinterpret_cast<unsigned char**>(kEditor);
+    auto level=*reinterpret_cast<unsigned char**>(editor+0x130);
+    auto actors=*reinterpret_cast<unsigned char***>(level+0x2C);
+    const int count=*reinterpret_cast<int*>(level+0x30);
+    std::size_t changed=0,matched=0;
+    for(int i=0;i<count;++i) {
+        auto actorObject=actors[i];
+        if(!actorObject) continue;
+        const auto found=normals.find(ObjectName(actorObject));
+        if(found==normals.end()) continue;
+        auto brush=*reinterpret_cast<unsigned char**>(actorObject+0x238);
+        auto polys=brush ? *reinterpret_cast<unsigned char**>(brush+0x50) : nullptr;
+        if(!polys || *reinterpret_cast<int*>(polys+0x2C)!=static_cast<int>(found->second.size())) return false;
+        auto data=*reinterpret_cast<unsigned char**>(polys+0x28);
+        for(std::size_t p=0;p<found->second.size();++p) {
+            memcpy(data+p*0x14C+0x0C,&found->second[p],sizeof(ProbePoint));
+            ++changed;
+        }
+        ++matched;
+    }
+    fprintf(report,"restored_source_normals brushes=%zu polygons=%zu expected_brushes=%zu\n",matched,changed,normals.size());
+    fflush(report);
+    return matched==normals.size() && matched!=0;
 }
 
 int Exec(const std::string& command) {
@@ -335,6 +600,11 @@ bool Rebuild() {
     using Paths = void(__thiscall*)(void*);
     if (ok) { Record("rebuild_paths"); reinterpret_cast<Paths>(0x10E06399)(editor); }
     reinterpret_cast<Bracket>(0x10E02EEC)(editor, &first, &second);
+    // Finish lighting exactly as the ordinary Build UI does. Save switches
+    // platforms and restores mesh instances from this cache.
+    auto context = *reinterpret_cast<unsigned char**>(0x11691D7C);
+    using CacheMeshLighting = void(__thiscall*)(void*, int);
+    if (ok) reinterpret_cast<CacheMeshLighting>(0x10E06605)(editor, *reinterpret_cast<int*>(context + 0x78));
     return ok;
 }
 
@@ -361,8 +631,6 @@ bool SetCubeBrush(int halfExtent, float x=0, float y=0, float z=0) {
     command << "End PolyList\n";
     return Exec(command.str()) != 0;
 }
-
-struct ProbePoint { float x{}, y{}, z{}; };
 
 bool EmptyAt(unsigned char* model, ProbePoint point) {
     auto nodes = *reinterpret_cast<unsigned char**>(model+0x54);
@@ -439,8 +707,18 @@ void RunTest() {
     report = _fsopen((directory / "native_recovery_report.txt").string().c_str(), "w", _SH_DENYNO);
     if (!report) return;
     Record("started");
+    ProbeNativeNormalThreshold();
     ObserveEditorExec();
-    if (GetPrivateProfileIntA("test","compact_points",0,configuration.c_str())) ObserveCsgCompaction();
+    traceSoftBodies=GetPrivateProfileIntA("test","trace_soft_bodies",0,configuration.c_str())!=0;
+    traceLeafLights=GetPrivateProfileIntA("test","trace_leaf_lights",0,configuration.c_str())!=0;
+    inspectCookedOnly=GetPrivateProfileIntA("test","inspect_cooked_only",0,configuration.c_str())!=0;
+    compactionEnabled=GetPrivateProfileIntA("test","compact_points",0,configuration.c_str())!=0;
+    char pointText[128]={},actorText[128]={};
+    GetPrivateProfileStringA("test","trace_point","",pointText,sizeof(pointText),configuration.c_str());
+    GetPrivateProfileStringA("test","trace_actor","",actorText,sizeof(actorText),configuration.c_str());
+    tracePointEnabled=sscanf_s(pointText,"%f,%f,%f",&tracedPoint.x,&tracedPoint.y,&tracedPoint.z)==3;
+    tracedActor=actorText;
+    if(compactionEnabled || tracePointEnabled) ObserveCsgCompaction();
     Snapshot("initial");
     bool rootOutsideFixture = GetPrivateProfileIntA("test", "root_outside", 0, configuration.c_str()) != 0;
     if (GetPrivateProfileIntA("test", "import_text_only", 0, configuration.c_str())) {
@@ -451,7 +729,22 @@ void RunTest() {
         auto level = *reinterpret_cast<void**>(editor+0x130);
         using Finalize = void(__thiscall*)(void*, void*);
         reinterpret_cast<Finalize>((*reinterpret_cast<void***>(editor))[0xE0/4])(editor,level);
+        if(GetPrivateProfileIntA("test","restore_text_normals",0,configuration.c_str())
+            && !RestoreSourceNormals(source)) {
+            Record("FAIL","Text normal restoration did not match the imported brush polygons."); return;
+        }
         Snapshot("text_imported");
+        DescribeSoftBodies("text_imported");
+        if (GetPrivateProfileIntA("test","build_imported_text",0,configuration.c_str())) {
+            struct Array {void* data{};int count{};int capacity{};} first,second;
+            using Bracket=void(__thiscall*)(void*,void*,void*);
+            reinterpret_cast<Bracket>(0x10E06A1A)(editor,&first,&second);
+            bool built=Exec("MAP REBUILD") && Exec("BSP REBUILD");
+            reinterpret_cast<Bracket>(0x10E02EEC)(editor,&first,&second);
+            Snapshot("text_built");
+            DumpNativeBsp("NativeImportedBsp.json");
+            if (!built) {Record("FAIL","Native imported geometry build failed.");return;}
+        }
         if (!Exec("MAP EXPORT FILE=\"" + (directory / "import_only.t3d").string() + "\"")) {
             Record("FAIL", "Native text import probe could not export."); return;
         }
@@ -467,14 +760,19 @@ void RunTest() {
             Record("FAIL", "Fresh-process source rebuild failed."); return;
         }
         Snapshot("fresh_normal_rebuild");
-        using Save = int(__thiscall*)(void*, const char*);
-        if (!reinterpret_cast<Save>(0x10E0416B)(*reinterpret_cast<void**>(kEditor), destination)) {
-            Record("FAIL", "Fresh-process source save failed."); return;
+        const auto saved = directory.parent_path()/"Packages"/"MapsEd"/std::filesystem::path(source).filename();
+        auto mainFrame=*reinterpret_cast<unsigned char**>(0x1165E80C);
+        using SetFilename=void(__thiscall*)(void*,const char*);
+        if (!mainFrame) { Record("FAIL", "Native level window was not available for File Save."); return; }
+        reinterpret_cast<SetFilename>(0x10E05E1C)(mainFrame,saved.string().c_str());
+        SendMessageA(frameWindow,WM_COMMAND,40007,0);
+        if (!Exec("MAP NEW") || !Exec("MAP LOAD FILE=\""+saved.string()+"\"") || !HasGeometry()) {
+            Record("FAIL", "Fresh-process source save/reopen failed."); return;
         }
         if (!Exec("MAP EXPORT FILE=\"" + (directory / "fresh_source.t3d").string() + "\"")) {
             Record("FAIL", "Fresh-process source export failed."); return;
         }
-        Record("PASS", "Fresh editor ordinary source load/rebuild/save/export completed without invoking recovery.");
+        Record("PASS", "Fresh editor ordinary source load/rebuild/File Save/reopen/export completed without invoking recovery.");
         return;
     }
     if (GetPrivateProfileIntA("test", "generate_fixture", 0, configuration.c_str())
@@ -536,6 +834,10 @@ void RunTest() {
     }
     Record("recovering", source);
     if (!recover(source, destination, error, sizeof(error))) {
+        if (inspectCookedOnly && inspectedCooked) {
+            Record("PASS", "Cooked-file inspection completed; no source reconstruction or gameplay validation was performed.");
+            return;
+        }
         if (expectFailure) {
             auto window = *reinterpret_cast<unsigned char**>(0x1165E80C);
             auto filename = window ? reinterpret_cast<const char*>(window + 0x58) : "";
@@ -614,9 +916,12 @@ void RunTest() {
         model = *reinterpret_cast<unsigned char**>(level + 0x13C);
         int editedSurfaces = *reinterpret_cast<int*>(model + 0x98);
         if (EmptyAt(model,editPoint) != subtract) { Record("FAIL", "Geometry edit did not change BSP space as expected."); return; }
-        using Save = int(__thiscall*)(void*, const char*);
-        if (!reinterpret_cast<Save>(0x10E0416B)(editor, destination)
-            || !Exec("MAP NEW") || !Exec(std::string("MAP LOAD FILE=\"") + destination + "\"")) {
+        // Exercise File > Save, including its normal post-save SDC repair.
+        // Calling the lower-level serializer directly bypasses that handler
+        // and is not the save path an editor user actually uses.
+        Record("save_normal_command",destination);
+        SendMessageA(frameWindow,WM_COMMAND,40007,0);
+        if (!Exec("MAP NEW") || !Exec(std::string("MAP LOAD FILE=\"") + destination + "\"")) {
             Record("FAIL", "Edited source could not save and reopen normally."); return;
         }
         Snapshot("edited_normal_reopen");

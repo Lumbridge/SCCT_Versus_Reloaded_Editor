@@ -13,13 +13,18 @@ texture-region partitioning, native polygon vertex limits, actor and LevelInfo
 transfer, GE gameplay data, and lossless asset-package decompression. They include
 malformed input, numeric edge cases, deep trees, work limits and no-overwrite cases.
 The geometry tests compare independently classified points before and after reconstruction.
+The leaf-light table suite checks signed-index overflow, exact ordered lists,
+shared suffixes, empty lists, capacity rejection and randomized roundtrips.
 Surface fixtures also cover concave and non-planar non-solid sheets: triangulation
 retains their original 3D float vertices and supplies each triangle's normal.
-Native import has an additional small-polygon cleanup step. An OffsD import
-removed 3,653 tiny fragments: all were under 0.051 units wide, and 3,642 were
-under 0.01 units wide. Therefore portable polygon counts need not match native
-counts. Native rebuild/space checks and visual inspection remain necessary,
-especially around very thin geometry and material regions.
+Native import applies additional consecutive-vertex and small-area cleanup.
+The polygon-import suite reproduces those rules, including their float arithmetic,
+and checks exact outline preservation. Recovery preflights every emitted polygon
+so native cleanup cannot silently open a brush. Surface tests cover exact convex
+coalescing, material divisions at native import and BSP split precision, and removal of collapsed bevels
+while preserving the remaining planes and proving closed geometry. Brush ordering
+tests preserve coordinates and reject mixed CSG operations. Native rebuild/space
+checks and visual inspection remain necessary, especially around thin geometry.
 
 The [native editor integration test](#native-editor-integration) also exercises
 conversion, geometry edits, ordinary reopening and builds in a disposable editor.
@@ -165,7 +170,25 @@ spaced object paths require nested quotes, for example
 `StaticMesh=StaticMesh'"Oilrig_SM.Third Floor.topcatwalk"'`, and polygon material
 paths require double quotes, for example
 `Begin Polygon Texture="Oilrig_TXT.Top floor.yellowmetal"`.
+Adding `-BuildImportedText` runs ordinary geometry and BSP rebuilding before
+export and writes `System/NativeImportedBsp.json` for spatial comparisons.
 The probe also writes cooked and failed BSP trees as JSON for spatial diagnosis.
+`-InspectCookedOnly` loads and exports a compiled file, records its native BSP
+arrays and player-start occupancy, then deliberately stops before reconstruction.
+Its completion result confirms inspection only, not conversion or gameplay.
+`-TraceSoftBodies` additionally records native soft-body fields and strip-door
+point/spring arrays for comparing procedural regeneration with cooked data.
+`-TraceLeafLights` writes the native leaf indices and light tables after builds
+and reopening to diagnose visibility-table limits.
+Ordinary recovery verifies strip-door topology, rest lengths, fixed anchors,
+physical settings and all exported authored actor properties at import, build
+and reopening. Decorative sheet tests check native polygon acceptance and
+exact boundary-edge preservation across alternative triangulations.
+Actor tests also cover stale Xbox labels on confirmed PC runtime actors,
+retained particle components and references, and exclusion without native PC
+membership evidence. Recovery verifies rebuilt mesh-lighting bindings after
+normal saving/reopening. The native rebuild probe includes the normal Build
+UI's platform-lighting cache finalizer before subsequent saves.
 `-CompactPoints` is a separate native compaction experiment that wraps completed
 CSG operation boundaries; it is excluded from ordinary source recovery checks.
 The first trial reclaimed unused points but later encountered a stale point
@@ -174,3 +197,12 @@ Reports, source/runtime maps, interchange files and crash dumps remain in the
 printed `TestRoot` for inspection. The disposable editor is stopped on finish
 or timeout. This checks the authoring pipeline; it does not launch a gameplay
 session or validate a map's complete gameplay behavior.
+
+Map-name assignment regression (x86 native tools prompt):
+
+```bat
+cl /nologo /std:c++17 /W4 /WX /EHsc tests\ReloadedCoreMapNameTests.cpp /Fo"%TEMP%\ReloadedCoreMapNameTests.obj" /Fe"%TEMP%\ReloadedCoreMapNameTests.exe"
+"%TEMP%\ReloadedCoreMapNameTests.exe" "%TEMP%\Reloaded.Core.play-level-guard.dll" "%SCCT%\SCCT Versus"
+```
+
+This executes all three patched filename-copy blocks with the stock game's actual FString assignment helper, a test allocator, and only the helper's imports resolved. It checks long/short names, the inline-string boundary, 240-character names, empty strings and absent destination owners. The game and Core DLL entry points are never run. Existing callback guard tests should also pass with the combined patch.

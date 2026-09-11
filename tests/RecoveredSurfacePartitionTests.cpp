@@ -1,5 +1,6 @@
 // cl /nologo /std:c++17 /W4 /WX /EHsc tests\RecoveredSurfacePartitionTests.cpp Reloaded.Editor\RecoveredSurfacePartition.cpp
 #include "../Reloaded.Editor/RecoveredSurfacePartition.h"
+#include "../Reloaded.Editor/RecoveredPolygonImport.h"
 
 #include <algorithm>
 #include <cassert>
@@ -147,6 +148,81 @@ namespace
         }
         return triangles;
     }
+
+    void CheckCoalescing()
+    {
+        const Vec3 up{0,0,1};
+        const Face face{Rectangle(0,0,10,10),up,0};
+        // A thin native-rejected subdivision with the same material does not
+        // need to exist at all once the entire face's coverage is known.
+        std::vector<Piece> output;
+        std::string error;
+        assert(Partition(face,{{Rectangle(0,0,0.0001,10),up,99}},99,output,error));
+        assert(output.size()==1 && output[0].materialIndex==99);
+        assert(output[0].vertices.size()==face.vertices.size());
+        for (std::size_t i=0;i<face.vertices.size();++i)
+            assert(output[0].vertices[i].x==face.vertices[i].x
+                && output[0].vertices[i].y==face.vertices[i].y);
+
+        // Three tiles share one material; a neighbouring material boundary
+        // survives. This exercises partial-edge and subdivided-edge joins.
+        std::vector<Piece> input{{Rectangle(0,0,5,5),1},{Rectangle(0,5,5,10),1},
+            {Rectangle(5,0,8,10),1},{Rectangle(8,0,10,10),2}};
+        input[2].vertices.insert(input[2].vertices.begin()+1,{6,0,0});
+        assert(CoalesceCoplanarPieces(input,up,output,error));
+        assert(output.size()==2);
+        auto areas=MaterialAreas(output,up);
+        assert(areas[1]==80 && areas[2]==20);
+        CheckCoverage(output,up);
+        for (const Piece& piece:output) for (const Vec3& point:piece.vertices)
+            assert(std::any_of(input.begin(),input.end(),[&](const Piece& source)
+            {
+                return std::any_of(source.vertices.begin(),source.vertices.end(),[&](const Vec3& original)
+                { return point.x==original.x && point.y==original.y && point.z==original.z; });
+            }));
+        std::vector<Piece> again;
+        assert(CoalesceCoplanarPieces(output,up,again,error) && again.size()==output.size());
+
+        // A real notch and an arbitrarily small gap are never filled.
+        input={{Rectangle(0,0,10,4),1},{Rectangle(0,4,4,10),1}};
+        assert(CoalesceCoplanarPieces(input,up,output,error));
+        assert(output.size()==2 && MaterialAreas(output,up)[1]==64);
+        input={{Rectangle(0,0,5,10),1},{Rectangle(5.0000000001,0,10,10),1}};
+        assert(CoalesceCoplanarPieces(input,up,output,error) && output.size()==2);
+        input={{Rectangle(0,0,10,2),1},{Rectangle(0,8,10,10),1},
+            {Rectangle(0,2,2,8),1},{Rectangle(8,2,10,8),1}};
+        assert(CoalesceCoplanarPieces(input,up,output,error));
+        assert(MaterialAreas(output,up)[1]==64);
+        for (const Piece& piece:output) assert(!Contains(piece.vertices,up,{5,5,0}));
+
+        // Reversed, translated, non-axis-aligned 3D input retains its exact
+        // original coordinates instead of restoring them from a 2D frame.
+        input={{Rectangle(0,0,5,10),1},{Rectangle(5,0,10,10),1}};
+        for (Piece& piece:input)
+        {
+            for (Vec3& point:piece.vertices) point={100000+point.x,200000+point.x,point.y-300000};
+            std::reverse(piece.vertices.begin(),piece.vertices.end());
+        }
+        const Vec3 normal{-std::sqrt(0.5),std::sqrt(0.5),0};
+        assert(CoalesceCoplanarPieces(input,normal,output,error) && output.size()==1);
+        for (const Vec3& point:output[0].vertices)
+            assert(std::any_of(input.begin(),input.end(),[&](const Piece& source)
+            {
+                return std::any_of(source.vertices.begin(),source.vertices.end(),[&](const Vec3& original)
+                { return point.x==original.x && point.y==original.y && point.z==original.z; });
+            }));
+        auto invalid=input;
+        for (Vec3& point:invalid[1].vertices) point.x+=1;
+        assert(!CoalesceCoplanarPieces(invalid,normal,output,error) && output.empty());
+        Limits limited; limited.maxWork=1;
+        assert(!CoalesceCoplanarPieces(input,normal,output,error,limited) && output.empty());
+        // Plane grouping may admit sub-epsilon 3D bends. Coalescing must not
+        // flatten those bends or change their triangulation.
+        input={{{{0,0,0},{10,0,0},{0,10,0}},1},
+            {{{10,0,0},{10,10,0.0000001},{0,10,0}},1}};
+        assert(CoalesceCoplanarPieces(input,up,output,error) && output.size()==2);
+        assert(output[1].vertices[1].z==input[1].vertices[1].z);
+    }
 }
 
 #include "RecoveredSurfacePartitionOffsDFixture.h"
@@ -156,8 +232,91 @@ namespace
 #include "RecoveredSurfacePartitionEncodingFixture.h"
 #include "RecoveredSurfacePartitionSheetFixture.h"
 
+void VerifyNativePrecisionMaterials()
+{
+    const Vec3 up{0,0,1};
+    const Face face{Rectangle(0,0,10,10),up,0};
+    const Surface strip{Rectangle(0,0,0.001,10),up,1};
+    std::vector<Piece> pieces;
+    std::string error;
+    Limits native;
+    native.matchEditorPrecision=true;
+    assert(Partition(face,{strip},99,pieces,error,native));
+    assert(pieces.size()==1 && pieces.front().materialIndex==99);
+    assert(std::fabs(Area(pieces.front().vertices,up)-100)<1e-10);
+    // This strip passes FPoly import, but is narrower than the ordinary BSP
+    // splitter's distance band. Preserve its parent face as one polygon.
+    const Surface buildSliver{Rectangle(0,0,0.1,10),up,1};
+    assert(RecoveredPolygonImport::Prepare(buildSliver.vertices).accepted());
+    assert(Partition(face,{buildSliver},99,pieces,error,native));
+    assert(pieces.size()==1 && pieces.front().materialIndex==99);
+    assert(std::fabs(Area(pieces.front().vertices,up)-100)<1e-10);
+    // Exact mode continues to retain the authored narrow paint region.
+    assert(Partition(face,{buildSliver},99,pieces,error));
+    assert(std::fabs(MaterialAreas(pieces,up)[1]-1)<1e-10);
+    // A narrow original face is geometry, and must never be widened or lost.
+    const Face thinFace{buildSliver.vertices,up,0};
+    assert(Partition(thinFace,{buildSliver},99,pieces,error,native));
+    assert(pieces.size()==1 && pieces.front().materialIndex==1);
+    assert(std::fabs(Area(pieces.front().vertices,up)-1)<1e-10);
+    assert(Partition(face,{{Rectangle(0,0,5,10),up,1}},99,pieces,error,native));
+    std::map<int,double> areas;
+    for (const auto& piece:pieces) areas[piece.materialIndex]+=Area(piece.vertices,up);
+    assert(std::fabs(areas[1]-50)<1e-10 && std::fabs(areas[99]-50)<1e-10);
+
+    // Double-distinct cut endpoints can become native-coincident after
+    // float encoding at larger world coordinates. Keep the entire face.
+    const Face translated{Rectangle(4096,4096,4112,4112),up,0};
+    const Surface angled{{{4096.0021,4096,0},{4112,4096,0},{4112,4112,0},{4104,4112,0}},up,1};
+    assert(Partition(translated,{angled},99,pieces,error,native));
+    std::vector<Piece> encoded;
+    assert(PrepareForEditor(translated,pieces,16,encoded,error));
+    double total=0;
+    for (const auto& piece:encoded)
+    {
+        const auto imported=RecoveredPolygonImport::Prepare(piece.vertices);
+        assert(imported.accepted() && RecoveredPolygonImport::PreservesOutline(piece.vertices,imported));
+        total+=Area(piece.vertices,up);
+    }
+    assert(std::fabs(total-256)<1e-8);
+}
+
+void VerifyNativeBrushBevel()
+{
+    using Node=RecoveredBspGeometry::Node;
+    std::vector<Node> nodes;
+    const Vec3 normals[]={{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1},{1,1,1}};
+    for (int i=0;i<7;++i)
+        nodes.push_back({{-normals[i].x,-normals[i].y,-normals[i].z},
+            i==6 ? -2.999 : -1.0,i==6 ? -1 : i+1,-1,true,i});
+    RecoveredBspGeometry::Result geometry;
+    std::string error;
+    assert(RecoveredBspGeometry::Reconstruct(nodes,false,{{-4,-4,-4},{4,4,4}},geometry,error));
+    auto& brush=geometry.brushes.front();
+    assert(brush.faces.size()==7);
+    assert(CanonicalizeBrushForEditor(brush,error));
+    assert(brush.faces.size()==6);
+    std::vector<bool> collapsed;
+    assert(ValidateEditorBrush(brush,collapsed,error));
+    for (const auto& face:brush.faces)
+    {
+        std::vector<Piece> encoded;
+        assert(PrepareForEditor(face,{{face.vertices,0}},16,encoded,error));
+        for (const auto& piece:encoded)
+        {
+            const auto imported=RecoveredPolygonImport::Prepare(piece.vertices);
+            assert(imported.accepted() && RecoveredPolygonImport::PreservesOutline(piece.vertices,imported));
+        }
+    }
+    RecoveredBspGeometry::Brush empty;
+    assert(!CanonicalizeBrushForEditor(empty,error) && empty.faces.empty());
+}
+
 int main()
 {
+    VerifyNativePrecisionMaterials();
+    VerifyNativeBrushBevel();
+    CheckCoalescing();
     VerifyNativeOffsDSurfaceCase();
     VerifyNativeOffsDSurfaceJoinCase();
     VerifyNativeLegacyD1SurfaceCase();
@@ -377,7 +536,55 @@ int main()
             return vertex.z==static_cast<float>(0.001);
         });
     }));
+    // Native BSP cuts can leave almost-collinear vertices on a warped sheet
+    // edge. Preserve that exact boundary while choosing importable diagonals.
+    Surface thinEar{{{2087.425537109375,823.50244140625,-1044},
+        {2083.425537109375,816.57440185546875,-1044},
+        {2083.425537109375,816.57440185546875,-1332},
+        {2092,831.42559814453125,-1332},{2092,831.42559814453125,-1044}},
+        {0.8660253286361694,-0.5000001192092896,0},23};
+    for (std::size_t rotation=0;rotation<thinEar.vertices.size();++rotation)
+    {
+        const auto parts=CheckSheetPreparation(thinEar);
+        std::map<std::pair<std::size_t,std::size_t>,int> edges;
+        for (const auto& part:parts)
+        {
+            const auto native=RecoveredPolygonImport::Prepare(part.vertices);
+            assert(native.accepted() && RecoveredPolygonImport::PreservesOutline(part.vertices,native));
+            std::vector<std::size_t> indices;
+            for (const auto& vertex:part.vertices)
+            {
+                const auto match=std::find_if(thinEar.vertices.begin(),thinEar.vertices.end(),[&](const auto& original)
+                { return original.x==vertex.x && original.y==vertex.y && original.z==vertex.z; });
+                assert(match!=thinEar.vertices.end());
+                indices.push_back(static_cast<std::size_t>(match-thinEar.vertices.begin()));
+            }
+            for (std::size_t i=0;i<indices.size();++i)
+            {
+                const auto a=indices[i],b=indices[(i+1)%indices.size()];
+                ++edges[{a,b}]; --edges[{b,a}];
+            }
+        }
+        for (std::size_t i=0;i<thinEar.vertices.size();++i)
+        {
+            const auto next=(i+1)%thinEar.vertices.size();
+            --edges[{i,next}]; ++edges[{next,i}];
+        }
+        for (const auto& edge:edges) assert(edge.second==0);
+        std::rotate(thinEar.vertices.begin(),thinEar.vertices.begin()+1,thinEar.vertices.end());
+    }
     Surface largeConvexSheet{{},up,22};
+    // A concave float boundary can also contain very shallow ears. A failed
+    // convex fast-path probe must not poison successful triangulation/retry.
+    const Surface shallowConcave{{{400.01385498046875,2179.999755859375,-448},
+        {8,2180,-448},{-496,2180.00048828125,-448},{-623.99822998046875,2180.00048828125,-448},
+        {-1284.001220703125,2180.001220703125,-448},{-1392,2180.001220703125,-448},
+        {-2298.92431640625,2180.001220703125,-448},{-2922.96142578125,2804.038330078125,-448},
+        {-2927.994140625,2809.071044921875,-448},{-3030.923095703125,2912,-448},
+        {-2547,2912,-448},{432,2912,-448},{432,2264,-448},{432,2179.999755859375,-448}},
+        {0,0,-1},24};
+    sheetTriangles=CheckSheetPreparation(shallowConcave);
+    assert(sheetTriangles.size()>1);
     for (int vertex=0;vertex<17;++vertex)
     {
         const double angle=vertex*6.283185307179586/17;

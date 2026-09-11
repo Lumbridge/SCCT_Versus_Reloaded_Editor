@@ -2,9 +2,11 @@
 #include "MapRecovery.h"
 #include "RecoveredBspGeometry.h"
 #include "RecoveredSurfacePartition.h"
+#include "RecoveredPolygonImport.h"
 #include "RecoveredActorImport.h"
 #include "RecoveredAssetPackage.h"
 #include "LightmapFix.h"
+#include "BspLeafLightFix.h"
 #include "logger.h"
 
 #include <commdlg.h>
@@ -13,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <sstream>
 #include <system_error>
@@ -39,6 +42,7 @@ namespace
     constexpr size_t kLevelModelOffset = 0x13C;
     constexpr size_t kLevelActorsDataOffset = 0x2C;
     constexpr size_t kLevelActorsCountOffset = 0x30;
+    constexpr size_t kLevelCollisionHashOffset = 0x3A4C;
     constexpr size_t kActorBrushOffset = 0x238;
     constexpr size_t kActorLevelOffset = 0x1A4;
     constexpr size_t kActorZoneNumberOffset = 0x1B4;
@@ -62,6 +66,8 @@ namespace
     constexpr size_t kSurfMaterialOffset = 0x10;
     constexpr size_t kSurfFlagsOffset = 0x14;
     constexpr uint32_t kSurfEditorPolyFlags = 0x0C000000u;
+    // Native Add Special's Portal checkbox (0x421); Anti-Portal is 0x08000000.
+    constexpr uint32_t kSurfZonePortal = 0x04000000u;
     constexpr size_t kNodeVertPoolOffset = 0x28;
     constexpr size_t kNodeSurfOffset = 0x2C;
     constexpr size_t kNodeVertexCountOffset = 0x5A;
@@ -511,6 +517,7 @@ namespace
     }
 
     bool ReconstructSourceBrushes(void* level, RecoveredBspGeometry::Result& result,
+                                  RecoveredPolygonImport::VertexPool& sourcePoints,
                                   std::string& error)
     {
         using namespace RecoveredBspGeometry;
@@ -569,6 +576,18 @@ namespace
         if (!MergeAdjacentConvexBrushes(result, error)) return false;
         Logger::log("MapRecovery: merged " + std::to_string(cells) + " structural cells into "
             + std::to_string(result.brushes.size()) + " closed brushes");
+        // Establish shared corners in reconstruction order, before material
+        // subdivision and the independent CSG build-order optimization.
+        for (const auto& brush : result.brushes)
+            for (const auto& face : brush.faces)
+                for (const auto& vertex : face.vertices)
+                {
+                    RecoveredBspGeometry::Vec3 canonical;
+                    if (!sourcePoints.Resolve(vertex,canonical,error)) return false;
+                }
+        for (auto& brush : result.brushes)
+            if (!RecoveredSurfacePartition::CanonicalizeBrushForEditor(brush, error)) return false;
+        if (!OrderForRebuild(result, error)) return false;
         return true;
     }
 
@@ -657,6 +676,7 @@ namespace
 
     bool WriteSourceBrushes(const RecoveredBspGeometry::Result& geometry,
                             const std::vector<RecoveredFace>& surfaces,
+                            RecoveredPolygonImport::VertexPool& sourcePoints,
                             std::string& text, std::string& error,
                             const std::filesystem::path& failurePath)
     {
@@ -695,12 +715,35 @@ namespace
         size_t polygonCount = 0;
         auto emit = [&](const std::vector<Surface::Vec3>& polygon,
                         const Surface::Vec3& normal, const RecoveredFace& material,
-                        bool prepared = false) {
+                        bool prepared = false, bool shareCorners = false) {
             std::vector<std::vector<Surface::Vec3>> parts;
             if (prepared) parts.push_back(polygon);
             else if (!Surface::SplitForVertexLimit(polygon, normal, 16, parts, error)) return false;
-            for (const auto& vertices : parts)
+            for (auto& vertices : parts)
             {
+                if (shareCorners)
+                    for (auto& vertex : vertices)
+                    {
+                        Surface::Vec3 canonical;
+                        if (!sourcePoints.Resolve(vertex,canonical,error)) return false;
+                        vertex=canonical;
+                    }
+                // Native T3D import ignores Normal and cleans every polygon.
+                // A valid float polygon can still disappear here. Check the
+                // actual importer rules before sending it an incomplete face.
+                const auto native = RecoveredPolygonImport::Prepare(vertices);
+                if (!native.accepted())
+                {
+                    error = "The editor would discard a reconstructed surface during import. "
+                        "Recovery stopped before creating an incomplete brush.";
+                    return false;
+                }
+                if (!RecoveredPolygonImport::PreservesOutline(vertices, native))
+                {
+                    error = "The editor's polygon cleanup would change a reconstructed surface boundary. "
+                        "Recovery stopped before creating an incomplete brush.";
+                    return false;
+                }
                 if (++polygonCount > 200000)
                 {
                     error = "Surface reconstruction exceeded the editor's safe polygon budget.";
@@ -728,12 +771,16 @@ namespace
             return true;
         };
         size_t brushIndex = 0;
-        auto beginBrush = [&](bool subtractive, bool nonSolid) {
+        auto beginBrush = [&](bool subtractive, bool nonSolid, bool hiddenDivider = false) {
             ++brushIndex;
             output << "Begin Actor Class=Brush Name=RecoveredVolume" << brushIndex
                    << "\n    CsgOper=" << (subtractive ? "CSG_Subtract" : "CSG_Add")
-                   << "\n    PolyFlags=" << (nonSolid ? 8 : 0)
-                   << "\n    Begin Brush Name=RecoveredModel" << brushIndex
+                   << "\n    PolyFlags=" << (nonSolid ? 8 : 0);
+            // Native Build All clears bHiddenEd while building, then restores
+            // it. Keep functional, ordinary editable zone boundaries without
+            // their wireframes cluttering the initial editing view.
+            if (hiddenDivider) output << "\n    bHiddenEd=True";
+            output << "\n    Begin Brush Name=RecoveredModel" << brushIndex
                    << "\n       Begin PolyList\n";
         };
         auto endBrush = [&]() {
@@ -769,7 +816,9 @@ namespace
                         for (size_t index : group->second) coplanar.push_back(candidates[index]);
                 }
                 std::vector<Surface::Piece> pieces;
-                if (!Surface::Partition(face, coplanar, fallback, pieces, error))
+                Surface::Limits partitionLimits;
+                partitionLimits.matchEditorPrecision = true;
+                if (!Surface::Partition(face, coplanar, fallback, pieces, error, partitionLimits))
                 {
                     DumpSurfaceCase(failurePath, face, coplanar);
                     DumpSurfaceBatch(failurePath.parent_path()/"SurfaceBatch.json",geometry,surfaces);
@@ -785,7 +834,7 @@ namespace
                     return false;
                 }
                 for (const auto& piece : prepared)
-                    if (!emit(piece.vertices, face.normal, surfaces[piece.materialIndex], true))
+                    if (!emit(piece.vertices, face.normal, surfaces[piece.materialIndex], true, true))
                     {
                         auto failedFace = face;
                         failedFace.vertices = piece.vertices;
@@ -810,9 +859,20 @@ namespace
             if (group.second) sheetGroups.emplace_back();
             sheetGroups[group.first->second].push_back(index);
         }
+        size_t hiddenZoneDividers = 0;
         for (const auto& group : sheetGroups)
         {
-            beginBrush(false, true);
+            const bool zoneDivider = (surfaces[group.front()].flags & kSurfZonePortal) != 0;
+            if (zoneDivider) ++hiddenZoneDividers;
+            beginBrush(false, true, zoneDivider);
+            struct SheetPlane
+            {
+                Surface::Vec3 normal;
+                Surface::Vec3 origin;
+                std::vector<Surface::Piece> pieces;
+            };
+            std::vector<SheetPlane> sheetPlanes;
+            const Surface::Limits sheetLimits;
             for (size_t index : group)
             {
                 std::vector<Surface::Surface> sheetParts;
@@ -827,12 +887,57 @@ namespace
                         + failurePath.string() + ")";
                     return false;
                 }
-                for (const auto& part : sheetParts)
-                    if (!emit(part.vertices, part.normal, surfaces[index], true))
+                for (auto& part : sheetParts)
+                {
+                    auto plane = std::find_if(sheetPlanes.begin(), sheetPlanes.end(),
+                        [&](const SheetPlane& existing) {
+                            const double alignment = existing.normal.x * part.normal.x
+                                + existing.normal.y * part.normal.y + existing.normal.z * part.normal.z;
+                            if (alignment < 1.0 - sheetLimits.normalTolerance) return false;
+                            return std::all_of(part.vertices.begin(), part.vertices.end(),
+                                [&](const Surface::Vec3& point) {
+                                    const double distance = existing.normal.x * (point.x - existing.origin.x)
+                                        + existing.normal.y * (point.y - existing.origin.y)
+                                        + existing.normal.z * (point.z - existing.origin.z);
+                                    return std::fabs(distance) <= sheetLimits.epsilon;
+                                });
+                        });
+                    if (plane == sheetPlanes.end())
                     {
-                        error += " (non-solid sheet emission " + std::to_string(index) + ")";
-                        return false;
+                        sheetPlanes.push_back({part.normal, part.vertices.front(), {}});
+                        plane = std::prev(sheetPlanes.end());
                     }
+                    plane->pieces.push_back({std::move(part.vertices), part.materialIndex});
+                }
+            }
+            for (const auto& plane : sheetPlanes)
+            {
+                // Only remove internal edges between exactly adjacent convex
+                // pieces. Disjoint regions, holes and nonplanar folds remain.
+                std::vector<Surface::Piece> coalesced;
+                if (!Surface::CoalesceCoplanarPieces(plane.pieces, plane.normal, coalesced, error))
+                {
+                    DumpSurfaceBatch(failurePath.parent_path()/"SurfaceBatch.json",geometry,surfaces);
+                    error += " (non-solid surface " + std::to_string(surfaces[group.front()].surfaceIndex)
+                        + " coalescing)";
+                    return false;
+                }
+                for (const auto& piece : coalesced)
+                {
+                    const Surface::Surface sheet{piece.vertices, plane.normal, piece.materialIndex};
+                    std::vector<Surface::Surface> finalParts;
+                    if (!Surface::PrepareSheetForEditor(sheet, finalParts, error)) return false;
+                    for (const auto& part : finalParts)
+                        if (!emit(part.vertices, part.normal, surfaces[piece.materialIndex], true))
+                        {
+                            RecoveredBspGeometry::Face failedFace{part.vertices, part.normal,
+                                surfaces[piece.materialIndex].surfaceIndex};
+                            DumpSurfaceCase(failurePath, failedFace, {});
+                            DumpSurfaceBatch(failurePath.parent_path()/"SurfaceBatch.json",geometry,surfaces);
+                            error += " (non-solid sheet emission; details: " + failurePath.string() + ")";
+                            return false;
+                        }
+                }
             }
             endBrush();
         }
@@ -840,6 +945,8 @@ namespace
         Logger::log("MapRecovery: emitted " + std::to_string(geometry.brushes.size())
             + " structural brushes, " + std::to_string(sheetGroups.size())
             + " non-solid sheet brushes and " + std::to_string(polygonCount) + " polygons");
+        Logger::log("MapRecovery: retained " + std::to_string(hiddenZoneDividers)
+            + " zone-divider brushes, hidden by default; retained ZoneInfo settings");
         text = output.str();
         return true;
     }
@@ -2149,6 +2256,77 @@ namespace
         return nullptr;
     }
 
+    struct StripDoorStructure
+    {
+        std::vector<unsigned char> points, springs, settings;
+    };
+
+    // ESBStripDoor is a procedural, level-owned simulation. Its native
+    // serializer (110D7800) stores points at 70 (stride 48) and springs at 7C
+    // (stride C). Compare topology, rest lengths, pins and physical settings;
+    // current/previous positions of free points, forces and wind timers are
+    // simulation state, not the authored shape. Never approve an arbitrary
+    // custom soft body simply because the native importer returned an object.
+    bool CaptureStripDoorStructure(void* level, const std::string& actorName,
+                                   StripDoorStructure& structure, std::string& error)
+    {
+        structure = {};
+        const auto actors = ReadRawArray(level, kLevelActorsDataOffset);
+        const unsigned char* actor = nullptr;
+        if (!IsValidArray(actors)) return false;
+        for (int i = 0; i < actors.count; ++i)
+        {
+            auto candidate = ReadRaw<unsigned char*>(actors.data, static_cast<size_t>(i) * sizeof(void*));
+            char path[512]{};
+            if (candidate && FormatExternalObjectPath(candidate, path, sizeof(path), "MyLevel")
+                && _stricmp(path, ("MyLevel." + actorName).c_str()) == 0) { actor = candidate; break; }
+        }
+        auto fail = [&](const std::string& detail) {
+            error = "The strip-door simulation on " + actorName
+                + " cannot be recovered: " + detail + ". Recovery cannot discard that data.";
+            return false;
+        };
+        if (!actor) return fail("actor missing");
+        char typePath[512]{};
+        if (!FormatExternalObjectPath(ReadRaw<void*>(actor, kObjectClassOffset), typePath, sizeof(typePath))
+            || _stricmp(typePath, "SoftBody.ESBStripDoorActor") != 0) return fail("unexpected actor class " + std::string(typePath));
+        const auto* body = ReadRaw<unsigned char*>(actor, 0x2F8);
+        if (!body) return fail("simulation missing");
+        if (ReadRaw<void*>(body, kObjectOuterOffset) != level || ReadRaw<void*>(body, 0x54) != actor)
+            return fail("simulation ownership differs from its actor");
+        if (!FormatExternalObjectPath(ReadRaw<void*>(body, kObjectClassOffset), typePath, sizeof(typePath))
+            || _stricmp(typePath, "SoftBody.ESBStripDoor") != 0) return fail("unexpected simulation class " + std::string(typePath));
+        const auto points = ReadRawArray(body, 0x70), springs = ReadRawArray(body, 0x7C);
+        if (!IsValidArray(points) || !IsValidArray(springs) || points.count < 1
+            || points.count > 100000 || springs.count < 1 || springs.count > 400000) return fail("invalid point/spring counts");
+        // Additional native constraints/attachments need their own lossless
+        // recovery support. An unrecognized nonempty array must stop recovery.
+        for (const size_t offset : {0x88u, 0x94u, 0xA0u, 0xACu})
+            if (ReadRawArray(body, offset).count != 0) return fail("additional native constraints or attachments");
+        for (int i = 0; i < points.count; ++i)
+        {
+            const auto* point = points.data + static_cast<size_t>(i) * 0x48;
+            const auto fixed = ReadRaw<uint32_t>(point, 0);
+            if (fixed > 1 || !IsFinite(ReadRaw<Vec3>(point, 4))) return fail("invalid simulation point");
+            structure.points.insert(structure.points.end(), point, point + 4);
+            if (fixed) structure.points.insert(structure.points.end(), point + 4, point + 16);
+            structure.points.insert(structure.points.end(), point + 0x30, point + 0x40);
+            structure.points.insert(structure.points.end(), point + 0x44, point + 0x48);
+        }
+        for (int i = 0; i < springs.count; ++i)
+        {
+            const auto* spring = springs.data + static_cast<size_t>(i) * 12;
+            const int first = ReadRaw<int>(spring, 0), second = ReadRaw<int>(spring, 4);
+            const auto length = ReadRaw<float>(spring, 8);
+            if (first < 0 || first >= points.count || second < 0 || second >= points.count
+                || !std::isfinite(length) || length < 0) return fail("invalid spring");
+            structure.springs.insert(structure.springs.end(), spring, spring + 12);
+        }
+        structure.settings.insert(structure.settings.end(), body + 0xB8, body + 0x114);
+        structure.settings.insert(structure.settings.end(), body + 0x11C, body + 0x15C);
+        return true;
+    }
+
     bool ReadTextFile(const std::filesystem::path& path, std::string& text, std::string& error)
     {
         std::ifstream input(path, std::ios::binary);
@@ -2274,6 +2452,34 @@ namespace
     }
 
     struct SpaceProbe { Vec3 point; bool outside; };
+
+    bool ValidateCollisionBounds(void* model, std::string& error)
+    {
+        if (!model) { error = "The rebuilt map has no collision model."; return false; }
+        const RawArray nodes = ReadRawArray(model, kModelNodesOffset);
+        const RawArray hulls = ReadRawArray(model, 0xB0);
+        if (!IsValidArray(nodes) || !IsValidArray(hulls))
+        {
+            error = "The rebuilt map has an invalid collision-bound table.";
+            return false;
+        }
+        for (int i=0; i<nodes.count; ++i)
+        {
+            const auto start=ReadRaw<uint16_t>(nodes.data+static_cast<size_t>(i)*kNodeStride,0x54);
+            if (start==0xFFFF) continue;
+            // Both the stock editor (11193198) and PC game (10A41194)
+            // sign-extend this field. Extending only the editor would produce
+            // a map which still crashes in the game. Stop before path builds.
+            if (start>=0x8000 || start>=hulls.count)
+            {
+                error = "The rebuilt map exceeds the PC engine's collision-bound index limit. "
+                        "Recovery stopped before navigation building or saving; the reconstructed T3D is retained. "
+                        "This map needs further collision-data support.";
+                return false;
+            }
+        }
+        return true;
+    }
 
     bool CaptureSpaceProbes(const std::vector<RecoveredFace>& faces,
                              std::vector<SpaceProbe>& probes, std::string& error)
@@ -2510,17 +2716,45 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
         if (!exportMap(actorsPath, actorText)) return false;
         std::vector<std::string> deletedActorPaths;
         if (!CollectDeletedActorPaths(g_recoveredLevel, deletedActorPaths, error)) return false;
+        // ExecuteRecoveryLoad used the PC runtime serializer. Its active
+        // actor list is stronger evidence than legacy editor platform tags.
+        std::vector<std::string> pcActorPaths;
+        const RawArray pcActors = ReadRawArray(g_recoveredLevel, kLevelActorsDataOffset);
+        if (!IsValidArray(pcActors))
+        {
+            error = "The compiled PC map has an invalid actor list.";
+            return false;
+        }
+        for (int index = 0; index < pcActors.count; ++index)
+        {
+            auto* actor = reinterpret_cast<unsigned char* const*>(pcActors.data)[index];
+            if (!actor || (ReadRaw<uint32_t>(actor, 0x2E8) & 0x8000u)) continue;
+            char name[256]{};
+            if (!CopyObjectName(actor, name, sizeof(name)))
+            {
+                error = "An active PC actor has an invalid name.";
+                return false;
+            }
+            pcActorPaths.push_back(std::string("MyLevel.") + name);
+        }
         RecoveredActorImport::PreparedMap actors;
         Logger::log("MapRecovery: preparing source actors and level settings");
-        if (!RecoveredActorImport::Prepare(actorText, actors, error, assetPackageName, deletedActorPaths)) return false;
+        if (!RecoveredActorImport::Prepare(actorText, actors, error, assetPackageName, deletedActorPaths, pcActorPaths)) return false;
+        std::vector<StripDoorStructure> stripDoors;
+        for (const auto& name : actors.regeneratedStripDoors)
+        {
+            stripDoors.emplace_back();
+            if (!CaptureStripDoorStructure(g_recoveredLevel, name, stripDoors.back(), error)) return false;
+        }
         const bool rootOutside = *reinterpret_cast<int*>(static_cast<char*>(CurrentModel()) + kModelRootOutsideOffset) != 0;
         RecoveredBspGeometry::Result geometry;
+        RecoveredPolygonImport::VertexPool sourcePoints;
         Logger::log("MapRecovery: reconstructing structural volumes");
-        if (!ReconstructSourceBrushes(g_recoveredLevel, geometry, error)) return false;
+        if (!ReconstructSourceBrushes(g_recoveredLevel, geometry, sourcePoints, error)) return false;
         Logger::log("MapRecovery: reconstructed " + std::to_string(geometry.brushes.size()) + " closed brushes");
         std::string geometryText;
         Logger::log("MapRecovery: restoring surface materials and texture coordinates");
-        if (!WriteSourceBrushes(geometry, faces, geometryText, error, scratch / "SurfaceFailure.json")
+        if (!WriteSourceBrushes(geometry, faces, sourcePoints, geometryText, error, scratch / "SurfaceFailure.json")
             || !WriteTextFile(geometryPath, geometryText, error)) return false;
         std::vector<SpaceProbe> probes;
         if (!CaptureSpaceProbes(faces, probes, error)) return false;
@@ -2573,6 +2807,20 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
                 error = std::string(stage) + " actor verification failed: " + error;
                 return false;
             }
+            void* level = *reinterpret_cast<void**>(static_cast<char*>(editor) + kEditorLevelOffset);
+            for (size_t i = 0; i < stripDoors.size(); ++i)
+            {
+                StripDoorStructure actualStructure;
+                if (!CaptureStripDoorStructure(level, actors.regeneratedStripDoors[i], actualStructure, error)) return false;
+                const auto& expected = stripDoors[i];
+                if (expected.points != actualStructure.points || expected.springs != actualStructure.springs
+                    || expected.settings != actualStructure.settings)
+                {
+                    error = std::string(stage) + " changed the strip-door topology, anchors or physical settings on "
+                        + actors.regeneratedStripDoors[i] + ". Recovery stopped to preserve the original data.";
+                    return false;
+                }
+            }
             return true;
         };
 
@@ -2592,10 +2840,11 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
                 error = "The preserved asset cannot load in normal editor mode: " + asset.path;
                 return false;
             }
-            // OBJ SAVEPACKAGE starts from RF_Standalone exports. Map-local
-            // assets (for example zone audio effects) may lack this flag; the
-            // explicitly selected dependency must root its reachable objects.
-            *reinterpret_cast<uint32_t*>(static_cast<char*>(object) + 0x1C) |= 0x00080000u;
+            // Selected assets become ordinary cross-package dependencies.
+            // RF_Standalone roots them for OBJ SAVEPACKAGE; RF_Public allows
+            // the source map to reference exports that were originally private
+            // inside MyLevel (notably ConvexVolume antiportal data).
+            *reinterpret_cast<uint32_t*>(static_cast<char*>(object) + 0x1C) |= 0x00080004u;
         }
         if (!assets.empty())
         {
@@ -2645,6 +2894,23 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
         }
         *reinterpret_cast<int*>(static_cast<char*>(CurrentModel()) + kModelRootOutsideOffset) = rootOutside ? 1 : 0;
         if (!verifyActors("Imported")) return false;
+        // MAP IMPORT creates a level without the collision hash initialized
+        // by ordinary level loading. LIGHT APPLY temporarily inserts actors
+        // into that hash and assumes it exists. Use the same native setup as
+        // normal loading (11133F12), including registration of existing actors.
+        auto* collisionHash=reinterpret_cast<void**>(
+            static_cast<char*>(importedLevel)+kLevelCollisionHashOffset);
+        if (!*collisionHash)
+        {
+            Logger::log("MapRecovery: initializing normal actor collision state");
+            using SetActorCollision=void(__thiscall*)(void*,int,int);
+            reinterpret_cast<SetActorCollision>(0x1111EB30)(importedLevel,1,0);
+            if (!*collisionHash)
+            {
+                error="The editor could not initialize collision for the imported source map.";
+                return false;
+            }
+        }
         ArmActorTickDiagnostic();
 
         // Same actor-state bracket as the editor's Build All path. Explicit
@@ -2668,9 +2934,14 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
             ~RestoreBuildState() { try { Finish(); } catch (...) {} }
         } restoreBuildState{editor, stateA, stateB};
         bool built = HasLiveSourceLevelInfo() && exec("MAP REBUILD")
-            && HasLiveSourceLevelInfo() && exec("BSP REBUILD") && HasLiveSourceLevelInfo();
+            && BspLeafLightFix::Validate(CurrentModel(), error)
+            && ValidateCollisionBounds(CurrentModel(), error)
+            && HasLiveSourceLevelInfo() && exec("BSP REBUILD") && HasLiveSourceLevelInfo()
+            && BspLeafLightFix::Validate(CurrentModel(), error)
+            && ValidateCollisionBounds(CurrentModel(), error);
         if (built) built = VerifySpaceProbes(probes, error);
-        if (built) built = exec("LIGHT APPLY");
+        if (built) built = exec("LIGHT APPLY") && BspLeafLightFix::Validate(CurrentModel(), error)
+            && ValidateCollisionBounds(CurrentModel(), error);
         if (built)
         {
             Logger::log("MapRecovery: rebuilding navigation and gameplay paths");
@@ -2687,6 +2958,35 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
         if (!verifyActors("Built")) return false;
         void* builtLevel = *reinterpret_cast<void**>(static_cast<char*>(editor) + kEditorLevelOffset);
         if (!SynchronizeImportedActorPlatforms(builtLevel, error)) return false;
+
+        // LIGHT APPLY updates the active StaticMeshInstance pointer. The
+        // normal Build UI then commits it to the current platform's cache
+        // (10EE6616); Save switches platforms and reads that cache. Without
+        // this native finalizer, fresh imported maps lose their baked mesh
+        // lighting during the first ordinary Save.
+        void* context = *reinterpret_cast<void**>(kGSerializationContext);
+        if (!context)
+        {
+            error = "The editor's lighting platform context is unavailable.";
+            return false;
+        }
+        const int lightingPlatform = *reinterpret_cast<int*>(static_cast<char*>(context) + 0x78);
+        using CacheMeshLighting = void(__thiscall*)(void*, int);
+        reinterpret_cast<CacheMeshLighting>(0x10E06605)(editor, lightingPlatform);
+        std::unordered_set<std::string> bakedMeshActors;
+        const RawArray builtActors = ReadRawArray(builtLevel, kLevelActorsDataOffset);
+        for (int index = 0; index < builtActors.count; ++index)
+        {
+            auto* actor = reinterpret_cast<unsigned char* const*>(builtActors.data)[index];
+            if (!actor || !ReadRaw<void*>(actor, 0x100) || !ReadRaw<void*>(actor, 0x22C)) continue;
+            char name[256]{};
+            if (!CopyObjectName(actor, name, sizeof(name)))
+            {
+                error = "A baked mesh actor has an invalid name.";
+                return false;
+            }
+            bakedMeshActors.insert(name);
+        }
 
         using SaveFn = int(__thiscall*)(void*, const char*);
         Logger::log("MapRecovery: saving normal source " + destination.string());
@@ -2710,7 +3010,30 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
         // This is deliberately the ordinary loader, with every recovery guard
         // off. A conversion is not successful unless its normal save reopens.
         if (!exec("MAP NEW") || !exec("MAP LOAD FILE=\"" + outputName + "\"")) return false;
-        if (!VerifySpaceProbes(probes, error))
+        const auto reopenedLevel = *reinterpret_cast<void**>(static_cast<char*>(editor) + kEditorLevelOffset);
+        const RawArray reopenedActors = ReadRawArray(reopenedLevel, kLevelActorsDataOffset);
+        if (!IsValidArray(reopenedActors))
+        {
+            error = "The saved map has an invalid actor list.";
+            return false;
+        }
+        for (int index = 0; index < reopenedActors.count; ++index)
+        {
+            auto* actor = reinterpret_cast<unsigned char* const*>(reopenedActors.data)[index];
+            if (!actor || !ReadRaw<void*>(actor, 0x22C)) continue;
+            char name[256]{};
+            if (CopyObjectName(actor, name, sizeof(name))) bakedMeshActors.erase(name);
+        }
+        if (!bakedMeshActors.empty())
+        {
+            error = "The ordinary save lost rebuilt mesh lighting on "
+                + std::to_string(bakedMeshActors.size()) + " actors (including "
+                + *bakedMeshActors.begin() + "). The saved outputs should not be used.";
+            return false;
+        }
+        Logger::log("MapRecovery: rebuilt mesh lighting survived ordinary save and reopening");
+        if (!VerifySpaceProbes(probes, error) || !BspLeafLightFix::Validate(CurrentModel(), error)
+            || !ValidateCollisionBounds(CurrentModel(), error))
         {
             error = "The saved outputs failed normal reopening verification and should not be used: "
                 + destination.string() + " and " + runtime.string() + ". " + error;
@@ -2734,8 +3057,10 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
                << "\nReconstructed structural brushes: " << structuralBrushCount
                << "\nRetained actors: " << actors.actorCount
                << "\nExcluded Xbox-only actors: " << actors.skippedXboxActorCount
+               << "\nCorrected stale platform labels on active PC actors: " << actors.correctedPcActorPlatformCount
                << "\nCleared references to excluded Xbox actors: " << actors.clearedXboxActorReferenceCount
                << "\nCleared references to confirmed deleted actors: " << actors.clearedDeletedActorReferenceCount
+               << "\nRegenerated and verified procedural strip doors: " << actors.regeneratedStripDoors.size()
                << "\nVerified solid/empty samples: " << probes.size()
                << "\nNormal import, geometry/BSP/lighting/path builds, save and reopening verified.\n";
         if (!assets.empty()) report << "Include this asset dependency when distributing the map: "

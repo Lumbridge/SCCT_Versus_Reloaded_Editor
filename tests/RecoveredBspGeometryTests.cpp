@@ -254,8 +254,52 @@ namespace
     }
 }
 
+void VerifyRebuildOrdering()
+{
+    auto box=[](double half,int tag)
+    {
+        std::vector<Node> nodes;
+        AddBox(nodes,{{-half,-half,-half},{half,half,half}},true);
+        Brush brush=Recover(nodes).brushes.front();
+        brush.faces.front().surfaceIndex=tag;
+        return brush;
+    };
+    Result result;
+    result.brushes={box(1,11),box(4,44),box(2,21),box(2,22)};
+    const auto original=result;
+    const double volume=Volume(result);
+    std::string error;
+    assert(OrderForRebuild(result,error));
+    const int expected[]={44,21,22,11};
+    for (std::size_t i=0;i<result.brushes.size();++i)
+    {
+        const auto& brush=result.brushes[i];
+        assert(brush.faces.front().surfaceIndex==expected[i]);
+        const auto found=std::find_if(original.brushes.begin(),original.brushes.end(),[&](const Brush& b)
+        {
+            return b.faces.front().surfaceIndex==expected[i];
+        });
+        assert(found!=original.brushes.end());
+        for (std::size_t face=0;face<brush.faces.size();++face)
+            for (std::size_t vertex=0;vertex<brush.faces[face].vertices.size();++vertex)
+            {
+                const auto a=brush.faces[face].vertices[vertex];
+                const auto b=found->faces[face].vertices[vertex];
+                assert(a.x==b.x && a.y==b.y && a.z==b.z);
+            }
+    }
+    assert(std::fabs(Volume(result)-volume)<1e-9);
+    result.brushes[1].subtractive=false;
+    assert(!OrderForRebuild(result,error));
+    for (std::size_t i=0;i<result.brushes.size();++i)
+        assert(result.brushes[i].faces.front().surfaceIndex==expected[i]);
+    result.brushes.clear();
+    assert(OrderForRebuild(result,error));
+}
+
 int main()
 {
+    VerifyRebuildOrdering();
     VerifyConvexMerging();
     const Bounds room{{-10,-10,-10},{10,10,10}};
     std::vector<Node> nodes;

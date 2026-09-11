@@ -3,6 +3,7 @@ param(
     [string]$SourceMap,
     [string]$GameSystem = $env:SCCT,
     [string]$StartupConfigSystem,
+    [ValidatePattern('^[A-Za-z_][A-Za-z0-9_]*$')][string]$OutputName = 'NativeRecovered_Source',
     [int]$TimeoutSeconds = 300,
     [switch]$PrepareOnly,
     [switch]$GenerateFixture,
@@ -12,7 +13,14 @@ param(
     [switch]$ExpectRecoveryFailure,
     [switch]$EditGeometry,
     [switch]$ImportTextOnly,
+    [switch]$BuildImportedText,
+    [switch]$RestoreTextNormals,
+    [switch]$TraceSoftBodies,
+    [switch]$TraceLeafLights,
+    [switch]$InspectCookedOnly,
     [switch]$CompactPoints,
+    [string]$TracePoint,
+    [string]$TraceActor,
     [string[]]$ExtraAssetPackage = @()
 )
 $ErrorActionPreference = 'Stop'
@@ -20,12 +28,14 @@ $repository = Split-Path -Parent $PSScriptRoot
 $nativeDll = (Resolve-Path -LiteralPath $EditorDll).Path
 if ($ImportBaseline -and !$GenerateFixture) { throw 'ImportBaseline requires GenerateFixture.' }
 if ($ImportTextOnly -and ($GenerateFixture -or $ReopenOnly -or $ExpectRecoveryFailure -or $EditGeometry)) { throw 'ImportTextOnly requires a standalone T3D input.' }
+if ($BuildImportedText -and !$ImportTextOnly) { throw 'BuildImportedText requires ImportTextOnly.' }
 if ($ReopenOnly -and $GenerateFixture) { throw 'ReopenOnly requires an existing source map.' }
 if ($EditGeometry -and ($ReopenOnly -or $ImportBaseline -or $ExpectRecoveryFailure)) { throw 'EditGeometry requires a successful recovery test.' }
 if ($RootOutside -and !$GenerateFixture) { throw 'RootOutside requires GenerateFixture.' }
 if ($ExpectRecoveryFailure -and ($ReopenOnly -or $ImportBaseline)) { throw 'ExpectRecoveryFailure requires a recovery test.' }
 if ($ExpectRecoveryFailure -and !$GenerateFixture) { throw 'ExpectRecoveryFailure requires GenerateFixture for the normal-load follow-up.' }
 if (!$GenerateFixture -and !$SourceMap) { throw 'Supply SourceMap or GenerateFixture.' }
+if ($InspectCookedOnly -and ($GenerateFixture -or $ReopenOnly -or $ImportTextOnly -or $EditGeometry -or $ExpectRecoveryFailure)) { throw 'InspectCookedOnly requires a standalone compiled map.' }
 $nativeSource = if ($GenerateFixture) { $null } else { (Resolve-Path -LiteralPath $SourceMap).Path }
 $installedSystem = (Resolve-Path -LiteralPath $GameSystem).Path
 $installedRoot = Split-Path -Parent $installedSystem
@@ -71,11 +81,11 @@ $inputMaps = Join-Path $testPackages 'Maps'
 $outputMaps = Join-Path $testPackages 'MapsEd'
 $null = New-Item -ItemType Directory -Path $inputMaps, $outputMaps
 $inputMap = Join-Path $(if ($ReopenOnly) { $outputMaps } else { $inputMaps }) $(if ($GenerateFixture) { 'NativeFixture.sdc' } else { [IO.Path]::GetFileName($nativeSource) })
-$outputMap = Join-Path $outputMaps 'NativeRecovered_Source.sdc'
+$outputMap = Join-Path $outputMaps ($OutputName + '.sdc')
 if ($ExpectRecoveryFailure) {
     # Fail geometry interchange writing after cooked loading/reconstruction.
     # The input package itself remains a valid native map.
-    $null = New-Item -ItemType Directory -Path (Join-Path $outputMaps 'Recovery\NativeRecovered_Source\Geometry.t3d') -Force
+    $null = New-Item -ItemType Directory -Path (Join-Path $outputMaps ('Recovery\' + $OutputName + '\Geometry.t3d')) -Force
 }
 if (!$GenerateFixture) { Copy-Item -LiteralPath $nativeSource -Destination $inputMap }
 $injectedDll = Join-Path $testSystem 'Reloaded.Editor.dll'
@@ -108,7 +118,14 @@ root_outside=$([int][bool]$RootOutside)
 expect_recovery_failure=$([int][bool]$ExpectRecoveryFailure)
 edit_geometry=$([int][bool]$EditGeometry)
 import_text_only=$([int][bool]$ImportTextOnly)
+build_imported_text=$([int][bool]$BuildImportedText)
+restore_text_normals=$([int][bool]$RestoreTextNormals)
+trace_soft_bodies=$([int][bool]$TraceSoftBodies)
+trace_leaf_lights=$([int][bool]$TraceLeafLights)
+inspect_cooked_only=$([int][bool]$InspectCookedOnly)
 compact_points=$([int][bool]$CompactPoints)
+trace_point=$TracePoint
+trace_actor=$TraceActor
 "@ | Set-Content -LiteralPath (Join-Path $testSystem 'native_recovery_test.ini') -Encoding ascii
 Write-Output "TestRoot=$testRoot"
 if ($PrepareOnly) { return }

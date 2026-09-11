@@ -96,4 +96,11 @@ namespace RecoveredBspGeometry
     // Commits atomically; on failure the input result is unchanged.
     bool MergeAdjacentConvexBrushes(Result& result,std::string& error,
                                     const Limits& limits = {});
+
+    // Build larger volumes before smaller details. The native BSP builder
+    // can otherwise lose narrow features between adjacent recovered cells.
+    // Only homogeneous additive or subtractive sets can be reordered without
+    // changing CSG meaning. Coordinates, faces and equal-volume order remain
+    // unchanged; failure leaves the input intact.
+    bool OrderForRebuild(Result& result,std::string& error);
 }

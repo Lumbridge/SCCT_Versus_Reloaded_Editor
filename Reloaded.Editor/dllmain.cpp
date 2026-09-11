@@ -26,6 +26,7 @@
 #include "BspTextureClipboard.h"
 #include "DdsImportFix.h"
 #include "LightCullFix.h"
+#include "BspLeafLightFix.h"
 #include "ProjectorDetachFix.h"
 #include "SizingBoxFix.h"
 #include "MapRecovery.h"
@@ -125,6 +126,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     StaticMeshCollisionFix::Initialize();
     DdsImportFix::Initialize();
     LightCullFix::Initialize();
+    BspLeafLightFix::Initialize();
     ProjectorDetachFix::Initialize();
     SizingBoxFix::Initialize();
     LightmapPacker::Initialize();
