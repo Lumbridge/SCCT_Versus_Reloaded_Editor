@@ -44,5 +44,6 @@ x86/
 *.aps
 *.user
 /bin
+/Reloaded.Editor.Launcher/bin/
 /Reloaded.Editor.vcxproj.user
 /Reloaded.Editor.Launcher.vcxproj.user

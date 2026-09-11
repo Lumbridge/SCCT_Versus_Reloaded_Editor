@@ -10,6 +10,8 @@
 #include "MapRecovery.h"
 #include "WindowDriftFix.h"
 #include "RebuildAllMaps.h"
+#include "BspTextureClipboard.h"
+#include "GridSizeShortcut.h"
 #include "PlayLevelCommand.h"
 #include "PlayLevelConfig.h"
 #include <mimalloc.h>
@@ -274,6 +276,148 @@ static void __cdecl DuplicateSelection()
 
     using ExecFn = int(__thiscall*)(void*, const char*, void*);
     reinterpret_cast<ExecFn>(vtable[0])(execInterface, kCommand, output);
+}
+
+static bool ExecEditorCommand(const char* command)
+{
+    void* editor = *reinterpret_cast<void**>(kGEditor);
+    void* output = *reinterpret_cast<void**>(kGWarn);
+    if (!editor || !output)
+        return false;
+
+    void* execInterface = static_cast<char*>(editor) + 0x28;
+    void** vtable = *reinterpret_cast<void***>(execInterface);
+    if (!vtable || !vtable[0])
+        return false;
+
+    using ExecFn = int(__thiscall*)(void*, const char*, void*);
+    return reinterpret_cast<ExecFn>(vtable[0])(
+        execInterface, command, output) != 0;
+}
+
+static constexpr char kDefaultBuilderCube[] =
+    "Begin PolyList\r\n"
+    "   Begin Polygon Item=DefaultCube\r\n"
+    "      Origin   +00128.000000,-00128.000000,-00128.000000\r\n"
+    "      Normal   +00000.000000,-00001.000000,+00000.000000\r\n"
+    "      TextureU -00001.000000,+00000.000000,+00000.000000\r\n"
+    "      TextureV +00000.000000,+00000.000000,-00001.000000\r\n"
+    "      Vertex   +00128.000000,-00128.000000,-00128.000000\r\n"
+    "      Vertex   +00128.000000,-00128.000000,+00128.000000\r\n"
+    "      Vertex   -00128.000000,-00128.000000,+00128.000000\r\n"
+    "      Vertex   -00128.000000,-00128.000000,-00128.000000\r\n"
+    "   End Polygon\r\n"
+    "   Begin Polygon Item=DefaultCube\r\n"
+    "      Origin   -00128.000000,-00128.000000,-00128.000000\r\n"
+    "      Normal   -00001.000000,+00000.000000,+00000.000000\r\n"
+    "      TextureU +00000.000000,+00001.000000,+00000.000000\r\n"
+    "      TextureV +00000.000000,+00000.000000,-00001.000000\r\n"
+    "      Vertex   -00128.000000,-00128.000000,-00128.000000\r\n"
+    "      Vertex   -00128.000000,-00128.000000,+00128.000000\r\n"
+    "      Vertex   -00128.000000,+00128.000000,+00128.000000\r\n"
+    "      Vertex   -00128.000000,+00128.000000,-00128.000000\r\n"
+    "   End Polygon\r\n"
+    "   Begin Polygon Item=DefaultCube\r\n"
+    "      Origin   -00128.000000,+00128.000000,-00128.000000\r\n"
+    "      Normal   +00000.000000,+00001.000000,+00000.000000\r\n"
+    "      TextureU +00001.000000,+00000.000000,+00000.000000\r\n"
+    "      TextureV +00000.000000,+00000.000000,-00001.000000\r\n"
+    "      Vertex   -00128.000000,+00128.000000,-00128.000000\r\n"
+    "      Vertex   -00128.000000,+00128.000000,+00128.000000\r\n"
+    "      Vertex   +00128.000000,+00128.000000,+00128.000000\r\n"
+    "      Vertex   +00128.000000,+00128.000000,-00128.000000\r\n"
+    "   End Polygon\r\n"
+    "   Begin Polygon Item=DefaultCube\r\n"
+    "      Origin   +00128.000000,+00128.000000,-00128.000000\r\n"
+    "      Normal   +00001.000000,+00000.000000,+00000.000000\r\n"
+    "      TextureU +00000.000000,-00001.000000,+00000.000000\r\n"
+    "      TextureV +00000.000000,+00000.000000,-00001.000000\r\n"
+    "      Vertex   +00128.000000,+00128.000000,-00128.000000\r\n"
+    "      Vertex   +00128.000000,+00128.000000,+00128.000000\r\n"
+    "      Vertex   +00128.000000,-00128.000000,+00128.000000\r\n"
+    "      Vertex   +00128.000000,-00128.000000,-00128.000000\r\n"
+    "   End Polygon\r\n"
+    "   Begin Polygon Item=DefaultCube\r\n"
+    "      Origin   -00128.000000,-00128.000000,+00128.000000\r\n"
+    "      Normal   +00000.000000,+00000.000000,+00001.000000\r\n"
+    "      TextureU +00000.000000,+00001.000000,+00000.000000\r\n"
+    "      TextureV -00001.000000,+00000.000000,+00000.000000\r\n"
+    "      Vertex   -00128.000000,-00128.000000,+00128.000000\r\n"
+    "      Vertex   +00128.000000,-00128.000000,+00128.000000\r\n"
+    "      Vertex   +00128.000000,+00128.000000,+00128.000000\r\n"
+    "      Vertex   -00128.000000,+00128.000000,+00128.000000\r\n"
+    "   End Polygon\r\n"
+    "   Begin Polygon Item=DefaultCube\r\n"
+    "      Origin   +00128.000000,-00128.000000,-00128.000000\r\n"
+    "      Normal   +00000.000000,+00000.000000,-00001.000000\r\n"
+    "      TextureU +00000.000000,+00001.000000,+00000.000000\r\n"
+    "      TextureV +00001.000000,+00000.000000,+00000.000000\r\n"
+    "      Vertex   +00128.000000,-00128.000000,-00128.000000\r\n"
+    "      Vertex   -00128.000000,-00128.000000,-00128.000000\r\n"
+    "      Vertex   -00128.000000,+00128.000000,-00128.000000\r\n"
+    "      Vertex   +00128.000000,+00128.000000,-00128.000000\r\n"
+    "   End Polygon\r\n"
+    "End PolyList\r\n";
+
+static bool WriteDefaultBuilderCube(char* path, size_t pathSize)
+{
+    char tempDirectory[MAX_PATH] = {};
+    char seedPath[MAX_PATH] = {};
+    if (!GetTempPathA(static_cast<DWORD>(std::size(tempDirectory)),
+                      tempDirectory)
+        || !GetTempFileNameA(tempDirectory, "RBB", 0, seedPath))
+        return false;
+
+    DeleteFileA(seedPath);
+    char* extension = strrchr(seedPath, '.');
+    if (!extension)
+        return false;
+    strcpy_s(extension, static_cast<size_t>(seedPath + sizeof(seedPath) - extension),
+             ".t3d");
+
+    HANDLE file = CreateFileA(seedPath, GENERIC_WRITE, 0, nullptr,
+                              CREATE_NEW, FILE_ATTRIBUTE_TEMPORARY, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return false;
+
+    DWORD written = 0;
+    const DWORD size = static_cast<DWORD>(sizeof(kDefaultBuilderCube) - 1);
+    const bool success = WriteFile(file, kDefaultBuilderCube, size,
+                                   &written, nullptr) != FALSE
+        && written == size;
+    CloseHandle(file);
+    if (!success)
+    {
+        DeleteFileA(seedPath);
+        return false;
+    }
+
+    strncpy_s(path, pathSize, seedPath, _TRUNCATE);
+    return true;
+}
+
+static void __cdecl RebuildDefaultBuilderBrush()
+{
+    char brushFile[MAX_PATH] = {};
+    if (!WriteDefaultBuilderCube(brushFile, std::size(brushFile)))
+    {
+        MessageBoxA(GetActiveWindow(),
+                    "Could not create the temporary default-cube brush file.",
+                    "Rebuild Builder Brush", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    char importCommand[MAX_PATH + 32] = {};
+    _snprintf_s(importCommand, sizeof(importCommand), _TRUNCATE,
+                "BRUSH IMPORT FILE=\"%s\"", brushFile);
+    const bool reset = ExecEditorCommand("BRUSH RESET");
+    const bool imported = ExecEditorCommand(importCommand);
+    DeleteFileA(brushFile);
+
+    if (!reset || !imported)
+        MessageBoxA(GetActiveWindow(),
+                    "The editor did not accept the builder-brush rebuild command.",
+                    "Rebuild Builder Brush", MB_OK | MB_ICONERROR);
 }
 
 static bool g_gameView = false;
@@ -558,6 +702,12 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         je   do_anim_browser
         cmp  dword ptr [esp+4], 40907 // Reset Property Window Positions
         je   do_reset_property_windows
+        cmp  dword ptr [esp+4], 40911 // Rebuild Builder Brush as Default Cube
+        je   do_reset_builder_brush
+        cmp  dword ptr [esp+4], 40912 // Copy selected BSP texture
+        je   do_copy_bsp_texture
+        cmp  dword ptr [esp+4], 40913 // Paste copied BSP texture
+        je   do_paste_bsp_texture
         cmp  dword ptr [esp+4], 40902 // Rebuild All Maps
         je   do_rebuild_all
         cmp  dword ptr [esp+4], 40900 // Reloaded Github
@@ -594,6 +744,18 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
 
     do_reset_property_windows:
         call ResetPropertyWindows
+        retn 4
+
+    do_reset_builder_brush:
+        call RebuildDefaultBuilderBrush
+        retn 4
+
+    do_copy_bsp_texture:
+        call BspTextureClipboard::CopySelectedTexture
+        retn 4
+
+    do_paste_bsp_texture:
+        call BspTextureClipboard::PasteTexture
         retn 4
 
     do_rebuild_all:
@@ -1201,6 +1363,7 @@ JMP_HOOK(0x10eb8722, DupOffsetHook2)
 void General::Initialize()
 {
     INSTALL_HOOKS;
+    GridSizeShortcut::Initialize();
     InstallMemoryHooks();
     InstallMinimizeOnPlayHook();
     InstallPlayLevelLaunchHook();

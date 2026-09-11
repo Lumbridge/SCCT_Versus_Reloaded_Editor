@@ -1,0 +1,1182 @@
+#include "RecoveredSurfacePartition.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <limits>
+#include <new>
+#include <sstream>
+#include <stdexcept>
+#include <utility>
+
+namespace RecoveredSurfacePartition
+{
+    namespace
+    {
+        Vec3 Add(const Vec3& a, const Vec3& b) { return {a.x+b.x,a.y+b.y,a.z+b.z}; }
+        Vec3 Sub(const Vec3& a, const Vec3& b) { return {a.x-b.x,a.y-b.y,a.z-b.z}; }
+        Vec3 Scale(const Vec3& a, double scale) { return {a.x*scale,a.y*scale,a.z*scale}; }
+        double Dot(const Vec3& a, const Vec3& b) { return a.x*b.x+a.y*b.y+a.z*b.z; }
+        Vec3 Cross(const Vec3& a, const Vec3& b)
+        {
+            return {a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x};
+        }
+        bool Finite(const Vec3& point)
+        {
+            return std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z);
+        }
+        bool Normalize(Vec3& normal)
+        {
+            const double length = std::hypot(normal.x,normal.y,normal.z);
+            if (!Finite(normal) || !std::isfinite(length) || length < 1e-12)
+                return false;
+            normal = Scale(normal,1.0/length);
+            return true;
+        }
+
+        struct Point { double x; double y; };
+        using Polygon = std::vector<Point>;
+
+        struct Work
+        {
+            const Limits& limits;
+            std::size_t used = 0;
+            std::string& error;
+            bool Spend(std::size_t amount)
+            {
+                if (amount > limits.maxWork || used > limits.maxWork-amount)
+                {
+                    error = "Surface partitioning exceeded its clipping-work limit.";
+                    return false;
+                }
+                used += amount;
+                return true;
+            }
+        };
+
+        double Side(const Point& point, const Point& a, const Point& b)
+        {
+            return (b.x-a.x)*(point.y-a.y)-(b.y-a.y)*(point.x-a.x);
+        }
+
+        double Area(const Polygon& polygon)
+        {
+            double area = 0;
+            for (std::size_t index = 1; index+1 < polygon.size(); ++index)
+                area += Side(polygon[index+1],polygon.front(),polygon[index]);
+            return area*0.5;
+        }
+
+        void Append(Polygon& polygon, const Point& point)
+        {
+            if (polygon.empty() || polygon.back().x != point.x || polygon.back().y != point.y)
+                polygon.push_back(point);
+        }
+
+        void Clean(Polygon& polygon,double flatTolerance=0)
+        {
+            if (polygon.size() > 1 && polygon.front().x == polygon.back().x
+                && polygon.front().y == polygon.back().y)
+                polygon.pop_back();
+            if (polygon.size() < 3 || Area(polygon) == 0)
+                polygon.clear();
+            if (flatTolerance>0 && !polygon.empty() && Area(polygon)<0)
+            {
+                const Point origin=polygon.front();
+                Point farthest=origin;
+                double longest=0;
+                for (const Point point:polygon)
+                {
+                    const double length=std::hypot(point.x-origin.x,point.y-origin.y);
+                    if (length>longest) { longest=length; farthest=point; }
+                }
+                bool flat=longest<=flatTolerance;
+                if (!flat)
+                {
+                    flat=std::all_of(polygon.begin(),polygon.end(),[&](const Point& point)
+                    {
+                        return std::fabs(Side(point,origin,farthest))<=flatTolerance*longest;
+                    });
+                }
+                // Only reversed numerical artifacts qualify. Positive thin
+                // fragments still contribute to exact complementary coverage
+                // and must survive until the whole face is encoded as floats.
+                if (flat) polygon.clear();
+            }
+        }
+
+        struct Frame
+        {
+            Vec3 origin, normal, u, v;
+            Point Project(const Vec3& point) const
+            {
+                const Vec3 delta = Sub(point,origin);
+                return {Dot(delta,u),Dot(delta,v)};
+            }
+            Vec3 Restore(const Point& point) const
+            {
+                return Add(origin,Add(Scale(u,point.x),Scale(v,point.y)));
+            }
+        };
+
+        bool ValidLimits(const Limits& limits, std::string& error)
+        {
+            if (!std::isfinite(limits.epsilon) || limits.epsilon <= 0
+                || !std::isfinite(limits.planeTolerance) || limits.planeTolerance < 0
+                || !std::isfinite(limits.normalTolerance) || limits.normalTolerance < 0
+                || limits.normalTolerance >= 1 || limits.maxVertices < 3)
+            {
+                error = "Surface partitioning requires valid tolerances and vertex limits.";
+                return false;
+            }
+            return true;
+        }
+
+        bool ValidatePolygon(const Polygon& polygon, Work& work)
+        {
+            const double area = Area(polygon);
+            if (polygon.size() < 3 || !std::isfinite(area) || area <= 0)
+            {
+                work.error = "A source polygon has zero area or reversed winding.";
+                return false;
+            }
+            for (std::size_t index = 0; index < polygon.size(); ++index)
+            {
+                if (!work.Spend(polygon.size()))
+                    return false;
+                const Point a = polygon[index], b = polygon[(index+1)%polygon.size()];
+                const double length = std::hypot(b.x-a.x,b.y-a.y);
+                if (!std::isfinite(length) || length == 0)
+                {
+                    work.error = "A source polygon has an invalid or repeated edge.";
+                    return false;
+                }
+                for (std::size_t pointIndex = 0; pointIndex < polygon.size(); ++pointIndex)
+                {
+                    const Point point = polygon[pointIndex];
+                    if (Side(point,a,b) < -work.limits.epsilon*length)
+                    {
+                        std::ostringstream message;
+                        message << "A source polygon is not convex; edge " << index
+                                << " places vertex " << pointIndex << " outside by "
+                                << -Side(point,a,b)/length << " units.";
+                        work.error = message.str();
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        bool DisjointBounds(const Polygon& a, const Polygon& b)
+        {
+            if (a.empty() || b.empty()) return true;
+            auto bounds = [](const Polygon& polygon)
+            {
+                std::array<double,4> result{polygon[0].x,polygon[0].y,polygon[0].x,polygon[0].y};
+                for (const Point point : polygon)
+                {
+                    result[0]=(std::min)(result[0],point.x); result[1]=(std::min)(result[1],point.y);
+                    result[2]=(std::max)(result[2],point.x); result[3]=(std::max)(result[3],point.y);
+                }
+                return result;
+            };
+            const auto first=bounds(a), second=bounds(b);
+            return first[2]<=second[0] || second[2]<=first[0]
+                || first[3]<=second[1] || second[3]<=first[1];
+        }
+
+        double FloatSourceTolerance(const Surface& source, const Frame& frame)
+        {
+            // Cooked vertices are float32. Only exact float32 inputs qualify
+            // for repairing their near-collinear edge noise; arbitrary double
+            // precision polygons retain the caller's strict tolerance.
+            Vec3 spacing{};
+            for (const Vec3& point : source.vertices)
+            {
+                const double values[]={point.x,point.y,point.z};
+                double* maximum[]={&spacing.x,&spacing.y,&spacing.z};
+                for (std::size_t axis=0;axis<3;++axis)
+                {
+                    if (std::fabs(values[axis])>(std::numeric_limits<float>::max)()) return 0;
+                    const float value=static_cast<float>(values[axis]);
+                    if (static_cast<double>(value)!=values[axis]) return 0;
+                    const float up=std::nextafter(value,std::numeric_limits<float>::infinity());
+                    const float down=std::nextafter(value,-std::numeric_limits<float>::infinity());
+                    if (!std::isfinite(up) || !std::isfinite(down)) return 0;
+                    const double ulp=(std::max)(double(up)-value,double(value)-down);
+                    *maximum[axis]=(std::max)(*maximum[axis],ulp);
+                }
+            }
+            const double u=std::fabs(frame.u.x)*spacing.x+std::fabs(frame.u.y)*spacing.y
+                +std::fabs(frame.u.z)*spacing.z;
+            const double v=std::fabs(frame.v.x)*spacing.x+std::fabs(frame.v.y)*spacing.y
+                +std::fabs(frame.v.z)*spacing.z;
+            return std::hypot(u,v);
+        }
+
+        bool EdgeWithinBoundaryTolerance(const Point& a,const Point& b,
+                                         const Polygon& hull,double tolerance)
+        {
+            // Inside a convex polygon, distance to its boundary is the
+            // minimum inward distance to its supporting lines. Find the
+            // segment interval strictly deeper than tolerance from ALL lines.
+            // An empty interval proves the whole edge remains in the boundary
+            // tube, including across joins of near-collinear hull segments.
+            double first=0,last=1;
+            for (std::size_t edge=0;edge<hull.size();++edge)
+            {
+                const Point p=hull[edge],q=hull[(edge+1)%hull.size()];
+                const double length=std::hypot(q.x-p.x,q.y-p.y);
+                const double da=Side(a,p,q)/length,db=Side(b,p,q)/length;
+                if (da<=tolerance && db<=tolerance) return true;
+                if (da>tolerance && db>tolerance) continue;
+                const double crossing=(tolerance-da)/(db-da);
+                if (da<=tolerance) first=(std::max)(first,crossing);
+                else last=(std::min)(last,crossing);
+                if (first>=last) return true;
+            }
+            return false;
+        }
+
+        bool RepairFloatBoundary(Polygon& polygon,double tolerance,Work& work)
+        {
+            if (!std::isfinite(tolerance) || tolerance<=0 || Area(polygon)<=0) return false;
+            Polygon points=polygon;
+            std::sort(points.begin(),points.end(),[](const Point& a,const Point& b)
+            {
+                return a.x<b.x || (a.x==b.x && a.y<b.y);
+            });
+            points.erase(std::unique(points.begin(),points.end(),[](const Point& a,const Point& b)
+            {
+                return a.x==b.x && a.y==b.y;
+            }),points.end());
+            if (points.size()<3) return false;
+            Polygon hull;
+            for (const Point point : points)
+            {
+                while (hull.size()>=2 && Side(point,hull[hull.size()-2],hull.back())<=0)
+                    hull.pop_back();
+                hull.push_back(point);
+            }
+            const std::size_t lowerSize=hull.size();
+            for (std::size_t index=points.size()-1;index-- > 0;)
+            {
+                const Point point=points[index];
+                while (hull.size()>lowerSize && Side(point,hull[hull.size()-2],hull.back())<=0)
+                    hull.pop_back();
+                hull.push_back(point);
+            }
+            hull.pop_back();
+            if (hull.size()<3) return false;
+
+            double perimeter=0;
+            for (std::size_t index=0;index<hull.size();++index)
+            {
+                const Point a=hull[index],b=hull[(index+1)%hull.size()];
+                perimeter+=std::hypot(b.x-a.x,b.y-a.y);
+            }
+            if (std::fabs(Area(polygon)-Area(hull))>tolerance*perimeter) return false;
+            // Every original edge must stay in the hull boundary's precision
+            // tube. This admits backtracking across near-collinear joins from
+            // cooked BSP welding, but never bridges a real notch or crossing.
+            for (std::size_t index=0;index<polygon.size();++index)
+            {
+                if (!work.Spend(hull.size())) return false;
+                const Point a=polygon[index],b=polygon[(index+1)%polygon.size()];
+                if (!EdgeWithinBoundaryTolerance(a,b,hull,tolerance)) return false;
+            }
+            polygon=std::move(hull);
+            return true;
+        }
+
+        bool OnSegment(const Point& point,const Point& a,const Point& b)
+        {
+            return Side(point,a,b)==0 && point.x>=(std::min)(a.x,b.x)
+                && point.x<=(std::max)(a.x,b.x) && point.y>=(std::min)(a.y,b.y)
+                && point.y<=(std::max)(a.y,b.y);
+        }
+
+        bool SegmentsIntersect(const Point& a,const Point& b,const Point& c,const Point& d)
+        {
+            const double ac=Side(c,a,b),ad=Side(d,a,b),ca=Side(a,c,d),cb=Side(b,c,d);
+            if (((ac<0 && ad>0)||(ac>0 && ad<0)) && ((ca<0 && cb>0)||(ca>0 && cb<0)))
+                return true;
+            return OnSegment(c,a,b)||OnSegment(d,a,b)||OnSegment(a,c,d)||OnSegment(b,c,d);
+        }
+
+        bool TriangulateSimple(const Polygon& polygon,std::vector<Polygon>& triangles,Work& work)
+        {
+            const double originalArea=Area(polygon);
+            if (polygon.size()<3 || !std::isfinite(originalArea) || originalArea<=0)
+            {
+                work.error="A material polygon has zero area or reversed winding.";
+                return false;
+            }
+            for (std::size_t first=0;first<polygon.size();++first)
+            {
+                if (!work.Spend(polygon.size())) return false;
+                const std::size_t firstNext=(first+1)%polygon.size();
+                for (std::size_t second=first+1;second<polygon.size();++second)
+                {
+                    const std::size_t secondNext=(second+1)%polygon.size();
+                    if (firstNext==second || secondNext==first) continue;
+                    if (SegmentsIntersect(polygon[first],polygon[firstNext],polygon[second],polygon[secondNext]))
+                    {
+                        work.error="A material polygon has self-intersecting boundary edges.";
+                        return false;
+                    }
+                }
+            }
+            std::vector<std::size_t> indices;
+            for (std::size_t index=0;index<polygon.size();++index) indices.push_back(index);
+            double totalArea=0;
+            while (indices.size()>3)
+            {
+                bool found=false;
+                for (std::size_t index=0;index<indices.size();++index)
+                {
+                    if (!work.Spend(indices.size())) return false;
+                    const std::size_t previous=indices[(index+indices.size()-1)%indices.size()];
+                    const std::size_t current=indices[index];
+                    const std::size_t next=indices[(index+1)%indices.size()];
+                    const Point a=polygon[previous],b=polygon[current],c=polygon[next];
+                    if (Side(c,a,b)<=0) continue;
+                    bool blocked=false;
+                    for (const std::size_t other:indices)
+                    {
+                        if (other==previous || other==current || other==next) continue;
+                        const Point point=polygon[other];
+                        if (Side(point,a,b)>=0 && Side(point,b,c)>=0 && Side(point,c,a)>=0)
+                        {
+                            blocked=true;
+                            break;
+                        }
+                    }
+                    if (blocked) continue;
+                    if (triangles.size()>=work.limits.maxPieces)
+                    {
+                        work.error="Material polygon triangulation exceeded its polygon budget.";
+                        return false;
+                    }
+                    Polygon triangle{a,b,c};
+                    totalArea+=Area(triangle);
+                    triangles.push_back(std::move(triangle));
+                    indices.erase(indices.begin()+static_cast<std::ptrdiff_t>(index));
+                    found=true;
+                    break;
+                }
+                if (!found)
+                {
+                    work.error="A concave material polygon could not be triangulated without degeneracy.";
+                    return false;
+                }
+            }
+            Polygon last{polygon[indices[0]],polygon[indices[1]],polygon[indices[2]]};
+            if (Area(last)<0)
+            {
+                work.error="Material triangulation produced a reversed final triangle.";
+                return false;
+            }
+            if (Area(last)>0)
+            {
+                if (triangles.size()>=work.limits.maxPieces)
+                {
+                    work.error="Material polygon triangulation exceeded its polygon budget.";
+                    return false;
+                }
+                totalArea+=Area(last);
+                triangles.push_back(std::move(last));
+            }
+            if (!std::isfinite(totalArea)
+                || std::fabs(totalArea-originalArea)>(std::max)(work.limits.epsilon*work.limits.epsilon,originalArea*1e-10))
+            {
+                work.error="Material triangulation could not preserve the polygon area.";
+                return false;
+            }
+            return true;
+        }
+
+        bool MakeFrame(const std::vector<Vec3>& vertices, Vec3 normal,
+                       Frame& frame, Polygon& polygon, Work& work)
+        {
+            if (vertices.size() < 3 || vertices.size() > work.limits.maxVertices
+                || !Normalize(normal) || !Finite(vertices.front()))
+            {
+                work.error = "The source face has an invalid normal or vertex count.";
+                return false;
+            }
+            frame.origin = vertices.front();
+            frame.normal = normal;
+            const Vec3 reference = std::fabs(normal.x) < 0.8 ? Vec3{1,0,0} : Vec3{0,1,0};
+            frame.u = Cross(reference,normal);
+            if (!Normalize(frame.u))
+            {
+                work.error = "The source face has no stable projection basis.";
+                return false;
+            }
+            frame.v = Cross(normal,frame.u);
+            for (const Vec3& point : vertices)
+            {
+                if (!Finite(point) || std::fabs(Dot(normal,Sub(point,frame.origin))) > work.limits.epsilon*8)
+                {
+                    work.error = "The source face is non-finite or non-planar.";
+                    return false;
+                }
+                const Point projected = frame.Project(point);
+                if (!std::isfinite(projected.x) || !std::isfinite(projected.y))
+                {
+                    work.error = "The source face could not be projected safely.";
+                    return false;
+                }
+                Append(polygon,projected);
+            }
+            Clean(polygon);
+            return ValidatePolygon(polygon,work);
+        }
+
+        // A single complementary split, using the SAME exact zero decision
+        // and intersection for both sides. Epsilon is never applied twice.
+        bool Split(const Polygon& polygon, const Point& a, const Point& b,
+                   Polygon& inside, Polygon& outside, Work& work)
+        {
+            if (!work.Spend(polygon.size()))
+                return false;
+            for (std::size_t index = 0; index < polygon.size(); ++index)
+            {
+                const Point p = polygon[index], q = polygon[(index+1)%polygon.size()];
+                const double dp = Side(p,a,b), dq = Side(q,a,b);
+                if (!std::isfinite(dp) || !std::isfinite(dq))
+                {
+                    work.error = "Surface clipping produced a non-finite distance.";
+                    return false;
+                }
+                if (dp >= 0) Append(inside,p);
+                if (dp <= 0) Append(outside,p);
+                if ((dp < 0 && dq > 0) || (dp > 0 && dq < 0))
+                {
+                    const double t = dp/(dp-dq);
+                    const Point intersection{p.x+(q.x-p.x)*t,p.y+(q.y-p.y)*t};
+                    if (!std::isfinite(intersection.x) || !std::isfinite(intersection.y))
+                    {
+                        work.error = "Surface clipping produced a non-finite intersection.";
+                        return false;
+                    }
+                    Append(inside,intersection);
+                    Append(outside,intersection);
+                }
+            }
+            Clean(inside,work.limits.epsilon);
+            Clean(outside,work.limits.epsilon);
+            if ((!inside.empty() && Area(inside) < 0) || (!outside.empty() && Area(outside) < 0))
+            {
+                work.error = "Surface clipping produced an unstable sliver with reversed area.";
+                return false;
+            }
+            return true;
+        }
+
+        bool AppendPiece(const Polygon& polygon, int material, const Frame& frame,
+                         std::vector<Piece>& output, Work& work)
+        {
+            if (output.size() >= work.limits.maxPieces || polygon.size() > work.limits.maxVertices)
+            {
+                work.error = "Surface reconstruction exceeded its polygon or vertex budget.";
+                return false;
+            }
+            Piece piece;
+            piece.materialIndex = material;
+            for (const Point point : polygon)
+            {
+                const Vec3 restored = frame.Restore(point);
+                if (!Finite(restored))
+                {
+                    work.error = "A reconstructed surface vertex is non-finite.";
+                    return false;
+                }
+                piece.vertices.push_back(restored);
+            }
+            output.push_back(std::move(piece));
+            return true;
+        }
+    }
+
+    bool Partition(const RecoveredBspGeometry::Face& face,
+                   const std::vector<Surface>& candidates, int fallbackMaterialIndex,
+                   std::vector<Piece>& result, std::string& error, const Limits& limits)
+    try
+    {
+        result.clear();
+        error.clear();
+        if (!ValidLimits(limits,error)) return false;
+        Work work{limits,0,error};
+        Frame frame;
+        Polygon original;
+        if (!MakeFrame(face.vertices,face.normal,frame,original,work))
+        {
+            error = "Target brush face: "+error;
+            return false;
+        }
+        const double originalArea = Area(original);
+        std::vector<Polygon> remaining{original};
+        std::vector<Piece> output;
+        double totalArea = 0;
+        for (const Surface& candidate : candidates)
+        {
+            if (!work.Spend(1)) return false;
+            if (remaining.empty()) break;
+            Vec3 candidateNormal = candidate.normal;
+            if (candidate.vertices.size() < 3 || candidate.vertices.size() > limits.maxVertices
+                || !Normalize(candidateNormal))
+            {
+                error = "A material source polygon has an invalid normal or vertex count.";
+                return false;
+            }
+            if (std::fabs(Dot(candidateNormal,frame.normal)) < 1-limits.normalTolerance)
+                continue;
+            bool coplanar = true;
+            Polygon boundary;
+            for (const Vec3& vertex : candidate.vertices)
+            {
+                if (!Finite(vertex))
+                {
+                    error = "A material source polygon contains a non-finite vertex.";
+                    return false;
+                }
+                if (std::fabs(Dot(frame.normal,Sub(vertex,frame.origin))) > limits.planeTolerance)
+                    coplanar = false;
+                Append(boundary,frame.Project(vertex));
+            }
+            if (!coplanar) continue;
+            Clean(boundary);
+            if (DisjointBounds(boundary,original)) continue;
+            if (Dot(candidateNormal,frame.normal) < 0)
+                std::reverse(boundary.begin(),boundary.end());
+            std::vector<Polygon> masks;
+            if (ValidatePolygon(boundary,work))
+                masks.push_back(std::move(boundary));
+            else if (RepairFloatBoundary(boundary,FloatSourceTolerance(candidate,frame),work)
+                     && ValidatePolygon(boundary,work))
+            {
+                masks.push_back(std::move(boundary));
+                error.clear();
+            }
+            else if (TriangulateSimple(boundary,masks,work))
+                error.clear();
+            else
+            {
+                error = "Material candidate "+std::to_string(&candidate-candidates.data())
+                    +" (materialIndex="+std::to_string(candidate.materialIndex)+"): "+error;
+                return false;
+            }
+            for (const Polygon& mask:masks)
+            {
+                if (remaining.empty()) break;
+                if (DisjointBounds(mask,original)) continue;
+                std::vector<Polygon> nextRemaining;
+                for (const Polygon& fragment : remaining)
+                {
+                    Polygon piece = fragment;
+                    std::vector<Polygon> outside;
+                    for (std::size_t edge = 0; edge < mask.size() && !piece.empty(); ++edge)
+                    {
+                        Polygon inside, cutOff;
+                        if (!Split(piece,mask[edge],mask[(edge+1)%mask.size()],inside,cutOff,work))
+                        {
+                            error="Material candidate "+std::to_string(&candidate-candidates.data())
+                                +" (materialIndex="+std::to_string(candidate.materialIndex)+"): "+error;
+                            return false;
+                        }
+                        if (!cutOff.empty()) outside.push_back(std::move(cutOff));
+                        piece = std::move(inside);
+                    }
+                    if (piece.empty())
+                        nextRemaining.push_back(fragment); // No overlap: avoid pointless fragmentation.
+                    else
+                    {
+                        totalArea += Area(piece);
+                        if (!AppendPiece(piece,candidate.materialIndex,frame,output,work)) return false;
+                        for (Polygon& uncovered : outside)
+                            nextRemaining.push_back(std::move(uncovered));
+                    }
+                    if (nextRemaining.size() > limits.maxPieces
+                        || output.size() > limits.maxPieces-nextRemaining.size())
+                    {
+                        error = "Surface reconstruction exceeded its polygon budget.";
+                        return false;
+                    }
+                }
+                remaining = std::move(nextRemaining);
+            }
+        }
+        for (const Polygon& fragment : remaining)
+        {
+            totalArea += Area(fragment);
+            if (!AppendPiece(fragment,fallbackMaterialIndex,frame,output,work)) return false;
+        }
+        if (!std::isfinite(totalArea)
+            || std::fabs(totalArea-originalArea) > (std::max)(limits.epsilon*limits.epsilon,originalArea*1e-10))
+        {
+            error = "Material partitioning could not preserve the source face area.";
+            return false;
+        }
+        result = std::move(output);
+        return true;
+    }
+    catch (const std::bad_alloc&)
+    {
+        result.clear(); error = "There is insufficient memory to partition the recovered surfaces."; return false;
+    }
+    catch (const std::length_error&)
+    {
+        result.clear(); error = "The recovered surface partition exceeds container capacity."; return false;
+    }
+
+    bool PrepareForEditor(const RecoveredBspGeometry::Face& face,
+                          const std::vector<Piece>& pieces,std::size_t maxVertices,
+                          std::vector<Piece>& result,std::string& error,const Limits& limits)
+    try
+    {
+        result.clear(); error.clear();
+        if (!ValidLimits(limits,error)) return false;
+        if (maxVertices<3 || pieces.size()>limits.maxPieces)
+        {
+            error="Editor surface preparation requires valid polygon and vertex limits.";
+            return false;
+        }
+        Work work{limits,0,error};
+        Frame frame;
+        Polygon original;
+        if (!MakeFrame(face.vertices,face.normal,frame,original,work)) return false;
+        auto encode=[&](const std::vector<Vec3>& vertices,std::vector<Vec3>& encodedVertices,
+                        Polygon& encoded,double& areaBound,double& displacement)
+        {
+            if (vertices.size()>limits.maxVertices)
+            {
+                error="Editor surface preparation exceeded its vertex budget.";
+                return false;
+            }
+            if (!work.Spend(vertices.size())) return false;
+            displacement=0;
+            double perimeter=0;
+            for (std::size_t index=0;index<vertices.size();++index)
+            {
+                const Vec3& point=vertices[index];
+                if (!Finite(point) || std::fabs(point.x)>(std::numeric_limits<float>::max)()
+                    || std::fabs(point.y)>(std::numeric_limits<float>::max)()
+                    || std::fabs(point.z)>(std::numeric_limits<float>::max)())
+                {
+                    error="A recovered surface vertex cannot be represented by editor float coordinates.";
+                    return false;
+                }
+                const Vec3 rounded{static_cast<float>(point.x),static_cast<float>(point.y),
+                    static_cast<float>(point.z)};
+                const Point before=frame.Project(point),after=frame.Project(rounded);
+                const Point next=frame.Project(vertices[(index+1)%vertices.size()]);
+                displacement=(std::max)(displacement,std::hypot(after.x-before.x,after.y-before.y));
+                perimeter+=std::hypot(next.x-before.x,next.y-before.y);
+                if (encoded.empty() || encoded.back().x!=after.x || encoded.back().y!=after.y)
+                {
+                    encoded.push_back(after);
+                    encodedVertices.push_back(rounded);
+                }
+            }
+            if (encoded.size()>1 && encoded.front().x==encoded.back().x && encoded.front().y==encoded.back().y)
+            {
+                encoded.pop_back(); encodedVertices.pop_back();
+            }
+            // Moving a polygon's vertices by at most d changes its signed
+            // area by at most d*perimeter + vertexCount*d*d/2. This includes
+            // internal subdivisions, so the conservative bound never assumes
+            // that independently rounded boundary points cancel perfectly.
+            areaBound=displacement*perimeter+vertices.size()*displacement*displacement*0.5;
+            if (!std::isfinite(areaBound))
+            {
+                error="Editor surface rounding produced a non-finite area bound.";
+                return false;
+            }
+            return true;
+        };
+        std::vector<Vec3> originalVertices;
+        Polygon encodedOriginal;
+        double roundingBound=0,originalDisplacement=0;
+        if (!encode(face.vertices,originalVertices,encodedOriginal,roundingBound,originalDisplacement)) return false;
+        const double originalArea=Area(encodedOriginal);
+        if (encodedOriginal.size()<3 || !std::isfinite(originalArea) || originalArea<=0)
+        {
+            error="An original structural brush face collapses or reverses in editor float coordinates.";
+            return false;
+        }
+        std::vector<Piece> output;
+        double totalArea=0;
+        for (const Piece& piece:pieces)
+        {
+            std::vector<Vec3> vertices;
+            Polygon encoded;
+            double pieceBound=0,displacement=0;
+            if (!encode(piece.vertices,vertices,encoded,pieceBound,displacement)) return false;
+            roundingBound+=pieceBound;
+            const double area=Area(encoded);
+            if (encoded.size()<3 || area==0) continue;
+            auto withinRoundingWidth=[&]()
+            {
+                if (piece.vertices.size()<3) return true;
+                const Point a=frame.Project(piece.vertices.front());
+                Point b=a;
+                double longest=0;
+                for (const Vec3& point:piece.vertices)
+                {
+                    const Point p=frame.Project(point);
+                    const double length=std::hypot(p.x-a.x,p.y-a.y);
+                    if (length>longest) { longest=length; b=p; }
+                }
+                if (longest==0) return true;
+                return std::all_of(piece.vertices.begin(),piece.vertices.end(),[&](const Vec3& point)
+                {
+                    return std::fabs(Side(frame.Project(point),a,b))<=displacement*longest;
+                });
+            };
+            if (!std::isfinite(area) || area<0)
+            {
+                if (std::isfinite(area) && withinRoundingWidth()) continue;
+                error="A material subdivision reverses winding in editor float coordinates.";
+                return false;
+            }
+            std::vector<Polygon> parts;
+            if (encoded.size()<=maxVertices && ValidatePolygon(encoded,work)) parts.push_back(encoded);
+            else if (RepairFloatBoundary(encoded,displacement*2,work) && ValidatePolygon(encoded,work))
+            {
+                if (encoded.size()<=maxVertices) parts.push_back(encoded);
+                else if (!TriangulateSimple(encoded,parts,work)) return false;
+                error.clear();
+            }
+            else if (TriangulateSimple(encoded,parts,work)) error.clear();
+            else if (withinRoundingWidth()) { error.clear(); continue; }
+            else return false;
+            for (const Polygon& part:parts)
+            {
+                if (output.size()>=limits.maxPieces)
+                {
+                    error="Editor surface preparation exceeded its polygon budget.";
+                    return false;
+                }
+                Piece prepared;
+                prepared.materialIndex=piece.materialIndex;
+                for (const Point point:part)
+                {
+                    if (!work.Spend(vertices.size())) return false;
+                    const auto found=std::find_if(vertices.begin(),vertices.end(),[&](const Vec3& vertex)
+                    {
+                        const Point input=frame.Project(vertex);
+                        return point.x==input.x && point.y==input.y;
+                    });
+                    if (found==vertices.end())
+                    {
+                        error="Editor surface triangulation introduced an unexpected vertex.";
+                        return false;
+                    }
+                    prepared.vertices.push_back(*found);
+                }
+                totalArea+=Area(part);
+                output.push_back(std::move(prepared));
+            }
+        }
+        if (output.empty() || !std::isfinite(totalArea)
+            || std::fabs(totalArea-originalArea)>roundingBound+(std::max)(limits.epsilon*limits.epsilon,originalArea*1e-10))
+        {
+            error="Editor float conversion could not preserve coverage of the original structural face.";
+            return false;
+        }
+        result=std::move(output);
+        return true;
+    }
+    catch (const std::bad_alloc&)
+    {
+        result.clear(); error="There is insufficient memory to prepare recovered surfaces for the editor."; return false;
+    }
+    catch (const std::length_error&)
+    {
+        result.clear(); error="Editor surface preparation exceeds container capacity."; return false;
+    }
+
+    bool ValidateEditorBrush(const RecoveredBspGeometry::Brush& brush,
+                             std::vector<bool>& collapsedFaces,std::string& error,const Limits& limits)
+    try
+    {
+        collapsedFaces.clear(); error.clear();
+        if (!ValidLimits(limits,error)) return false;
+        Work work{limits,0,error};
+        std::vector<Vec3> points;
+        std::vector<std::vector<std::size_t>> faces;
+        std::vector<bool> collapsed;
+        for (const auto& face:brush.faces)
+        {
+            Frame frame;
+            Polygon polygon;
+            if (!MakeFrame(face.vertices,face.normal,frame,polygon,work)) return false;
+            std::vector<std::size_t> indices;
+            for (const Vec3& source:face.vertices)
+            {
+                if (std::fabs(source.x)>(std::numeric_limits<float>::max)()
+                    || std::fabs(source.y)>(std::numeric_limits<float>::max)()
+                    || std::fabs(source.z)>(std::numeric_limits<float>::max)())
+                {
+                    error="A structural brush vertex exceeds editor float coordinates.";
+                    return false;
+                }
+                const Vec3 point{static_cast<float>(source.x),static_cast<float>(source.y),static_cast<float>(source.z)};
+                if (!work.Spend(points.size()+1)) return false;
+                const auto found=std::find_if(points.begin(),points.end(),[&](const Vec3& value)
+                {
+                    // The BSP reconstruction already welds shared vertices
+                    // at this tolerance. Near coordinate zero, casting its
+                    // double arithmetic noise to float does not remove it.
+                    const Vec3 difference=Sub(point,value);
+                    return std::hypot(difference.x,difference.y,difference.z)<=limits.epsilon;
+                });
+                const std::size_t index=static_cast<std::size_t>(found-points.begin());
+                if (found==points.end()) points.push_back(point);
+                if (indices.empty() || indices.back()!=index) indices.push_back(index);
+            }
+            if (indices.size()>1 && indices.front()==indices.back()) indices.pop_back();
+            Vec3 area{};
+            for (std::size_t index=1;index+1<indices.size();++index)
+                area=Add(area,Cross(Sub(points[indices[index]],points[indices[0]]),
+                    Sub(points[indices[index+1]],points[indices[0]])));
+            const bool zero=area.x==0 && area.y==0 && area.z==0;
+            if (!zero && Dot(area,frame.normal)<=0)
+            {
+                error="An original brush face reverses winding in editor float coordinates.";
+                return false;
+            }
+            collapsed.push_back(zero);
+            if (!zero) faces.push_back(std::move(indices));
+        }
+        if (faces.size()<4 || points.empty())
+        {
+            error="A recovered structural brush collapses in editor float coordinates.";
+            return false;
+        }
+        std::vector<std::pair<std::size_t,std::size_t>> edges;
+        double volumeSix=0;
+        const Vec3 reference=points.front();
+        for (const auto& face:faces)
+        {
+            for (std::size_t index=1;index+1<face.size();++index)
+                volumeSix+=Dot(Sub(points[face[0]],reference),Cross(Sub(points[face[index]],reference),
+                    Sub(points[face[index+1]],reference)));
+            for (std::size_t index=0;index<face.size();++index)
+            {
+                const std::size_t start=face[index],end=face[(index+1)%face.size()];
+                const Vec3 a=points[start],delta=Sub(points[end],a);
+                const double lengthSquared=Dot(delta,delta);
+                std::vector<std::pair<double,std::size_t>> chain{{0,start},{1,end}};
+                if (!work.Spend(points.size())) return false;
+                for (std::size_t other=0;other<points.size();++other)
+                {
+                    if (other==start || other==end) continue;
+                    const Vec3 offset=Sub(points[other],a),cross=Cross(delta,offset);
+                    const double t=Dot(offset,delta)/lengthSquared;
+                    if (t>0 && t<1 && cross.x==0 && cross.y==0 && cross.z==0)
+                        chain.emplace_back(t,other);
+                }
+                std::sort(chain.begin(),chain.end());
+                for (std::size_t part=1;part<chain.size();++part)
+                    edges.emplace_back(chain[part-1].second,chain[part].second);
+            }
+        }
+        if (!std::isfinite(volumeSix) || volumeSix<=0)
+        {
+            error="A recovered structural brush has zero or reversed editor float volume.";
+            return false;
+        }
+        std::sort(edges.begin(),edges.end());
+        for (std::size_t index=0;index<edges.size();++index)
+        {
+            const auto edge=edges[index];
+            if (edge.first==edge.second || (index>0 && edge==edges[index-1])
+                || !std::binary_search(edges.begin(),edges.end(),std::make_pair(edge.second,edge.first)))
+            {
+                error="A recovered structural brush has an open or repeated edge after editor float conversion.";
+                return false;
+            }
+        }
+        collapsedFaces=std::move(collapsed);
+        return true;
+    }
+    catch (const std::bad_alloc&)
+    {
+        collapsedFaces.clear(); error="There is insufficient memory to validate an editor brush."; return false;
+    }
+    catch (const std::length_error&)
+    {
+        collapsedFaces.clear(); error="Editor brush validation exceeds container capacity."; return false;
+    }
+
+    bool PrepareSheetForEditor(const Surface& sheet,std::vector<Surface>& result,
+                               std::string& error,const Limits& limits)
+    try
+    {
+        result.clear(); error.clear();
+        if (!ValidLimits(limits,error)) return false;
+        if (sheet.vertices.size()<3 || sheet.vertices.size()>limits.maxVertices)
+        {
+            error="A non-solid sheet has an invalid vertex count.";
+            return false;
+        }
+        Work work{limits,0,error};
+        std::vector<Vec3> vertices;
+        for (const Vec3& vertex:sheet.vertices)
+        {
+            if (!Finite(vertex) || std::fabs(vertex.x)>(std::numeric_limits<float>::max)()
+                || std::fabs(vertex.y)>(std::numeric_limits<float>::max)()
+                || std::fabs(vertex.z)>(std::numeric_limits<float>::max)())
+            {
+                error="A non-solid sheet vertex exceeds finite editor float coordinates.";
+                return false;
+            }
+            const Vec3 point{static_cast<float>(vertex.x),static_cast<float>(vertex.y),static_cast<float>(vertex.z)};
+            if (vertices.empty() || point.x!=vertices.back().x || point.y!=vertices.back().y || point.z!=vertices.back().z)
+                vertices.push_back(point);
+        }
+        if (vertices.size()>1 && vertices.front().x==vertices.back().x
+            && vertices.front().y==vertices.back().y && vertices.front().z==vertices.back().z)
+            vertices.pop_back();
+        Vec3 normal{};
+        for (std::size_t index=1;index+1<vertices.size();++index)
+            normal=Add(normal,Cross(Sub(vertices[index],vertices[0]),Sub(vertices[index+1],vertices[0])));
+        if (vertices.size()<3 || !Normalize(normal))
+        {
+            error="A non-solid sheet has no stable area in editor float coordinates.";
+            return false;
+        }
+        Frame frame;
+        frame.origin=vertices.front(); frame.normal=normal;
+        frame.u=Cross(std::fabs(normal.x)<0.8?Vec3{1,0,0}:Vec3{0,1,0},normal);
+        if (!Normalize(frame.u))
+        {
+            error="A non-solid sheet has no stable projection basis.";
+            return false;
+        }
+        frame.v=Cross(normal,frame.u);
+        Polygon boundary;
+        for (const Vec3& point:vertices) Append(boundary,frame.Project(point));
+        Clean(boundary);
+        if (boundary.size()<3)
+        {
+            error="A non-solid sheet collapses in its triangulation projection.";
+            return false;
+        }
+        const bool convex=ValidatePolygon(boundary,work);
+        if (convex && vertices.size()<=16 && boundary.size()==vertices.size())
+        {
+            // Keep a valid source polygon intact when its stored float32
+            // vertices already describe a convex plane. The stricter existing
+            // epsilon is used here, not the broad coplanar-material tolerance.
+            // No vertex is projected, repaired, snapped, or reordered.
+            const double planeTolerance=(std::min)(limits.epsilon,limits.planeTolerance);
+            const bool planar=std::all_of(vertices.begin(),vertices.end(),[&](const Vec3& point)
+            {
+                return std::fabs(Dot(Sub(point,frame.origin),normal))<=planeTolerance;
+            });
+            bool forwardBoundary=true;
+            for (std::size_t index=0;index<boundary.size() && forwardBoundary;++index)
+            {
+                const Point a=boundary[index],b=boundary[(index+1)%boundary.size()];
+                const Point c=boundary[(index+2)%boundary.size()];
+                // The validator tolerates tiny concavity from projection.
+                // This fast path requires genuine convex turns and excludes
+                // collinear edges which double back over the same boundary.
+                const double turn=Side(c,a,b);
+                forwardBoundary=turn>=0 && (turn!=0
+                    || (b.x-a.x)*(c.x-b.x)+(b.y-a.y)*(c.y-b.y)>0);
+            }
+            if (planar && forwardBoundary)
+            {
+                if (limits.maxPieces==0)
+                {
+                    error="Non-solid sheet preparation exceeded its polygon budget.";
+                    return false;
+                }
+                result.push_back({std::move(vertices),normal,sheet.materialIndex});
+                return true;
+            }
+        }
+        if (!convex)
+        {
+            Surface rounded{vertices,normal,sheet.materialIndex};
+            if (RepairFloatBoundary(boundary,FloatSourceTolerance(rounded,frame),work)) error.clear();
+        }
+        std::vector<Polygon> triangles;
+        if (!TriangulateSimple(boundary,triangles,work)) return false;
+        std::vector<Surface> output;
+        for (const Polygon& triangle:triangles)
+        {
+            if (output.size()>=limits.maxPieces)
+            {
+                error="Non-solid sheet triangulation exceeded its polygon budget.";
+                return false;
+            }
+            Surface part;
+            part.materialIndex=sheet.materialIndex;
+            for (const Point point:triangle)
+            {
+                if (!work.Spend(vertices.size())) return false;
+                const auto found=std::find_if(vertices.begin(),vertices.end(),[&](const Vec3& vertex)
+                {
+                    const Point projected=frame.Project(vertex);
+                    return projected.x==point.x && projected.y==point.y;
+                });
+                if (found==vertices.end())
+                {
+                    error="Non-solid sheet triangulation introduced an unexpected vertex.";
+                    return false;
+                }
+                part.vertices.push_back(*found);
+            }
+            part.normal=Cross(Sub(part.vertices[1],part.vertices[0]),Sub(part.vertices[2],part.vertices[0]));
+            // A mathematically collinear 3D edge can acquire a tiny positive
+            // 2D area from projection arithmetic. It contributes no rendered
+            // area and must not become an invalid native FPoly triangle.
+            if (part.normal.x==0 && part.normal.y==0 && part.normal.z==0) continue;
+            if (!Normalize(part.normal) || Dot(part.normal,normal)<=0)
+            {
+                error="A non-solid sheet triangle has zero area or reversed winding.";
+                return false;
+            }
+            output.push_back(std::move(part));
+        }
+        if (output.empty())
+        {
+            error="Non-solid sheet triangulation produced no editable polygons.";
+            return false;
+        }
+        result=std::move(output); error.clear();
+        return true;
+    }
+    catch (const std::bad_alloc&)
+    {
+        result.clear(); error="There is insufficient memory to triangulate a non-solid sheet."; return false;
+    }
+    catch (const std::length_error&)
+    {
+        result.clear(); error="Non-solid sheet triangulation exceeds container capacity."; return false;
+    }
+
+    bool SplitForVertexLimit(const std::vector<Vec3>& polygon, const Vec3& normal,
+                             std::size_t maxVertices, std::vector<std::vector<Vec3>>& result,
+                             std::string& error, const Limits& limits)
+    try
+    {
+        result.clear(); error.clear();
+        if (!ValidLimits(limits,error)) return false;
+        if (maxVertices < 3)
+        {
+            error = "A source polygon requires a vertex limit of at least three.";
+            return false;
+        }
+        Work work{limits,0,error};
+        Frame frame;
+        Polygon projected;
+        std::vector<Vec3> importVertices;
+        auto sameFloatPoint=[](const Vec3& a,const Vec3& b)
+        {
+            return static_cast<float>(a.x)==static_cast<float>(b.x)
+                && static_cast<float>(a.y)==static_cast<float>(b.y)
+                && static_cast<float>(a.z)==static_cast<float>(b.z);
+        };
+        for (const Vec3& vertex:polygon)
+        {
+            if (!Finite(vertex) || std::fabs(vertex.x)>(std::numeric_limits<float>::max)()
+                || std::fabs(vertex.y)>(std::numeric_limits<float>::max)()
+                || std::fabs(vertex.z)>(std::numeric_limits<float>::max)())
+            {
+                error="A source polygon vertex cannot be represented by the editor's float coordinates.";
+                return false;
+            }
+            if (importVertices.empty() || !sameFloatPoint(importVertices.back(),vertex))
+                importVertices.push_back(vertex);
+        }
+        if (importVertices.size()>1 && sameFloatPoint(importVertices.front(),importVertices.back()))
+            importVertices.pop_back();
+        if (importVertices.size()<3)
+        {
+            error="A source polygon collapses to fewer than three vertices in editor float coordinates.";
+            return false;
+        }
+        if (!MakeFrame(importVertices,normal,frame,projected,work)) return false;
+        std::vector<std::vector<Vec3>> output;
+        if (projected.size() <= maxVertices)
+        {
+            if (limits.maxPieces == 0)
+            {
+                error = "Splitting a polygon exceeds the source polygon budget.";
+                return false;
+            }
+            output.emplace_back();
+            for (const Point point : projected) output.back().push_back(frame.Restore(point));
+        }
+        else
+        {
+            if (projected.size() > limits.maxPieces)
+            {
+                error = "Splitting a long polygon exceeds the source polygon budget.";
+                return false;
+            }
+            Point center = projected.front();
+            for (std::size_t index = 1; index < projected.size(); ++index)
+            {
+                const double fraction = 1.0/static_cast<double>(index+1);
+                center.x += (projected[index].x-center.x)*fraction;
+                center.y += (projected[index].y-center.y)*fraction;
+            }
+            for (std::size_t index = 0; index < projected.size(); ++index)
+            {
+                const Point a = projected[index], b = projected[(index+1)%projected.size()];
+                if (Side(b,center,a) <= 0)
+                {
+                    error = "Splitting a long polygon would create a degenerate triangle.";
+                    return false;
+                }
+                output.push_back({frame.Restore(center),frame.Restore(a),frame.Restore(b)});
+            }
+        }
+        for (const auto& part:output)
+        {
+            Polygon encoded;
+            for (const Vec3& point:part)
+                Append(encoded,frame.Project({static_cast<float>(point.x),
+                    static_cast<float>(point.y),static_cast<float>(point.z)}));
+            Clean(encoded);
+            if (encoded.size()<3 || Area(encoded)<=0)
+            {
+                error="A source polygon has zero or reversed area after conversion to editor float coordinates.";
+                return false;
+            }
+        }
+        result = std::move(output);
+        return true;
+    }
+    catch (const std::bad_alloc&)
+    {
+        result.clear(); error = "There is insufficient memory to split a recovered polygon."; return false;
+    }
+    catch (const std::length_error&)
+    {
+        result.clear(); error = "The recovered polygon exceeds container capacity."; return false;
+    }
+
+    bool PlaneBucket(const Vec3& inputNormal, const Vec3& point,
+                     std::int64_t& bucket, double bucketWidth)
+    {
+        Vec3 normal = inputNormal;
+        if (!Normalize(normal) || !Finite(point) || !std::isfinite(bucketWidth) || bucketWidth <= 0)
+            return false;
+        const double key = std::floor(std::fabs(Dot(normal,point))/bucketWidth);
+        // A conservative floating comparison also avoids rounded INT64_MAX.
+        if (!std::isfinite(key) || key < 0 || key >= 9.0e18)
+            return false;
+        bucket = static_cast<std::int64_t>(key);
+        return true;
+    }
+}

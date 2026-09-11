@@ -138,6 +138,7 @@
     <ClInclude Include="AnimationBrowser.h" />
     <ClInclude Include="BrowserOpenDir.h" />
     <ClInclude Include="BspDiagnostics.h" />
+    <ClInclude Include="BspTextureClipboard.h" />
     <ClInclude Include="CrashDiagnostics.h" />
     <ClInclude Include="Debug.h" />
     <ClInclude Include="dllmain.h" />
@@ -169,7 +170,12 @@
     <ClInclude Include="DeintersectFix.h" />
     <ClInclude Include="MapUnlock.h" />
     <ClInclude Include="MapRecovery.h" />
+    <ClInclude Include="RecoveredBspGeometry.h" />
+    <ClInclude Include="RecoveredSurfacePartition.h" />
+    <ClInclude Include="RecoveredActorImport.h" />
+    <ClInclude Include="RecoveredAssetPackage.h" />
     <ClInclude Include="StaticMeshCollisionFix.h" />
+    <ClInclude Include="StaticMeshBrowserFavorites.h" />
     <ClInclude Include="DdsImportFix.h" />
     <ClInclude Include="LightCullFix.h" />
     <ClInclude Include="ProjectorDetachFix.h" />
@@ -179,12 +185,15 @@
     <ClInclude Include="MapCheckLog.h" />
     <ClInclude Include="RebuildAllMaps.h" />
     <ClInclude Include="ViewportConfigFix.h" />
+    <ClInclude Include="GridSizeShortcut.h" />
+    <ClInclude Include="GridSizeShortcutState.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AmbientSoundZone.cpp" />
     <ClCompile Include="AnimationBrowser.cpp" />
     <ClCompile Include="BrowserOpenDir.cpp" />
     <ClCompile Include="BspDiagnostics.cpp" />
+    <ClCompile Include="BspTextureClipboard.cpp" />
     <ClCompile Include="CrashDiagnostics.cpp" />
     <ClCompile Include="Debug.cpp" />
     <ClCompile Include="dllmain.cpp" />
@@ -210,7 +219,20 @@
     <ClCompile Include="DeintersectFix.cpp" />
     <ClCompile Include="MapUnlock.cpp" />
     <ClCompile Include="MapRecovery.cpp" />
+    <ClCompile Include="RecoveredBspGeometry.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="RecoveredSurfacePartition.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="RecoveredActorImport.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="RecoveredAssetPackage.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="StaticMeshCollisionFix.cpp" />
+    <ClCompile Include="StaticMeshBrowserFavorites.cpp" />
     <ClCompile Include="DdsImportFix.cpp" />
     <ClCompile Include="LightCullFix.cpp" />
     <ClCompile Include="ProjectorDetachFix.cpp" />
@@ -220,6 +242,7 @@
     <ClCompile Include="MapCheckLog.cpp" />
     <ClCompile Include="RebuildAllMaps.cpp" />
     <ClCompile Include="ViewportConfigFix.cpp" />
+    <ClCompile Include="GridSizeShortcut.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Reloaded.Editor.rc" />

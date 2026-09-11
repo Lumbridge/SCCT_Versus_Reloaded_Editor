@@ -22,6 +22,8 @@
 #include "DeintersectFix.h"
 #include "MapUnlock.h"
 #include "StaticMeshCollisionFix.h"
+#include "StaticMeshBrowserFavorites.h"
+#include "BspTextureClipboard.h"
 #include "DdsImportFix.h"
 #include "LightCullFix.h"
 #include "ProjectorDetachFix.h"
@@ -106,6 +108,8 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     Shadows::Initialize();
     SoundBrowser::Initialize();
     TextureBrowser::Initialize();
+    StaticMeshBrowserFavorites::Initialize();
+    BspTextureClipboard::Initialize();
     GEWireframeFix::Initialize();
     LightmapFix::Initialize();
     ReloadedOptions::Initialize();

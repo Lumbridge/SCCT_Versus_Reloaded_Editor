@@ -118,7 +118,7 @@ static void InjectReloadedMenuItems(HWND frame)
         if (MenuPosByCommand(file, MapRecovery::kCommandId) < 0)
             InsertMenuA(file, 2, MF_BYPOSITION | MF_STRING,
                         MapRecovery::kCommandId,
-                        "&Recover Compiled Map... (Experimental)");
+                        "&Recover Compiled Map...");
 
         const int recoveryPos =
             MenuPosByCommand(file, MapRecovery::kCommandId);
@@ -127,25 +127,7 @@ static void InjectReloadedMenuItems(HWND frame)
             InsertMenuA(file, recoveryPos + 1,
                         MF_BYPOSITION | MF_STRING,
                         MapRecovery::kOpenRecoveredCommandId,
-                        "&Open Recovered Map... (Experimental)");
-
-        const int openRecoveredPos =
-            MenuPosByCommand(file, MapRecovery::kOpenRecoveredCommandId);
-        if (openRecoveredPos >= 0
-            && MenuPosByCommand(file, MapRecovery::kExportBrushesCommandId) < 0)
-            InsertMenuA(file, openRecoveredPos + 1,
-                        MF_BYPOSITION | MF_STRING,
-                        MapRecovery::kExportBrushesCommandId,
-                        "Export Recovered &BSP as Brushes... (Experimental)");
-
-        const int exportBrushesPos =
-            MenuPosByCommand(file, MapRecovery::kExportBrushesCommandId);
-        if (exportBrushesPos >= 0
-            && MenuPosByCommand(file, MapRecovery::kRecoverEditableCommandId) < 0)
-            InsertMenuA(file, exportBrushesPos + 1,
-                        MF_BYPOSITION | MF_STRING,
-                        MapRecovery::kRecoverEditableCommandId,
-                        "Recover Compiled Map as &Editable... (Experimental)");
+                        "Convert &Legacy Recovered Map...");
     }
 
     // -UnlockPackages is what lets it save over the stock maps.
@@ -157,6 +139,16 @@ static void InjectReloadedMenuItems(HWND frame)
             AppendMenuA(build, MF_SEPARATOR, 0, nullptr);
             AppendMenuA(build, MF_STRING, 40902, "Rebuild &All Maps...");
         }
+    }
+
+    HMENU brush = SubMenuWithCommand(bar, 40403); // "Scale..." lives in Brush
+    if (brush && MenuPosByCommand(brush, 40911) < 0)
+    {
+        // Keep the direct action beside the stock Reset submenu.
+        const int scalePos = MenuPosByCommand(brush, 40403);
+        if (scalePos >= 0)
+            InsertMenuA(brush, scalePos, MF_BYPOSITION | MF_STRING,
+                        40911, "Rebuild Builder Brush as Default &Cube");
     }
 
     HMENU help = SubMenuWithCommand(bar, 40480); // "Unreal Developer Network" lives in Help

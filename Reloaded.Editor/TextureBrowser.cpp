@@ -13,6 +13,7 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 INIT_HOOKS;
@@ -61,6 +62,7 @@ typedef void (__fastcall *FArrayLoadFn)(void* lazyLoaderSubobj);
 #define CONTINUE_AFTER_LIST_BUILD   0x10EC9D19u
 #define GTB_OPTIONS_PTR             0x1165DFECu
 #define GEDITOR_PTR                 0x1165DFA0u
+#define EXEC_LOG_DEV                0x115BEFB0u
 #define GOBJECTS_DATA_PTR           0x11697B70u
 #define GOBJECTS_NUM_PTR            0x11697B74u
 #define CREATEWINDOWEXA_IAT_SLOT    0x11AF23E0u
@@ -91,6 +93,7 @@ typedef HWND(WINAPI* CreateWindowExAFn)(DWORD, LPCSTR, LPCSTR, DWORD,
 typedef HMENU(WINAPI* LoadMenuAFn)(HINSTANCE, LPCSTR);
 static CreateWindowExAFn g_PreviousCreateWindowExA = nullptr;
 static LoadMenuAFn g_PreviousLoadMenuA = nullptr;
+static void TB_SaveFavorites();
 
 static std::string TB_GetIniPath()
 {
@@ -109,13 +112,53 @@ static std::string TB_ToLower(std::string value)
     return value;
 }
 
+static std::string TB_NormalizeLegacyPath(const std::string& path)
+{
+    // Older favorites treated UObject+0x24 (the class pointer in this build)
+    // as an FName number and persisted it as an address-like suffix.
+    std::string normalized;
+    size_t start = 0;
+    while (start <= path.size())
+    {
+        const size_t end = path.find('.', start);
+        std::string part = path.substr(start,
+            end == std::string::npos ? std::string::npos : end - start);
+        const size_t underscore = part.rfind('_');
+        if (underscore != std::string::npos && underscore + 1 < part.size())
+        {
+            unsigned long long value = 0;
+            bool digits = true;
+            for (size_t i = underscore + 1; i < part.size(); ++i)
+            {
+                const unsigned char c = static_cast<unsigned char>(part[i]);
+                if (!std::isdigit(c))
+                {
+                    digits = false;
+                    break;
+                }
+                value = value * 10 + (c - '0');
+            }
+            if (digits && value + 1 >= 0x10E00000ull &&
+                value + 1 < 0x12000000ull)
+                part.erase(underscore);
+        }
+
+        if (!normalized.empty())
+            normalized.push_back('.');
+        normalized += part;
+        if (end == std::string::npos)
+            break;
+        start = end + 1;
+    }
+    return normalized;
+}
+
 // Keep all fault-prone engine memory reads in leaf functions without C++
 // objects, allowing SEH to protect favorites from stale UObject pointers.
 static bool TB_ReadObjectIdentity(void* object, void** outer,
-                                  char* name, size_t nameSize,
-                                  INT* instanceNumber)
+                                  char* name, size_t nameSize)
 {
-    if (!object || !outer || !name || nameSize == 0 || !instanceNumber)
+    if (!object || !outer || !name || nameSize == 0)
         return false;
 
     __try
@@ -139,15 +182,12 @@ static bool TB_ReadObjectIdentity(void* object, void** outer,
         strncpy_s(name, nameSize, source, _TRUNCATE);
         *outer = *reinterpret_cast<void**>(
             static_cast<char*>(object) + UOBJECT_OUTER_OFFSET);
-        *instanceNumber = *reinterpret_cast<INT*>(
-            static_cast<char*>(object) + UOBJECT_FNAME_OFFSET + sizeof(INT));
         return name[0] != '\0';
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
         name[0] = '\0';
         *outer = nullptr;
-        *instanceNumber = 0;
         return false;
     }
 }
@@ -157,7 +197,6 @@ static bool TB_BuildObjectPath(void* object, std::string& path)
     struct ObjectNamePart
     {
         char Name[256];
-        INT InstanceNumber;
     };
 
     ObjectNamePart parts[32] = {};
@@ -168,8 +207,7 @@ static bool TB_BuildObjectPath(void* object, std::string& path)
     {
         void* outer = nullptr;
         if (!TB_ReadObjectIdentity(cursor, &outer, parts[partCount].Name,
-                                   std::size(parts[partCount].Name),
-                                   &parts[partCount].InstanceNumber))
+                                   std::size(parts[partCount].Name)))
             return false;
 
         ++partCount;
@@ -187,15 +225,6 @@ static bool TB_BuildObjectPath(void* object, std::string& path)
         if (!path.empty())
             path.push_back('.');
         path += parts[i].Name;
-
-        // FName stores zero for an unnumbered name and N+1 for the visible
-        // suffix.  Numbered material names are uncommon, but retaining it
-        // makes the persisted path unambiguous.
-        if (parts[i].InstanceNumber > 0)
-        {
-            path.push_back('_');
-            path += std::to_string(parts[i].InstanceNumber - 1);
-        }
     }
     return !path.empty();
 }
@@ -263,6 +292,7 @@ static void TB_LoadFavorites()
 {
     g_FavoritesIniPath = TB_GetIniPath();
     g_FavoritePaths.clear();
+    bool migrated = false;
 
     int count = GetPrivateProfileIntA(kFavoritesIniSection, "Count", 0,
                                       g_FavoritesIniPath.c_str());
@@ -275,9 +305,16 @@ static void TB_LoadFavorites()
         GetPrivateProfileStringA(kFavoritesIniSection, key, "", value,
                                  static_cast<DWORD>(std::size(value)),
                                  g_FavoritesIniPath.c_str());
-        if (value[0] && !TB_FindFavorite(value))
-            g_FavoritePaths.emplace_back(value);
+        if (value[0])
+        {
+            const std::string normalized = TB_NormalizeLegacyPath(value);
+            migrated = migrated || normalized != value;
+            if (!TB_FindFavorite(normalized))
+                g_FavoritePaths.push_back(normalized);
+        }
     }
+    if (migrated)
+        TB_SaveFavorites();
 }
 
 static void TB_SaveFavorites()
@@ -347,6 +384,140 @@ static void TB_RefreshResolvedFavorites()
         if (material)
             g_ResolvedFavoriteMaterials.push_back(material);
     }
+}
+
+static bool __cdecl TB_ExecEditorCommand(const char* command)
+{
+    if (!command || !command[0])
+        return false;
+
+    __try
+    {
+        void* editor = *reinterpret_cast<void**>(GEDITOR_PTR);
+        if (!editor)
+            return false;
+        void* exec = static_cast<char*>(editor) + 0x28;
+        void* vtable = *reinterpret_cast<void**>(exec);
+        void* function = vtable ? *reinterpret_cast<void**>(vtable) : nullptr;
+        void* log = *reinterpret_cast<void**>(EXEC_LOG_DEV);
+        if (!function || !log)
+            return false;
+        __asm
+        {
+            push log
+            push command
+            mov  ecx, exec
+            mov  eax, function
+            call eax
+        }
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return false;
+    }
+}
+
+static std::string TB_GetTextureDirectory()
+{
+    char executable[MAX_PATH] = {};
+    if (!GetModuleFileNameA(nullptr, executable,
+                            static_cast<DWORD>(std::size(executable))))
+        return {};
+    char* slash = strrchr(executable, '\\');
+    if (!slash)
+        return {};
+    *(slash + 1) = '\0';
+
+    const std::string relative = std::string(executable) +
+        "..\\Packages\\Textures\\";
+    char fullPath[MAX_PATH] = {};
+    const DWORD length = GetFullPathNameA(relative.c_str(),
+        static_cast<DWORD>(std::size(fullPath)), fullPath, nullptr);
+    if (!length || length >= std::size(fullPath))
+        return {};
+    return fullPath;
+}
+
+static std::string TB_FavoritePackage(const std::string& path)
+{
+    const size_t dot = path.find('.');
+    return dot == std::string::npos ? path : path.substr(0, dot);
+}
+
+static void TB_LoadMissingFavoritePackages()
+{
+    std::unordered_set<std::string> resolved;
+    resolved.reserve(g_ResolvedFavoriteMaterials.size());
+    for (void* material : g_ResolvedFavoriteMaterials)
+    {
+        std::string path;
+        if (TB_BuildObjectPath(material, path))
+            resolved.insert(TB_ToLower(path));
+    }
+
+    std::unordered_map<std::string, std::string> wantedPackages;
+    for (const auto& path : g_FavoritePaths)
+    {
+        if (resolved.find(TB_ToLower(path)) != resolved.end())
+            continue;
+        const std::string package = TB_FavoritePackage(path);
+        if (!package.empty())
+            wantedPackages.emplace(TB_ToLower(package), package);
+    }
+    if (wantedPackages.empty())
+        return;
+
+    const std::string directory = TB_GetTextureDirectory();
+    if (directory.empty())
+        return;
+
+    std::unordered_map<std::string, std::string> packageFiles;
+    WIN32_FIND_DATAA data = {};
+    HANDLE search = FindFirstFileA((directory + "*.utx").c_str(), &data);
+    if (search != INVALID_HANDLE_VALUE)
+    {
+        do
+        {
+            if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                continue;
+            std::string fileName = data.cFileName;
+            const size_t dot = fileName.rfind('.');
+            const std::string baseName = dot == std::string::npos
+                ? fileName : fileName.substr(0, dot);
+            packageFiles.emplace(TB_ToLower(baseName), directory + fileName);
+        } while (FindNextFileA(search, &data));
+        FindClose(search);
+    }
+
+    int loaded = 0;
+    int unavailable = 0;
+    for (const auto& wanted : wantedPackages)
+    {
+        const auto file = packageFiles.find(wanted.first);
+        if (file == packageFiles.end())
+        {
+            ++unavailable;
+            continue;
+        }
+
+        char command[MAX_PATH + 32] = {};
+        _snprintf_s(command, sizeof(command), _TRUNCATE,
+                    "OBJ LOAD FILE=\"%s\"", file->second.c_str());
+        if (TB_ExecEditorCommand(command))
+            ++loaded;
+        else
+            ++unavailable;
+    }
+
+    if (loaded > 0)
+        Logger::log("TextureBrowser: loaded " + std::to_string(loaded) +
+                    " favorite package(s)");
+    if (unavailable > 0)
+        Logger::log("TextureBrowser: could not locate or load " +
+            std::to_string(unavailable) + " favorite package(s)");
+
+    TB_RefreshResolvedFavorites();
 }
 
 static void TB_RedrawFavoritesPage()
@@ -495,6 +666,7 @@ static void TB_ActivateFavorites(HWND tab)
         if (current >= 0 && current < 3)
             g_LastNativeTab = current;
         TB_RefreshResolvedFavorites();
+        TB_LoadMissingFavoritePackages();
     }
 
     // Ask the native property sheet to show its Recent page, then select the

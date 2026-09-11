@@ -1,4 +1,30 @@
-# Play Level regression tests
+# Regression tests
+
+## Map recovery
+
+From an **x86 Native Tools Command Prompt for Visual Studio**, run:
+
+```bat
+tools\test_map_recovery.cmd
+```
+
+The portable suites verify structural BSP classification, closed brush geometry,
+texture-region partitioning, native polygon vertex limits, actor and LevelInfo
+transfer, GE gameplay data, and lossless asset-package decompression. They include
+malformed input, numeric edge cases, deep trees, work limits and no-overwrite cases.
+The geometry tests compare independently classified points before and after reconstruction.
+Surface fixtures also cover concave and non-planar non-solid sheets: triangulation
+retains their original 3D float vertices and supplies each triangle's normal.
+Native import has an additional small-polygon cleanup step. An OffsD import
+removed 3,653 tiny fragments: all were under 0.051 units wide, and 3,642 were
+under 0.01 units wide. Therefore portable polygon counts need not match native
+counts. Native rebuild/space checks and visual inspection remain necessary,
+especially around very thin geometry and material regions.
+
+The [native editor integration test](#native-editor-integration) also exercises
+conversion, geometry edits, ordinary reopening and builds in a disposable editor.
+
+## Play Level
 
 Run from the repository root in an **x86 Native Tools Command Prompt for Visual Studio**.
 
@@ -84,3 +110,67 @@ Reloaded.Core.dll should be loaded, its configured controls and frame timing sho
 the render should be sharp at the selected resolution, the window should be large
 and centred, mouse input should remain correct,
 and switching back to the editor should not change the desktop display mode.
+
+## Native editor integration
+
+Native source-map recovery can be exercised against the supported installed
+editor without replacing its DLL, configuration, or maps. From PowerShell:
+
+```powershell
+./tools/run_native_map_recovery_test.ps1 -EditorDll ./bin/Reloaded.Editor.dll -GenerateFixture
+./tools/run_native_map_recovery_test.ps1 -EditorDll ./bin/Reloaded.Editor.dll -SourceMap 'C:/path/to/compiled.sdc'
+./tools/run_native_map_recovery_test.ps1 -EditorDll ./bin/Reloaded.Editor.dll -SourceMap 'C:/path/to/compiled.sdc' -EditGeometry
+./tools/run_native_map_recovery_test.ps1 -EditorDll ./bin/Reloaded.Editor.dll -SourceMap 'C:/path/to/source.sdc' -ReopenOnly -ExtraAssetPackage 'C:/path/to/source_Assets.usx'
+```
+
+The harness requires the Visual Studio x86 C++ tools and uses `SCCT` as the
+installed System directory (override with `-GameSystem`). It creates a separate
+editor installation in a unique temporary directory, copies configuration and
+maps, and shares only asset directories that the test does not write. Its
+StaticMeshes directory is a complete copy because recovery may create a new
+dependency package there. The generated fixture is an ordinary room brush that
+the native editor builds and compiles before attempting recovery.
+`-StartupConfigSystem` can copy startup INI files from a previously successful
+isolated test while retaining the installed assets. Startup critical errors are
+recorded separately from recovery failures.
+
+An injected probe invokes the recovery API on the editor's UI thread, then uses
+ordinary map loading and geometry/BSP/lighting/path rebuilding. It records
+actor, brush, polygon and BSP counts and exports a final T3D. `PASS` requires
+geometry to survive recovery, ordinary reopen, and another normal rebuild, and
+the normal File Save target to identify the recovered source. The generated
+fixture additionally adds a solid pillar to the recovered room, rebuilds it,
+then saves and reopens it while checking that the edited BSP survives.
+`-EditGeometry` also exercises a real geometry edit on an existing compiled
+map: it finds empty BSP space, adds a small solid brush, rebuilds and saves,
+then verifies the changed space and surface count after ordinary reopening.
+It also changes a retained static mesh actor's Tag through native property
+import and checks that the property survives the same save/reopen cycle.
+`-GenerateFixture -RootOutside` exercises the complementary solid cube in an
+empty world and edits a cavity into it, preserving `UModel::RootOutside=1`.
+`-ReopenOnly` starts a fresh editor and exercises ordinary source loading,
+rebuilding, saving and export without invoking the recovery API. Optional
+`-ExtraAssetPackage` paths copy generated dependencies into that isolated
+editor. `-GenerateFixture -ImportBaseline` isolates the native T3D import,
+platform actor synchronization, rebuild and source/runtime save path.
+`-GenerateFixture -ExpectRecoveryFailure` blocks geometry interchange writing
+after cooked loading with an owned directory. It checks that the rejected
+conversion clears the previous normal File Save target, then loads the original
+source and verifies that a new geometry edit rebuilds normally.
+`-ImportTextOnly -SourceMap <fixture.t3d>` isolates ordinary native T3D import
+and export without recovery, rebuilding or saving. It writes
+`System/import_only.t3d`; its completion result requires a separate comparison
+of that output to verify the fixture's properties. This mode confirmed that
+spaced object paths require nested quotes, for example
+`StaticMesh=StaticMesh'"Oilrig_SM.Third Floor.topcatwalk"'`, and polygon material
+paths require double quotes, for example
+`Begin Polygon Texture="Oilrig_TXT.Top floor.yellowmetal"`.
+The probe also writes cooked and failed BSP trees as JSON for spatial diagnosis.
+`-CompactPoints` is a separate native compaction experiment that wraps completed
+CSG operation boundaries; it is excluded from ordinary source recovery checks.
+The first trial reclaimed unused points but later encountered a stale point
+reference, so this experiment is not a validated rebuild fix.
+Reports, source/runtime maps, interchange files and crash dumps remain in the
+printed `TestRoot` for inspection. The disposable editor is stopped on finish
+or timeout. This checks the authoring pipeline; it does not launch a gameplay
+session or validate a map's complete gameplay behavior.

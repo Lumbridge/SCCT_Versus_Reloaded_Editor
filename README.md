@@ -6,43 +6,60 @@ This is my fork of [AllyPal's Reloaded Editor](https://github.com/AllyPal/SCCT_V
 
 ## What's New in This Fork
 
-| Addition | What it helps you do | Source status |
+| Addition | What it helps you do | Release build |
 | --- | --- | --- |
-| [Compiled-map and editable BSP recovery](#compiled-map-recovery-experimental) | Open cooked maps, recover actors and asset references, and reconstruct editable brushes. | Published on `main` |
-| [BSP and crash diagnostics](#bsp-and-crash-diagnostics) | Investigate failed builds and work with BSP point indices beyond the stock signed 16-bit limit. | Published on `main` |
-| [Property-window fixes](#property-window-fixes) | Bring misplaced property windows back into view. | Published on `main` |
-| [Play Level compatibility (experimental)](#play-level-compatibility-experimental) | Launch editor playtests through Reloaded with startup guards; profile setup remains incomplete. | Published on `main` |
-| [Texture Browser Favorites](#texture-browser-favorites) | Keep frequently used materials together in a persistent thumbnail tab. | Published on `main` |
-| [Static Mesh Browser Favorites](#static-mesh-browser-favorites) | Browse saved meshes across packages without repeatedly switching package filters. | Local development |
-| [BSP texture copy and paste](#bsp-texture-copy-and-paste) | Reuse a surface's material on other surfaces while retaining their alignment. | Local development |
-| [Quick grid size adjustment](#quick-grid-size-adjustment) | Change the grid preset with **Ctrl + mouse wheel** directly over a level viewport. | Local development |
-| [Builder-brush repair](#builder-brush-repair) | Rebuild a missing or damaged builder brush as a default cube. | Local development |
+| [Compiled-map recovery](#compiled-map-recovery-experimental) | Recover cooked maps into normal source maps with editable geometry, actors and assets. | Included |
+| [BSP and crash diagnostics](#bsp-and-crash-diagnostics) | Investigate failed builds and work with BSP point indices beyond the stock signed 16-bit limit. | Included |
+| [Property-window fixes](#property-window-fixes) | Bring misplaced property windows back into view. | Included |
+| [Play Level compatibility (experimental)](#play-level-compatibility-experimental) | Launch editor playtests through Reloaded with startup guards; profile setup remains incomplete. | Included |
+| [Texture Browser Favorites](#texture-browser-favorites) | Keep frequently used materials together in a persistent thumbnail tab. | Included |
+| [Static Mesh Browser Favorites](#static-mesh-browser-favorites) | Browse saved meshes across packages without repeatedly switching package filters. | Included |
+| [BSP texture copy and paste](#bsp-texture-copy-and-paste) | Reuse a surface's material on other surfaces while retaining their alignment. | Included |
+| [Quick grid size adjustment](#quick-grid-size-adjustment) | Change the grid preset with **Ctrl + mouse wheel** directly over a level viewport. | Included |
+| [Builder-brush repair](#builder-brush-repair) | Rebuild a missing or damaged builder brush as a default cube. | Included |
 
-**Availability:** Features marked **Local development** are implemented in the development checkout but their code has not yet been published to this fork. They are documented here as a preview of the next additions. Published source status does not imply availability in a prebuilt release.
+**Availability:** Release builds from this checkout include every feature listed above, including the tools previously labelled Local development. Older release archives do not gain these features automatically. Compiled-map recovery and Play Level retain the experimental limitations described below.
 
 ## Install
 
 - Copy the built patch files, or extract a release archive, into the game's `System` directory, where `ChaosTheory_Editor.exe` is located.
 - Run `Reloaded_Editor.exe` and check that the title bar displays **Reloaded Chaos Theory Editor** to confirm the patch is active.
 
-## Published Fork Features
+### Build and Package a Release
+
+From a Visual Studio C++ developer PowerShell with v143 and the manifest's vcpkg dependencies installed:
+
+```powershell
+$env:SCCT = $null # Build without copying into an installed game.
+msbuild SCCT_Versus_Reloaded_Editor.sln /m /t:Rebuild /p:Configuration=Release /p:Platform=x86 /p:PlatformToolset=v143
+if ($LASTEXITCODE -ne 0) { throw 'Release build failed' }
+./tools/package_release.ps1
+```
+
+The archive is written to `bin/Reloaded_Editor.zip`. Use `-ArchivePath` to choose a new filename for subsequent builds. It contains the editor DLL, launcher, game renderer, this guide, license, and the optional Play Level guard script. The GitHub Actions build packages the same files. Play Level still requires a separately installed Reloaded Core and the manual guard step described below.
+
+Release builds also include Sound Browser diagnostics: hold **Shift** when opening sound Properties to dump the current package's sound flags, and inspect `Packages/Sounds/<map>.uas.buildlog.txt` after a streaming-audio build.
+
+## Editor Features
 
 ### Compiled-Map Recovery (Experimental)
 
-The **File** menu now provides four recovery commands:
+Recovery is a one-time conversion. Its output uses the normal editor format: use **File > Open**, edit brushes or actors, rebuild, and save as usual.
+
+Recovery targets the PC version of a map. It retains common and PC-only actors and excludes Xbox-only actors.
+
+The **File** menu provides two commands:
 
 | Command | Use it to |
 | --- | --- |
-| **Recover Compiled Map... (Experimental)** | Copy a compiled `.sdc` map into `Packages/MapsEd` under a unique name and open the copy with support for its compiled data layout. |
-| **Open Recovered Map... (Experimental)** | Reopen an existing recovered `.sdc` in place without making another copy. |
-| **Export Recovered BSP as Brushes... (Experimental)** | Export the active recovered map's final BSP geometry to `.t3d`, with an option to create a normal editable map. |
-| **Recover Compiled Map as Editable... (Experimental)** | Combine recovery, actor snapshots, and BSP reconstruction into one workflow that creates a normal editable source map. |
+| **Recover Compiled Map...** | Convert a compiled `.sdc` into a uniquely named normal source map in `Packages/MapsEd` and its playable copy in `Packages/Maps`. |
+| **Convert Legacy Recovered Map...** | Convert a map saved by the earlier cooked-layout recovery mode into the same normal source format. |
 
-Runtime actors, asset references, materials, and final geometry are recovered where possible. Brush reconstruction retains surface materials and UV axes where available, creating separate 1-unit-thick additive brushes from the cooked BSP polygons.
+The converter reads the final BSP tree and reconstructs closed convex brush volumes representing its empty or solid space. It merges compatible adjacent volumes and groups decorative fragments by their original surface to reduce the number of brushes. Coplanar faces are partitioned to retain their materials and texture alignment. Surviving actors, supported embedded assets, authored actor relationships, level settings, and GE ledges/pipes are transferred to the new map. The original construction-brush names, grouping, pivots and editing history cannot be recovered.
 
-Save current work before starting recovery, because it replaces the open map. **Save** and **Save As** preserve the compiled layout while working on a recovered map; reopen those files with **Open Recovered Map**, rather than the normal Open command. After creating an editable source map, use **Save As** with a new map name before rebuilding.
+Recovery rebuilds geometry, BSP, lighting and paths, checks solid/empty space samples and retained actor/gameplay data, saves normally, and verifies ordinary reopening. It stops with an explanation when the input has unsupported references, unbounded or invalid structural geometry, exceeds reconstruction limits, or fails verification. These checks do not replace visual inspection and a gameplay test; reconstructed brushes can be more fragmented than the original source.
 
-Recovery is an approximation: compiled maps no longer contain the original construction-brush grouping, additive/subtractive history, names, pivots, or every editor-only object. The exporter skips malformed or degenerate BSP nodes. If you import the exported brush fragment manually, use `MAP IMPORTADD` in a new normal source map; the standard **File > Import** command expects a complete map export.
+Save current work first: recovery replaces the active map and may take several minutes. Original map files are not overwritten. Recovery inputs and complete T3D exports are retained under `Packages/MapsEd/Recovery/<output name>` for diagnosis. When an embedded asset dependency is created under `Packages/StaticMeshes`, distribute that package alongside the playable map. Previously saved cooked-layout recovery files still require conversion; opening them with regular Open does not convert them automatically.
 
 ### BSP and Crash Diagnostics
 
@@ -102,9 +119,9 @@ The Texture Browser adds a **Favorites** tab alongside Full, In Use, and Recent.
 
 Opening Favorites attempts to load missing favorite `.utx` packages from `Packages/Textures`. The list is saved in `System/Reloaded_Editor.ini` and persists between editor sessions. Unavailable materials remain in the saved list until their packages can be found.
 
-## Latest Editing Tools (Local Development)
+## Additional Editing Tools
 
-These additions are implemented locally and await publication of their source code.
+These tools are included in both Debug and Release builds.
 
 ### Static Mesh Browser Favorites
 

@@ -93,7 +93,22 @@
     <ClInclude Include="MapRecovery.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="RecoveredBspGeometry.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="RecoveredSurfacePartition.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="RecoveredActorImport.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="RecoveredAssetPackage.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="StaticMeshCollisionFix.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="StaticMeshBrowserFavorites.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="DdsImportFix.h">
@@ -142,6 +157,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="BspDiagnostics.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="BspTextureClipboard.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="CrashDiagnostics.h">
@@ -203,7 +221,22 @@
     <ClCompile Include="MapRecovery.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="RecoveredBspGeometry.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RecoveredSurfacePartition.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RecoveredActorImport.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="RecoveredAssetPackage.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="StaticMeshCollisionFix.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="StaticMeshBrowserFavorites.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="DdsImportFix.cpp">
@@ -251,6 +284,9 @@
     <ClCompile Include="BspDiagnostics.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="BspTextureClipboard.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="CrashDiagnostics.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -262,5 +298,16 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="cpp.hint" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="GridSizeShortcut.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="GridSizeShortcutState.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClCompile Include="GridSizeShortcut.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

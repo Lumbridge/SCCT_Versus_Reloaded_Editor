@@ -376,10 +376,8 @@ static void              GetMuxPath            (void* pSound, char* outPath, int
 static INT_PTR CALLBACK  SurroundPickerDlgProc(HWND, UINT, WPARAM, LPARAM);
 static INT_PTR CALLBACK  SurroundPropsDlgProc (HWND, UINT, WPARAM, LPARAM);
 static void __cdecl      SB_HandleSurroundProps(void* this_ptr);
-#ifdef _DEBUG
-// Debug only: enumerate all sounds in current package (including delisted ones)
+// Enumerate all sounds in the current package (including delisted ones).
 static void __cdecl      SB_ShowFlagsDump     (void* this_ptr);
-#endif
 
 static HWND GetParentHWND    (void* t) { return *reinterpret_cast<HWND*>(static_cast<char*>(t) + 0x04); }
 static HWND GetPackageComboHWND(void* t)
@@ -2263,7 +2261,6 @@ static void __cdecl SB_HandleMakeUAS(void* this_ptr)
     EnumThreadWindows(GetCurrentThreadId(), Local::Proc, 0);
 
     // Write the per-sound build log next to the .uas so the user can inspect it.
-#ifdef _DEBUG
     USF_WriteReport(report, mapName, encoded, (int)report.size());
 
     // Append head-dumps of:
@@ -2289,7 +2286,6 @@ static void __cdecl SB_HandleMakeUAS(void* this_ptr)
              "..\\Packages\\Sounds\\%s-Original.uas", mapName);
     if (fileSize(refPath) > 0)
         UAS_AppendHeadDump(logPath, "reference (-Original.uas)", refPath, 512);
-#endif // _DEBUG
 
     // Collect names of sounds that didn't make it into the build. EncodedOk,
     // UserOggCopied, and StempOggReused are all success states (the engine
@@ -3255,7 +3251,6 @@ static INT_PTR CALLBACK ImportSoundDlgProc(HWND hDlg, UINT msg, WPARAM wParam, L
     return FALSE;
 }
 
-#ifdef _DEBUG
 // Shift+Properties: dumps flags for all USounds in the current package to %TEMP%\scct_flag_dump.txt.
 
 static const char* SB_ReadFName(void* pObj)
@@ -3473,18 +3468,15 @@ static void __cdecl SB_ShowFlagsDump(void* this_ptr)
         MessageBoxA(hParent, msg, "Message", MB_OK);
     }
 }
-#endif // _DEBUG
 
 static void __cdecl ShowPropertiesDialogHelper(void* this_ptr)
 {
-#ifdef _DEBUG
-    // Shift held > flag dump (debug builds only)
+    // Shift held > flag dump (available in release builds too).
     if (GetKeyState(VK_SHIFT) & 0x8000)
     {
         SB_ShowFlagsDump(this_ptr);
         return;
     }
-#endif
 
     void* pSound = GetSelectedSound(this_ptr);
     if (!pSound) return;

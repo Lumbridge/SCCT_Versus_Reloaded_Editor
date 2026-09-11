@@ -1,8 +1,12 @@
 #pragma once
 
+#include <filesystem>
+#include <string>
+
 namespace MapRecovery
 {
     constexpr UINT kCommandId = 40903;
+    // Retained command identifiers; 40904 now converts legacy recovery files.
     constexpr UINT kOpenRecoveredCommandId = 40904;
     constexpr UINT kExportBrushesCommandId = 40905;
     constexpr UINT kRecoverEditableCommandId = 40906;
@@ -11,6 +15,11 @@ namespace MapRecovery
     void RunEditable(HWND owner);
     void OpenRecovered(HWND owner);
     void ExportRecoveredBrushes(HWND owner);
+    // One-time conversion; the output uses the normal editor package layout.
+    // No dialogs. The caller must supply a new destination filename.
+    bool RecoverToSource(const std::filesystem::path& source,
+                         const std::filesystem::path& destination,
+                         std::string& error);
     bool HandleSaveCommand(UINT commandId);
     void* ResolveBuilderBrushActor(void* level);
     bool IsRecoveredMapActive();
@@ -36,9 +45,9 @@ namespace MapRecovery
     void ArmViewportExceptionDiagnostic();
     bool LogViewportException(EXCEPTION_POINTERS* exceptionInfo);
 
-    // Recovered levels still use the cooked serializer layout. SavePackage
-    // must use that same layout or its editor-only FBspSurf/FPoly fields are
-    // read as invalid memory. These calls are paired by the SavePackage hook.
+    // Temporary cooked extraction levels require the cooked serializer layout.
+    // Finished source maps use the ordinary save path with these guards off.
+    // These calls are paired by the SavePackage hook.
     void BeginSavePackage(uintptr_t returnAddress);
     uintptr_t EndSavePackage();
 }
