@@ -10,7 +10,8 @@ This is my fork of [AllyPal's Reloaded Editor](https://github.com/AllyPal/SCCT_V
 | --- | --- | --- |
 | [Compiled-map and editable BSP recovery](#compiled-map-recovery-experimental) | Open cooked maps, recover actors and asset references, and reconstruct editable brushes. | Published on `main` |
 | [BSP and crash diagnostics](#bsp-and-crash-diagnostics) | Investigate failed builds and work with BSP point indices beyond the stock signed 16-bit limit. | Published on `main` |
-| [Property-window and Play Level fixes](#property-window-and-play-level-fixes) | Bring misplaced property windows back into view and improve Enhanced SCCT playtesting compatibility. | Published on `main` |
+| [Property-window fixes](#property-window-fixes) | Bring misplaced property windows back into view. | Published on `main` |
+| [Play Level compatibility (experimental)](#play-level-compatibility-experimental) | Launch editor playtests through Reloaded with startup guards; profile setup remains incomplete. | Published on `main` |
 | [Texture Browser Favorites](#texture-browser-favorites) | Keep frequently used materials together in a persistent thumbnail tab. | Published on `main` |
 | [Static Mesh Browser Favorites](#static-mesh-browser-favorites) | Browse saved meshes across packages without repeatedly switching package filters. | Local development |
 | [BSP texture copy and paste](#bsp-texture-copy-and-paste) | Reuse a surface's material on other surfaces while retaining their alignment. | Local development |
@@ -75,9 +76,11 @@ once a rebuild passes 32,767 BSP points. Reloaded treats the fields as unsigned,
 retains the format's `0xFFFF` invalid-index sentinel, extends the usable range
 to 65,535, and journals when either threshold is crossed.
 
-### Property-Window and Play Level Fixes
+### Property-Window Fixes
 
 Use **View > Reset Property Window Positions** to bring misplaced property windows back to the current editor monitor while preserving their size and visibility.
+
+### Play Level Compatibility (Experimental)
 
 **Play Level remains experimental and incomplete.** The guarded launch has loaded the selected level and accepted keyboard input during a timed live test, but direct editor startup does not create `SPlayerProfile`. Full Reloaded controls and profile-dependent features are therefore not restored. The remaining work is to initialize and load the player's profile before enabling those callbacks; the guards alone do not complete that setup.
 
