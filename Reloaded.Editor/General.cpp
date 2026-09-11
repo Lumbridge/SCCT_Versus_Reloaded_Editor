@@ -17,7 +17,6 @@
 #include <mimalloc.h>
 #include <cstring>
 #include <unordered_map>
-#include <unordered_set>
 
 INIT_HOOKS;
 
@@ -232,17 +231,12 @@ static void __cdecl OpenRebuildAllMaps()
 }
 
 // Game View (J) - Simulates the in-game view in the viewport
-// Copies bHidden to bHiddenEd and only clears the flags it set when disabled
 static const uint32_t kGEditor            = 0x1165dfa0;
 static const uint32_t kGWarn              = 0x115befb0;
 static const uint32_t kEditor_Level       = 0x130;
 static const uint32_t kEditor_RedrawVtbl  = 0xE8;   // RedrawLevel(ULevel*)
-static const uint32_t kLevel_ActorsData   = 0x2C;
-static const uint32_t kLevel_ActorsNum    = 0x30;
 static const uint32_t kActor_Flags        = 0x2E8;  // dword holding bHidden
 static const uint32_t kMask_Hidden        = 0x1000; // its bit
-static const uint32_t kActor_EdFlags      = 0x2F4;  // dword holding bHiddenEd
-static const uint32_t kMask_HiddenEd      = 0x08;   // its bit
 static const uint32_t kActor_Texture      = 0x228;  // editor icon sprite
 static const uint32_t kActor_DrawType     = 0x2D9;
 static const uint8_t  kDrawType_Particle  = 10;
@@ -421,8 +415,9 @@ static void __cdecl RebuildDefaultBuilderBrush()
 }
 
 static bool g_gameView = false;
-static std::unordered_set<void*> g_gameViewHidden;          // compared only, never dereferenced
-static std::unordered_map<void*, void*> g_gameViewSprites;  // actor -> saved Texture
+
+enum : uint8_t { GV_None = 0, GV_IconOnly = 1, GV_Keep = 2 };
+static std::unordered_map<void*, uint8_t> g_gameViewClassCache;
 
 // Hides the rain volume wireframe but keeps the rain visible
 JMP_HOOK(0x1114aa20, RainVolumeBoundsHook)
@@ -444,7 +439,7 @@ JMP_HOOK(0x1114aa20, RainVolumeBoundsHook)
     }
 }
 
-// AActor::RenderEditorInfo assumes Actor->Texture is non-null
+// AActor::RenderEditorInfo draws overlays used by the editor (icons, radii, etc.)
 JMP_HOOK(0x11191110, ActorEditorInfoHook)
 {
     static int s_resume = 0x11191115;
@@ -461,29 +456,6 @@ JMP_HOOK(0x11191110, ActorEditorInfoHook)
 
     skip_info:
         ret  0xc
-    }
-}
-
-// DrawSprite assumes Actor->Texture is non-null. Callers must guard it or it will crash on cleared icons
-JMP_HOOK(0x110a3270, DrawSpriteNullTextureFix)
-{
-    static int s_resume = 0x110a3275;
-
-    __asm
-    {
-        mov  eax, dword ptr [esp + 4]      // the actor
-        test eax, eax
-        jz   skip_sprite
-        cmp  dword ptr [eax + 0x228], 0    // Actor->Texture
-        jz   skip_sprite
-
-        push ebp
-        mov  ebp, esp
-        push -1
-        jmp  dword ptr [s_resume]
-
-    skip_sprite:
-        ret                                // caller cleans the arg
     }
 }
 
@@ -507,12 +479,11 @@ JMP_HOOK(0x10eced35, GEViewportRenderHook)
     }
 }
 
-static bool GV_ClassChainHas(void* actor, const char* want)
+static bool GV_ClassChainHas(void* cls, const char* want)
 {
     int* gnames = *reinterpret_cast<int**>(kGNames);
     if (!gnames) return false;
 
-    void* cls = *reinterpret_cast<void**>(static_cast<char*>(actor) + kObj_Class);
     for (int depth = 0; cls && depth < 16; ++depth)
     {
         int entry = gnames[*reinterpret_cast<int*>(static_cast<char*>(cls) + kObj_Name)];
@@ -523,106 +494,112 @@ static bool GV_ClassChainHas(void* actor, const char* want)
     return false;
 }
 
-static bool GV_IsKeptClass(void* actor)
+static uint8_t GV_ClassifyClass(void* cls)
 {
+    auto it = g_gameViewClassCache.find(cls);
+    if (it != g_gameViewClassCache.end())
+        return it->second;
+
+    uint8_t kind = GV_None;
     for (const char* keep : kGameViewKeep)
-        if (GV_ClassChainHas(actor, keep))
-            return true;
-    return false;
+        if (GV_ClassChainHas(cls, keep)) { kind = GV_Keep; break; }
+
+    if (kind == GV_None)
+        for (const char* icon : kGameViewIconOnly)
+            if (GV_ClassChainHas(cls, icon)) { kind = GV_IconOnly; break; }
+
+    g_gameViewClassCache[cls] = kind;
+    return kind;
 }
 
-static bool GV_IsIconOnlyClass(void* actor)
+// Emitters, coronas, and light beams are visible in game, so only their editor icon is suppressed
+static bool GV_IsIconOnly(void* actor)
 {
-    for (const char* cls : kGameViewIconOnly)
-        if (GV_ClassChainHas(actor, cls))
-            return true;
-    return false;
+    if (*reinterpret_cast<uint8_t*>(static_cast<char*>(actor) + kActor_DrawType) == kDrawType_Particle)
+        return true;
+    void* cls = *reinterpret_cast<void**>(static_cast<char*>(actor) + kObj_Class);
+    return cls && GV_ClassifyClass(cls) == GV_IconOnly;
 }
 
-static void** GV_Actors(void* gEditor, int* outCount)
+static int __cdecl GV_ShouldHide(void* actor)
 {
-    void* level = *reinterpret_cast<void**>(static_cast<char*>(gEditor) + kEditor_Level);
-    if (!level) return nullptr;
-    *outCount = *reinterpret_cast<int*>(static_cast<char*>(level) + kLevel_ActorsNum);
-    return *reinterpret_cast<void***>(static_cast<char*>(level) + kLevel_ActorsData);
+    if (!g_gameView || !actor) return 0;
+
+    DWORD flags = *reinterpret_cast<DWORD*>(static_cast<char*>(actor) + kActor_Flags);
+    if (!(flags & kMask_Hidden)) return 0;
+
+    if (GV_IsIconOnly(actor)) return 0;
+
+    void* cls = *reinterpret_cast<void**>(static_cast<char*>(actor) + kObj_Class);
+    if (cls && GV_ClassifyClass(cls) == GV_Keep) return 0;
+
+    return 1;
 }
 
-static void GV_Apply(void** actors, int count)
+static int __cdecl GV_SkipSprite(void* actor)
 {
-    for (int i = 0; i < count; ++i)
+    if (!actor) return 1;
+    if (!*reinterpret_cast<void**>(static_cast<char*>(actor) + kActor_Texture)) return 1; // engine assumes non-null
+    return (g_gameView && GV_IsIconOnly(actor)) ? 1 : 0;
+}
+
+// FLevelSceneNode::FilterActor(AActor*) handles actor visibility for rendering and hit-testing
+JMP_HOOK(0x110a15e0, SceneNodeFilterActorHook)
+{
+    static int s_resume = 0x110a15e6;
+
+    __asm
     {
-        void* actor = actors[i];
-        if (!actor) continue;
-        DWORD* flags = reinterpret_cast<DWORD*>(static_cast<char*>(actor) + kActor_Flags);
-        DWORD* ed    = reinterpret_cast<DWORD*>(static_cast<char*>(actor) + kActor_EdFlags);
-        void** tex   = reinterpret_cast<void**>(static_cast<char*>(actor) + kActor_Texture);
+        cmp  byte ptr [g_gameView], 0
+        jz   pass_through
 
-        // Emitter particles, and a light's corona / light beam, are visible in game
-        // and die with the actor, so only hide the editor icon
-        const bool iconOnly =
-            *reinterpret_cast<uint8_t*>(static_cast<char*>(actor) + kActor_DrawType)
-                == kDrawType_Particle ||
-            GV_IsIconOnlyClass(actor);
+        push ecx                           // this
+        push dword ptr [esp + 8]           // actor
+        call GV_ShouldHide
+        add  esp, 4
+        pop  ecx
+        test eax, eax
+        jnz  hide_actor
 
-        if ((*flags & kMask_Hidden) && !(*ed & kMask_HiddenEd)
-                && !iconOnly && !GV_IsKeptClass(actor))
-        {
-            *ed |= kMask_HiddenEd;
-            g_gameViewHidden.insert(actor);
-            continue;
-        }
+    pass_through:
+        mov  eax, dword ptr [ecx + 4]      // replay overwritten prologue
+        mov  ecx, dword ptr [eax + 0x30]
+        jmp  dword ptr [s_resume]
 
-        if (iconOnly && *tex)
-        {
-            g_gameViewSprites[actor] = *tex;
-            *tex = nullptr;
-        }
+    hide_actor:
+        xor  eax, eax
+        ret  4
     }
-    g_gameView = true;
 }
 
-// Refresh from the live actor list because a map reload invalidates the saved pointers.
-static void GV_Restore(void** actors, int count)
+// DrawSprite assumes Actor->Texture is non-null, and in Game View icon-only actors skip their icon
+JMP_HOOK(0x110a3270, DrawSpriteNullTextureFix)
 {
-    for (int i = 0; i < count; ++i)
+    static int s_resume = 0x110a3275;
+
+    __asm
     {
-        void* actor = actors[i];
-        if (!actor) continue;
+        push ecx
+        push edx
+        push dword ptr [esp + 12]          // the actor
+        call GV_SkipSprite
+        add  esp, 4
+        pop  edx
+        pop  ecx
+        test eax, eax
+        jnz  skip_sprite
 
-        if (g_gameViewHidden.count(actor))
-            *reinterpret_cast<DWORD*>(static_cast<char*>(actor) + kActor_EdFlags)
-                &= ~kMask_HiddenEd;
+        push ebp
+        mov  ebp, esp
+        push -1
+        jmp  dword ptr [s_resume]
 
-        auto its = g_gameViewSprites.find(actor);
-        if (its != g_gameViewSprites.end())
-        {
-            void** tex = reinterpret_cast<void**>(static_cast<char*>(actor) + kActor_Texture);
-
-            // Restore only if Texture is still null (the value set by GV_Apply).
-            // If it's non-null, the texture was changed or this actor was reused,
-            // so restoring the saved pointer could overwrite valid data.
-            if (!*tex)
-                *tex = its->second;
-        }
+    skip_sprite:
+        ret                                // caller cleans the arg
     }
-    g_gameViewHidden.clear();
-    g_gameViewSprites.clear();
-    g_gameView = false;
 }
 
-// bHiddenEd is saved, so Game View must be off before SavePackage to avoid baking hidden state into the map
-static void __cdecl GameViewClearForSave()
-{
-    if (!g_gameView) return;
-
-    void* gEditor = *reinterpret_cast<void**>(kGEditor);
-    if (!gEditor) return;
-
-    int count = 0;
-    void** actors = GV_Actors(gEditor, &count);
-    if (actors) GV_Restore(actors, count);
-}
-
+// Recovery still brackets native saves; Game View no longer changes saved actor data.
 static void __cdecl BeginRecoverySavePackage(uintptr_t returnAddress)
 {
     MapRecovery::BeginSavePackage(returnAddress);
@@ -633,7 +610,7 @@ static uintptr_t __cdecl EndRecoverySavePackage()
     return MapRecovery::EndSavePackage();
 }
 
-JMP_HOOK(0x10fb2610, SavePackageGameViewHook)
+JMP_HOOK(0x10fb2610, RecoverySavePackageHook)
 {
     static int s_resume = 0x10fb2615;
     static uintptr_t s_recoveryReturnAddress = 0;
@@ -645,10 +622,6 @@ JMP_HOOK(0x10fb2610, SavePackageGameViewHook)
         call BeginRecoverySavePackage
         add  esp, 4
         mov  dword ptr [esp], offset recovery_save_complete
-
-        pushad
-        call GameViewClearForSave
-        popad
 
         push ebp
         mov  ebp, esp
@@ -673,12 +646,8 @@ static void __cdecl ToggleGameView()
     void* level = *reinterpret_cast<void**>(static_cast<char*>(gEditor) + kEditor_Level);
     if (!level) return;
 
-    int count = 0;
-    void** actors = GV_Actors(gEditor, &count);
-    if (!actors) return;
-
-    if (g_gameView) GV_Restore(actors, count);
-    else            GV_Apply(actors, count);
+    g_gameView = !g_gameView;
+    g_gameViewClassCache.clear();   // class pointers may have been recycled by a map load
 
     void* vtable = *reinterpret_cast<void**>(gEditor);
     void* redraw = *reinterpret_cast<void**>(static_cast<char*>(vtable) + kEditor_RedrawVtbl);
