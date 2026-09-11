@@ -2,7 +2,7 @@
 
 SCCT Versus Reloaded Editor is an unofficial patch for the Unreal Level Editor used by Splinter Cell: Chaos Theory's Versus mode. It is compatible with the stock game as well as [Enhanced SCCT Versus](https://github.com/Joshhhuaaa/EnhancedSCCTVersus).
 
-This is [Lumbridge's fork](https://github.com/Lumbridge/SCCT_Versus_Reloaded_Editor) of [AllyPal's Reloaded Editor](https://github.com/AllyPal/SCCT_Versus_Reloaded_Editor), adding compiled-map recovery, build diagnostics, and tools to speed up everyday map editing.
+This is my fork of [AllyPal's Reloaded Editor](https://github.com/AllyPal/SCCT_Versus_Reloaded_Editor). I've added compiled-map recovery, build diagnostics, and tools to speed up everyday map editing.
 
 ## What's New in This Fork
 
