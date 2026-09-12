@@ -1,0 +1,590 @@
+#include "pch.h"
+#undef min
+#undef max
+#include "WorkflowTools.h"
+#include "WorkflowEditor.h"
+#include "WorkflowGraph.h"
+#include "MagicEventWorkbench.h"
+#include "MemoryWriter.h"
+#include <commctrl.h>
+#include <algorithm>
+#include <cmath>
+#include <memory>
+#include <set>
+#include <stdexcept>
+#pragma comment(lib,"comctl32.lib")
+
+namespace WorkflowTools
+{
+using namespace Workflow;
+namespace
+{
+    constexpr int kList=100,kName=101,kStatus=102,kFollow=103,kScope=104;
+    enum Button { Refresh=200,Primary,Secondary,Third,Fourth,Fifth,Sixth,Seventh,Eighth,Ninth,Tenth,Eleventh };
+    enum class Kind { Assets,Connections,Views,Assemblies };
+    Json document; uintptr_t level=0; std::string mapKey; bool loaded=false; unsigned mapEpoch=0,nativeMapGeneration=0;
+    std::filesystem::path LibraryPath() { return Editor::Directory()/"library.json"; }
+    Json EmptyMap() { return {{"views",Json::array()},{"instances",Json::array()}}; }
+    void Save(Json next)
+    {
+        Json disk=next;
+        disk["maps"].erase(""); // Untitled views stay in memory until first save.
+        WriteDocument(LibraryPath(),disk); document=std::move(next);
+    }
+    bool Sync()
+    {
+        if(!loaded)
+        {
+            document=ReadDocument(LibraryPath(),{{"version",1},{"assemblies",Json::array()},{"maps",Json::object()}});
+            if(!document.at("assemblies").is_array() || !document.at("maps").is_object()) throw std::runtime_error("Invalid workflow library; restore a valid copy before editing it.");
+            loaded=true;
+        }
+        auto current=Editor::LevelIdentity(); auto key=Editor::MapKey();auto generation=Editor::MapGeneration(); bool changed=current!=level || key!=mapKey || generation!=nativeMapGeneration;
+        if(!changed) return false;
+        Json next=document;
+        if(level && current==level && generation==nativeMapGeneration && key!=mapKey && !key.empty()) next["maps"][key]=next["maps"].value(mapKey,EmptyMap());
+        else if(key.empty()) next["maps"][""]=EmptyMap();
+        if(!next["maps"].contains(key)) next["maps"][key]=EmptyMap();
+        if(current==level && !key.empty()) Save(next); else document=std::move(next);
+        level=current; mapKey=key; nativeMapGeneration=generation; ++mapEpoch; return true;
+    }
+    HWND Control(HWND parent,const char* type,const std::string& title,DWORD style,int id,int x,int y,int w,int h)
+    {
+        HWND child=CreateWindowExA(type==std::string("EDIT")?WS_EX_CLIENTEDGE:0,type,title.c_str(),WS_CHILD|WS_VISIBLE|WS_TABSTOP|style,x,y,w,h,parent,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),GetModuleHandle(nullptr),nullptr);
+        SendMessage(child,WM_SETFONT,reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)),TRUE); return child;
+    }
+    std::string Text(HWND control)
+    {
+        int count=GetWindowTextLengthA(control); std::string text(count+1,'\0'); GetWindowTextA(control,text.data(),count+1); text.resize(count); return text;
+    }
+    struct InputField { std::string label,value; std::vector<std::string> choices; };
+    struct Form { std::vector<InputField> fields; std::vector<HWND> controls; bool done=false,accepted=false; };
+    LRESULT CALLBACK FormProc(HWND window,UINT message,WPARAM w,LPARAM l)
+    {
+        auto form=reinterpret_cast<Form*>(GetWindowLongPtr(window,GWLP_USERDATA));
+        if(message==WM_NCCREATE) { form=static_cast<Form*>(reinterpret_cast<CREATESTRUCT*>(l)->lpCreateParams); SetWindowLongPtr(window,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(form)); }
+        if(!form) return DefWindowProcA(window,message,w,l);
+        if(message==WM_CREATE)
+        {
+            int y=16;
+            for(size_t i=0;i<form->fields.size();++i)
+            {
+                auto& f=form->fields[i]; Control(window,"STATIC",f.label,0,0,12,y,200,22);
+                HWND input=Control(window,f.choices.empty()?"EDIT":"COMBOBOX",f.choices.empty()?f.value:"",f.choices.empty()?ES_AUTOHSCROLL:CBS_DROPDOWNLIST|WS_VSCROLL,1000+static_cast<int>(i),215,y-3,340,f.choices.empty()?24:240);
+                for(auto& choice:f.choices) SendMessageA(input,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(choice.c_str()));
+                if(!f.choices.empty()) SendMessage(input,CB_SETCURSEL,0,0);
+                form->controls.push_back(input); y+=34;
+            }
+            Control(window,"BUTTON","OK",BS_DEFPUSHBUTTON,IDOK,365,y,90,28); Control(window,"BUTTON","Cancel",0,IDCANCEL,465,y,90,28);
+            if(!form->controls.empty()) SetFocus(form->controls[0]); return 0;
+        }
+        if(message==WM_COMMAND && (LOWORD(w)==IDOK || LOWORD(w)==IDCANCEL))
+        {
+            form->accepted=LOWORD(w)==IDOK;
+            if(form->accepted) for(size_t i=0;i<form->fields.size();++i) form->fields[i].value=Text(form->controls[i]);
+            form->done=true; return 0;
+        }
+        if(message==WM_CLOSE) { form->done=true; return 0; }
+        return DefWindowProcA(window,message,w,l);
+    }
+    bool Ask(HWND parent,const char* title,std::vector<InputField>& fields)
+    {
+        WNDCLASSA wc{}; wc.lpfnWndProc=FormProc; wc.hInstance=GetModuleHandle(nullptr); wc.lpszClassName="ReloadedWorkflowForm"; wc.hCursor=LoadCursor(nullptr,IDC_ARROW); wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1); RegisterClassA(&wc);
+        Form form{fields}; RECT owner{}; GetWindowRect(parent,&owner);
+        HWND dialog=CreateWindowExA(WS_EX_DLGMODALFRAME|WS_EX_CONTROLPARENT,wc.lpszClassName,title,WS_CAPTION|WS_SYSMENU|WS_POPUP,owner.left+40,owner.top+50,585,110+static_cast<int>(fields.size())*34,parent,nullptr,wc.hInstance,&form);
+        if(!dialog) throw std::runtime_error("Could not create workflow dialog.");
+        EnableWindow(parent,FALSE); ShowWindow(dialog,SW_SHOW);
+        MSG msg{};
+        while(!form.done && GetMessage(&msg,nullptr,0,0)>0) if(!IsDialogMessage(dialog,&msg)) { TranslateMessage(&msg); DispatchMessage(&msg); }
+        EnableWindow(parent,TRUE); DestroyWindow(dialog); SetActiveWindow(parent);
+        if(form.accepted) fields=std::move(form.fields); return form.accepted;
+    }
+    bool GetName(HWND parent,const char* title,std::string& name)
+    {
+        std::vector<InputField> fields={{"Name",name,{}}}; if(!Ask(parent,title,fields)) return false;
+        name=fields[0].value;
+        if(name.empty() || name.size()>120 || name.find_first_of("\r\n")!=std::string::npos) throw std::runtime_error("Enter a name between 1 and 120 characters."); return true;
+    }
+    struct TagPreviewText { std::string title,summary,assignments; };
+    INT_PTR CALLBACK TagPreviewProc(HWND window,UINT message,WPARAM w,LPARAM l)
+    {
+        if(message==WM_INITDIALOG)
+        {
+            auto data=reinterpret_cast<TagPreviewText*>(l);SetWindowTextA(window,data->title.c_str());RECT r{};GetClientRect(window,&r);
+            Control(window,"STATIC",data->summary,0,0,12,12,r.right-24,95);
+            Control(window,"EDIT",data->assignments,ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|ES_AUTOHSCROLL|WS_VSCROLL|WS_HSCROLL,1000,12,110,r.right-24,r.bottom-160);
+            Control(window,"BUTTON","Rename group",BS_DEFPUSHBUTTON,IDOK,r.right-245,r.bottom-38,125,27);Control(window,"BUTTON","Cancel",0,IDCANCEL,r.right-110,r.bottom-38,95,27);return TRUE;
+        }
+        if(message==WM_COMMAND && (LOWORD(w)==IDOK || LOWORD(w)==IDCANCEL)){EndDialog(window,LOWORD(w));return TRUE;}
+        if(message==WM_CLOSE){EndDialog(window,IDCANCEL);return TRUE;}return FALSE;
+    }
+    bool ConfirmTagRename(HWND owner,TagPreviewText& data)
+    {
+        std::vector<WORD> bytes((sizeof(DLGTEMPLATE)+1)/2+3,0);auto dlg=reinterpret_cast<DLGTEMPLATE*>(bytes.data());
+        dlg->style=WS_POPUP|WS_CAPTION|WS_SYSMENU|DS_MODALFRAME|DS_CENTER;dlg->cx=440;dlg->cy=285;
+        auto answer=DialogBoxIndirectParamW(GetModuleHandle(nullptr),dlg,owner,TagPreviewProc,reinterpret_cast<LPARAM>(&data));
+        if(answer==-1)throw std::runtime_error("Could not open tag rename preview.");return answer==IDOK;
+    }
+    struct State
+    {
+        Kind kind; HWND window{},list{},status{}; Json rows=Json::array(); std::string selectedId,source,connectionActor; bool mesh=false;
+        Json editing; Json members=Json::array(), instance; Pose frame{}; uintptr_t editLevel=0; unsigned epoch=0,revision=0;
+        std::vector<HWND> buttons;
+    };
+    std::vector<State*> windows;
+    void Status(State& s,const std::string& text) { SetWindowTextA(s.status,text.c_str()); }
+    Json Entries(const State& s) { return s.kind==Kind::Assemblies ? document.at("assemblies") : document.at("maps").at(mapKey).at("views"); }
+    int Selected(const State& s) { return ListView_GetNextItem(s.list,-1,LVNI_SELECTED); }
+    Json Entry(State& s)
+    {
+        int row=Selected(s); if(row<0 || row>=static_cast<int>(s.rows.size())) throw std::runtime_error("Select an entry first.");
+        auto entry=s.rows[row]; if(entry.contains("id")) s.selectedId=entry.at("id").get<std::string>(); return entry;
+    }
+    void Row(State& s,int index,const std::vector<std::string>& values,bool checked=false)
+    {
+        LVITEMA item{}; item.mask=LVIF_TEXT; item.iItem=index; item.pszText=const_cast<char*>(values[0].c_str()); SendMessageA(s.list,LVM_INSERTITEMA,0,reinterpret_cast<LPARAM>(&item));
+        for(size_t i=1;i<values.size();++i) { item.iSubItem=static_cast<int>(i); item.pszText=const_cast<char*>(values[i].c_str()); SendMessageA(s.list,LVM_SETITEMTEXTA,index,reinterpret_cast<LPARAM>(&item)); }
+        if(s.kind==Kind::Assets) ListView_SetCheckState(s.list,index,checked);
+    }
+    void Populate(State& s)
+    {
+        Sync(); bool changed=s.epoch!=mapEpoch; s.epoch=mapEpoch;s.revision=Editor::Revision();
+        if(changed || (s.editLevel && s.editLevel!=level)) { s.editing=Json{}; s.members=Json::array(); s.editLevel=0; }
+        ListView_DeleteAllItems(s.list);
+        if(s.kind==Kind::Assets)
+        {
+            s.rows=Editor::FindUsages(s.source); bool only=SendMessage(GetDlgItem(s.window,kScope),BM_GETCHECK,0,0)==BST_CHECKED;
+            int i=0; for(const auto& j:s.rows)
+            {
+                auto actor=j.at("actor").is_object()?j.at("actor").value("path",std::string{}):"BSP";
+                bool can=j.at("replaceable"); Row(s,i++,{actor,j.at("property"),can?"Direct / replaceable":j.at("direct").get<bool>()?"Read-only assignment":"Indirect / shared asset"},can && (!only || j.at("selected").get<bool>()));
+            }
+            Status(s,s.source+" — "+std::to_string(s.rows.size())+" usages. Uncheck results to exclude them; shared asset contents are read-only.");
+        }
+        else if(s.kind==Kind::Connections)
+        {
+            if(s.connectionActor.empty() || SendMessage(GetDlgItem(s.window,kFollow),BM_GETCHECK,0,0)==BST_CHECKED)
+            {
+                auto selected=Editor::Actors(true); s.connectionActor=selected.empty()?"":selected[0].at("path").get<std::string>();
+            }
+            s.rows=s.connectionActor.empty()?Json::array():Editor::Connections(s.connectionActor);
+            int i=0; for(const auto& j:s.rows) { bool outgoing=Fold(j.at("from").get<std::string>())==Fold(s.connectionActor); Row(s,i++,{outgoing?"Outgoing":"Incoming",outgoing?j.at("to").get<std::string>():j.at("from").get<std::string>(),j.at("property").get<std::string>()+" / "+j.at("kind").get<std::string>()+(j.at("resolved").get<bool>()?"":" / UNRESOLVED")}); }
+            Status(s,s.connectionActor.empty()?"Select an actor in the level, then Refresh.":s.connectionActor);
+        }
+        else
+        {
+            s.rows=Entries(s); int i=0;
+            for(const auto& j:s.rows)
+            {
+                std::string info=s.kind==Kind::Views?std::to_string(j.at("cameras").size())+" viewports":std::to_string(j.at("actors").size())+" actors / "+std::to_string(j.at("bindings").size())+" external bindings";
+                Row(s,i,{j.at("name"),info,j.value("modified",std::string{})});
+                if(j.at("id")==s.selectedId) ListView_SetItemState(s.list,i,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED);
+                ++i;
+            }
+            if(s.editing.is_object() && !s.editing.empty()) Status(s,"Editing "+s.editing.at("name").get<std::string>()+" — "+std::to_string(s.members.size())+" members. Add/Remove Selected changes membership; Save Changes updates the library.");
+            else Status(s,s.kind==Kind::Views?"Restore a view, adjust the workspace, then Update Selected from Current.":"Edit Contents to add/remove members. Saving affects future placements; other placed copies stay independent.");
+        }
+    }
+    void StoreEntry(State& s,Json value,bool update)
+    {
+        Json next=document;
+        auto& entries=s.kind==Kind::Views?next["maps"][mapKey]["views"]:next["assemblies"];
+        if(update) UpdateEntry(entries,s.selectedId,value);
+        else { value["id"]=Id(); value["modified"]=Timestamp(); s.selectedId=value.at("id"); entries.push_back(value); }
+        Save(next); Populate(s);
+    }
+    void SaveAssembly(State& s,bool update,bool session)
+    {
+        Json original=update?(session?s.editing:Entry(s)):Json{};
+        if(session && (s.editing.empty() || s.editLevel!=Editor::LevelIdentity())) throw std::runtime_error("Start Edit Contents in this map first.");
+        Json members=session?s.members:Editor::SelectedIdentities();
+        Pose frame=session?s.frame:Pose{};
+        Json updatingInstance=session?s.instance:Json{};
+        if(update && !session)
+        {
+            frame.position=original.at("pivot").get<Vector>();
+            for(const auto& instance:document["maps"][mapKey]["instances"]) if(instance.at("assembly")==original.at("id"))
+            {
+                bool overlap=false;
+                for(const auto& old:instance.at("members")) for(const auto& selected:members) if(old.at("path")==selected.at("path") && old.at("class")==selected.at("class"))overlap=true;
+                if(!overlap)continue;
+                if(!updatingInstance.empty())throw std::runtime_error("The selection spans multiple instances. Use Edit Contents to choose which instance to update.");
+                updatingInstance=instance;frame={instance.at("position").get<Vector>(),instance.at("rotation").get<Rotation>()};
+            }
+        }
+        if(!update)
+        {
+            // Start from actor bounds supplied by the native snapshot helper.
+            frame=Editor::BuilderPose();
+            auto snapshot=Editor::CaptureAssembly(members,Pose{}); Vector lo{},hi{}; bool first=true;
+            for(const auto& a:snapshot.at("actors")) { Vector p=a.at("position").get<Vector>(); if(first) {lo=hi=p; first=false;} else for(int i=0;i<3;++i){lo[i]=std::min(lo[i],p[i]);hi[i]=std::max(hi[i],p[i]);} }
+            for(int i=0;i<3;++i) frame.position[i]=(lo[i]+hi[i])/2;
+        }
+        Json captured=Editor::CaptureAssembly(members,frame);
+        auto names=session && s.instance.contains("names")?s.instance.at("names").get<std::map<std::string,std::string>>():std::map<std::string,std::string>{};
+        if(update && !session)
+        {
+            for(const auto& instance:document["maps"][mapKey]["instances"]) if(instance.at("assembly")==original.at("id") && instance.contains("names"))
+                for(auto i=instance.at("names").begin();i!=instance.at("names").end();++i) names[i.key()]=i.value();
+        }
+        captured=CanonicalizeAssembly(captured,names);
+        std::string name=update?original.at("name").get<std::string>():"New assembly";
+        if(!update && !GetName(s.window,"Save Selection as Assembly",name)) return;
+        captured["name"]=name;
+        if(update)
+        {
+            s.selectedId=original.at("id"); captured["pivot"]=original.at("pivot");
+            std::set<std::string> before,after;
+            for(const auto& a:original.at("actors")) before.insert(Fold(a.at("name").get<std::string>()));
+            for(const auto& a:captured.at("actors")) after.insert(Fold(a.at("name").get<std::string>()));
+            int added=0,removed=0,modified=0; for(const auto& n:after) added+=!before.count(n); for(const auto& n:before) removed+=!after.count(n);
+            for(const auto& a:captured.at("actors")) for(const auto& b:original.at("actors"))
+                if(Fold(a.at("name").get<std::string>())==Fold(b.at("name").get<std::string>()) && a.at("text")!=b.at("text")) ++modified;
+            std::string summary="Update '"+name+"' in place?\n\n"+std::to_string(added)+" added, "+std::to_string(removed)+" removed.\nCapture current properties and transforms for "+std::to_string(captured.at("actors").size())+" members.\n\nExternal bindings:\n";
+            summary+=std::to_string(modified)+" existing members have changed contents.\n";
+            for(const auto& b:captured.at("bindings")) summary+="  "+b.at("label").get<std::string>()+" ("+b.at("type").get<std::string>()+")\n";
+            if(captured.at("bindings").empty()) summary+="  None\n";
+            for(const auto& old:original.at("bindings"))
+                if(std::find(captured.at("bindings").begin(),captured.at("bindings").end(),old)==captured.at("bindings").end()) summary+="  Removed/changed: "+old.at("label").get<std::string>()+"\n";
+            summary+="\nExisting placed copies will not be changed.";
+            if(MessageBoxA(s.window,summary.c_str(),"Update Assembly",MB_OKCANCEL|MB_ICONINFORMATION)!=IDOK) return;
+        }
+        if(!updatingInstance.empty())
+        {
+            // Keep the editable instance's membership and canonical names current
+            // so a second edit does not resurrect removed members.
+            Json next=document; auto& list=next["maps"][mapKey]["instances"];
+            for(auto& instance:list) if(instance.at("id")==updatingInstance.at("id"))
+            {
+                instance["members"]=Json::array();instance["names"]=Json::object();
+                for(const auto& a:captured.at("actors"))
+                {
+                    auto source=a.at("sourcePath").get<std::string>();
+                    for(const auto& m:members) if(m.at("path")==source) instance["members"].push_back(m);
+                    instance["names"][source]=a.at("name");
+                }
+            }
+            UpdateEntry(next["assemblies"],s.selectedId,captured);Save(next);Populate(s);
+        }
+        else StoreEntry(s,captured,update);
+        if(session) { s.editing=Json{}; s.members=Json::array(); s.editLevel=0; Populate(s); }
+    }
+    Json Place(State& s,const Json& entry)
+    {
+        auto frame=Editor::BuilderPose(); std::vector<InputField> fields;
+        const char* labels[]={"Position X","Position Y","Position Z","Pitch (degrees)","Yaw (degrees)","Roll (degrees)"};
+        for(int i=0;i<6;++i) fields.push_back({labels[i],i<3?std::to_string(frame.position[i]):"0",{}});
+        if(!Ask(s.window,"Place Assembly",fields)) return {};
+        for(int i=0;i<6;++i)
+        {
+            size_t used=0; double v=std::stod(fields[i].value,&used);
+            if(used!=fields[i].value.size() || !std::isfinite(v) || abs(v)>10000000) throw std::runtime_error("Enter finite numeric position/rotation values.");
+            if(i<3) frame.position[i]=v; else frame.rotation[i-3]=static_cast<int>(std::lround(std::fmod(v,360.0)*65536.0/360.0));
+        }
+        auto actors=Editor::Actors(); std::map<std::string,std::string> bindings;
+        for(const auto& b:entry.at("bindings"))
+        {
+            std::vector<std::string> choices={"Unbound (None)"};
+            for(const auto& a:actors) if(Editor::Compatible(a.at("path"),b.at("type")))
+                if(b.at("kind")!="event" || Fold(a.at("tag").get<std::string>())!="none") choices.push_back(a.at("path"));
+            std::vector<InputField> binding={{b.at("label"),"",choices}};
+            if(!Ask(s.window,"Bind External Actor",binding)) return {};
+            bindings[b.at("id")]=binding[0].value==choices[0]?"":binding[0].value;
+        }
+        Json instance=Editor::PlaceAssembly(entry,frame,bindings); Json next=document;
+        next["maps"][mapKey]["instances"].push_back(instance);
+        try { Save(next); }
+        catch(...) { Editor::Exec("TRANSACTION UNDO"); throw; }
+        return instance;
+    }
+    void EditContents(State& s)
+    {
+        auto entry=Entry(s); std::vector<Json> instances;
+        std::vector<std::string> choices={"Place a new editable copy"};
+        auto live=Editor::Actors();
+        for(const auto& i:document["maps"][mapKey]["instances"]) if(i.at("assembly")==entry.at("id"))
+        {
+            bool exists=false;
+            for(const auto& m:i.at("members")) for(const auto& a:live) if(a.at("path")==m.at("path") && a.at("class")==m.at("class")) exists=true;
+            if(exists) { instances.push_back(i); choices.push_back("Existing instance "+i.at("id").get<std::string>().substr(0,8)+" ("+std::to_string(i.at("members").size())+" members)"); }
+        }
+        std::vector<InputField> fields={{"Edit instance","",choices}}; if(!Ask(s.window,"Edit Assembly Contents",fields)) return;
+        auto choice=std::find(choices.begin(),choices.end(),fields[0].value)-choices.begin();
+        Json instance=choice==0?Place(s,entry):instances.at(choice-1); if(instance.empty()) return;
+        s.editing=entry; s.instance=instance; s.members=instance.at("members"); s.frame={instance.at("position").get<Vector>(),instance.at("rotation").get<Rotation>()}; s.editLevel=level;
+        Editor::Select(s.members,true); Populate(s);
+    }
+    void Activate(State& s)
+    {
+        Sync();
+        if(s.epoch!=mapEpoch || (s.kind==Kind::Assets && s.revision!=Editor::Revision()))
+        {
+            Populate(s); throw std::runtime_error("The map changed. Select an entry in the refreshed list.");
+        }
+        auto j=Entry(s);
+        if(s.kind==Kind::Views) { auto message=Editor::RestoreView(j); Status(s,message); }
+        else if(s.kind==Kind::Assets)
+        {
+            if(!j.at("actor").empty()) Editor::Select(Json::array({j.at("actor")}),true);
+        }
+        else if(s.kind==Kind::Connections)
+        {
+            if(!j.at("resolved").get<bool>()) throw std::runtime_error("This relationship has no matching target.");
+            std::string target=Fold(j.at("from").get<std::string>())==Fold(s.connectionActor)?j.at("to"):j.at("from");
+            for(const auto& a:Editor::Actors()) if(a.at("path")==target) { Editor::Select(Json::array({a}),true); break; }
+        }
+        else Place(s,j);
+    }
+    void Command(State& s,int command)
+    {
+        Sync(); if(s.epoch!=mapEpoch) { s.editing=Json{}; s.members=Json::array(); Populate(s); if(command!=Refresh) throw std::runtime_error("The map changed. Select an entry in the refreshed list."); }
+        if(command==Refresh) { Populate(s); return; }
+        if(s.kind==Kind::Assets)
+        {
+            if(command==Primary) { Activate(s); return; }
+            if(command==Secondary)
+            {
+                if(s.revision!=Editor::Revision()) { Populate(s); throw std::runtime_error("The map changed. Review the refreshed usages before replacing."); }
+                auto target=Editor::CurrentAsset(s.mesh); if(target.empty()) throw std::runtime_error("Select a replacement in the asset browser first.");
+                Json changes=Json::array(); bool only=SendMessage(GetDlgItem(s.window,kScope),BM_GETCHECK,0,0)==BST_CHECKED;
+                for(int i=0;i<static_cast<int>(s.rows.size());++i) if(ListView_GetCheckState(s.list,i))
+                {
+                    auto j=s.rows[i]; if(!j.at("replaceable").get<bool>()) throw std::runtime_error("Uncheck read-only usages before replacing.");
+                    if(only && !j.at("selected").get<bool>()) continue;
+                    changes.push_back(j);
+                }
+                if(changes.empty()) throw std::runtime_error("Check at least one replaceable usage.");
+                std::string preview="Replace "+std::to_string(changes.size())+" checked assignments?\n\nFrom: "+s.source+"\nTo: "+target+"\n\nThis is one undoable map operation.";
+                if(MessageBoxA(s.window,preview.c_str(),"Preview Asset Replacement",MB_OKCANCEL|MB_ICONINFORMATION)!=IDOK) return;
+                Editor::ReplaceUsages(changes,s.source,target); Populate(s);
+            }
+            return;
+        }
+        if(s.kind==Kind::Connections) { if(command==Third) WorkflowGraph::Open(s.window); else Activate(s); return; }
+        if(s.kind==Kind::Views)
+        {
+            if(command==Primary) { Activate(s); return; }
+            if(command==Secondary) { std::string name="New view"; if(GetName(s.window,"Save New Working View",name)) { auto view=Editor::CaptureView(); view["name"]=name; StoreEntry(s,view,false); } return; }
+            if(command==Third) { Entry(s); StoreEntry(s,Editor::CaptureView(),true); Status(s,"Updated the selected view from the current workspace. Its name and identity are unchanged."); return; }
+        }
+        if(s.kind==Kind::Assemblies)
+        {
+            if(command==Primary) { Activate(s); return; }
+            if(command==Secondary) { SaveAssembly(s,false,false); return; }
+            if(command==Third) { EditContents(s); return; }
+            if(command==Sixth) { SaveAssembly(s,true,false); return; }
+            if(command==Seventh || command==Eighth || command==Ninth || command==Tenth || command==Eleventh)
+            {
+                if(s.editing.empty() || s.editLevel!=level) throw std::runtime_error("Choose Edit Contents first.");
+                if(command==Ninth) { Editor::Select(s.members,true); return; }
+                if(command==Tenth) { SaveAssembly(s,true,true); return; }
+                if(command==Eleventh) { s.editing=Json{}; s.members=Json::array(); Populate(s); return; }
+                auto selected=Editor::SelectedIdentities();
+                for(const auto& a:selected)
+                {
+                    auto found=std::find_if(s.members.begin(),s.members.end(),[&](const Json& m){return m.at("path")==a.at("path");});
+                    if(command==Seventh && found==s.members.end()) s.members.push_back(a);
+                    if(command==Eighth && found!=s.members.end()) s.members.erase(found);
+                }
+                Populate(s); return;
+            }
+        }
+        if(command==Fourth || command==Fifth)
+        {
+            auto entry=Entry(s); Json next=document;
+            auto& entries=s.kind==Kind::Views?next["maps"][mapKey]["views"]:next["assemblies"];
+            if(command==Fourth)
+            {
+                std::string name=entry.at("name"); if(!GetName(s.window,"Rename Entry",name)) return;
+                for(auto& j:entries) if(j.at("id")==s.selectedId) { j["name"]=name; j["modified"]=Timestamp(); }
+            }
+            else
+            {
+                if(MessageBoxA(s.window,"Delete this saved entry? Placed actors are kept.","Delete Entry",MB_OKCANCEL|MB_ICONQUESTION)!=IDOK) return;
+                entries.erase(std::remove_if(entries.begin(),entries.end(),[&](const Json& j){return j.at("id")==s.selectedId;}),entries.end());
+            }
+            Save(next); Populate(s);
+        }
+    }
+    void Layout(State& s)
+    {
+        RECT r{}; GetClientRect(s.window,&r); int width=r.right;
+        int y=12,x=12;
+        for(auto button:s.buttons) { if(x+205>width) {x=12;y+=33;} MoveWindow(button,x,y,200,27,TRUE); x+=207; }
+        y+=37;
+        if(s.kind==Kind::Connections) { MoveWindow(GetDlgItem(s.window,kFollow),12,y,250,24,TRUE); y+=30; }
+        if(s.kind==Kind::Assets) { MoveWindow(GetDlgItem(s.window,kScope),12,y,380,24,TRUE); y+=30; }
+        MoveWindow(s.list,12,y,std::max(50,width-24),std::max(30,static_cast<int>(r.bottom)-y-66),TRUE);
+        MoveWindow(s.status,12,r.bottom-55,width-24,48,TRUE);
+        int first=s.kind==Kind::Connections?100:(width-24)/3; ListView_SetColumnWidth(s.list,0,first); ListView_SetColumnWidth(s.list,1,(width-first-24)/2); ListView_SetColumnWidth(s.list,2,(width-first-24)/2-20);
+    }
+    LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM w,LPARAM l)
+    {
+        auto s=reinterpret_cast<State*>(GetWindowLongPtr(window,GWLP_USERDATA));
+        if(message==WM_NCCREATE) { s=static_cast<State*>(reinterpret_cast<CREATESTRUCT*>(l)->lpCreateParams); s->window=window; SetWindowLongPtr(window,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(s)); }
+        if(!s) return DefWindowProcA(window,message,w,l);
+        try
+        {
+            if(message==WM_CREATE)
+            {
+                auto button=[&](int id,const char* name){s->buttons.push_back(Control(window,"BUTTON",name,0,id,0,0,200,27));};
+                button(Refresh,"Refresh");
+                if(s->kind==Kind::Assets) {button(Primary,"Select and Focus");button(Secondary,"Replace Checked...");Control(window,"BUTTON","Limit to selection captured at Refresh",BS_AUTOCHECKBOX,kScope,0,0,300,24);}
+                if(s->kind==Kind::Connections) {button(Primary,"Select and Focus");button(Third,"Graph...");auto f=Control(window,"BUTTON","Follow Selection",BS_AUTOCHECKBOX,kFollow,0,0,200,24);SendMessage(f,BM_SETCHECK,BST_CHECKED,0);}
+                if(s->kind==Kind::Views) {button(Primary,"Restore");button(Secondary,"Save New...");button(Third,"Update Selected from Current");button(Fourth,"Rename...");button(Fifth,"Delete...");}
+                if(s->kind==Kind::Assemblies) {button(Primary,"Place...");button(Secondary,"Save Selection as New...");button(Third,"Edit Contents...");button(Sixth,"Update from Selection...");button(Fourth,"Rename...");button(Fifth,"Delete...");button(Seventh,"Add Selected");button(Eighth,"Remove Selected");button(Ninth,"Select Members");button(Tenth,"Save Changes...");button(Eleventh,"Cancel Editing");}
+                s->list=Control(window,WC_LISTVIEWA,"",LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_BORDER,kList,0,0,500,300);
+                ListView_SetExtendedListViewStyle(s->list,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|(s->kind==Kind::Assets?LVS_EX_CHECKBOXES:0));
+                const char* columns=s->kind==Kind::Connections?"Direction|Actor|Relationship":s->kind==Kind::Assets?"Actor|Property / surface|Usage":"Name|Contents|Updated (UTC epoch ms)";
+                std::istringstream names(columns); std::string name; int i=0; while(std::getline(names,name,'|')) {LVCOLUMNA col{};col.mask=LVCF_TEXT|LVCF_WIDTH;col.cx=250;col.pszText=name.data();SendMessageA(s->list,LVM_INSERTCOLUMNA,i++,reinterpret_cast<LPARAM>(&col));}
+                s->status=Control(window,"STATIC","",0,kStatus,0,0,600,50); Layout(*s); Populate(*s); SetTimer(window,1,1000,nullptr); return 0;
+            }
+            if(message==WM_SIZE) { if(s->list) Layout(*s); return 0; }
+            if(message==WM_GETMINMAXINFO) {auto m=reinterpret_cast<MINMAXINFO*>(l);m->ptMinTrackSize={680,430};return 0;}
+            if(message==WM_COMMAND)
+            {
+                if(LOWORD(w)>=Refresh && LOWORD(w)<=Eleventh) {Command(*s,LOWORD(w));return 0;}
+                if(LOWORD(w)==kScope || LOWORD(w)==kFollow) {Populate(*s);return 0;}
+            }
+            if(message==WM_NOTIFY)
+            {
+                auto hdr=reinterpret_cast<NMHDR*>(l);
+                if(hdr->code==NM_DBLCLK && hdr->hwndFrom==s->list) {Activate(*s);return 0;}
+                if(hdr->code==LVN_ITEMCHANGED && hdr->hwndFrom==s->list)
+                {
+                    int row=Selected(*s); if(row>=0 && row<static_cast<int>(s->rows.size()) && s->rows[row].contains("id")) s->selectedId=s->rows[row].at("id");
+                }
+            }
+            if(message==WM_TIMER)
+            {
+                Sync(); if(s->epoch!=mapEpoch) { s->editing=Json{}; s->members=Json::array(); Populate(*s); }
+                else if(s->revision!=Editor::Revision() && (s->kind==Kind::Assets || s->kind==Kind::Connections)) Populate(*s);
+                else if(s->kind==Kind::Connections && SendMessage(GetDlgItem(window,kFollow),BM_GETCHECK,0,0)==BST_CHECKED)
+                { auto actors=Editor::Actors(true); auto actor=actors.empty()?"":actors[0].at("path").get<std::string>(); if(actor!=s->connectionActor) Populate(*s); }
+                return 0;
+            }
+            if(message==WM_CLOSE)
+            {
+                if(!s->editing.empty() && MessageBoxA(window,"Close without saving assembly membership changes? Scene edits remain in the map.","Close Assembly Editor",MB_OKCANCEL|MB_ICONQUESTION)!=IDOK) return 0;
+                DestroyWindow(window); return 0;
+            }
+        }
+        catch(const std::exception& e)
+        {
+            if(message==WM_TIMER) { if(s->status) Status(*s,e.what()); }
+            else MessageBoxA(window,e.what(),"Reloaded Editing Tools",MB_OK|MB_ICONERROR);
+            return message==WM_CREATE?-1:0;
+        }
+        if(message==WM_NCDESTROY) {KillTimer(window,1);windows.erase(std::remove(windows.begin(),windows.end(),s),windows.end());SetWindowLongPtr(window,GWLP_USERDATA,0);delete s;}
+        return DefWindowProcA(window,message,w,l);
+    }
+    HWND Open(Kind kind,HWND owner,std::string source={},bool mesh=false)
+    {
+        for(auto s:windows) if(s->kind==kind && (kind!=Kind::Assets || s->source==source)) {ShowWindow(s->window,SW_RESTORE);SetForegroundWindow(s->window);return s->window;}
+        Sync(); WNDCLASSA wc{}; wc.lpfnWndProc=WindowProc; wc.hInstance=GetModuleHandle(nullptr);wc.lpszClassName="ReloadedWorkflowTools";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1);RegisterClassA(&wc);
+        auto s=new State{kind}; s->source=std::move(source);s->mesh=mesh; windows.push_back(s);
+        const char* title=kind==Kind::Assets?"Asset Find and Replace":kind==Kind::Connections?"Gameplay Connections":kind==Kind::Views?"Working Views":"Actor Assemblies";
+        HWND window=CreateWindowExA(WS_EX_CONTROLPARENT,wc.lpszClassName,title,WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,1000,650,owner,nullptr,wc.hInstance,s);
+        if(window) ShowWindow(window,SW_SHOW); return window;
+    }
+    using LoadMenuFn=HMENU(WINAPI*)(HINSTANCE,LPCSTR); LoadMenuFn previousLoadMenu=nullptr;
+    HMENU WINAPI LoadMenuHook(HINSTANCE instance,LPCSTR resource)
+    {
+        auto menu=previousLoadMenu(instance,resource);
+        if(menu && reinterpret_cast<uintptr_t>(resource)<=65535)
+        {
+            // Actor context resource 107 (verified native menu resource).
+            if(reinterpret_cast<uintptr_t>(resource)==107) if(auto sub=GetSubMenu(menu,0)) {AppendMenuA(sub,MF_STRING,kSaveAssembly,"Save Selection as &Assembly...");AppendMenuA(sub,MF_STRING,MagicEventWorkbench::Command,"Edit SMagicEvent...");}
+        }
+        return menu;
+    }
+}
+bool HandleCommand(UINT command)
+{
+    if(command==MagicEventWorkbench::Command){try{MagicEventWorkbench::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"SMagicEvent Workbench",MB_OK|MB_ICONERROR);}return true;}
+    if(command<kConnections || command>kSaveAssembly) return false;
+    try
+    {
+        Kind kind=command==kConnections?Kind::Connections:command==kViews?Kind::Views:Kind::Assemblies;
+        auto window=Open(kind,GetActiveWindow());
+        if(command==kSaveAssembly && window) SendMessage(window,WM_COMMAND,Secondary,0);
+    }
+    catch(const std::exception& e) {MessageBoxA(GetActiveWindow(),e.what(),"Reloaded Editing Tools",MB_OK|MB_ICONERROR);}
+    return true;
+}
+void FindUsages(HWND owner,void*,bool mesh)
+{
+    try { Open(Kind::Assets,owner,Editor::CurrentAsset(mesh),mesh); }
+    catch(const std::exception& e) {MessageBoxA(owner,e.what(),"Find Asset Usages",MB_OK|MB_ICONERROR);}
+}
+void RenameActorTag(HWND owner,std::string path,std::string type)
+{
+    try
+    {
+        Json identity={{"path",path},{"class",type}};std::string tag="NewTag";
+        for(const auto& actor:Editor::Actors())if(actor.at("path")==path && actor.at("class")==type)tag=actor.at("tag");
+        if(Fold(tag)=="none")tag="NewTag";
+        if(!GetName(owner,"Rename Tag",tag))return;
+        auto preview=Editor::PreviewTagRename(identity,tag);size_t targets=0,events=0;
+        for(const auto& c:preview.at("changes"))if(c.at("property")=="Tag")++targets;else ++events;
+        std::string text="Rename Tag '"+preview.at("old").get<std::string>()+"' to '"+tag+"'?\n\n";
+        if(targets>1)text+="SHARED TAG: all "+std::to_string(targets)+" actors using this Tag will be renamed together. Their one-to-many connections will be preserved.\n\n";
+        text+=std::to_string(targets)+" actor Tags and "+std::to_string(events)+" dependent Event / EventGroup assignments will change in one undo operation.\n\n";
+        std::string assignments;
+        for(const auto& c:preview.at("changes"))
+        {
+            assignments+=c.at("actor").at("path").get<std::string>()+" : "+c.at("property").get<std::string>()+"\r\n";
+        }
+        TagPreviewText details{targets>1?"Rename Shared Tag Group":"Preview Tag Rename",text,assignments};
+        if(!ConfirmTagRename(owner,details))return;
+        Editor::RenameTag(preview);
+    }
+    catch(const std::exception& e){MessageBoxA(owner,e.what(),"Rename Tag",MB_OK|MB_ICONERROR);}
+}
+void Initialize()
+{
+    Editor::Initialize();
+    INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_LISTVIEW_CLASSES}; InitCommonControlsEx(&controls);
+    previousLoadMenu=*reinterpret_cast<LoadMenuFn*>(0x11AF23F0);
+    auto hook=&LoadMenuHook; MemoryWriter::WriteBytes(0x11AF23F0,&hook,sizeof(hook));
+}
+}
+
+// JSON bridge used by the isolated native integration probe. Calls must be made
+// on the editor UI thread, exactly like the corresponding dialog operations.
+extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char* request,char* output,unsigned capacity)
+{
+    using namespace Workflow;
+    try
+    {
+        Json q=Json::parse(request),result; std::string op=q.at("op");
+        if(op=="actors") result=Editor::Actors(q.value("selected",false));
+        else if(op=="magic.classes") result=Editor::EventClasses();
+        else if(op=="magic.assets") result=Editor::EventAssets(q.at("type"),q.value("classes",false));
+        else if(op=="magic.component") result=Editor::CreateEventComponent(q.at("snapshot"),q.at("class"));
+        else if(op=="magic.key") {Editor::CaptureMoverKey(q.at("snapshot"),q.at("key"));result=true;}
+        else if(op=="magic.inspect") result=Editor::InspectActor(q.at("actor"));
+        else if(op=="magic.edit") {Editor::EditActor(q.at("snapshot"),q.at("changes"));result=true;}
+        else if(op=="magic.create") result=Editor::CreateEventActor(q.at("class"),q.value("event",Json{}),q.value("trigger",false),q.value("geometry",std::string("point")),q.value("group",0));
+        else if(op=="magic.link") {Editor::LinkEventActor(q.at("event"),q.at("target"),q.value("trigger",false),q.value("group",0));result=true;}
+        else if(op=="select") {Editor::Select(q.at("actors"),q.value("focus",false));result=true;}
+        else if(op=="view.capture") result=Editor::CaptureView();
+        else if(op=="view.restore") result=Editor::RestoreView(q.at("view"));
+        else if(op=="usages") result=Editor::FindUsages(q.at("asset"));
+        else if(op=="replace") {Editor::ReplaceUsages(q.at("usages"),q.at("source"),q.at("replacement"));result=true;}
+        else if(op=="connections") result=Editor::Connections(q.at("actor"));
+        else if(op=="surface.brushes") result=Editor::SelectedSurfaceBrushes();
+        else if(op=="tag.preview") result=Editor::PreviewTagRename(q.at("actor"),q.at("tag"));
+        else if(op=="tag.rename") {Editor::RenameTag(q.at("preview"));result=true;}
+        else if(op=="assembly.capture") result=Editor::CaptureAssembly(q.at("members"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()});
+        else if(op=="assembly.place") result=Editor::PlaceAssembly(q.at("definition"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()},q.at("bindings").get<std::map<std::string,std::string>>());
+        else if(op=="map") result={{"key",Editor::MapKey()},{"level",Editor::LevelPath()}};
+        else throw std::runtime_error("Unknown workflow request.");
+        auto text=Json({{"ok",true},{"result",result}}).dump(); if(text.size()+1>capacity) return -static_cast<int>(text.size()+1);
+        memcpy(output,text.c_str(),text.size()+1); return 1;
+    }
+    catch(const std::exception& e)
+    {
+        auto text=Json({{"ok",false},{"error",e.what()}}).dump(); if(text.size()+1<=capacity) memcpy(output,text.c_str(),text.size()+1); return 0;
+    }
+}

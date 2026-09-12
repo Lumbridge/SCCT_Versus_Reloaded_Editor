@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "StaticMeshBrowserFavorites.h"
+#include "WorkflowTools.h"
 #include "MemoryWriter.h"
 #include <commctrl.h>
 #pragma comment(lib, "comctl32.lib")
@@ -888,11 +889,17 @@ static HMENU WINAPI SM_LoadMenuA_Hook(HINSTANCE instance, LPCSTR menuName)
 
     // Stock positions 0-2 are Delete, Copy and Rename; keep Sections last.
     InsertMenuA(context, 3, flags, IDMN_SM_TOGGLE_FAVORITE, label);
+    InsertMenuA(context, 4, flags, WorkflowTools::kFindMesh, "Find &Usages...");
     return menu;
 }
 
 static bool SM_HandleCommand(WPARAM wParam)
 {
+    if (LOWORD(wParam) == WorkflowTools::kFindMesh)
+    {
+        WorkflowTools::FindUsages(g_BrowserWindow, SM_GetCurrentMesh(), true);
+        return true;
+    }
     if (LOWORD(wParam) == IDMN_SM_TOGGLE_FAVORITE)
     {
         SM_ToggleCurrentFavorite();

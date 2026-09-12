@@ -697,6 +697,9 @@ bool MakeFixture(const char* runtimePath, bool rootOutside) {
     return true;
 }
 
+} // namespace (keep standard/JSON headers outside the anonymous namespace)
+#include "WorkflowNativeTests.h"
+namespace {
 void RunTest() {
     auto configuration = (directory / "native_recovery_test.ini").string();
     char source[MAX_PATH] = {}, destination[MAX_PATH] = {}, dll[MAX_PATH] = {};
@@ -818,6 +821,10 @@ void RunTest() {
     }
     HMODULE editorDll = GetModuleHandleA(dll);
     if (!editorDll) editorDll = GetModuleHandleA(std::filesystem::path(dll).filename().string().c_str());
+    if (GetPrivateProfileIntA("test", "workflow_tools", 0, configuration.c_str())) {
+        RunWorkflowTests(editorDll, destination, GetPrivateProfileIntA("test", "workflow_restart", 0, configuration.c_str()) != 0);
+        return;
+    }
     using RecoverFn = int(__cdecl*)(const char*, const char*, char*, unsigned int);
     auto recover = reinterpret_cast<RecoverFn>(GetProcAddress(editorDll, "ReloadedRecoverMapToSource"));
     if (!recover) recover = reinterpret_cast<RecoverFn>(GetProcAddress(editorDll, "_ReloadedRecoverMapToSource"));

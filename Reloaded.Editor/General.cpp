@@ -11,6 +11,7 @@
 #include "WindowDriftFix.h"
 #include "RebuildAllMaps.h"
 #include "BspTextureClipboard.h"
+#include "WorkflowTools.h"
 #include "GridSizeShortcut.h"
 #include "PlayLevelCommand.h"
 #include "PlayLevelConfig.h"
@@ -665,6 +666,18 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
     static bool s_recoverySaveHandled = false;
 
     __asm {
+        cmp dword ptr [esp+4], 40927
+        je workflow_dispatch
+        cmp dword ptr [esp+4], 40920
+        jb workflow_continue
+        cmp dword ptr [esp+4], 40923
+        ja workflow_continue
+    workflow_dispatch:
+        push dword ptr [esp+4]
+        call WorkflowTools::HandleCommand
+        add esp, 4
+        retn 4
+    workflow_continue:
         cmp  dword ptr [esp+4], 40066 // Reloaded Options
         je   do_reloaded_options
         cmp  dword ptr [esp+4], 40067 // Show Animation Browser
@@ -677,6 +690,8 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         je   do_copy_bsp_texture
         cmp  dword ptr [esp+4], 40913 // Paste copied BSP texture
         je   do_paste_bsp_texture
+        cmp  dword ptr [esp+4], 40926 // Select source brushes of selected BSP faces
+        je   do_select_surface_brush
         cmp  dword ptr [esp+4], 40902 // Rebuild All Maps
         je   do_rebuild_all
         cmp  dword ptr [esp+4], 40900 // Reloaded Github
@@ -725,6 +740,10 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
 
     do_paste_bsp_texture:
         call BspTextureClipboard::PasteTexture
+        retn 4
+
+    do_select_surface_brush:
+        call BspTextureClipboard::SelectBrush
         retn 4
 
     do_rebuild_all:

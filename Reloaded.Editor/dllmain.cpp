@@ -37,6 +37,7 @@
 #include "ViewportConfigFix.h"
 #include "EngineLog.h"
 #include "MapCheckLog.h"
+#include "WorkflowTools.h"
 
 INIT_ONCE g_InitOnce = INIT_ONCE_STATIC_INIT;
 HINSTANCE g_hReloadedDll = nullptr;
@@ -134,6 +135,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     ViewportConfigFix::Initialize();
     EngineLog::Initialize();
     MapCheckLog::Initialize();
+    WorkflowTools::Initialize();
     BspDiagnostics::Initialize(dllPath);
 
 #ifdef _DEBUG

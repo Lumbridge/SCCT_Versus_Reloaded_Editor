@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "TextureBrowser.h"
+#include "WorkflowTools.h"
 #include "Hooks.h"
 #include "MemoryWriter.h"
 #include <commdlg.h>
@@ -641,6 +642,7 @@ static HMENU WINAPI TB_LoadMenuA_Hook(HINSTANCE instance, LPCSTR menuName)
 
     // Stock positions 0-2 are Properties, Duplicate and Rename.
     InsertMenuA(context, 3, flags, IDMN_TB_TOGGLE_FAVORITE, label);
+    InsertMenuA(context, 4, flags, WorkflowTools::kFindMaterial, "Find &Usages...");
     return menu;
 }
 
@@ -775,6 +777,11 @@ static LRESULT CALLBACK TB_BrowserSubclassProc(HWND window, UINT message,
                                                WPARAM wParam, LPARAM lParam,
                                                UINT_PTR, DWORD_PTR)
 {
+    if (message == WM_COMMAND && LOWORD(wParam) == WorkflowTools::kFindMaterial)
+    {
+        WorkflowTools::FindUsages(window, TB_GetCurrentMaterial(), false);
+        return 0;
+    }
     if (message == WM_COMMAND && LOWORD(wParam) == IDMN_TB_TOGGLE_FAVORITE)
     {
         TB_ToggleCurrentFavorite();

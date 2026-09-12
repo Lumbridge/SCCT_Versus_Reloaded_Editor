@@ -1,5 +1,75 @@
 # Regression tests
 
+## Editing workflow tools
+
+The SMagicEvent workbench adds model validation tests plus native fixtures for
+array edits, precise timeline drags, actor/component and brush-volume creation,
+mover keys, compound rollback and undo/redo, and stale snapshot rejection.
+The fixture exercises the actual native activation thunk to verify delay,
+Sequence, Repeat and ValidOn semantics, then saves and reopens a complete event
+with two triggers, mover, sound, emitter and damage volume in a second process.
+See [SMagicEventSemantics.md](SMagicEventSemantics.md) for the verified contract.
+Screenshots and `magic_*.json` diagnostics remain in the isolated test directory.
+
+From an **x86 Native Tools Command Prompt for Visual Studio**:
+
+```bat
+tools\test_workflow_tools.cmd
+```
+
+The model suite covers nested native T3D, quoted reference paths, authored strings,
+canonical member names, internal reference/tag remapping, explicit external bindings,
+position/rotation composition, in-place updates, version rejection and atomic persistence.
+The graph suite checks separate islands, cyclic/self/parallel links, unresolved targets,
+relationship/class filters, bounded neighbourhood expansion, isolated actors, deterministic
+layout and a 600-actor fan-out without overlapping nodes. Radial layout checks cover
+hub selection independent of actor order and parallel properties, circular fan-out,
+and label bounds for nested branches with cyclic cross-links. The native harness
+also renders a 16-target event island and verifies hub search and selection.
+The native surface-menu checks verify Select Brush availability, single and multiple
+source-brush selection after rebuilding, unchanged cameras and face selection, and
+rejection of faces without master polygons without disturbing actor selection.
+It also checks actor-tag labels and classification of nested EventGroup links in filters
+and island grouping. The native fixture imports `SBase.SMagicEvent` with two Groups and
+multiple EventGroup entries, verifying incoming links, shared Tags, `None`, and an
+unmatched target. `workflow_magic_schema.json` records the native structure layout and
+`workflow_magic_edges.json` records the resulting relationships.
+
+Run the native integration suite against a disposable editor copy:
+
+```powershell
+./tools/run_native_map_recovery_test.ps1 -EditorDll ./bin/Reloaded.Editor.dll -GenerateFixture -WorkflowTools -TimeoutSeconds 180
+```
+
+This uses the existing isolated driver; it never runs the test against the installed
+game directory. The report and workflow JSON/BMP artifacts remain in the printed test
+directory. The workflow probe verifies native BSP replacement scope, undo/redo and
+source-polygon rebuild persistence; cyclic/one-to-many Event/Tag relationships and
+instance isolation; brush insertion, undo/redo, rebuild and save/reopen; viewport
+restoration and in-place updates; and the actual view/assembly/connection dialogs,
+including adding/removing members and selection-based updates without deleting scene actors,
+stable pivots and changed future placements. It then starts a second editor process and
+checks camera restoration, another in-place view update and placement of the updated
+assembly from disk.
+The first process also opens the native graph panel, renders whole-level and selected-actor
+graphs, searches and focuses an actor, and exercises native double-click navigation.
+Graph screenshots are retained as `workflow_graph_*.bmp`.
+Tag-rename coverage verifies a shared two-actor group and both ordinary Event and nested
+EventGroup dependants, one-step undo/redo of nested arrays, collision/None/stale-preview
+rejection, and the graph's rename/confirmation/cancel workflow. Native FName construction
+is verified at `0x10fb9610` with `NAME_Add=1`; existing FName spellings are never edited.
+
+Build both solution configurations with `SCCT` cleared. Use **Rebuild** when switching
+configurations: the renderer static library currently shares its output path. The new
+modules are included unconditionally in the editor project. The native integration
+is specific to the supported ChaosTheory editor executable and must be reverified
+before changing native addresses or property layouts.
+
+Additional manual acceptance coverage: static-mesh replacement with material overrides,
+game-specific array/structure actor links,
+Save As/map switching, GE selections, and external-binding changes during assembly edits.
+Use disposable source maps and include stale/deleted instance members and missing packages.
+
 ## Map recovery
 
 From an **x86 Native Tools Command Prompt for Visual Studio**, run:

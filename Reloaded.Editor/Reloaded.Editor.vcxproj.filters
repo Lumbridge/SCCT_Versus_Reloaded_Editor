@@ -15,6 +15,14 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="WorkflowGraph.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="WorkflowGraphModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="WorkflowModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="WorkflowEditor.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="WorkflowTools.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MagicEventWorkbench.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MagicEventModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MagicEventNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="resource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -293,6 +301,11 @@
     <ClCompile Include="PropertyGrid.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="WorkflowModel.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="WorkflowEditor.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="WorkflowGraph.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="WorkflowTools.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="MagicEventWorkbench.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="AmbientSoundZone.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
