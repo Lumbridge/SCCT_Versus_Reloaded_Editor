@@ -15,6 +15,12 @@ int main()
     memcpy(endpoints, words, sizeof(words));
     assert(CollisionBox::FromEndpoints(box, endpoints, endpoints + 3));
     assert(!memcmp(box, endpoints, sizeof(box)));
+    assert(CollisionBox::IsOrdered(box));
+    const uint32_t crashWords[]={0xc0a2680a,0xc1a5a33a,0xc11cdb23,0x4096e7d5,0x41a558ae,0x411d1d15};
+    float crashBox[6];memcpy(crashBox,crashWords,sizeof(crashBox));
+    assert(CollisionBox::IsOrdered(crashBox));
+    float inverted[]={1,0,0,0,0,0};
+    assert(!CollisionBox::IsOrdered(inverted));
 #if defined(_MSC_VER) && defined(_M_IX86)
     // The decoder may run inside native code with live x87 values. It must
     // neither consume that stack nor need spare x87 registers for its bounds.
@@ -32,9 +38,11 @@ int main()
         fld1
     }
     bool fullStackResult = CollisionBox::FromEndpoints(box, endpoints, endpoints + 3);
+    bool fullStackOrdered = CollisionBox::IsOrdered(crashBox);
     __asm { fnstsw status }
     __asm { frstor savedFpu }
     assert(fullStackResult && !(status & 0x41));
+    assert(fullStackOrdered);
     assert(!memcmp(box, endpoints, sizeof(box)));
 #endif
     assert(CollisionBox::FromEndpoints(endpoints, endpoints + 3, endpoints));
@@ -50,6 +58,7 @@ int main()
             memcpy(&value, &bits, sizeof(value));
         }
         assert(CollisionBox::FromEndpoints(box, endpoints, endpoints + 3));
+        assert(CollisionBox::IsOrdered(box));
         for (int axis = 0; axis < 3; ++axis)
         {
             assert(box[axis] <= endpoints[axis] && box[axis] <= endpoints[axis + 3]);
@@ -74,6 +83,7 @@ int main()
             memcpy(before, output, sizeof(output));
             input[axis] = invalid;
             assert(!CollisionBox::FromEndpoints(output, input, input + 3));
+            assert(!CollisionBox::IsOrdered(input));
             assert(!memcmp(before, output, sizeof(output)));
         }
     puts("Collision box tests passed");

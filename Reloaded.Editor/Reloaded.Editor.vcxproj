@@ -201,6 +201,9 @@
     <ClInclude Include="RebuildAllMaps.h" />
     <ClInclude Include="ViewportConfigFix.h" />
     <ClInclude Include="GridSizeShortcut.h" />
+    <ClInclude Include="PlayLevelConfig.h" />
+    <ClInclude Include="LocalLightingMatch.h" />
+    <ClInclude Include="PlayLevelCommand.h" />
     <ClInclude Include="GridSizeShortcutState.h" />
   </ItemGroup>
   <ItemGroup>

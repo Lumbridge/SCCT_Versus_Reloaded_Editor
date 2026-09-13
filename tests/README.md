@@ -1,5 +1,25 @@
 # Regression tests
 
+## Local BSP lighting matching
+
+Compile and run `tests/LocalLightingMatchTests.cpp` with C++17 or later. It tests
+closest-triangle sampling, degenerate triangles, signed RGB residuals, clipping,
+alpha preservation, and retained local variation. The native
+`-ReopenOnly -VerifyPreservedLighting -VerifySelectedLighting` suite also invokes
+the matching menu, checks cancellation and exact preservation of unselected
+BSP/meshes, then saves and reopens the resulting combined bake. These byte checks
+do not establish visual fidelity or correct shadows. `-LightingBrush
+'Brush3702,Brush3728'` targets named brush faces in that suite instead of its
+default single-face fixture. Segment tests cover empty space, solid half-spaces,
+an intervening wall, invalid child indices and cyclic BSP data.
+
+Use `-ReopenOnly -MatchLightingAfterLoad -LightingBrush 'Brush3702,Brush3728'`
+to test matching immediately after loading a source map, without warming the
+collision/lighting state through a preceding rebuild. Native probes also check
+all six compressed-collision bounds accessors using the September 13 crash's
+exact finite bounds while all eight x87 registers are occupied. Each must return
+the correct endpoint pointer and preserve the complete x87 state.
+
 ## Map packaging and selective Tag renaming
 
 Run `tools\test_map_package.cmd` from an x86 Visual Studio developer prompt after installing the manifest dependencies. The packaging suite covers compressed and raw SCCT package tables, older name encodings, transitive/cyclic dependencies, missing and ambiguous packages, texture counterparts, byte-identical base comparisons, exclusions, stale files, archive paths, and no-overwrite publication. `MapPackageTests.exe <game-root> <playable-map> [new-zip]` also supports read-only inspection or packaging of real maps.
@@ -259,6 +279,15 @@ File Save/reopen, cancelling Recalculate Lighting must change nothing, accepting
 it must replace the bake, and later ordinary lighting commands must preserve the
 replacement. `-TraceLighting` also dumps BSP atlas bytes before/after the build
 and after saving/reopening for independent comparison.
+Add `-GeometryOnlyBuild` to the reopen test to issue only MAP REBUILD in the
+native build bracket. This covers preservation's internal BSP finalization and
+lighting transfer without a subsequent explicit BSP build masking a sequencing
+bug. Use an edited recovered source for the stale visibility-index regression.
+`-ReopenOnly -VerifyPlayMapSave` exercises the native Play Level save call and
+its temporary runtime package repair without launching the game. Test a map
+larger than the 15 MB uncompressed writer buffer and a small map. Inspect the
+resulting `Packages/Maps/Autoplay.sdc` with `-InspectCookedOnly` to verify that
+the native compiled-map reader can load it.
 Ordinary recovery verifies strip-door topology, rest lengths, fixed anchors,
 physical settings and all exported authored actor properties at import, build
 and reopening. Decorative sheet tests check native polygon acceptance and
@@ -275,3 +304,34 @@ reference, so it is not ready for normal builds.
 Reports, source/runtime maps, interchange files and crash dumps remain in the
 printed `TestRoot` for inspection. The disposable editor is stopped on finish
 or timeout. The harness tests map editing and saving. Test gameplay separately.
+
+## Play Level resolution regressions
+
+For a selective-lighting regression, add `-VerifySelectedLighting` to a native
+`-ReopenOnly -VerifyPreservedLighting` run with a recovered map containing lit
+static meshes. It checks cancellation, a changed selected mesh, exact unchanged
+mesh and BSP chart texels, selected BSP recalculation, and preservation of the
+combined bake through File Save/reopen. Atlas packing may change; chart texels
+are compared independently of their atlas locations.
+
+After adding or subtracting geometry, build geometry, select affected BSP faces
+or their source brushes and static meshes, then use **Build > Recalculate
+Selected Lighting...**. Include surfaces where shadows should appear or disappear.
+Selecting a light alone does not select its receivers. The selected areas use
+the native baker and may differ from the original bake. Unselected chart texels
+are copied without resampling; incompatible chart identities/dimensions fail
+with a message to reopen the saved map. Shared charts require selecting their
+adjoining faces too.
+
+Reloaded's `labs_borderless_fullscreen` setting in `SCCT_Versus.config` controls
+borderless presentation for both play commands and ordinary game launches.
+
+Compile `PlayLevelConfigTests.cpp` and `PlayLevelCommandTests.cpp` with MSVC
+`/std:c++17 /W4 /WX /EHsc` (link `user32.lib` for the configuration test).
+They cover resolution selection, preserving source INI bytes and unrelated
+settings, configuration failure paths, and recognizing explicit INI overrides.
+Play Level clones `Default.ini` to `Reloaded_PlayLevel.ini` and sets viewport
+and menu dimensions before launching. It defaults to the editor monitor's
+current display mode; `[PlayLevel] ResolutionX/ResolutionY` in
+`Reloaded_Editor.ini` can override both dimensions. An explicit launch `INI=`
+is respected. The legacy executable-token repair remains separate and active.

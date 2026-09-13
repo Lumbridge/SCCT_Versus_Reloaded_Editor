@@ -3680,6 +3680,12 @@ namespace
             lightingReentry = true;
             struct Finish { ~Finish() { RecoveredBspLighting::Deactivate(); lightingReentry = false; } } finish;
             if (!lightingPreviousExec(self, command, output)) throw std::runtime_error("Geometry build failed.");
+            // Follow the normal full-build ordering. MAP REBUILD can leave
+            // visibility inputs needing BSP finalization after brush edits;
+            // invoking LIGHT APPLY here first can read stale point indices.
+            if (LightingCommand(command, "MAP REBUILD")
+                && !lightingPreviousExec(self, "BSP REBUILD", output))
+                throw std::runtime_error("BSP finalization failed before lighting preservation.");
             // Geometry rebuilds discard chart bindings. Rebuild those structures
             // synchronously and reproject from the session's pre-build bake;
             // reusing that snapshot avoids cumulative resampling on each build.
@@ -3738,4 +3744,109 @@ void MapRecovery::RecalculateLighting(HWND owner)
         Logger::log("RecoveredLighting: explicit recalculation completed; future builds preserve the new bake.");
     }
     catch (const std::exception& e) { MessageBoxA(owner, e.what(), "Recalculate Lighting", MB_OK | MB_ICONERROR); }
+}
+
+void MapRecovery::RecalculateSelectedLighting(HWND owner, bool matchSurroundings)
+{
+    auto level = LightingLevel();
+    if (!level) return;
+    bool started = false;
+    const char* title = matchSurroundings ? "Match Selected BSP Lighting" : "Recalculate Selected Lighting";
+    try {
+        std::string error;
+        RecoveredLighting meshes;
+        if (!CaptureMeshLighting(level, "MyLevel", meshes, error)) throw std::runtime_error(error);
+        std::unordered_set<void*> selectedActors;
+        const auto actors = ReadRawArray(level, kLevelActorsDataOffset);
+        size_t selectedMeshes = 0;
+        for (int i = 0; i < actors.count; ++i) {
+            auto actor = reinterpret_cast<unsigned char* const*>(actors.data)[i];
+            if (!actor || !(ReadRaw<uint32_t>(actor, 0x2F4) & 0x40)) continue;
+            selectedActors.insert(actor);
+            char name[256]{};
+            if (ReadRaw<void*>(actor, 0x100)) {
+                ++selectedMeshes;
+                if (CopyObjectName(actor, name, sizeof(name))) meshes.erase(name);
+            }
+        }
+        std::unordered_set<int> selectedSurfaces;
+        const auto surfaces = ReadRawArray(CurrentModel(), kModelSurfsOffset);
+        if (!IsValidArray(surfaces)) throw std::runtime_error("Invalid BSP surface list.");
+        for (int i = 0; i < surfaces.count; ++i) {
+            auto surface = surfaces.data + i * kSurfStride;
+            const auto poly = ReadRaw<unsigned char*>(surface, 0x20);
+            const auto brush = poly ? ReadRaw<void*>(poly, 0x14C) : nullptr;
+            if ((ReadRaw<uint32_t>(surface, kSurfFlagsOffset) & 0x02000000)
+                || (brush && selectedActors.count(brush))) selectedSurfaces.insert(i);
+        }
+        if (selectedSurfaces.empty() && !selectedMeshes) {
+            MessageBoxA(owner, "Select BSP surfaces, their source brushes, or static meshes to relight.\n\n"
+                "After adding or subtracting geometry, build geometry first. Include nearby surfaces "
+                "where the changed geometry should cast or remove shadows. Selecting a light alone is not sufficient.",
+                title, MB_OK | MB_ICONINFORMATION);
+            return;
+        }
+        if (matchSurroundings && selectedMeshes) {
+            MessageBoxA(owner, "Matching currently supports BSP surfaces and brushes. Deselect static meshes first.\n\n"
+                "Static mesh lighting needs a separate matching method; it is not changed by this tool.", title, MB_OK | MB_ICONINFORMATION);
+            return;
+        }
+        const auto message = "Recalculate lighting on " + std::to_string(selectedSurfaces.size())
+            + " BSP surfaces and " + std::to_string(selectedMeshes) + " static meshes?\n\n"
+            "Build geometry first after additions or subtractions. Include surfaces receiving changed shadows "
+            "in your selection. Unselected geometry keeps its existing lighting.\n\n"
+            "Selected areas use the native baker and may look darker. Save a backup before continuing.";
+        const auto matchingMessage = "Match " + std::to_string(selectedSurfaces.size()) + " selected BSP surfaces to their surroundings?\n\n"
+            "Build geometry first. Leave some original, similarly facing surfaces with the same material unselected nearby. "
+            "The tool compares their original lighting with a fresh bake and applies the difference locally.\n\n"
+            "This experimental match works best on wall or floor extensions. It uses two lighting passes. "
+            "Faces without a suitable reference keep the native bake. Include changed shadow receivers in your selection. "
+            "Save a backup and check the result in game.";
+        if (MessageBoxA(owner, (matchSurroundings ? matchingMessage : message).c_str(), title,
+            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+        auto snapshot = RecoveredBspLighting::Capture(CurrentModel(), LightingAssetPath, "MyLevel", error, &selectedSurfaces);
+        if (!snapshot) throw std::runtime_error(error);
+        if (matchSurroundings) RecoveredBspLighting::RecordNativeBake(snapshot);
+        auto editor = *reinterpret_cast<unsigned char**>(kGEditor);
+        auto output = *reinterpret_cast<void**>(kGWarn);
+        struct Array { void* data{}; int count{}, capacity{}; } first, second;
+        using Bracket = void(__thiscall*)(void*, void*, void*);
+        lightingReentry = true;
+        struct Finish { ~Finish() { RecoveredBspLighting::Deactivate(); lightingReentry = false; } } finish;
+        RecoveredBspLighting::Activate(snapshot);
+        reinterpret_cast<Bracket>(0x10E06A1A)(editor, &first, &second);
+        started = true;
+        const int ok = lightingPreviousExec(editor + 0x28, "LIGHT APPLY", output);
+        reinterpret_cast<Bracket>(0x10E02EEC)(editor, &first, &second);
+        if (!ok || !RecoveredBspLighting::Result(snapshot, error, true)
+            || !TransferMeshLighting(level, meshes, true, error, "MyLevel"))
+            throw std::runtime_error(error.empty() ? "Selective lighting calculation failed." : error);
+        if (matchSurroundings) {
+            snapshot = RecoveredBspLighting::PrepareLocalMatch(CurrentModel(), snapshot, selectedSurfaces, error);
+            if (!snapshot) throw std::runtime_error(error);
+            RecoveredBspLighting::Activate(snapshot);
+            Array matchingFirst, matchingSecond;
+            reinterpret_cast<Bracket>(0x10E06A1A)(editor, &matchingFirst, &matchingSecond);
+            const int matched = lightingPreviousExec(editor + 0x28, "LIGHT APPLY", output);
+            reinterpret_cast<Bracket>(0x10E02EEC)(editor, &matchingFirst, &matchingSecond);
+            if (!matched || !RecoveredBspLighting::Result(snapshot, error, true)
+                || !TransferMeshLighting(level, meshes, true, error, "MyLevel"))
+                throw std::runtime_error(error.empty() ? "Local lighting matching failed." : error);
+            Logger::log("RecoveredLighting: " + RecoveredBspLighting::LocalMatchReport(snapshot));
+        }
+        CommitMeshLighting();
+        // Subsequent ordinary builds must preserve this combined bake, rather
+        // than reverting the selected area to the session's previous baseline.
+        buildLighting.reset();
+        PrimeRecoveredLighting();
+        LightingNotice(false);
+        Logger::log("RecoveredLighting: selected recalculation completed; surfaces="
+            + std::to_string(selectedSurfaces.size()) + " meshes=" + std::to_string(selectedMeshes));
+        if (matchSurroundings) MessageBoxA(owner, RecoveredBspLighting::LocalMatchReport(snapshot).c_str(), title, MB_OK | MB_ICONINFORMATION);
+    } catch (const std::exception& e) {
+        const std::string message = std::string(e.what()) + (started
+            ? "\n\nLighting may be incomplete. Reopen your saved map before continuing." : "");
+        Logger::log("RecoveredLighting: selective recalculation failed: " + message);
+        MessageBoxA(owner, message.c_str(), title, MB_OK | MB_ICONERROR);
+    }
 }

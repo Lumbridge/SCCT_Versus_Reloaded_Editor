@@ -4,9 +4,28 @@ An unofficial editor patch for Splinter Cell: Chaos Theory Versus, compatible wi
 
 ## Added in this fork
 
+After adding or subtracting geometry, build it, select the affected faces or
+brushes and static meshes (including surfaces receiving changed shadows), and
+choose **Build → Recalculate Selected Lighting…**. Selected areas receive a
+fresh native bake; the rest keeps its existing lighting. Save a backup first:
+the native bake can look different from recovered lighting.
+
+For dark BSP wall or floor extensions, **Build → Match Selected BSP Lighting…**
+is an experimental alternative. Select the new faces and any affected shadow
+receivers after building geometry. Leave nearby original surfaces unselected:
+the tool uses references with the same material and facing direction, within
+16 units of the same plane and 512 units of each lighting sample, with a BSP
+visibility check between points offset in front of the surfaces. It adds the
+local difference between original and freshly calculated reference lighting to
+the selected bake. Unselected BSP and static meshes retain their existing bake.
+The completion message reports coverage; samples without a reference retain
+native lighting. This does not support static-mesh matching, automatically find
+changed shadows, or reconstruct missing lights. Check the approximation in game.
+
 | Feature | What it does |
 | --- | --- |
 | **Compiled-map recovery** | Turns compiled maps into editable brushes, actors, and assets. |
+| **Selective lighting** | Recalculate selected BSP faces, brushes and static meshes while preserving lighting elsewhere. |
 | **SMagicEvent Workbench** | Edit event groups, triggers, actions, and timing in one panel. |
 | **Gameplay Connections** | View actor links in a list or graph, jump to connected actors, and rename Tags with their linked events. |
 | **Selective Tag renaming** | Uncheck individual actor Tags or linked Event assignments before renaming a shared group. |
@@ -18,6 +37,7 @@ An unofficial editor patch for Splinter Cell: Chaos Theory Versus, compatible wi
 | **BSP texture copy/paste** | Copy a surface's material while keeping the destination's texture alignment. |
 | **Select Brush** | Select the source brush directly from a BSP surface. |
 | **Quick grid adjustment** | Change grid size with **Ctrl + mouse wheel** over a viewport. |
+| **Play Level resolution** | Launch playtests at the current resolution of the editor's monitor. |
 | **Property-window reset** | Bring off-screen property windows back onto the editor monitor. |
 | **Builder-brush repair** | Restore a missing or damaged builder brush as a default cube. |
 | **BSP fixes and crash diagnostics** | Support larger BSP point counts and record build failures and crashes. |

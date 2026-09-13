@@ -648,9 +648,50 @@ CALL_HOOK(0x10e3dbe5, SaveHook)
     }
 }
 
+static bool HasSavedPackageSummary(const char* path)
+{
+    std::vector<SDCChunk> chunks;
+    if (!ParseSDCChunks(path, chunks)) return false;
+    auto bytes = ReadAndDecompress(path, chunks.front());
+    if (bytes.size() < 36) return false;
+    uint32_t fields[9]{};
+    memcpy(fields, bytes.data(), sizeof(fields));
+    return fields[0] == UE2_MAGIC && fields[3] > 0 && fields[4] >= 36
+        && fields[5] > 0 && fields[6] >= 36;
+}
+
+static int __fastcall SavePlayMapAndRepair(void* editor, void*)
+{
+    using SavePlayMap = int(__thiscall*)(void*);
+    const int result = reinterpret_cast<SavePlayMap>(0x10E05219)(editor);
+    if (!result) return result;
+    const char* extension = *reinterpret_cast<const char**>(0x1165E988);
+    if (!extension || _stricmp(extension, "sdc") != 0) return result;
+    // SavePlayMap (10EE4A20) issues MAP SAVE directly, bypassing File Save's
+    // call-site repair. SavePlayMap sets context+80=-1, so this command emits
+    // only the runtime copy. Finalize it before launching the game while the
+    // summary capture still belongs to this synchronous save.
+    const char* runtime = "..\\Packages\\Maps\\Autoplay.sdc";
+    LightmapFix::RepairSavedMap(runtime);
+    if (!HasSavedPackageSummary(runtime))
+    {
+        Logger::log("LightmapFix: Play Level stopped because the temporary map header is invalid.");
+        MessageBoxA(nullptr, "The temporary Play Level map could not be finalized. The game was not launched. "
+            "Your named map has not been replaced.", "Play Level", MB_OK | MB_ICONERROR);
+        return 0;
+    }
+    Logger::log("LightmapFix: Play Level temporary runtime map header verified.");
+    return result;
+}
+
 void LightmapFix::Initialize()
 {
     INSTALL_HOOKS;
+    constexpr uintptr_t playSaveCall = 0x10E212AA;
+    if (*reinterpret_cast<unsigned char*>(playSaveCall) == 0xE8
+        && playSaveCall + 5 + *reinterpret_cast<int*>(playSaveCall + 1) == 0x10E05219)
+        MemoryWriter::WriteCall(playSaveCall, reinterpret_cast<void(*)()>(SavePlayMapAndRepair));
+    else Logger::log("LightmapFix: Play Level save call mismatch; repair hook not installed.");
 
     {
         static const uint8_t jl_patch[] = { 0x7C };

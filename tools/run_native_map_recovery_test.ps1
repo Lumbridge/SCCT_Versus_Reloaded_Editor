@@ -24,6 +24,11 @@ param(
     [switch]$TraceLeafLights,
     [switch]$TraceLighting,
     [switch]$VerifyPreservedLighting,
+    [switch]$VerifySelectedLighting,
+    [string]$LightingBrush,
+    [switch]$MatchLightingAfterLoad,
+    [switch]$GeometryOnlyBuild,
+    [switch]$VerifyPlayMapSave,
     [switch]$RelightCookedMeshes,
     [switch]$AllLeafLightCandidates,
     [switch]$SkipMeshShadowOcclusion,
@@ -35,6 +40,10 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if ($VerifyPreservedLighting -and !$ReopenOnly) { throw 'VerifyPreservedLighting requires ReopenOnly and a recovered source with nontrivial lighting.' }
+if ($VerifySelectedLighting -and (!$ReopenOnly -or !$VerifyPreservedLighting)) { throw 'VerifySelectedLighting requires ReopenOnly and VerifyPreservedLighting.' }
+if ($MatchLightingAfterLoad -and (!$ReopenOnly -or !$LightingBrush)) { throw 'MatchLightingAfterLoad requires ReopenOnly and LightingBrush.' }
+if ($GeometryOnlyBuild -and !$ReopenOnly) { throw 'GeometryOnlyBuild requires ReopenOnly.' }
+if ($VerifyPlayMapSave -and !$ReopenOnly) { throw 'VerifyPlayMapSave requires ReopenOnly.' }
 if ($StepCookedSoftBodies -and !$TraceSoftBodies) { throw 'StepCookedSoftBodies requires TraceSoftBodies.' }
 if ($RecoveryMenu -and ($GenerateFixture -or $ReopenOnly -or $ImportTextOnly -or $ExpectRecoveryFailure -or $WorkflowTools)) { throw 'RecoveryMenu requires a standalone compiled map recovery test.' }
 $repository = Split-Path -Parent $PSScriptRoot
@@ -145,6 +154,11 @@ step_cooked_soft_bodies=$([int][bool]$StepCookedSoftBodies)
 trace_leaf_lights=$([int][bool]$TraceLeafLights)
 trace_lighting=$([int][bool]$TraceLighting)
 verify_preserved_lighting=$([int][bool]$VerifyPreservedLighting)
+verify_selected_lighting=$([int][bool]$VerifySelectedLighting)
+lighting_brush=$LightingBrush
+match_lighting_after_load=$([int][bool]$MatchLightingAfterLoad)
+geometry_only_build=$([int][bool]$GeometryOnlyBuild)
+verify_play_map_save=$([int][bool]$VerifyPlayMapSave)
 relight_cooked_meshes=$([int][bool]$RelightCookedMeshes)
 all_leaf_light_candidates=$([int][bool]$AllLeafLightCandidates)
 skip_mesh_shadow_occlusion=$([int][bool]$SkipMeshShadowOcclusion)

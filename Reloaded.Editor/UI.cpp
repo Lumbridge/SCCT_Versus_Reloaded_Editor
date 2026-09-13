@@ -149,6 +149,10 @@ static void InjectReloadedMenuItems(HWND frame)
         AppendMenuA(lightingBuild, MF_SEPARATOR, 0, nullptr);
         AppendMenuA(lightingBuild, MF_STRING, MapRecovery::kRecalculateLightingCommandId, "&Recalculate Lighting...");
     }
+    if (lightingBuild && MenuPosByCommand(lightingBuild, MapRecovery::kRecalculateSelectedLightingCommandId) < 0)
+        AppendMenuA(lightingBuild, MF_STRING, MapRecovery::kRecalculateSelectedLightingCommandId, "Recalculate &Selected Lighting...");
+    if (lightingBuild && MenuPosByCommand(lightingBuild, MapRecovery::kMatchSelectedLightingCommandId) < 0)
+        AppendMenuA(lightingBuild, MF_STRING, MapRecovery::kMatchSelectedLightingCommandId, "Match Selected &BSP Lighting...");
     // -UnlockPackages is what lets it save over the stock maps.
     if (RebuildAllMaps::Available())
     {

@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "RecoveredBspLighting.h"
 #include "logger.h"
+#include "LocalLightingMatch.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -8,6 +9,7 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
+#include <array>
 
 namespace RecoveredBspLighting
 {
@@ -111,10 +113,21 @@ public:
     std::string error;
     std::vector<uint64_t> savedAtlases;
     size_t mapped{},unmapped{},atlases{};
+    bool selective = false;
+    std::vector<std::array<int,6>> chartLayouts;
+    std::unordered_set<int> selectedCharts;
+    std::vector<int> nodeCharts;
+    bool recordNative = false;
+    bool localMatch = false;
+    std::vector<Image> nativeImages;
+    size_t matchedTexels{}, unmatchedTexels{};
+    std::vector<LocalLightingMatch::BspNode> visibility;
+    bool rootOutside = false;
 };
 static std::shared_ptr<Snapshot> active;
 
-std::shared_ptr<Snapshot> Capture(void* model,AssetPath path,const char* package,std::string& error)
+std::shared_ptr<Snapshot> Capture(void* model,AssetPath path,const char* package,std::string& error,
+    const std::unordered_set<int>* excludedSurfaces)
 {
     try
     {
@@ -139,6 +152,24 @@ std::shared_ptr<Snapshot> Capture(void* model,AssetPath path,const char* package
             snapshot->images.push_back(std::move(image));
         }
         const auto nodes=GetArray(model,0x54),sections=GetArray(model,0xD4),surfaces=GetArray(model,0x94);
+        if(excludedSurfaces) {
+            snapshot->selective=true;
+            for(int n=0;n<nodes.count;++n) snapshot->nodeCharts.push_back(Read<int>(nodes.data+n*0x5C,0x3C));
+            const auto charts=GetArray(model,0xEC);
+            for(int i=0;i<charts.count;++i) {
+                const auto chart=charts.data+i*0xA4;
+                snapshot->chartLayouts.push_back({Read<int>(chart,8),Read<int>(chart,0x10),
+                    Read<int>(chart,0x14),Read<int>(chart,0x18),Read<int>(chart,0x1C),Read<int>(chart,0x20)});
+                bool selected=false,unselected=false;
+                for(int n=0;n<nodes.count;++n) {
+                    auto node=nodes.data+n*0x5C;
+                    if(node[0x5A]<3 || Read<int>(node,0x3C)!=i) continue;
+                    if(excludedSurfaces->count(Read<int>(node,0x2C))) selected=true;else unselected=true;
+                }
+                if(selected && unselected) throw std::runtime_error("Selected and unselected faces share a lighting chart. Select the adjoining faces too.");
+                if(selected) snapshot->selectedCharts.insert(i);
+            }
+        }
         for(int i=0;i<nodes.count;++i)
         {
             const auto* node=nodes.data+i*0x5C;
@@ -155,6 +186,7 @@ std::shared_ptr<Snapshot> Capture(void* model,AssetPath path,const char* package
             if(primary>=textures.count || secondary>=textures.count) throw std::runtime_error("Invalid original BSP lightmap binding");
             const auto vertices=GetArray(render,4);
             const int surface=Read<int>(node,0x2C);
+            if(excludedSurfaces && excludedSurfaces->count(surface)) continue;
             if(count>vertices.count || start>vertices.count-count || surface<0 || surface>=surfaces.count)
                 throw std::runtime_error("Invalid original BSP lighting vertices");
             char material[1024]{};
@@ -199,6 +231,113 @@ void Activate(const std::shared_ptr<Snapshot>& snapshot)
 }
 void Deactivate() { active.reset(); }
 
+void RecordNativeBake(const std::shared_ptr<Snapshot>& snapshot) {
+    if(snapshot->triangles.empty())
+        throw std::runtime_error("Leave original BSP surfaces unselected to provide lighting references. No lighting was changed.");
+    snapshot->recordNative=true;
+}
+
+std::shared_ptr<Snapshot> PrepareLocalMatch(void* model, const std::shared_ptr<Snapshot>& snapshot,
+    const std::unordered_set<int>& selectedSurfaces, std::string& error)
+{
+    // Capture after the first bake: donor UVs now address the freshly packed
+    // atlases, whose unselected charts have already been restored exactly.
+    auto result=Capture(model,snapshot->path,"MyLevel",error,&selectedSurfaces);
+    if(!result) return {};
+    if(result->images.size()!=snapshot->nativeImages.size()) {
+        error="The native reference bake did not produce every lighting atlas."; return {};
+    }
+    for(size_t i=0;i<result->images.size();++i) {
+        if(result->images[i].w!=snapshot->nativeImages[i].w || result->images[i].h!=snapshot->nativeImages[i].h) {
+            error="The native reference atlas dimensions do not match."; return {};
+        }
+    }
+    result->nativeImages=std::move(snapshot->nativeImages);
+    result->localMatch=true;
+    result->rootOutside=Read<int>(model,0x104)!=0;
+    const auto nodes=GetArray(model,0x54);
+    for(int n=0;n<nodes.count;++n) {
+        const auto node=nodes.data+n*0x5C;
+        const auto normal=Position(node);
+        result->visibility.push_back({{normal.x,normal.y,normal.z},Read<float>(node,0xC),
+            Read<int>(node,0x34),Read<int>(node,0x30),node[0x5A]!=0 && !(node[0x5B]&0x21)});
+    }
+    return result;
+}
+
+std::string LocalMatchReport(const std::shared_ptr<Snapshot>& snapshot) {
+    return "Matched "+std::to_string(snapshot->matchedTexels)+" lighting texels to nearby original surfaces.\n"
+        +std::to_string(snapshot->unmatchedTexels)+" texels had no suitable reference and kept the native bake.\n\n"
+        "This is an approximate colour and brightness match. Check the result in game, especially shadows. "
+        "It does not reconstruct missing original lights or automatically select shadow receivers.";
+}
+
+namespace {
+void MatchChart(Snapshot& snapshot, void* pixels, const void* model, const unsigned char* chart,
+    int chartIndex, int textureIndex)
+{
+    const auto nodes=GetArray(model,0x54),surfaces=GetArray(model,0x94),verts=GetArray(model,0x64),points=GetArray(model,0x84);
+    const int x=Read<int>(chart,0x14),y=Read<int>(chart,0x18),w=Read<int>(chart,0x1C),h=Read<int>(chart,0x20);
+    const int layer=Read<int>(chart,8)==textureIndex ? 0 : 1;
+    const unsigned char* node=nullptr;
+    for(int n=0;n<nodes.count;++n)
+        if(nodes.data[n*0x5C+0x5A]>=3 && Read<int>(nodes.data+n*0x5C,0x3C)==chartIndex) {node=nodes.data+n*0x5C;break;}
+    if(!node) { snapshot.unmatchedTexels+=size_t(w)*h; return; }
+    const int surface=Read<int>(node,0x2C),start=Read<int>(node,0x28);
+    if(surface<0 || surface>=surfaces.count || start<0 || start>=verts.count) throw std::runtime_error("Invalid matching surface.");
+    const unsigned point=Read<uint16_t>(verts.data,start*8);
+    if(point>=unsigned(points.count)) throw std::runtime_error("Invalid matching surface point.");
+    const V anchor=Position(points.data+point*12),normal=Position(node);
+    char material[1024]{};
+    if(!snapshot.path(Read<void*>(surfaces.data+surface*0x2C,0x10),material,sizeof(material),"MyLevel")) {
+        snapshot.unmatchedTexels+=size_t(w)*h; return;
+    }
+    auto found=snapshot.triangles.find(material);
+    std::vector<const Triangle*> candidates;
+    if(found!=snapshot.triangles.end()) for(const auto& t:found->second) {
+        // Allow a small wall-thickness offset, but require the same facing and
+        // material. The segment check below rejects intervening solid BSP.
+        if(Dot(t.normal,normal)>0.9999 && std::abs(Dot(t.normal,anchor)-t.distance)<=16.0
+            && t.atlas[layer]>=0) candidates.push_back(&t);
+    }
+    if(candidates.empty()) { snapshot.unmatchedTexels+=size_t(w)*h; return; }
+    double matrix[4][4],inverse[4][4];
+    for(int r=0;r<4;++r) for(int c=0;c<4;++c) {
+        matrix[r][c]=Read<float>(chart,0x28+(r*4+c)*4);
+        if(!std::isfinite(matrix[r][c])) throw std::runtime_error("Invalid matching chart transform.");
+    }
+    if(!Invert(matrix,inverse)) throw std::runtime_error("Singular matching chart transform.");
+    const auto local=Transform(matrix,anchor);
+    auto convert=[](V v) {return LocalLightingMatch::Point{v.x,v.y,v.z};};
+    for(int py=0;py<h;++py) for(int px=0;px<w;++px) {
+        const auto world=Transform(inverse,{px+0.5,py+0.5,local.z});
+        const Triangle* nearest=nullptr;
+        double distance=512.0*512.0,wb=0,wc=0;
+        for(const auto* t:candidates) {
+            // Cheap AABB rejection before the closest-triangle calculation.
+            if(world.x<t->minimum.x-512 || world.x>t->maximum.x+512
+                || world.y<t->minimum.y-512 || world.y>t->maximum.y+512
+                || world.z<t->minimum.z-512 || world.z>t->maximum.z+512) continue;
+            double b,c;
+            const double d=LocalLightingMatch::Nearest(convert(world),convert(t->a),convert(t->b),convert(t->c),b,c);
+            const auto reference=t->a*(1-b-c)+t->b*b+t->c*c;
+            // Move the connecting segment outside both almost coplanar faces.
+            // This checks BSP only: mesh occlusion remains the native baker's.
+            if(d<distance && LocalLightingMatch::ClearSegment(snapshot.visibility,snapshot.rootOutside,
+                convert(world+normal*18),convert(reference+normal*18))) {distance=d;nearest=t;wb=b;wc=c;}
+        }
+        if(!nearest) {++snapshot.unmatchedTexels;continue;}
+        const double wa=1-wb-wc;
+        const double u=nearest->u[0]*wa+nearest->u[1]*wb+nearest->u[2]*wc;
+        const double v=nearest->v[0]*wa+nearest->v[1]*wb+nearest->v[2]*wc;
+        const int atlas=nearest->atlas[layer];
+        auto& target=static_cast<uint32_t*>(pixels)[(y+py)*512+x+px];
+        target=LocalLightingMatch::Correct(target,Sample(snapshot.images[atlas],u,v),Sample(snapshot.nativeImages[atlas],u,v));
+        ++snapshot.matchedTexels;
+    }
+}
+}
+
 void RestoreAtlas(void* pixels,const void* model,const void* texture) noexcept
 {
     if(!active || !active->error.empty()) return;
@@ -211,6 +350,60 @@ void RestoreAtlas(void* pixels,const void* model,const void* texture) noexcept
         if(textureOffset<0 || textureOffset%0x70 || textureOffset/0x70>=textures.count) throw std::runtime_error("Invalid target BSP atlas");
         const int textureIndex=int(textureOffset/0x70);
         ++snapshot.atlases;
+        if(snapshot.recordNative) {
+            if(snapshot.nativeImages.size()!=size_t(textures.count)) snapshot.nativeImages.resize(textures.count);
+            auto& image=snapshot.nativeImages[textureIndex];image.w=image.h=512;
+            const auto* begin=static_cast<const uint32_t*>(pixels);
+            image.pixels.assign(begin,begin+512*512);
+        }
+        if(snapshot.selective) {
+            // LIGHT APPLY repacks atlases. Match unchanged chart identities and
+            // dimensions, then copy their texels to their new atlas rectangles.
+            if(nodes.count!=int(snapshot.nodeCharts.size()))
+                throw std::runtime_error("Lighting chart layout changed during selective recalculation.");
+            std::vector<int> sourceCharts(lightmaps.count,-1);
+            for(int n=0;n<nodes.count;++n) {
+                const auto node=nodes.data+n*0x5C;
+                if(node[0x5A]<3) continue;
+                const int target=Read<int>(node,0x3C),source=snapshot.nodeCharts[n];
+                if(target<0 || target>=lightmaps.count) continue;
+                if(source<0 || source>=int(snapshot.chartLayouts.size()))
+                    throw std::runtime_error("A surface has no original lighting chart. Build geometry before selective recalculation.");
+                if(sourceCharts[target]>=0 && sourceCharts[target]!=source)
+                    throw std::runtime_error("Lighting charts merged during selective recalculation. Reopen the saved map before retrying.");
+                sourceCharts[target]=source;
+            }
+            for(int entry=0;entry<indices.count;++entry) {
+                const int i=Read<int>(indices.data,entry*4);
+                if(i<0 || i>=lightmaps.count) throw std::runtime_error("Invalid selective lighting chart index.");
+                auto chart=lightmaps.data+i*0xA4;
+                const std::array<int,6> layout={Read<int>(chart,8),Read<int>(chart,0x10),Read<int>(chart,0x14),
+                    Read<int>(chart,0x18),Read<int>(chart,0x1C),Read<int>(chart,0x20)};
+                if(sourceCharts[i]<0) continue;
+                const auto& old=snapshot.chartLayouts[sourceCharts[i]];
+                if(layout[4]!=old[4] || layout[5]!=old[5]) throw std::runtime_error("Lighting chart dimensions changed. Reopen the saved map before retrying.");
+                if(layout[0]!=textureIndex && layout[1]!=textureIndex) continue;
+                if(layout[2]<0 || layout[3]<0 || layout[4]<=0 || layout[5]<=0
+                    || layout[4]>512 || layout[5]>512 || layout[2]>512-layout[4] || layout[3]>512-layout[5])
+                    throw std::runtime_error("Selective lighting chart exceeds its atlas.");
+                if(snapshot.selectedCharts.count(sourceCharts[i])) {
+                    if(snapshot.localMatch) MatchChart(snapshot,pixels,model,chart,i,textureIndex);
+                    continue;
+                }
+                const int source=old[layout[0]==textureIndex ? 0 : 1];
+                if(source<0 || source>=int(snapshot.images.size())) throw std::runtime_error("Missing original selective lighting atlas.");
+                const auto& original=snapshot.images[source];
+                if(old[2]<0 || old[3]<0 || old[2]>original.w-old[4] || old[3]>original.h-old[5])
+                    throw std::runtime_error("Original selective lighting chart exceeds its atlas.");
+                for(int row=0;row<layout[5];++row) {
+                    const int offset=(layout[3]+row)*512+layout[2];
+                    const int sourceOffset=(old[3]+row)*original.w+old[2];
+                    memcpy(static_cast<uint32_t*>(pixels)+offset,original.pixels.data()+sourceOffset,layout[4]*sizeof(uint32_t));
+                }
+                snapshot.mapped+=size_t(layout[4])*layout[5];
+            }
+            return;
+        }
         for(int entry=0;entry<indices.count;++entry)
         {
             const int index=Read<int>(indices.data,entry*4);

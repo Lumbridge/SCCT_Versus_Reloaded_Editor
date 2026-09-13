@@ -4,6 +4,22 @@
 
 namespace CollisionBox
 {
+    // Validate without touching x87: callers in the compressed collision
+    // decoder keep arithmetic live across bounds accessor calls.
+    inline bool IsOrdered(const float* box)
+    {
+        uint32_t bits[6];
+        std::memcpy(bits,box,sizeof(bits));
+        auto order=[](uint32_t value) {
+            if(!(value&0x7fffffff)) return uint32_t(0x80000000);
+            return value&0x80000000 ? ~value : value^0x80000000;
+        };
+        for(int axis=0;axis<3;++axis) {
+            if((bits[axis]&0x7f800000)==0x7f800000 || (bits[axis+3]&0x7f800000)==0x7f800000
+                || order(bits[axis])>order(bits[axis+3])) return false;
+        }
+        return true;
+    }
     // Native compressed mesh collision boxes contain six floats, without a
     // validity byte. Copy first so the destination may alias either endpoint.
     inline bool FromEndpoints(float* destination, const float* first, const float* second)

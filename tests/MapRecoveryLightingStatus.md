@@ -1,8 +1,185 @@
 # OffsD lighting investigation
 
-Updated 13 September 2026. Follow-up testing confirmed that the Play Level profile issue and recovered-map Play Here crash are no longer present. The notes below record the earlier lighting and visibility investigation; later results supersede the test plans and open questions in older entries.
+## Match-lighting collision accessor crash (13 September, 17:02)
+
+The installed editor crashed at `10EB299D`, the FBox minimum accessor's native
+`isValid()` breakpoint, returning to compressed collision decoder call
+`11172346`. Dump `EditorCrash_20260913_170228_279_pid44612.dmp` retained finite,
+ordered bounds: min `(-5.07520008,-20.7047005,-9.80350018)`, max
+`(4.71579981,20.6683006,9.81960011)`. It occurred in the first native lighting
+pass, before local matching. A graphics-device creation also appeared during
+that pass, but its role in the failure has not been established.
+
+The six min/max accessor calls in the compressed collision decoder now validate
+finite ordered bounds using integer float-bit ordering and return the existing
+endpoint pointer without using x87. Invalid bounds still call the native getter
+and retain its diagnostics. Other engine box getters are unchanged. This extends
+the earlier integer-only collision-box constructor fix to its input accessors.
+
+The previous DLL failed a probe calling those actual native call targets with
+the dump's bounds and a full x87 stack:
+`scct-source-recovery-bd7c01dc3fa14b128eadafeab98112ef`. The patched DLL passed
+all six endpoint-pointer and complete x87-state comparisons, followed by matching
+both added brushes immediately after loading OffsD without a preliminary build:
+`scct-source-recovery-e16c34b74479484798398b7277947c05`.
+The ordinary fresh-load sequence itself did not reproduce the user's breakpoint
+with the previous DLL; the controlled accessor test supplies the regression.
+
+Unit tests cover the exact crash bounds, inverted bounds, nonfinite input,
+100,000 random finite endpoint pairs and operation with an occupied x87 stack.
+
+Full two-brush matching/preservation/File Save/reopen regression also passed:
+`scct-source-recovery-53be76d4c3ce438bbfceb34826d90201`. Lighting correction totals
+were unchanged (native RGB sum 30051, matched 81846), and unselected lighting was
+byte-identical. Installed the tested DLL in scct2 with SHA256
+`96242A99394927FB5BC96E9E9E42F2B534A6AA4B613787D2638A04564038E4CE`.
+
+## Experimental local BSP matching (13 September, dark additions)
+
+`Build > Match Selected BSP Lighting...` performs two native lighting passes on
+fixed geometry. The first records fresh atlas pixels before restoring unselected
+charts. A new snapshot then pairs those pixels with the restored original charts
+in the same atlas layout. The second pass adds the nearest suitable reference's
+original-minus-native RGB residual to selected chart samples, preserving alpha.
+Unselected charts are copied exactly through both repacks; all mesh colours are
+restored. Subsequent ordinary builds preserve the combined result.
+
+References are unselected BSP triangles with the same material and almost equal
+normal, at most 16 units from the target plane and 512 units from the sample.
+The reference-target segment, offset 18 units in front of both surfaces, must
+remain outside solid BSP. This is a conservative geometric filter, not a full
+light transport solution. It does not test static-mesh occlusion, reconstruct
+original lights, match mesh vertex colours, or infer affected shadow receivers.
+Clipping and spatially varying residuals can still alter shadow contrast.
+
+OffsD's added Brush3702/Brush3728 faces lie about nine units forward of the
+original GAR_asphalt wall. The first one-unit coplanarity limit therefore
+missed much of the visible addition. Before widening it, the Brush3702 native
+test corrected 710 of 2240 samples; RGB component sum changed from 8340 to 31515.
+That run passed unselected-byte preservation and File Save/reopen checks:
+`scct-source-recovery-dc01b7365d134be8b585ed66e2e1e209`.
+
+The completion notice's OK button uses IDCANCEL through the editor's existing
+message-box hook. The native harness now handles that ID, rather than hanging
+after a successful calculation. The first wall test completed without manual
+dialog intervention. Visual blending still needs an in-game comparison; numeric
+correction and serialization checks alone do not establish it.
+
+Final two-brush run with the offset and BSP visibility filter:
+`scct-source-recovery-170c87c1404c4aba9ebd2744a1c55851`, using
+`-LightingBrush 'Brush3702,Brush3728'`. Ten selected surfaces contained 4096 chart
+samples: 936 matched and 3160 retained native lighting. RGB sum changed from
+30051 to 81846 over 12288 components. Cancellation, actual selected correction,
+exact unselected BSP/mesh bytes, resumed preservation and File Save/reopen all
+passed. The test does not establish coverage of every visible face.
+
+Installed that exact tested DLL in scct2 at 17:00, SHA256
+`596DB15BA44FE40C185C3FC56FE7F293F757783FE9AE72D1113DD15E07B964E6`.
+Previous DLL backup: `Reloaded.Editor.dll.backup-20260913-170048`.
+The working launcher and user maps were unchanged.
+
+Updated 13 September 2026. Play Level failures depend on the installed launcher, runtime and map dependencies. The latest follow-up below supersedes earlier claims that the Play Here crash was fully resolved.
 
 ## Default preservation during ordinary builds (13 September)
+
+### Selective recalculation for additions and subtractions
+
+Build > Recalculate Selected Lighting (40930) captures selected BSP faces and
+faces belonging to selected source brushes, and excludes selected static meshes
+from colour restoration. It runs the native lighting calculation with geometry
+held fixed, then restores unselected mesh streams and exact BSP chart texels.
+Charts are matched through their owning BSP nodes: a native bake can renumber
+charts and move their atlas rectangles even without geometry changes. Only
+indices listed by the target texture are visited; unused secondary bindings
+must not be treated as live PC atlas references.
+
+Successful recalculation refreshes the preservation baseline. Shared lighting
+charts require selecting adjoining faces together. Changed chart dimensions or
+incompatible ownership stop with an instruction to reopen the saved map.
+Users build changed geometry first and select its shadow receivers as well;
+the operation does not infer the full shadow footprint of an addition or cutout.
+
+Native run `scct-source-recovery-28e569125f32436c8275a3c69d29847e` passed selected
+mesh recalculation, exact unselected mesh/BSP chart preservation, selected BSP
+recalculation, cancellation, combined-bake save/reopen, and subsequent protection.
+The narrower `scct-source-recovery-ffaac50f2be241cda5cd650d48b7c691` run also
+passed a partial BSP selection: selected chart texels changed while all other
+BSP chart texels and mesh streams stayed byte-identical. Its combined bake
+passed the same native save/reopen and later protection checks.
+
+For scct2, Reloaded's existing `labs_borderless_fullscreen` configuration was
+enabled with a backup. An isolated game window check reported style `14000000`
+(visible without a caption or resizing frame); its DPI-virtualized client size
+was 2048x1152, with the playtest configuration set to 2560x1440. This setting
+also controls ordinary game launches in that installation.
+
+### Play Level game-side follow-up
+
+The user's 15:12 crash persisted after the temporary package header repair.
+An isolated game debugger reproduced the null-level dereference at `109EA378`:
+the native launch command's map URL was consumed as argv[0], and the game
+attempted to load `HWND=0`. General.cpp now supplies the missing executable
+token only for the SHA-256-identified legacy SCCT_Versus.exe
+(`03cf76573fb15b0f357f11f15dd4c3f9ab31e0b0d181a1493e1150e52bdc2586`).
+Other launcher binaries keep their existing command line.
+
+With the command corrected, the native game loader reported missing
+`Oilrig_TXT`. The scct2 installation lacked Oilrig_TXT.utx, while the other
+local installation contained it. Adding a copy in the isolated test resolved
+the missing package and returned a non-null Autoplay level. Its old Core then
+crashed after loading. Using the existing guarded Core from the other local
+installation (SHA-256 `95e3f812a58d03fde82983d397183dc3fb87da85a663cafac766c8d28ace866d`)
+completed the 45-second debugger run without an access violation. This was a
+startup smoke test, not interactive gameplay verification.
+
+Diagnostic files are retained in the System directory under
+`scct-source-recovery-7c79ebc32c0b46a8a82d493b10511ac4` in TEMP:
+`game_debug_missing_texture.txt`, `game_debug_loaded_map_core_crash.txt`, and
+`game_debug_live.txt`. The original named user map was never modified.
+
+### Play Level temporary package repair
+
+The later game crash at `109EA378` was reproduced in the user's crash log:
+the game dereferenced a null loaded level. Its `Maps/Autoplay.sdc` consisted
+of two compressed chunks (15,728,640 and 2,914,881 uncompressed bytes), with
+zero name/export counts in the package header. The named `Maps/OffsD.sdc`
+had a valid repaired summary. The temporary package missed the existing
+post-save repair because Play Level bypasses the File Save/Save As call sites.
+
+The Play Map save call at `10E212AA` now repairs the temporary runtime package
+before the game can launch and rejects an unfinalized header. Native SavePlayMap
+sets context+80=-1, so its MAP SAVE command emits only the playable Autoplay
+copy, not a MapsEd source copy. The repair consumes the summary captured during
+that same synchronous save; it does not reconstruct already lost metadata from
+an old file. No renderer, game launcher, or profile workaround was added.
+
+The native Play Map save regression passed for both the user's large map and
+a small fixture. The large runtime package was repaired to one compressed chunk
+containing 18,473,868 uncompressed bytes, with 2,544 names, 1,798 exports and
+349 imports. A separate native cooked-map inspection loaded it successfully.
+Large-map save run: `scct-source-recovery-7c79ebc32c0b46a8a82d493b10511ac4`.
+These checks did not launch the game or validate gameplay.
+
+### Edited-map geometry-build crash follow-up
+
+The user's edited `MapsEd/OffsD.sdc` reproduced an access violation at
+`110C00AB` in FPoly::SplitWithPlane during visibility construction. The beta.6
+preservation wrapper ran LIGHT APPLY immediately after MAP REBUILD, before
+the BSP finalization normally preceding lighting in a full build. The fault
+read a point outside the model's point array. This is a preservation sequencing
+regression, not evidence that the user's added brush needs removing.
+
+Protected MAP REBUILD now completes BSP REBUILD before lighting transfer.
+The unchanged failing file then passed full rebuilding, exact mesh-colour
+preservation, mesh/BSP File Save/reopen equality, and explicit recalculation.
+The probe also supports geometry-only rebuilding so the internal ordering is
+tested without relying on a subsequent caller-issued BSP REBUILD.
+
+Baseline crash: `scct-source-recovery-1a4899c80a9c489884387696924518fc`.
+Fixed full build: `scct-source-recovery-fd0f8758627744aa933da48aeab7b569`.
+Fixed geometry-only build: `scct-source-recovery-e5a2c15513fc44c181ac9988b58b1d6d`;
+mesh preservation, BSP/mesh save roundtrip and the explicit recalculation checks
+also passed without a caller-issued BSP REBUILD.
 
 Recovered source maps now protect their existing bake automatically. Recognition
 uses the recovery's serialized structural brush/model identities, so reopening

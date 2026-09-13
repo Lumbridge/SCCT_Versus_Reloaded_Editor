@@ -109,6 +109,17 @@ static void* __fastcall ConstructCollisionBox(void* destination, void*, const fl
     return reinterpret_cast<Constructor>(0x10EC26E0)(destination, first, second);
 }
 
+static void* __fastcall CollisionMinimum(void* box, void*)
+{
+    if(CollisionBox::IsOrdered(static_cast<const float*>(box))) return box;
+    return reinterpret_cast<void*(__thiscall*)(void*)>(0x10EB2950)(box);
+}
+static void* __fastcall CollisionMaximum(void* box, void*)
+{
+    if(CollisionBox::IsOrdered(static_cast<const float*>(box))) return static_cast<float*>(box)+3;
+    return reinterpret_cast<void*(__thiscall*)(void*)>(0x10EB29D0)(box);
+}
+
 void StaticMeshCollisionFix::Initialize()
 {
     INSTALL_HOOKS;
@@ -118,6 +129,19 @@ void StaticMeshCollisionFix::Initialize()
     if (!memcmp(reinterpret_cast<const void*>(boxCall), expected, sizeof(expected)))
         MemoryWriter::WriteCall(boxCall, reinterpret_cast<void(*)()>(&ConstructCollisionBox));
     else Logger::log("StaticMeshCollisionFix: collision-box constructor call mismatch; replacement skipped.");
+
+    // Patch only this decoder's six accessor calls. Valid finite boxes require
+    // no x87 temporaries; invalid boxes retain the original assertion path.
+    const uintptr_t minimumCalls[]={0x111722DB,0x11172346,0x111723B2};
+    const uintptr_t maximumCalls[]={0x111722E8,0x11172354,0x111723C0};
+    auto patchAccessor=[](uintptr_t site,uintptr_t expected,void(*replacement)()) {
+        if(*reinterpret_cast<const unsigned char*>(site)==0xE8
+            && site+5+*reinterpret_cast<const int32_t*>(site+1)==expected)
+            MemoryWriter::WriteCall(site,replacement);
+        else Logger::log("StaticMeshCollisionFix: bounds accessor call mismatch; replacement skipped.");
+    };
+    for(auto site:minimumCalls) patchAccessor(site,0x10E05F11,reinterpret_cast<void(*)()>(&CollisionMinimum));
+    for(auto site:maximumCalls) patchAccessor(site,0x10E039F5,reinterpret_cast<void(*)()>(&CollisionMaximum));
 
     PatchByte(0x11172469, 0x8D, 0x83, "collision node bounds check");  // 0F 8D condition byte: JGE -> JAE
     PatchByte(0x1117424D, 0x74, 0xEB, "degenerate bounds assert");     // JZ over the assert body -> JMP

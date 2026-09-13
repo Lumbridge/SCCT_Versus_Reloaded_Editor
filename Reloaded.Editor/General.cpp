@@ -13,8 +13,14 @@
 #include "BspTextureClipboard.h"
 #include "WorkflowTools.h"
 #include "GridSizeShortcut.h"
+#include "PlayLevelConfig.h"
+#include "PlayLevelCommand.h"
 #include <mimalloc.h>
 #include <cstring>
+#include <wincrypt.h>
+#include <filesystem>
+#include <fstream>
+#pragma comment(lib, "advapi32.lib")
 #include <unordered_map>
 
 INIT_HOOKS;
@@ -62,6 +68,91 @@ static void InstallNoEmbedOnPlayPatch()
 {
     const uint8_t patch[] = { 0xB9, 0x00, 0x00, 0x00, 0x00, 0x90 };
     MemoryWriter::WriteBytes(0x10E2131A, patch, sizeof(patch));
+}
+
+// This legacy Reloaded launcher passes WinMain's arguments directly to
+// CreateProcess as the child's entire command line. The game consumes the map
+// URL as argv[0] and then attempts to load HWND=0. New launchers may already
+// supply argv[0], so restrict the compatibility shim to the verified old binary.
+static bool IsLegacyPlayLauncher(const std::filesystem::path& path)
+{
+    static constexpr unsigned char expected[] = {
+        0x03,0xcf,0x76,0x57,0x3f,0xb1,0x5b,0x0f,0x35,0x7f,0x11,0xf1,0x5d,0xd4,0xc3,0xf9,
+        0xab,0x31,0xe0,0xb0,0xd1,0x81,0xa1,0x49,0x3e,0x11,0x50,0xe5,0x2b,0xdc,0x25,0x86
+    };
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return false;
+    HCRYPTPROV provider{};
+    HCRYPTHASH hash{};
+    if (!CryptAcquireContextW(&provider, nullptr, nullptr, PROV_RSA_AES, CRYPT_VERIFYCONTEXT)) return false;
+    bool ok = CryptCreateHash(provider, CALG_SHA_256, 0, 0, &hash) != FALSE;
+    char buffer[16384];
+    while (ok && file) {
+        file.read(buffer, sizeof(buffer));
+        const auto count = file.gcount();
+        if (count) ok = CryptHashData(hash, reinterpret_cast<const BYTE*>(buffer), static_cast<DWORD>(count), 0) != FALSE;
+    }
+    unsigned char actual[32]{};
+    DWORD size = sizeof(actual);
+    ok = ok && file.eof() && CryptGetHashParam(hash, HP_HASHVAL, actual, &size, 0)
+        && size == sizeof(expected) && memcmp(actual, expected, sizeof(expected)) == 0;
+    if (hash) CryptDestroyHash(hash);
+    CryptReleaseContext(provider, 0);
+    return ok;
+}
+
+static HINSTANCE WINAPI LaunchPlayLevel(HWND window, LPCSTR operation, LPCSTR file,
+    LPCSTR parameters, LPCSTR directory, INT show)
+{
+    try {
+        if (file && parameters && _strnicmp(parameters, "Autoplay.sdc?", 13) == 0
+            && strstr(parameters, "?Editeur=true")) {
+            std::filesystem::path path(file);
+            if (_stricmp(path.filename().string().c_str(), "SCCT_Versus.exe") == 0) {
+                if (path.is_relative()) {
+                    if (directory && *directory) path = std::filesystem::path(directory) / path;
+                    else {
+                        char module[MAX_PATH]{};
+                        GetModuleFileNameA(nullptr, module, MAX_PATH);
+                        path = std::filesystem::path(module).parent_path() / path;
+                    }
+                }
+                std::string corrected(parameters);
+                if (!PlayLevelCommand::HasConfigurationOverride(parameters)) {
+                    const auto gameDirectory = path.parent_path();
+                    const auto options = (gameDirectory / "Reloaded_Editor.ini").string();
+                    const auto resolution = PlayLevelConfig::SelectResolution(
+                        GetPrivateProfileIntA("PlayLevel", "ResolutionX", 0, options.c_str()),
+                        GetPrivateProfileIntA("PlayLevel", "ResolutionY", 0, options.c_str()),
+                        PlayLevelConfig::CurrentDisplayResolution(window ? window : GetActiveWindow()));
+                    const auto source = (gameDirectory / "Default.ini").string();
+                    const auto configuration = (gameDirectory / "Reloaded_PlayLevel.ini").string();
+                    if (!PlayLevelConfig::WriteConfiguration(source.c_str(), configuration.c_str(), resolution)) {
+                        Logger::log("Play Level: could not prepare resolution settings, error "
+                            + std::to_string(GetLastError()));
+                        return reinterpret_cast<HINSTANCE>(static_cast<INT_PTR>(SE_ERR_ACCESSDENIED));
+                    }
+                    corrected += " INI=\"" + configuration + "\"";
+                    Logger::log("Play Level: render resolution " + std::to_string(resolution.width)
+                        + "x" + std::to_string(resolution.height));
+                }
+                if (IsLegacyPlayLauncher(path)) {
+                    corrected = "\"SCCT Versus\" " + corrected;
+                    Logger::log("Play Level: supplied executable argument for the legacy Reloaded launcher.");
+                }
+                return ShellExecuteA(window, operation, file, corrected.c_str(), directory, show);
+            }
+        }
+    } catch (const std::exception& e) {
+        Logger::log(std::string("Play Level: launcher compatibility check failed: ") + e.what());
+    }
+    return ShellExecuteA(window, operation, file, parameters, directory, show);
+}
+
+static void InstallLegacyPlayLaunchHook()
+{
+    const auto function = reinterpret_cast<uintptr_t>(&LaunchPlayLevel);
+    MemoryWriter::WriteBytes(0x11AF228C, &function, sizeof(function));
 }
 
 static const char s_github_url[] = "https://github.com/AllyPal/SCCT_Versus_Reloaded_Editor";
@@ -562,6 +653,10 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         cmp dword ptr [esp+4], 40928 // Package Map for Sharing
         je workflow_dispatch
         cmp dword ptr [esp+4], 40929 // Explicit lighting recalculation
+        je workflow_dispatch
+        cmp dword ptr [esp+4], 40930 // Selected lighting recalculation
+        je workflow_dispatch
+        cmp dword ptr [esp+4], 40931 // Match selected BSP lighting
         je workflow_dispatch
         cmp dword ptr [esp+4], 40920
         jb workflow_continue
@@ -1250,4 +1345,5 @@ void General::Initialize()
     InstallMemoryHooks();
     InstallMinimizeOnPlayHook();
     InstallNoEmbedOnPlayPatch();
+    InstallLegacyPlayLaunchHook();
 }

@@ -347,6 +347,15 @@
     <ClInclude Include="GridSizeShortcut.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="LocalLightingMatch.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="PlayLevelConfig.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="PlayLevelCommand.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="GridSizeShortcutState.h">
       <Filter>Header Files</Filter>
     </ClInclude>

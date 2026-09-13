@@ -526,6 +526,8 @@ namespace
 bool HandleCommand(UINT command)
 {
     if(command==MapRecovery::kRecalculateLightingCommandId){MapRecovery::RecalculateLighting(GetActiveWindow());return true;}
+    if(command==MapRecovery::kRecalculateSelectedLightingCommandId){MapRecovery::RecalculateSelectedLighting(GetActiveWindow());return true;}
+    if(command==MapRecovery::kMatchSelectedLightingCommandId){MapRecovery::RecalculateSelectedLighting(GetActiveWindow(),true);return true;}
     if(command==MapPackageDialog::Command){try{MapPackageDialog::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Map Packaging",MB_OK|MB_ICONERROR);}return true;}
     if(command==MagicEventWorkbench::Command){try{MagicEventWorkbench::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"SMagicEvent Workbench",MB_OK|MB_ICONERROR);}return true;}
     if(command<kConnections || command>kSaveAssembly) return false;

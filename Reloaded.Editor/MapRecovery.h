@@ -22,6 +22,9 @@ namespace MapRecovery
                          std::string& error);
     bool HandleSaveCommand(UINT commandId);
     constexpr UINT kRecalculateLightingCommandId = 40929;
+    constexpr UINT kRecalculateSelectedLightingCommandId = 40930;
+    void RecalculateSelectedLighting(HWND owner, bool matchSurroundings = false);
+    constexpr UINT kMatchSelectedLightingCommandId = 40931;
     void InitializeLightingProtection();
     void RecalculateLighting(HWND owner);
     void* ResolveBuilderBrushActor(void* level);

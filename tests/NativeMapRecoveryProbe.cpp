@@ -862,6 +862,45 @@ bool CheckCollisionBoxConstructor(bool stress) {
     return true;
 }
 
+bool CheckCollisionAccessors()
+{
+    const uint32_t words[]={0xc0a2680a,0xc1a5a33a,0xc11cdb23,0x4096e7d5,0x41a558ae,0x411d1d15};
+    float box[6];memcpy(box,words,sizeof(box));
+    const uintptr_t sites[]={0x111722DB,0x111722E8,0x11172346,0x11172354,0x111723B2,0x111723C0};
+    for(int i=0;i<6;++i) {
+        const auto site=sites[i];
+        if(*reinterpret_cast<unsigned char*>(site)!=0xE8)return false;
+        auto getter=reinterpret_cast<void*(__thiscall*)(void*)>(site+5+*reinterpret_cast<int*>(site+1));
+        unsigned char saved[108],before[108],after[108];
+        void* result=nullptr;
+        __asm {
+            fnsave saved
+            fldcw saved
+            fld1
+            fld1
+            fld1
+            fld1
+            fld1
+            fld1
+            fld1
+            fld1
+            fnsave before
+            frstor before
+        }
+        __try { result=getter(box); }
+        __except(GetExceptionCode()==EXCEPTION_BREAKPOINT ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {}
+        __asm { fnsave after }
+        __asm { frstor saved }
+        if(result!=box+(i%2?3:0) || memcmp(before,after,sizeof(before))) {
+            fprintf(report,"collision_accessor_failure site=%08lX pointer_correct=%d x87_unchanged=%d\n",
+                static_cast<unsigned long>(site),result==box+(i%2?3:0),!memcmp(before,after,sizeof(before)));
+            Record("FAIL","Collision bounds accessor changed live x87 state or returned incorrect bounds.");return false;
+        }
+    }
+    Record("collision_bounds_accessors","All six decoder calls returned crash-dump bounds with an unchanged full x87 stack.");
+    return true;
+}
+
 bool Rebuild() {
     DescribeLighting("before_normal_build");
     DescribeBspLighting("before_normal_build");
@@ -869,9 +908,12 @@ bool Rebuild() {
     void* editor = *reinterpret_cast<void**>(kEditor);
     using Bracket = void(__thiscall*)(void*, void*, void*);
     reinterpret_cast<Bracket>(0x10E06A1A)(editor, &first, &second);
-    bool ok = Exec("MAP REBUILD") && Exec("BSP REBUILD") && Exec("LIGHT APPLY");
+    const auto config=directory/"native_recovery_test.ini";
+    const bool geometryOnly=GetPrivateProfileIntA("test","geometry_only_build",0,config.string().c_str())!=0;
+    bool ok = Exec("MAP REBUILD");
+    if(ok && !geometryOnly)ok=Exec("BSP REBUILD") && Exec("LIGHT APPLY");
     using Paths = void(__thiscall*)(void*);
-    if (ok) { Record("rebuild_paths"); reinterpret_cast<Paths>(0x10E06399)(editor); }
+    if (ok && !geometryOnly) { Record("rebuild_paths"); reinterpret_cast<Paths>(0x10E06399)(editor); }
     reinterpret_cast<Bracket>(0x10E02EEC)(editor, &first, &second);
     // Finish lighting exactly as the ordinary Build UI does. Save switches
     // platforms and restores mesh instances from this cache.
@@ -1003,22 +1045,173 @@ LightingBytes ReadLightingBytes(bool bsp) {
 }
 int lightingAnswer=IDNO;
 bool lightingAnswered=false;
-void CALLBACK AnswerLighting(HWND,UINT,UINT_PTR,DWORD) {
-    auto dialog=WorkflowProbe::FindDialog("Recalculate Lighting");
-    if(dialog) {lightingAnswered=true;SendMessage(GetDlgItem(dialog,lightingAnswer),BM_CLICK,0,0);}
+bool selectedLightingDialog=false;
+bool matchingLightingDialog=false;
+bool matchingSucceeded=false;
+std::string matchingBrush;
+void CALLBACK AnswerLighting(HWND,UINT,UINT_PTR timer,DWORD) {
+    auto dialog=WorkflowProbe::FindDialog(matchingLightingDialog ? "Match Selected BSP Lighting" : (selectedLightingDialog ? "Recalculate Selected Lighting" : "Recalculate Lighting"));
+    if(dialog) {
+        if(!GetDlgItem(dialog,IDYES)) {
+            KillTimer(nullptr,timer);
+            char text[2048]{};GetDlgItemTextA(dialog,65535,text,sizeof(text));
+            if(matchingLightingDialog && !strncmp(text,"Matched ",8)) {matchingSucceeded=true;Record("local_match",text);}
+            else Record("FAIL",text);
+            // The editor's message-box hook labels IDCANCEL as OK on notices.
+            const int button=GetDlgItem(dialog,IDOK) ? IDOK : IDCANCEL;
+            SendMessage(dialog,WM_COMMAND,MAKEWPARAM(button,BN_CLICKED),reinterpret_cast<LPARAM>(GetDlgItem(dialog,button)));return;
+        }
+        lightingAnswered=true;SendMessage(GetDlgItem(dialog,lightingAnswer),BM_CLICK,0,0);
+    }
 }
-bool ChooseLighting(int answer) {
+bool ChooseLighting(int answer,bool selected=false,bool matching=false) {
+    selectedLightingDialog=selected;
+    matchingLightingDialog=matching;matchingSucceeded=false;
     lightingAnswer=answer;lightingAnswered=false;
     auto timer=SetTimer(nullptr,0,50,AnswerLighting);
-    SendMessage(frameWindow,WM_COMMAND,40929,0);
+    SendMessage(frameWindow,WM_COMMAND,matching ? 40931 : (selected ? 40930 : 40929),0);
     KillTimer(nullptr,timer);
-    return lightingAnswered;
+    return lightingAnswered && (!matching || answer==IDNO || matchingSucceeded);
+}
+
+LightingBytes ReadChartLighting() {
+    auto result=ReadLightingBytes(false);
+    auto level=*reinterpret_cast<unsigned char**>(*reinterpret_cast<unsigned char**>(kEditor)+0x130);
+    auto model=*reinterpret_cast<unsigned char**>(level+0x13c);
+    auto charts=*reinterpret_cast<unsigned char**>(model+0xec);
+    auto textures=*reinterpret_cast<unsigned char**>(model+0xe0);
+    for(int i=0;i<*reinterpret_cast<int*>(model+0xf0);++i) {
+        auto chart=charts+i*0xa4;
+        int atlas=*reinterpret_cast<int*>(chart+8);
+        if(atlas<0 || atlas>=*reinterpret_cast<int*>(model+0xe4))continue;
+        int x=*reinterpret_cast<int*>(chart+0x14),y=*reinterpret_cast<int*>(chart+0x18);
+        int w=*reinterpret_cast<int*>(chart+0x1c),h=*reinterpret_cast<int*>(chart+0x20);
+        auto compressed=textures+atlas*0x70+0x14;
+        using Load=unsigned char*(__thiscall*)(void*,int);
+        auto pixels=reinterpret_cast<Load>(0x111b2400)(compressed,0);
+        auto nodes=*reinterpret_cast<unsigned char**>(model+0x54);
+        std::string key="chart";
+        for(int n=0;n<*reinterpret_cast<int*>(model+0x58);++n)
+            if(nodes[n*0x5c+0x5a]>=3 && *reinterpret_cast<int*>(nodes+n*0x5c+0x3c)==i)key+="_"+std::to_string(n);
+        if(key=="chart")continue;
+        auto& bytes=result[key];
+        for(int row=0;row<h;++row)bytes.insert(bytes.end(),pixels+((y+row)*512+x)*4,pixels+((y+row)*512+x+w)*4);
+    }
+    return result;
+}
+bool VerifySelectedLighting() {
+    auto level=*reinterpret_cast<unsigned char**>(*reinterpret_cast<unsigned char**>(kEditor)+0x130);
+    auto actors=*reinterpret_cast<unsigned char***>(level+0x2c);
+    const int count=*reinterpret_cast<int*>(level+0x30);
+    unsigned char* chosen=nullptr;
+    for(int i=0;i<count;++i) if(auto actor=actors[i]) {
+        *reinterpret_cast<unsigned*>(actor+0x2f4)&=~0x40u;
+        auto instance=*reinterpret_cast<unsigned char**>(actor+0x22c);
+        if(!chosen && *reinterpret_cast<void**>(actor+0x100) && instance
+            && *reinterpret_cast<int*>(instance+0x3c)>0) chosen=actor;
+    }
+    if(!chosen) {Record("FAIL","Selective fixture has no lit static mesh.");return false;}
+    auto model=*reinterpret_cast<unsigned char**>(level+0x13c);
+    auto surfaces=*reinterpret_cast<unsigned char**>(model+0x94);
+    const int surfaceCount=*reinterpret_cast<int*>(model+0x98);
+    for(int i=0;i<surfaceCount;++i)*reinterpret_cast<unsigned*>(surfaces+i*0x2c+0x14)&=~0x02000000u;
+    *reinterpret_cast<unsigned*>(chosen+0x2f4)|=0x40;
+    auto instance=*reinterpret_cast<unsigned char**>(chosen+0x22c);
+    // A distinctive previous bake proves that the chosen mesh is recalculated.
+    memset(*reinterpret_cast<void**>(instance+0x38),0x7f,*reinterpret_cast<int*>(instance+0x3c)*4);
+    auto before=ReadChartLighting();
+    if(!ChooseLighting(IDNO,true) || before!=ReadChartLighting()) {Record("FAIL","Selective cancellation changed lighting.");return false;}
+    if(!ChooseLighting(IDYES,true)) {Record("FAIL","Selective mesh confirmation missing.");return false;}
+    auto after=ReadChartLighting();
+    const auto name=ObjectName(chosen);
+    if(before[name]==after[name]) {Record("FAIL","Selected mesh was not recalculated.");return false;}
+    before.erase(name);after.erase(name);
+    if(before!=after) {Record("FAIL","Selective mesh bake changed unselected mesh or BSP bytes.");return false;}
+    *reinterpret_cast<unsigned*>(chosen+0x2f4)&=~0x40u;
+    // Select one chart's faces, expanding only shared-chart ownership. Prove
+    // that the remaining BSP and every mesh keep exactly their previous bake.
+    auto nodes=*reinterpret_cast<unsigned char**>(model+0x54);
+    const int nodeCount=*reinterpret_cast<int*>(model+0x58);
+    auto charts=*reinterpret_cast<unsigned char**>(model+0xec);
+    std::set<int> faces,selectedCharts;
+    if(!matchingBrush.empty()) for(int i=0;i<surfaceCount;++i) {
+        auto poly=*reinterpret_cast<unsigned char**>(surfaces+i*0x2c+0x20);
+        auto brush=poly ? *reinterpret_cast<unsigned char**>(poly+0x14c) : nullptr;
+        if(brush && (","+matchingBrush+",").find(std::string(",")+ObjectName(brush)+",")!=std::string::npos) faces.insert(i);
+    }
+    if(!matchingBrush.empty() && faces.empty()) {Record("FAIL","Requested lighting brush was not found.");return false;}
+    for(int n=0;n<nodeCount && faces.empty();++n) {
+        auto node=nodes+n*0x5c;int chart=*reinterpret_cast<int*>(node+0x3c);
+        if(node[0x5a]>=3 && chart>=0 && *reinterpret_cast<int*>(charts+chart*0xa4+8)>=0)
+            faces.insert(*reinterpret_cast<int*>(node+0x2c));
+    }
+    bool expanded=true;
+    while(expanded) {
+        expanded=false;
+        for(int n=0;n<nodeCount;++n) {
+            auto node=nodes+n*0x5c;if(node[0x5a]<3)continue;
+            int chart=*reinterpret_cast<int*>(node+0x3c),face=*reinterpret_cast<int*>(node+0x2c);
+            if(chart<0)continue;
+            if(faces.count(face))expanded=selectedCharts.insert(chart).second || expanded;
+            if(selectedCharts.count(chart))expanded=faces.insert(face).second || expanded;
+        }
+    }
+    if(faces.empty() || faces.size()>=size_t(surfaceCount)) {Record("FAIL","No independent BSP selection.");return false;}
+    for(int face:faces)*reinterpret_cast<unsigned*>(surfaces+face*0x2c+0x14)|=0x02000000u;
+    auto textures=*reinterpret_cast<unsigned char**>(model+0xe0);
+    std::set<std::string> selectedKeys;
+    for(int i:selectedCharts) {
+        auto chart=charts+i*0xa4;int atlas=*reinterpret_cast<int*>(chart+8);
+        if(atlas<0)continue;
+        std::string key="chart";
+        for(int n=0;n<nodeCount;++n)if(nodes[n*0x5c+0x5a]>=3 && *reinterpret_cast<int*>(nodes+n*0x5c+0x3c)==i)key+="_"+std::to_string(n);
+        selectedKeys.insert(key);
+        auto compressed=textures+atlas*0x70+0x14;
+        using Load=unsigned char*(__thiscall*)(void*,int);
+        auto pixels=reinterpret_cast<Load>(0x111b2400)(compressed,0);
+        int x=*reinterpret_cast<int*>(chart+0x14),y=*reinterpret_cast<int*>(chart+0x18);
+        int w=*reinterpret_cast<int*>(chart+0x1c),h=*reinterpret_cast<int*>(chart+0x20);
+        for(int row=0;row<h;++row)memset(pixels+((y+row)*512+x)*4,0x7f,w*4);
+    }
+    before=ReadChartLighting();
+    if(!ChooseLighting(IDYES,true))return false;
+    after=ReadChartLighting();
+    bool changed=false;
+    for(const auto& key:selectedKeys){changed=before[key]!=after[key] || changed;before.erase(key);after.erase(key);}
+    if(!changed || before!=after) {
+        Record("FAIL","Selected BSP did not change independently of unselected BSP and mesh lighting.");return false;
+    }
+    before=ReadChartLighting();
+    if(!ChooseLighting(IDNO,true,true) || before!=ReadChartLighting()) {Record("FAIL","Matching cancellation changed lighting.");return false;}
+    if(!ChooseLighting(IDYES,true,true)) {Record("FAIL","Local lighting matching did not complete.");return false;}
+    after=ReadChartLighting();
+    bool corrected=false;
+    uint64_t nativeSum=0,matchedSum=0,sampleCount=0;
+    for(const auto& key:selectedKeys){
+        corrected=before[key]!=after[key] || corrected;
+        for(size_t i=0;i<before[key].size() && i<after[key].size();++i) if(i%4!=3) {
+            nativeSum+=before[key][i];matchedSum+=after[key][i];++sampleCount;
+        }
+        before.erase(key);after.erase(key);
+    }
+    if(before!=after) {Record("FAIL","Local matching changed unselected BSP or meshes.");return false;}
+    if(!corrected) {Record("FAIL","Matching fixture did not exercise a colour correction.");return false;}
+    Record("local_match_values", ("native RGB sum="+std::to_string(nativeSum)+" matched="+std::to_string(matchedSum)
+        +" components="+std::to_string(sampleCount)).c_str());
+    for(int i=0;i<surfaceCount;++i)*reinterpret_cast<unsigned*>(surfaces+i*0x2c+0x14)&=~0x02000000u;
+    auto combined=ReadLightingBytes(true);
+    if(!Exec("LIGHT APPLY") || combined!=ReadLightingBytes(true)) {Record("FAIL","Combined bake was not protected.");return false;}
+    Record("selected_lighting","Cancellation, selected mesh bake, exact unselected mesh/BSP bytes, selected BSP bake and resumed preservation passed.");
+    return true;
 }
 namespace {
 #include "NativeRecoveryMenuProbe.h"
 
 void RunTest() {
     auto configuration = (directory / "native_recovery_test.ini").string();
+    char matchingBrushName[256]{};
+    GetPrivateProfileStringA("test","lighting_brush","",matchingBrushName,sizeof(matchingBrushName),configuration.c_str());
+    matchingBrush=matchingBrushName;
     char source[MAX_PATH] = {}, destination[MAX_PATH] = {}, dll[MAX_PATH] = {};
     GetPrivateProfileStringA("test", "source", "", source, MAX_PATH, configuration.c_str());
     GetPrivateProfileStringA("test", "destination", "", destination, MAX_PATH, configuration.c_str());
@@ -1029,6 +1222,7 @@ void RunTest() {
     Record("started");
     bool boundsProbe = GetPrivateProfileIntA("test", "fpu_bounds_probe", 0, configuration.c_str()) != 0;
     if (!CheckCollisionBoxConstructor(boundsProbe)) { Record("FAIL", "Collision box constructor differs from native bounds."); return; }
+    if(!CheckCollisionAccessors())return;
     if (boundsProbe && !GetPrivateProfileIntA("test", "recovery_menu", 0, configuration.c_str())) {
         Record("PASS", "Native collision bounds comparison and full x87 stack probe completed."); return;
     }
@@ -1086,6 +1280,38 @@ void RunTest() {
             Record("FAIL", "Fresh-process ordinary source load failed."); return;
         }
         Snapshot("fresh_normal_reopen");
+        if(GetPrivateProfileIntA("test","match_lighting_after_load",0,configuration.c_str())) {
+            auto level=*reinterpret_cast<unsigned char**>(*reinterpret_cast<unsigned char**>(kEditor)+0x130);
+            auto actors=*reinterpret_cast<unsigned char***>(level+0x2c);
+            int selected=0;
+            for(int i=0;i<*reinterpret_cast<int*>(level+0x30);++i) if(auto actor=actors[i]) {
+                bool choose=(","+matchingBrush+",").find(std::string(",")+ObjectName(actor)+",")!=std::string::npos;
+                auto& flags=*reinterpret_cast<unsigned*>(actor+0x2f4);
+                flags=(flags&~0x40u)|(choose?0x40u:0);
+                selected+=choose;
+            }
+            auto model=*reinterpret_cast<unsigned char**>(level+0x13c);
+            auto surfaces=*reinterpret_cast<unsigned char**>(model+0x94);
+            for(int i=0;i<*reinterpret_cast<int*>(model+0x98);++i)*reinterpret_cast<unsigned*>(surfaces+i*0x2c+0x14)&=~0x02000000u;
+            if(!selected || !ChooseLighting(IDYES,true,true)) {Record("FAIL","Match immediately after load failed.");return;}
+            Record("PASS","Match immediately after loading source completed without a prior geometry or lighting build.");
+            return;
+        }
+        if(GetPrivateProfileIntA("test","verify_play_map_save",0,configuration.c_str())) {
+            constexpr uintptr_t call=0x10e212aa;
+            if(*reinterpret_cast<unsigned char*>(call)!=0xe8) {Record("FAIL","Play Map save call missing.");return;}
+            auto target=call+5+*reinterpret_cast<int*>(call+1);
+            using SavePlayMap=int(__thiscall*)(void*);
+            if(!reinterpret_cast<SavePlayMap>(target)(*reinterpret_cast<void**>(kEditor))) {
+                Record("FAIL","Play Map temporary save failed.");return;
+            }
+            auto temporary=directory.parent_path()/"Packages"/"Maps"/"Autoplay.sdc";
+            if(!std::filesystem::is_regular_file(temporary) || !std::filesystem::file_size(temporary)) {
+                Record("FAIL","Play Map temporary runtime file is missing.");return;
+            }
+            Record("PASS","Native Play Map save call finalized Autoplay. Runtime copy retained for compiled-map inspection; no game launched.");
+            return;
+        }
         const bool verifyLighting=GetPrivateProfileIntA("test","verify_preserved_lighting",0,configuration.c_str())!=0;
         auto originalLighting=verifyLighting ? ReadLightingBytes(false) : LightingBytes{};
         if (!Rebuild() || !HasGeometry()) {
@@ -1096,6 +1322,10 @@ void RunTest() {
         if(verifyLighting && (originalLighting.empty() || originalLighting!=ReadLightingBytes(false)
             || !Exec("LIGHT APPLY") || rebuiltLighting!=ReadLightingBytes(true))) {
             Record("FAIL","Default rebuild or ordinary lighting command changed protected mesh lighting.");return;
+        }
+        if(GetPrivateProfileIntA("test","verify_selected_lighting",0,configuration.c_str())) {
+            if(!VerifySelectedLighting())return;
+            rebuiltLighting=ReadLightingBytes(true);
         }
         const auto saved = directory.parent_path()/"Packages"/"MapsEd"/std::filesystem::path(source).filename();
         auto mainFrame=*reinterpret_cast<unsigned char**>(0x1165E80C);
