@@ -48,11 +48,7 @@ HRESULT STDMETHODCALLTYPE Direct3DSwapChain8::Present(const RECT *pSourceRect, c
 	UNREFERENCED_PARAMETER(pDirtyRegion);
 
 	const HWND destination = ResolveProcessWindow(hDestWindowOverride);
-	const HRESULT hr = ProxyInterface->Present(pSourceRect,
-		PlayWindow.DestinationRect(pDestRect, destination), destination, nullptr, 0);
-	if (SUCCEEDED(hr))
-		PlayWindow.AfterPresent(ProxyInterface, destination);
-	return hr;
+	return ProxyInterface->Present(pSourceRect, pDestRect, destination, nullptr, 0);
 }
 HRESULT STDMETHODCALLTYPE Direct3DSwapChain8::GetBackBuffer(UINT iBackBuffer, D3DBACKBUFFER_TYPE Type, IDirect3DSurface8 **ppBackBuffer)
 {

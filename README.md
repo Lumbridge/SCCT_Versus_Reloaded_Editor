@@ -16,7 +16,6 @@ An unofficial editor patch for Splinter Cell: Chaos Theory Versus, compatible wi
 | **BSP texture copy/paste** | Copy a surface's material while keeping the destination's texture alignment. |
 | **Select Brush** | Select the source brush directly from a BSP surface. |
 | **Quick grid adjustment** | Change grid size with **Ctrl + mouse wheel** over a viewport. |
-| **Play Level** | Launch playtests through Reloaded at the current display resolution. |
 | **Property-window reset** | Bring off-screen property windows back onto the editor monitor. |
 | **Builder-brush repair** | Restore a missing or damaged builder brush as a default cube. |
 | **BSP fixes and crash diagnostics** | Support larger BSP point counts and record build failures and crashes. |
@@ -38,21 +37,6 @@ Save your work, then choose **File > Recover Compiled Map...**. Recovery can tak
 The editable copy goes in `Packages/MapsEd`, the playable copy in `Packages/Maps`, and any extracted mesh assets in `Packages/StaticMeshes`. Keep those assets with the map when sharing it. Reports and T3D exports are saved in `Packages/MapsEd/Recovery`.
 
 Recovery is experimental. Original brush history cannot be restored, reconstructed geometry may be fragmented, and later lighting rebuilds can change the appearance. Check the result in the editor and in game. Use **File > Convert Legacy Recovered Map...** for files made by the older recovery mode.
-
-</details>
-
-<details>
-<summary>Play Level setup</summary>
-
-
-Play Level requires a separately installed Reloaded Core. For the supported Reloaded v3.0a build, close the game and run the repository's guard script:
-
-```powershell
-python tools/patch_reloaded_play_level.py "<System>/Reloaded.Core.dll" --check
-python tools/patch_reloaded_play_level.py "<System>/Reloaded.Core.dll" --apply
-```
-
-The script checks compatibility and backs up the original DLL. Playtests use the current display resolution by default.
 
 </details>
 

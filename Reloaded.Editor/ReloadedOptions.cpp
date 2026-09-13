@@ -232,10 +232,6 @@ static void LoadSettings()
 static void SaveSettings()
 {
     const std::string ini = GetIniPath();
-    // These optional launch overrides have no controls in this dialog. Retain
-    // them when saving the settings it does expose; zero means current display.
-    const UINT playResolutionX = GetPrivateProfileIntA("PlayLevel", "ResolutionX", 0, ini.c_str());
-    const UINT playResolutionY = GetPrivateProfileIntA("PlayLevel", "ResolutionY", 0, ini.c_str());
     // Write the INI manually to keep blank lines between sections.
     char text[512];
     int len = snprintf(text, sizeof(text),
@@ -253,11 +249,7 @@ static void SaveSettings()
         "Fence=%c\r\n"
         "\r\n"
         "[General]\r\n"
-        "MinimizeOnPlay=%d\r\n"
-        "\r\n"
-        "[PlayLevel]\r\n"
-        "ResolutionX=%u\r\n"
-        "ResolutionY=%u\r\n",
+        "MinimizeOnPlay=%d\r\n",
         g_ReloadedMaxFPS,
         g_ReloadedMuteSounds ? 1 : 0,
         g_ReloadedNoDuplicateOffset ? 1 : 0,
@@ -267,8 +259,7 @@ static void SaveSettings()
         static_cast<char>(g_KeyLadder),
         static_cast<char>(g_KeyZipline),
         static_cast<char>(g_KeyFence),
-        g_ReloadedMinimizeOnPlay ? 1 : 0,
-        playResolutionX, playResolutionY);
+        g_ReloadedMinimizeOnPlay ? 1 : 0);
     if (len <= 0)
         return;
 

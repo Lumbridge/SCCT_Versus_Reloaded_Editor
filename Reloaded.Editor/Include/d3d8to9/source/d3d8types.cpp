@@ -4,7 +4,6 @@
  */
 
 #include "d3d8types.hpp"
-#include "PlayLevelPresentation.h"
 #include <assert.h>
 #include <algorithm>
 
@@ -228,8 +227,6 @@ void ConvertPresentParameters(D3DPRESENT_PARAMETERS8 &Input, D3DPRESENT_PARAMETE
 			}
 		}
 	}
-
-	PlayLevelPresentation::Apply(Output, PlayLevelPresentation::IsEnabledForProcess());
 }
 
 void ConvertAdapterIdentifier(D3DADAPTER_IDENTIFIER9 &Input, D3DADAPTER_IDENTIFIER8 &Output)
