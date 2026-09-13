@@ -7,6 +7,7 @@
 #include "RecoveredAssetPackage.h"
 #include "LightmapFix.h"
 #include "BspLeafLightFix.h"
+#include "RecoveredBspLighting.h"
 #include "logger.h"
 
 #include <commdlg.h>
@@ -336,6 +337,7 @@ namespace
 
         faces.clear();
         faces.reserve(static_cast<size_t>(nodes.count));
+        std::unordered_set<int> capturedPortals;
         for (int nodeIndex = 0; nodeIndex < nodes.count; ++nodeIndex)
         {
             const unsigned char* node =
@@ -462,6 +464,67 @@ namespace
                 }
             }
 
+            if (face.flags & kSurfZonePortal)
+            {
+                if (!capturedPortals.insert(surfIndex).second) continue;
+                // Runtime portal visibility uses the retained FPoly at surf+20
+                // (111AA951), once per surface, not each clipped BSP fragment.
+                // Recover that authored outline intact. Using fragments makes
+                // the first imported fragment become the whole visibility gate.
+                const auto* poly = ReadRaw<const unsigned char*>(
+                    surfs.data + static_cast<size_t>(surfIndex) * kSurfStride, 0x20);
+                const unsigned count = poly ? ReadRaw<unsigned short>(poly, 0x148) : 0;
+                if (count < 3 || count > 19)
+                { error = "A cooked zone portal has no valid retained outline."; return false; }
+                const Vec3 normal = ReadRaw<Vec3>(poly, 0x0C);
+                Vec3 normalizedPortalNormal = normal;
+                // Cooked surfaces can face the opposite direction from their
+                // retained authored FPoly (EDE64 surface 121). Both describe
+                // the same divider plane. Preserve the authored winding;
+                // vertex-to-node plane validation below still rejects offsets.
+                if (!IsFinite(normal) || !Normalize(normalizedPortalNormal)
+                    || std::fabs(Dot(normalizedPortalNormal, face.normal)) < 0.999f)
+                { error = "A retained portal outline disagrees with its BSP plane (surface "
+                    + std::to_string(surfIndex) + ", normal " + std::to_string(normal.x)
+                    + "," + std::to_string(normal.y) + "," + std::to_string(normal.z)
+                    + ", BSP normal " + std::to_string(face.normal.x) + ","
+                    + std::to_string(face.normal.y) + "," + std::to_string(face.normal.z)
+                    + ")."; return false; }
+                // A surface's texture origin need not lie on its geometry:
+                // OffsD's water uses Z=-480 for a portal at Z=-448. Validate
+                // against the node's actual plane equation instead.
+                const Vec3 planeNormal = ReadRaw<Vec3>(node, 0);
+                const float planeDistance = ReadRaw<float>(node, 0x0C);
+                const double planeNormalLength = std::sqrt(
+                    static_cast<double>(planeNormal.x) * planeNormal.x
+                    + static_cast<double>(planeNormal.y) * planeNormal.y
+                    + static_cast<double>(planeNormal.z) * planeNormal.z);
+                if (!IsFinite(planeNormal) || !std::isfinite(planeDistance)
+                    || !std::isfinite(planeNormalLength) || planeNormalLength < 0.000001)
+                { error = "A retained portal has an invalid BSP plane."; return false; }
+                // FPoly::SplitWithPlane accepts a 0.25-unit coplanar band
+                // (0x110BFFF7). Retained authored outlines can differ from
+                // the cooked splitter within that band (Sub18: 0.074219).
+                // Preserve the outline rather than projecting its vertices.
+                constexpr double portalPlaneTolerance = 0.25;
+                face.vertices.clear();
+                for (unsigned i = 0; i < count; ++i)
+                {
+                    const Vec3 point = ReadRaw<Vec3>(poly, 0x18 + i * sizeof(Vec3));
+                    const double distance = (static_cast<double>(planeNormal.x) * point.x
+                        + static_cast<double>(planeNormal.y) * point.y
+                        + static_cast<double>(planeNormal.z) * point.z - planeDistance)
+                        / planeNormalLength;
+                    if (!IsFinite(point) || !std::isfinite(distance)
+                        || std::fabs(distance) > portalPlaneTolerance)
+                    { error = "A retained portal outline has invalid vertices (surface "
+                        + std::to_string(surfIndex) + ", vertex " + std::to_string(i)
+                        + ", plane distance " + std::to_string(distance) + ")."; return false; }
+                    face.vertices.push_back(point);
+                }
+                face.normal = normal;
+                face.structural = false;
+            }
             faces.push_back(std::move(face));
             if (faces.size() > kMaxRecoveredFaces)
             {
@@ -497,6 +560,111 @@ namespace
             if (face.materialPath.empty())
                 face.materialPath = fallbackMaterial;
         }
+        return true;
+    }
+
+    // Portal traversal (111AA91B/111AAC18) caches visits by surface index.
+    // A solid-side fragment must not consume the visit for a room-side fragment
+    // sharing that surface. Keep both apertures, with independent visit records.
+    bool SeparateSolidPortalVisits(void* model, bool repair, std::string& error)
+    {
+        if (!model) { error = "Cannot inspect portal visits without a BSP model."; return false; }
+        const RawArray nodes = ReadRawArray(model, kModelNodesOffset);
+        RawArray surfaces = ReadRawArray(model, kModelSurfsOffset);
+        if (!IsValidArray(nodes) || !IsValidArray(surfaces))
+        { error = "Invalid arrays while inspecting portal visits."; return false; }
+        std::vector<unsigned char> sides(surfaces.count, 0);
+        for (int i = 0; i < nodes.count; ++i)
+        {
+            const auto* node = nodes.data + static_cast<size_t>(i) * kNodeStride;
+            const int surface = ReadRaw<int>(node, kNodeSurfOffset);
+            if (!node[kNodeVertexCountOffset]) continue;
+            if (surface < 0 || surface >= surfaces.count)
+            { error = "Invalid portal node surface index."; return false; }
+            if (ReadRaw<uint32_t>(surfaces.data + surface * kSurfStride, kSurfFlagsOffset) & kSurfZonePortal)
+                sides[surface] |= (!node[0x58] || !node[0x59]) ? 1 : 2;
+        }
+        std::unordered_map<int, int> replacements;
+        for (int i = 0; i < static_cast<int>(sides.size()); ++i)
+        {
+            if (sides[i] != 3) continue;
+            if (!repair)
+            { error = "Saved portal fragments share solid/room visibility visits."; return false; }
+            const auto* original = surfaces.data + i * kSurfStride;
+            const auto* poly = ReadRaw<const unsigned char*>(original, 0x20);
+            if (!poly || ReadRaw<unsigned short>(poly, 0x148) < 3
+                || ReadRaw<unsigned short>(poly, 0x148) > 19)
+            { error = "Cannot separate a portal with an invalid outline."; return false; }
+            // Both surfaces own their FPoly allocation. Allocate through the
+            // native FArray allocator, then transfer that allocation to UModel;
+            // never share an owning pointer or use the DLL's CRT heap here.
+            struct NativeStorage { void* data = nullptr; int count = 0; int capacity = 0; } storage;
+            using AddFn = int(__thiscall*)(void*, int, int);
+            const auto add = reinterpret_cast<AddFn>(kFArrayAdd);
+            add(&storage, 1, 0x154);
+            if (!storage.data) { error = "Cannot allocate a portal outline copy."; return false; }
+            std::memcpy(storage.data, poly, 0x154);
+            const int added = add(static_cast<unsigned char*>(model) + kModelSurfsOffset, 1, kSurfStride);
+            surfaces = ReadRawArray(model, kModelSurfsOffset);
+            auto* destination = const_cast<unsigned char*>(surfaces.data) + added * kSurfStride;
+            std::memcpy(destination, surfaces.data + i * kSurfStride, kSurfStride);
+            *reinterpret_cast<void**>(destination + 0x20) = storage.data;
+            replacements.emplace(i, added);
+        }
+        for (int i = 0; i < nodes.count; ++i)
+        {
+            auto* node = const_cast<unsigned char*>(nodes.data) + static_cast<size_t>(i) * kNodeStride;
+            if (node[0x58] && node[0x59]) continue;
+            const auto replacement = replacements.find(ReadRaw<int>(node, kNodeSurfOffset));
+            if (replacement != replacements.end())
+                *reinterpret_cast<int*>(node + kNodeSurfOffset) = replacement->second;
+        }
+        if (repair) Logger::log("MapRecovery: separated solid-side visibility visits for "
+            + std::to_string(replacements.size()) + " portal surfaces");
+        return true;
+    }
+
+    bool VerifyPortalOutlines(void* model, const std::vector<RecoveredFace>& expected,
+                              std::string& error)
+    {
+        const RawArray surfaces = model ? ReadRawArray(model, kModelSurfsOffset) : RawArray{};
+        if (!model || !IsValidArray(surfaces))
+        { error = "Cannot verify recovered portal outlines."; return false; }
+        std::vector<bool> found(expected.size(), false);
+        for (int i = 0; i < surfaces.count; ++i)
+        {
+            const auto* surface = surfaces.data + static_cast<size_t>(i) * kSurfStride;
+            if (!(ReadRaw<uint32_t>(surface, kSurfFlagsOffset) & kSurfZonePortal)) continue;
+            const auto* poly = ReadRaw<const unsigned char*>(surface, 0x20);
+            const unsigned count = poly ? ReadRaw<unsigned short>(poly, 0x148) : 0;
+            bool matched = false;
+            if (count >= 3 && count <= 19)
+                for (size_t candidate = 0; candidate < expected.size() && !matched; ++candidate)
+                {
+                    const auto& vertices = expected[candidate].vertices;
+                    if (vertices.size() != count) continue;
+                    for (unsigned start = 0; start < count && !matched; ++start)
+                    {
+                        bool equal = true;
+                        for (unsigned vertex = 0; vertex < count && equal; ++vertex)
+                        {
+                            const Vec3 actual = ReadRaw<Vec3>(poly, 0x18 + vertex * sizeof(Vec3));
+                            const Vec3& original = vertices[(start + vertex) % count];
+                            equal = IsFinite(actual) && std::fabs(actual.x - original.x) <= 0.02f
+                                && std::fabs(actual.y - original.y) <= 0.02f
+                                && std::fabs(actual.z - original.z) <= 0.02f;
+                        }
+                        if (equal) { found[candidate] = true; matched = true; }
+                    }
+                }
+            if (!matched)
+            { error = "A rebuilt zone portal lost its original visibility outline (surface "
+                + std::to_string(i) + ")."; return false; }
+        }
+        if (std::find(found.begin(), found.end(), false) != found.end())
+        { error = "An original zone portal is missing after recovery."; return false; }
+        Logger::log("MapRecovery: verified " + std::to_string(expected.size())
+            + " original portal visibility outlines");
         return true;
     }
 
@@ -687,7 +855,11 @@ namespace
         for (size_t index = 0; index < surfaces.size(); ++index)
         {
             const auto& surface = surfaces[index];
-            if (!surface.structural && !(surface.flags & 8u))
+            // Retained portal outlines are emitted as non-solid dividers,
+            // even when the cooked surface lacks PF_NotSolid (EDE64).
+            // Original solid space is reconstructed separately from node
+            // flags and verified by the solid/empty probes after rebuilding.
+            if (!surface.structural && !(surface.flags & (8u | kSurfZonePortal)))
             {
                 error = "A non-structural BSP surface has unsupported collision flags ("
                     + std::to_string(surface.flags) + "). No finished source map was saved.";
@@ -834,7 +1006,13 @@ namespace
                     return false;
                 }
                 for (const auto& piece : prepared)
-                    if (!emit(piece.vertices, face.normal, surfaces[piece.materialIndex], true, true))
+                {
+                    // A generated closing face may inherit its fallback
+                    // material from a portal splitter. It is not itself an
+                    // authored visibility portal or antiportal.
+                    auto material = surfaces[piece.materialIndex];
+                    material.flags &= ~kSurfEditorPolyFlags;
+                    if (!emit(piece.vertices, face.normal, material, true, true))
                     {
                         auto failedFace = face;
                         failedFace.vertices = piece.vertices;
@@ -843,6 +1021,7 @@ namespace
                         error += " (source polygon; details: " + failurePath.string() + ")";
                         return false;
                     }
+                }
             }
             endBrush();
         }
@@ -865,6 +1044,18 @@ namespace
             const bool zoneDivider = (surfaces[group.front()].flags & kSurfZonePortal) != 0;
             if (zoneDivider) ++hiddenZoneDividers;
             beginBrush(false, true, zoneDivider);
+            if (zoneDivider)
+            {
+                // The retained FPoly is already an authored native polygon.
+                // Generic sheet preparation triangulates slightly nonplanar
+                // quads; native BSP then retains just one triangle as the
+                // surface's visibility aperture. Keep the complete outline.
+                for (size_t index : group)
+                    if (!emit(candidates[index].vertices, candidates[index].normal,
+                              surfaces[index], true)) return false;
+                endBrush();
+                continue;
+            }
             struct SheetPlane
             {
                 Surface::Vec3 normal;
@@ -912,8 +1103,6 @@ namespace
             }
             for (const auto& plane : sheetPlanes)
             {
-                // Only remove internal edges between exactly adjacent convex
-                // pieces. Disjoint regions, holes and nonplanar folds remain.
                 std::vector<Surface::Piece> coalesced;
                 if (!Surface::CoalesceCoplanarPieces(plane.pieces, plane.normal, coalesced, error))
                 {
@@ -1010,6 +1199,224 @@ namespace
             output[0] = '\0';
             return false;
         }
+    }
+
+    struct RecoveredMeshLighting
+    {
+        std::string meshPath;
+        std::vector<uint32_t> colors;
+        bool recalculated = false;
+    };
+    using RecoveredLighting = std::unordered_map<std::string, RecoveredMeshLighting>;
+
+    // Cooked instances retain their final BGRA vertex stream even when the
+    // authoring bake cannot be reproduced. Copy values, never UObject pointers:
+    // MAP NEW destroys the compiled level before the source import.
+    bool CaptureMeshLighting(void* level, const char* embeddedPackage,
+                             RecoveredLighting& lighting, std::string& error)
+    {
+        const RawArray actors = ReadRawArray(level, kLevelActorsDataOffset);
+        if (!IsValidArray(actors))
+        {
+            error = "Cannot capture lighting from an invalid actor list.";
+            return false;
+        }
+        for (int index = 0; index < actors.count; ++index)
+        {
+            auto* actor = reinterpret_cast<unsigned char* const*>(actors.data)[index];
+            if (!actor || (ReadRaw<uint32_t>(actor, 0x2E8) & 0x8000u)) continue;
+            void* mesh = ReadRaw<void*>(actor, 0x100);
+            void* instance = ReadRaw<void*>(actor, 0x22C);
+            if (!mesh || !instance) continue;
+            const RawArray colors = ReadRawArray(instance, 0x38);
+            if (colors.count == 0) continue;
+            char name[256]{}, meshPath[1024]{};
+            if (!IsValidArray(colors) || !CopyObjectName(actor, name, sizeof(name))
+                || !FormatExternalObjectPath(mesh, meshPath, sizeof(meshPath), embeddedPackage))
+            {
+                error = "A compiled mesh has invalid baked lighting or asset identity.";
+                return false;
+            }
+            RecoveredMeshLighting snapshot;
+            snapshot.meshPath = meshPath;
+            snapshot.colors.resize(colors.count);
+            SIZE_T copied = 0;
+            const size_t bytes = snapshot.colors.size() * sizeof(uint32_t);
+            if (!ReadProcessMemory(GetCurrentProcess(), colors.data, snapshot.colors.data(), bytes, &copied)
+                || copied != bytes || !lighting.emplace(name, std::move(snapshot)).second)
+            {
+                error = "Cannot safely capture compiled mesh lighting for " + std::string(name);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool TransferMeshLighting(void* level, RecoveredLighting& lighting,
+                             bool restore, std::string& error)
+    {
+        const RawArray actors = ReadRawArray(level, kLevelActorsDataOffset);
+        if (!IsValidArray(actors))
+        {
+            error = "Cannot verify recovered mesh lighting: invalid actor list.";
+            return false;
+        }
+        std::unordered_set<std::string> remaining;
+        for (const auto& entry : lighting) remaining.insert(entry.first);
+        for (int index = 0; index < actors.count; ++index)
+        {
+            auto* actor = reinterpret_cast<unsigned char* const*>(actors.data)[index];
+            char name[256]{}, meshPath[1024]{};
+            if (!actor || !CopyObjectName(actor, name, sizeof(name))) continue;
+            const auto found = lighting.find(name);
+            if (found == lighting.end()) continue;
+            auto& expected = found->second;
+            void* mesh = ReadRaw<void*>(actor, 0x100);
+            void* instance = ReadRaw<void*>(actor, 0x22C);
+            const RawArray colors = instance ? ReadRawArray(instance, 0x38) : RawArray{};
+            if (!mesh || !instance || !IsValidArray(colors)
+                || colors.count <= 0
+                || (!restore && colors.count != static_cast<int>(expected.colors.size()))
+                || !FormatExternalObjectPath(mesh, meshPath, sizeof(meshPath))
+                || _stricmp(meshPath, expected.meshPath.c_str()) != 0)
+            {
+                if (mesh) FormatExternalObjectPath(mesh, meshPath, sizeof(meshPath));
+                error = "Recovered mesh lighting no longer matches the asset or vertex count on " + std::string(name)
+                    + " (expected " + expected.meshPath + ", " + std::to_string(expected.colors.size())
+                    + " colors; actual " + meshPath + ", " + std::to_string(colors.count)
+                    + " colors; instance " + (instance ? "present" : "missing") + ")";
+                return false;
+            }
+            if (restore && colors.count != static_cast<int>(expected.colors.size()))
+            {
+                // The installed mesh can have a different render-vertex layout
+                // from the compiled bake (EDE64's lift: 72 versus 168 colors).
+                // There is no valid index mapping for that old stream. Keep
+                // the native rebuilt lighting and verify it survives saving.
+                Logger::log("MapRecovery: recalculated incompatible baked lighting on " + std::string(name)
+                    + " (original colors=" + std::to_string(expected.colors.size())
+                    + ", rebuilt colors=" + std::to_string(colors.count) + ")");
+                expected.colors.resize(colors.count);
+                memcpy(expected.colors.data(), colors.data, expected.colors.size() * sizeof(uint32_t));
+                expected.recalculated = true;
+            }
+            const size_t bytes = expected.colors.size() * sizeof(uint32_t);
+            if (restore)
+                memcpy(const_cast<unsigned char*>(colors.data), expected.colors.data(), bytes);
+            else if (memcmp(colors.data, expected.colors.data(), bytes) != 0)
+            {
+                error = "The ordinary save changed preserved mesh lighting on " + std::string(name)
+                    + ". The saved outputs should not be used.";
+                return false;
+            }
+            remaining.erase(name);
+        }
+        if (!remaining.empty())
+        {
+            error = "Original mesh lighting is missing from recovered actor " + *remaining.begin();
+            return false;
+        }
+        return true;
+    }
+
+    // Audit rendered BSP, not just the editable FPolys: CSG and lighting can
+    // split/drop polygons after a correct source import. Node lightmap indices
+    // are consumed at 110D141C against UModel+EC (A4-byte entries).
+    bool WriteBspSurfaceAudit(void* model, const std::filesystem::path& path,
+                              std::string& error)
+    {
+        if (!model) { error = "Cannot audit a missing BSP model."; return false; }
+        const RawArray nodes = ReadRawArray(model, kModelNodesOffset);
+        const RawArray verts = ReadRawArray(model, kModelVertsOffset);
+        const RawArray points = ReadRawArray(model, kModelPointsOffset);
+        const RawArray surfaces = ReadRawArray(model, kModelSurfsOffset);
+        const RawArray lightmaps = ReadRawArray(model, 0xEC);
+        if (!IsValidArray(nodes) || !IsValidArray(verts) || !IsValidArray(points)
+            || !IsValidArray(surfaces))
+        {
+            error = "Cannot audit invalid BSP arrays.";
+            return false;
+        }
+        std::ofstream output(path, std::ios::binary);
+        output << std::setprecision(9) << "{\"lightmapCount\":" << lightmaps.count
+               << ",\"surfaces\":[";
+        for (int index = 0; index < surfaces.count; ++index)
+        {
+            const auto* surface = surfaces.data + static_cast<size_t>(index) * kSurfStride;
+            char material[1024]{};
+            FormatExternalObjectPath(ReadRaw<void*>(surface, kSurfMaterialOffset),
+                                     material, sizeof(material), "MyLevel");
+            if (index) output << ',';
+            output << "{\"material\":" << std::quoted(material)
+                   << ",\"flags\":" << ReadRaw<uint32_t>(surface, kSurfFlagsOffset);
+            if (ReadRaw<uint32_t>(surface, kSurfFlagsOffset) & kSurfZonePortal)
+            {
+                const auto* poly = ReadRaw<const unsigned char*>(surface, 0x20);
+                const unsigned count = poly ? ReadRaw<unsigned short>(poly, 0x148) : 0;
+                if (count < 3 || count > 19)
+                { error = "BSP audit found an invalid portal outline."; return false; }
+                output << ",\"portalOutline\":[";
+                for (unsigned i = 0; i < count; ++i)
+                {
+                    const Vec3 point = ReadRaw<Vec3>(poly, 0x18 + i * sizeof(Vec3));
+                    if (!IsFinite(point)) { error = "Nonfinite portal outline."; return false; }
+                    if (i) output << ',';
+                    output << '[' << point.x << ',' << point.y << ',' << point.z << ']';
+                }
+                output << ']';
+            }
+            output << '}';
+        }
+        output << "],\"nodes\":[";
+        bool first = true;
+        for (int index = 0; index < nodes.count; ++index)
+        {
+            const auto* node = nodes.data + static_cast<size_t>(index) * kNodeStride;
+            const int count = node[kNodeVertexCountOffset];
+            if (!count) continue;
+            const int start = ReadRaw<int>(node, kNodeVertPoolOffset);
+            const int surface = ReadRaw<int>(node, kNodeSurfOffset);
+            if (start < 0 || count > verts.count || start > verts.count - count
+                || surface < 0 || surface >= surfaces.count)
+            {
+                error = "BSP surface audit encountered invalid node indices.";
+                return false;
+            }
+            if (!first) output << ',';
+            first = false;
+            output << "{\"index\":" << index << ",\"surface\":" << surface
+                   << ",\"lightmap\":" << ReadRaw<int>(node, 0x3C)
+                   << ",\"coplanar\":" << ReadRaw<int>(node, 0x38)
+                   << ",\"zones\":[" << static_cast<unsigned>(node[0x58])
+                   << ',' << static_cast<unsigned>(node[0x59]) << ']'
+                   << ",\"flags\":" << static_cast<unsigned>(node[kNodeFlagsOffset])
+                   << ",\"plane\":[";
+            for (int component = 0; component < 4; ++component)
+            {
+                if (component) output << ',';
+                output << ReadRaw<float>(node, component * sizeof(float));
+            }
+            output << "],\"vertices\":[";
+            for (int vertex = 0; vertex < count; ++vertex)
+            {
+                const unsigned pointIndex = ReadRaw<unsigned short>(verts.data
+                    + static_cast<size_t>(start + vertex) * kVertStride, 0);
+                if (pointIndex >= static_cast<unsigned>(points.count))
+                {
+                    error = "BSP surface audit encountered an invalid vertex.";
+                    return false;
+                }
+                const Vec3 point = ReadVector(points, pointIndex);
+                if (!IsFinite(point)) { error = "BSP surface audit encountered a nonfinite point."; return false; }
+                if (vertex) output << ',';
+                output << '[' << point.x << ',' << point.y << ',' << point.z << ']';
+            }
+            output << "]}";
+        }
+        output << "]}\n";
+        output.close();
+        if (!output) { error = "Cannot write BSP surface audit: " + path.string(); return false; }
+        return true;
     }
 
     void* BuilderBrushActor(void* level)
@@ -2256,19 +2663,19 @@ namespace
         return nullptr;
     }
 
-    struct StripDoorStructure
+    struct ProceduralSoftBodyStructure
     {
         std::vector<unsigned char> points, springs, settings;
     };
 
-    // ESBStripDoor is a procedural, level-owned simulation. Its native
+    // ESBStripDoor and ESBPatch are procedural, level-owned simulations. Its native
     // serializer (110D7800) stores points at 70 (stride 48) and springs at 7C
     // (stride C). Compare topology, rest lengths, pins and physical settings;
     // current/previous positions of free points, forces and wind timers are
     // simulation state, not the authored shape. Never approve an arbitrary
     // custom soft body simply because the native importer returned an object.
-    bool CaptureStripDoorStructure(void* level, const std::string& actorName,
-                                   StripDoorStructure& structure, std::string& error)
+    bool CaptureProceduralSoftBodyStructure(void* level, const std::string& actorName,
+                                   ProceduralSoftBodyStructure& structure, std::string& error)
     {
         structure = {};
         const auto actors = ReadRawArray(level, kLevelActorsDataOffset);
@@ -2282,20 +2689,22 @@ namespace
                 && _stricmp(path, ("MyLevel." + actorName).c_str()) == 0) { actor = candidate; break; }
         }
         auto fail = [&](const std::string& detail) {
-            error = "The strip-door simulation on " + actorName
+            error = "The procedural soft-body simulation on " + actorName
                 + " cannot be recovered: " + detail + ". Recovery cannot discard that data.";
             return false;
         };
         if (!actor) return fail("actor missing");
         char typePath[512]{};
         if (!FormatExternalObjectPath(ReadRaw<void*>(actor, kObjectClassOffset), typePath, sizeof(typePath))
-            || _stricmp(typePath, "SoftBody.ESBStripDoorActor") != 0) return fail("unexpected actor class " + std::string(typePath));
+            || (_stricmp(typePath, "SoftBody.ESBStripDoorActor") != 0
+                && _stricmp(typePath, "SoftBody.ESBPatchActor") != 0)) return fail("unexpected actor class " + std::string(typePath));
+        const bool patch = _stricmp(typePath, "SoftBody.ESBPatchActor") == 0;
         const auto* body = ReadRaw<unsigned char*>(actor, 0x2F8);
         if (!body) return fail("simulation missing");
         if (ReadRaw<void*>(body, kObjectOuterOffset) != level || ReadRaw<void*>(body, 0x54) != actor)
             return fail("simulation ownership differs from its actor");
         if (!FormatExternalObjectPath(ReadRaw<void*>(body, kObjectClassOffset), typePath, sizeof(typePath))
-            || _stricmp(typePath, "SoftBody.ESBStripDoor") != 0) return fail("unexpected simulation class " + std::string(typePath));
+            || _stricmp(typePath, patch ? "SoftBody.ESBPatch" : "SoftBody.ESBStripDoor") != 0) return fail("unexpected simulation class " + std::string(typePath));
         const auto points = ReadRawArray(body, 0x70), springs = ReadRawArray(body, 0x7C);
         if (!IsValidArray(points) || !IsValidArray(springs) || points.count < 1
             || points.count > 100000 || springs.count < 1 || springs.count > 400000) return fail("invalid point/spring counts");
@@ -2310,7 +2719,9 @@ namespace
             if (fixed > 1 || !IsFinite(ReadRaw<Vec3>(point, 4))) return fail("invalid simulation point");
             structure.points.insert(structure.points.end(), point, point + 4);
             if (fixed) structure.points.insert(structure.points.end(), point + 4, point + 16);
-            structure.points.insert(structure.points.end(), point + 0x30, point + 0x40);
+            // The point serializer at 110D34C0 stores the transient
+            // vector at 28..33; 30 is its Z component, not authored data.
+            structure.points.insert(structure.points.end(), point + 0x34, point + 0x40);
             structure.points.insert(structure.points.end(), point + 0x44, point + 0x48);
         }
         for (int i = 0; i < springs.count; ++i)
@@ -2704,6 +3115,9 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
         size_t skipped = 0;
         Logger::log("MapRecovery: extracting cooked surfaces");
         if (!ExtractRecoveredFaces(g_recoveredLevel, faces, skipped, error, assetPackageName.c_str())) return false;
+        std::vector<RecoveredFace> originalPortals;
+        for (const auto& face : faces)
+            if (face.flags & kSurfZonePortal) originalPortals.push_back(face);
         if (skipped)
         {
             error = "The compiled BSP contains " + std::to_string(skipped)
@@ -2714,6 +3128,16 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
         // material reconstruction. Keep this export even if geometry fails.
         std::string actorText;
         if (!exportMap(actorsPath, actorText)) return false;
+        RecoveredLighting originalLighting;
+        if (!CaptureMeshLighting(g_recoveredLevel, assetPackageName.c_str(), originalLighting, error)) return false;
+        if (!WriteBspSurfaceAudit(CurrentModel(), scratch / "BspCooked.json", error)) return false;
+        auto originalBspLighting = RecoveredBspLighting::Capture(CurrentModel(),
+            FormatExternalObjectPath, assetPackageName.c_str(), error);
+        if (!originalBspLighting) return false;
+        struct EndBspLightingTransfer
+        {
+            ~EndBspLightingTransfer() { RecoveredBspLighting::Deactivate(); }
+        } endBspLightingTransfer;
         std::vector<std::string> deletedActorPaths;
         if (!CollectDeletedActorPaths(g_recoveredLevel, deletedActorPaths, error)) return false;
         // ExecuteRecoveryLoad used the PC runtime serializer. Its active
@@ -2740,11 +3164,11 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
         RecoveredActorImport::PreparedMap actors;
         Logger::log("MapRecovery: preparing source actors and level settings");
         if (!RecoveredActorImport::Prepare(actorText, actors, error, assetPackageName, deletedActorPaths, pcActorPaths)) return false;
-        std::vector<StripDoorStructure> stripDoors;
-        for (const auto& name : actors.regeneratedStripDoors)
+        std::vector<ProceduralSoftBodyStructure> softBodies;
+        for (const auto& name : actors.regeneratedSoftBodies)
         {
-            stripDoors.emplace_back();
-            if (!CaptureStripDoorStructure(g_recoveredLevel, name, stripDoors.back(), error)) return false;
+            softBodies.emplace_back();
+            if (!CaptureProceduralSoftBodyStructure(g_recoveredLevel, name, softBodies.back(), error)) return false;
         }
         const bool rootOutside = *reinterpret_cast<int*>(static_cast<char*>(CurrentModel()) + kModelRootOutsideOffset) != 0;
         RecoveredBspGeometry::Result geometry;
@@ -2808,16 +3232,19 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
                 return false;
             }
             void* level = *reinterpret_cast<void**>(static_cast<char*>(editor) + kEditorLevelOffset);
-            for (size_t i = 0; i < stripDoors.size(); ++i)
+            for (size_t i = 0; i < softBodies.size(); ++i)
             {
-                StripDoorStructure actualStructure;
-                if (!CaptureStripDoorStructure(level, actors.regeneratedStripDoors[i], actualStructure, error)) return false;
-                const auto& expected = stripDoors[i];
+                ProceduralSoftBodyStructure actualStructure;
+                if (!CaptureProceduralSoftBodyStructure(level, actors.regeneratedSoftBodies[i], actualStructure, error)) return false;
+                const auto& expected = softBodies[i];
                 if (expected.points != actualStructure.points || expected.springs != actualStructure.springs
                     || expected.settings != actualStructure.settings)
                 {
-                    error = std::string(stage) + " changed the strip-door topology, anchors or physical settings on "
-                        + actors.regeneratedStripDoors[i] + ". Recovery stopped to preserve the original data.";
+                    error = std::string(stage) + " changed the soft-body topology, anchors or physical settings on "
+                        + actors.regeneratedSoftBodies[i] + " (points=" + std::to_string(expected.points == actualStructure.points)
+                        + ", springs=" + std::to_string(expected.springs == actualStructure.springs)
+                        + ", settings=" + std::to_string(expected.settings == actualStructure.settings)
+                        + "). Recovery stopped to preserve the original data.";
                     return false;
                 }
             }
@@ -2939,9 +3366,15 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
             && HasLiveSourceLevelInfo() && exec("BSP REBUILD") && HasLiveSourceLevelInfo()
             && BspLeafLightFix::Validate(CurrentModel(), error)
             && ValidateCollisionBounds(CurrentModel(), error);
-        if (built) built = VerifySpaceProbes(probes, error);
-        if (built) built = exec("LIGHT APPLY") && BspLeafLightFix::Validate(CurrentModel(), error)
-            && ValidateCollisionBounds(CurrentModel(), error);
+        if (built) built = SeparateSolidPortalVisits(CurrentModel(), true, error)
+            && VerifySpaceProbes(probes, error);
+        if (built)
+        {
+            RecoveredBspLighting::Activate(originalBspLighting);
+            built = exec("LIGHT APPLY") && RecoveredBspLighting::Result(originalBspLighting, error)
+                && BspLeafLightFix::Validate(CurrentModel(), error)
+                && ValidateCollisionBounds(CurrentModel(), error);
+        }
         if (built)
         {
             Logger::log("MapRecovery: rebuilding navigation and gameplay paths");
@@ -2955,9 +3388,23 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
             return false;
         }
         if (!built) return false;
-        if (!verifyActors("Built")) return false;
+        if (!RecoveredBspLighting::CheckSavedAtlases(CurrentModel(), originalBspLighting, true, error)) return false;
+        if (!WriteBspSurfaceAudit(CurrentModel(), scratch / "BspBuilt.json", error)) return false;
+        if (!VerifyPortalOutlines(CurrentModel(), originalPortals, error)) return false;
+        if (!SeparateSolidPortalVisits(CurrentModel(), false, error)) return false;
         void* builtLevel = *reinterpret_cast<void**>(static_cast<char*>(editor) + kEditorLevelOffset);
         if (!SynchronizeImportedActorPlatforms(builtLevel, error)) return false;
+        // Build BSP lightmaps and normal instance structures first, then retain
+        // the original final mesh colours. A later explicit lighting rebuild
+        // remains free to recalculate lighting for the user's edited geometry.
+        if (!TransferMeshLighting(builtLevel, originalLighting, true, error)) return false;
+        const auto recalculatedMeshCount = std::count_if(originalLighting.begin(), originalLighting.end(),
+            [](const auto& item) { return item.second.recalculated; });
+        const auto preservedMeshCount = originalLighting.size() - recalculatedMeshCount;
+        Logger::log("MapRecovery: preserved original baked colours on "
+            + std::to_string(preservedMeshCount) + " mesh actors; recalculated "
+            + std::to_string(recalculatedMeshCount) + " incompatible streams");
+        if (!verifyActors("Built")) return false;
 
         // LIGHT APPLY updates the active StaticMeshInstance pointer. The
         // normal Build UI then commits it to the current platform's cache
@@ -3032,6 +3479,13 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
             return false;
         }
         Logger::log("MapRecovery: rebuilt mesh lighting survived ordinary save and reopening");
+        if (!TransferMeshLighting(reopenedLevel, originalLighting, false, error)) return false;
+        Logger::log("MapRecovery: preserved and recalculated mesh colour bytes survived ordinary save and reopening");
+        if (!RecoveredBspLighting::CheckSavedAtlases(CurrentModel(), originalBspLighting, false, error)) return false;
+        Logger::log("MapRecovery: transferred BSP lightmap texture contents survived ordinary save and reopening");
+        if (!WriteBspSurfaceAudit(CurrentModel(), scratch / "BspReopened.json", error)) return false;
+        if (!VerifyPortalOutlines(CurrentModel(), originalPortals, error)) return false;
+        if (!SeparateSolidPortalVisits(CurrentModel(), false, error)) return false;
         if (!VerifySpaceProbes(probes, error) || !BspLeafLightFix::Validate(CurrentModel(), error)
             || !ValidateCollisionBounds(CurrentModel(), error))
         {
@@ -3056,17 +3510,24 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
                << "\nTarget platform: PC (common and PC-only actors)"
                << "\nReconstructed structural brushes: " << structuralBrushCount
                << "\nRetained actors: " << actors.actorCount
+               << "\nPreserved and verified original baked mesh colour streams: " << preservedMeshCount
+               << "\nRecalculated incompatible mesh colour streams: " << recalculatedMeshCount
                << "\nExcluded Xbox-only actors: " << actors.skippedXboxActorCount
                << "\nCorrected stale platform labels on active PC actors: " << actors.correctedPcActorPlatformCount
                << "\nCleared references to excluded Xbox actors: " << actors.clearedXboxActorReferenceCount
                << "\nCleared references to confirmed deleted actors: " << actors.clearedDeletedActorReferenceCount
-               << "\nRegenerated and verified procedural strip doors: " << actors.regeneratedStripDoors.size()
+               << "\nRegenerated and verified procedural soft bodies: " << actors.regeneratedSoftBodies.size()
                << "\nVerified solid/empty samples: " << probes.size()
                << "\nNormal import, geometry/BSP/lighting/path builds, save and reopening verified.\n";
         if (!assets.empty()) report << "Include this asset dependency when distributing the map: "
                                     << assetPackagePath.string() << '\n';
         report << "Original construction-brush grouping/history is not retained. "
                   "Inspect the reconstructed map and test gameplay before distribution.\n";
+        report << "Compatible original baked mesh colours are preserved during conversion; mismatched vertex counts "
+                  "use verified recalculated lighting. Original BSP lighting is resampled "
+                  "onto matching rebuilt surfaces, with atlas-content checks after saving and reopening. "
+                  "Unmatched chart texels retain recalculated lighting. A later lighting rebuild recalculates "
+                  "lighting and may differ from the original compiled bake.\n";
         std::string reportError;
         if (!WriteTextFile(scratch / "Recovery.txt", report.str(), reportError)) Logger::log(reportError);
         return true;

@@ -72,6 +72,35 @@ Use disposable source maps and include stale/deleted instance members and missin
 
 ## Map recovery
 
+Sub18 regression (2026-09-13): retained portal surface 1282 has a vertex
+0.074219 units from its cooked BSP plane. Recovery accepts the native BSP
+splitter's 0.25-unit coplanar band, using normalized plane distance and retaining
+the original vertex coordinates. Hallway and living-room ZoneEffect objects are
+preserved in the dependency package. ESBPatchActor simulations regenerate from
+their authored settings, with native comparisons of topology, pinned anchors,
+springs and physical settings after import, rebuild and ordinary reopening.
+The point serializer at `0x110D34C0` puts a transient vector at `0x28..0x33`;
+its Z component must not be included in the authored-data comparison.
+The isolated Sub18 run passed recovery, saving, ordinary reopening and a further
+geometry/BSP/lighting/path rebuild: 17 patches, 71 portal outlines, 333 structural
+brushes, 1812 retained actors and 3980 solid/empty probes. The portable recovery
+suites also pass, including patch class/setting mismatch rejection and the new
+ZoneEffect classes. This verifies conversion, not a gameplay or visual review.
+
+EDE64 regression (2026-09-13): retained portal 121 faces opposite its cooked
+surface, and some portal surfaces lack PF_NotSolid. Recovery preserves authored
+portal winding while validating the undirected plane and reconstructing solid
+space independently. Arena and Cave audio effects are preserved as dependencies.
+The polygon-import suite includes the actual EDE64 edge from approximately
+`-5.7e-14` to `384`: unchanged endpoints prove membership without a rounded
+subtraction, while removed intermediate points still require exact collinearity.
+The isolated run passed recovery, ordinary save/reopen and subsequent rebuild:
+259 structural brushes, 1403 actors, nine strip doors, 80 portal outlines and
+4338 solid/empty samples. It preserved 995 original mesh colour streams. Lift
+SLift14593 has 72 cooked colours versus 168 rebuilt render vertices, so recovery
+retains its newly calculated colours and verifies them after reopening. A mesh
+asset identity change, missing instance or invalid stream still stops recovery.
+
 From an **x86 Native Tools Command Prompt for Visual Studio**, run:
 
 ```bat
@@ -250,6 +279,16 @@ Its completion result confirms inspection only, not conversion or gameplay.
 point/spring arrays for comparing procedural regeneration with cooked data.
 `-TraceLeafLights` writes the native leaf indices and light tables after builds
 and reopening to diagnose visibility-table limits.
+`-TraceLighting` records reflected light settings, loaded light-actor membership,
+mesh leaf-light candidates, and each mesh instance's baked BGRA colour stream at
+cooked/imported/built/reopened stages in `System/lighting_*`. It measures content,
+not just the existence of lighting objects. `-InspectCookedOnly -TraceLighting
+-RelightCookedMeshes` additionally refreshes mesh render data and runs native
+mesh shadow-mask generation and colour baking against the original BSP in the
+disposable editor. This diagnostic does not run the complete normal lighting
+command, rebuild BSP, or save a map; its results are not a gameplay acceptance test.
+The current OffsD findings and remaining limitations are recorded in
+[MapRecoveryLightingStatus.md](MapRecoveryLightingStatus.md).
 Ordinary recovery verifies strip-door topology, rest lengths, fixed anchors,
 physical settings and all exported authored actor properties at import, build
 and reopening. Decorative sheet tests check native polygon acceptance and

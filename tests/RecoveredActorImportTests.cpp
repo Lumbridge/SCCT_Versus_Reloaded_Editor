@@ -216,7 +216,7 @@ int main(int argc, char** argv)
         "windMin=(Y=-100)\nTexture=Shader'External.Glass'\n"
         "SoftBody=ESBStripDoor'MyLevel.MyLevel.OriginalDoor'\nEnd Actor\nEnd Map");
     assert(Prepare(stripDoor,bad,error));
-    assert(bad.regeneratedStripDoors==std::vector<std::string>{"Door0"});
+    assert(bad.regeneratedSoftBodies==std::vector<std::string>{"Door0"});
     assert(bad.actorsT3d.find("OriginalDoor")==std::string::npos);
     assert(bad.actorsT3d.find("prevTopFixed=True")!=std::string::npos);
     assert(ComposeSourceMap(bad,kFresh,kGeometry,composed,error));
@@ -230,6 +230,17 @@ int main(int argc, char** argv)
     assert(!Prepare(Replace(stripDoor,"Class=SoftBody.ESBStripDoorActor","Class=Trigger"),bad,error));
     assert(!Prepare(Replace(stripDoor,"ESBStripDoor'MyLevel.MyLevel.OriginalDoor'",
         "ESBPatch'MyLevel.MyLevel.OriginalDoor'"),bad,error));
+    const auto patch = ReplaceAll(stripDoor, "ESBStripDoor", "ESBPatch");
+    assert(Prepare(patch,bad,error));
+    assert(bad.regeneratedSoftBodies==std::vector<std::string>{"Door0"});
+    assert(ComposeSourceMap(bad,kFresh,kGeometry,composed,error));
+    assert(!VerifySourceMap(bad,composed,error));
+    const auto regeneratedPatch = Replace(composed,"SoftBody=None","SoftBody=ESBPatch'MyLevel.MyLevel.NewPatch'");
+    assert(VerifySourceMap(bad,regeneratedPatch,error));
+    assert(!VerifySourceMap(bad,Replace(regeneratedPatch,"ULength=24","ULength=25"),error));
+    assert(!VerifySourceMap(bad,Replace(regeneratedPatch,"ESBPatch'MyLevel.MyLevel.NewPatch'",
+        "ESBStripDoor'MyLevel.MyLevel.NewPatch'"),error));
+    assert(!Prepare(Replace(patch,"Class=SoftBody.ESBPatchActor","Class=Trigger"),bad,error));
     assert(!Prepare(Replace(kRecovered, "Owner=Trigger'MyLevel.Trigger0'",
                                         "Owner=Trigger'MyLevel.MissingTrigger'"),
                     bad, error, "RecoveryAssets_Test"));
@@ -342,7 +353,8 @@ int main(int argc, char** argv)
     assert(VerifySourceMap(bad, composed, error));
     assert(!Prepare(Replace(zoneEffect, "ZoneEffect=EFFECT_Hangar", "ZoneEffect=EFFECT_Unknown"),
                     bad, error, "RecoveryAssets_Test"));
-    for (const auto* effect : {"EFFECT_Mountains", "EFFECT_Quarry"})
+    for (const auto* effect : {"EFFECT_Mountains", "EFFECT_Quarry", "EFFECT_Hallway", "EFFECT_Livingroom",
+                              "EFFECT_Arena", "EFFECT_Cave"})
     {
         assert(Prepare(ReplaceAll(zoneEffect, "EFFECT_Hangar", effect), bad, error, "RecoveryAssets_Test"));
         assert(bad.externalizedAssets.size() == 1);

@@ -50,7 +50,7 @@ Recovery targets the PC version of a map. It uses the compiled PC level's actual
 
 Zone/portal divider brushes are retained and hidden by default. Their boundaries preserve where ZoneInfo lighting, fog and sound settings apply, without cluttering the initial editing view. They remain ordinary editable brushes and participate in normal rebuilds. ZoneInfo actors and occlusion volumes are retained too.
 
-Recovery commits rebuilt per-object lighting to the editor's platform cache before saving, then checks that the baked mesh lighting survives ordinary reopening.
+Recovery preserves the compiled map's original baked mesh colours after building the source geometry. It checks mesh asset identities and vertex counts before restoring colours, commits them to the platform cache, and verifies every preserved colour byte after ordinary saving and reopening. If a matching mesh has a different render-vertex count, recovery keeps and verifies its newly calculated lighting instead, and records that fallback in the recovery report. For supported RGBA8 BSP lightmaps, recovery also resamples the original baked lighting onto matching rebuilt surfaces and checks atlas contents after reopening. Unmatched lightmap texels keep recalculated lighting. A later lighting rebuild recalculates lighting and may be darker than the original compiled bake; initial preservation does not resolve that rebuild discrepancy.
 
 Supported procedural strip-curtain doors are regenerated from their editable settings. Recovery checks their point connections, rest lengths, fixed anchors and physical settings against the original; moving cloth starts from its rest pose. Unsupported custom cloth constraints stop conversion. Embedded occlusion volumes are retained in the recovered asset package.
 

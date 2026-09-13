@@ -12,6 +12,7 @@
 #include <vector>
 #include <fstream>
 #include <map>
+#include <set>
 
 namespace {
 HMODULE self;
@@ -37,6 +38,8 @@ bool startupFailed;
 bool compactionEnabled;
 bool traceSoftBodies;
 bool traceLeafLights;
+bool traceLighting;
+bool relightCookedMeshes;
 bool inspectCookedOnly;
 bool inspectedCooked;
 void Snapshot(const char* stage);
@@ -336,6 +339,94 @@ void DescribeActorFields(unsigned char* actor) {
     }
 }
 
+void DescribeLighting(const char* stage) {
+    if (!traceLighting) return;
+    const auto folder = directory / (std::string("lighting_") + stage);
+    std::filesystem::create_directories(folder);
+    std::ofstream text(folder / "actors.txt");
+    auto editor = *reinterpret_cast<unsigned char**>(kEditor);
+    auto level = *reinterpret_cast<unsigned char**>(editor + 0x130);
+    auto actors = *reinterpret_cast<unsigned char***>(level + 0x2C);
+    const int count = *reinterpret_cast<int*>(level + 0x30);
+    auto objects = *reinterpret_cast<unsigned char***>(0x11697B70);
+    const int objectCount = *reinterpret_cast<int*>(0x11697B74);
+    auto package = *reinterpret_cast<void**>(level + 0x18);
+    for (int i = 0; objects && i < objectCount; ++i) {
+        auto object = objects[i];
+        if (!object || *reinterpret_cast<void**>(object + 0x18) != package) continue;
+        const std::string className = ObjectName(*reinterpret_cast<void**>(object + 0x24));
+        if (className != "Light" && className != "STriggerLight") continue;
+        text << "package_light " << ObjectName(object) << " class=" << className
+             << " active=" << ContainsActor(level, 0x2C, object)
+             << " deleted=" << ((*reinterpret_cast<unsigned*>(object + 0x2E8) & 0x8000u) != 0) << '\n';
+    }
+    auto dump = [&](const std::string& name, const void* pointer, size_t size) {
+        std::vector<char> bytes(size);
+        SIZE_T read = 0;
+        if (pointer && ReadProcessMemory(GetCurrentProcess(), pointer, bytes.data(), size, &read) && read == size)
+            std::ofstream(folder / name, std::ios::binary).write(bytes.data(), size);
+    };
+    for (int i = 0; actors && i < count; ++i) {
+        auto actor = actors[i];
+        if (!actor) continue;
+        auto type = *reinterpret_cast<unsigned char**>(actor + 0x24);
+        const std::string actorName = ObjectName(actor), className = ObjectName(type);
+        const bool light = className.find("Light") != std::string::npos
+            || className.find("ZoneInfo") != std::string::npos || className == "LevelInfo";
+        auto mesh = *reinterpret_cast<void**>(actor + 0x100);
+        if (!light && !mesh) continue;
+        text << "actor " << actorName << " class=" << className << '\n';
+        for (auto property = *reinterpret_cast<unsigned char**>(type + 0x58); property;
+             property = *reinterpret_cast<unsigned char**>(property + 0x40)) {
+            const std::string name = ObjectName(property);
+            const std::string kind = ObjectName(*reinterpret_cast<void**>(property + 0x24));
+            if (kind != "BoolProperty" && kind != "ByteProperty" && kind != "FloatProperty"
+                && kind != "IntProperty" && kind != "NameProperty") continue;
+            if (!light && name.find("Light") == std::string::npos && name.find("Ambient") == std::string::npos
+                && name != "bStatic" && name != "bHidden") continue;
+            char value[4096]{};
+            const unsigned offset = *reinterpret_cast<unsigned*>(property + 0x3C);
+            using ExportItem = void(__thiscall*)(void*, char*, const void*, const void*, unsigned int);
+            auto exporter = (*reinterpret_cast<void***>(property))[0x90 / 4];
+            reinterpret_cast<ExportItem>(exporter)(property, value, actor + offset, nullptr, 0);
+            text << "  " << name << '=' << value << '\n';
+        }
+        if (mesh) {
+            auto model = *reinterpret_cast<unsigned char**>(level + 0x13C);
+            auto leaves = *reinterpret_cast<unsigned short**>(model + 0xBC);
+            const int leafCount = *reinterpret_cast<int*>(model + 0xC0);
+            auto lights = *reinterpret_cast<unsigned char***>(model + 0xC8);
+            const int lightCount = *reinterpret_cast<int*>(model + 0xCC);
+            auto actorLeaves = *reinterpret_cast<int**>(actor + 0x1C4);
+            const int actorLeafCount = *reinterpret_cast<int*>(actor + 0x1C8);
+            std::set<std::string> affectingLights;
+            if (actorLeafCount >= 0 && actorLeafCount < 100000)
+                for (int leaf = 0; actorLeaves && leaf < actorLeafCount; ++leaf) {
+                    const int index = actorLeaves[leaf];
+                    if (index < 0 || index >= leafCount) continue;
+                    const unsigned start = leaves[index * 2 + 1];
+                    if (start == 0xFFFF) continue;
+                    for (unsigned j = start; j < static_cast<unsigned>(lightCount) && lights[j]; ++j)
+                        affectingLights.insert(ObjectName(lights[j]));
+                }
+            text << "  leaf_count=" << actorLeafCount << " lights=";
+            for (const auto& name : affectingLights) text << name << ',';
+            text << '\n';
+            auto instance = *reinterpret_cast<unsigned char**>(actor + 0x22C);
+            text << "  mesh=" << ObjectName(mesh) << " instance=" << ObjectName(instance) << '\n';
+            dump(actorName + "_instance.bin", instance, 0x50);
+            if (instance) {
+                const int colorCount = *reinterpret_cast<int*>(instance + 0x3C);
+                if (colorCount >= 0 && colorCount <= 1000000)
+                    dump(actorName + "_colors.bin", *reinterpret_cast<void**>(instance + 0x38),
+                         static_cast<size_t>(colorCount) * 4);
+                dump("instance_class.bin", *reinterpret_cast<void**>(instance + 0x24), 0x100);
+                dump("instance_vtable.bin", *reinterpret_cast<void**>(instance), 0x100);
+            }
+        }
+    }
+}
+
 void DescribeSoftBodies(const char* stage) {
     if (!traceSoftBodies) return;
     auto editor=*reinterpret_cast<unsigned char**>(kEditor);
@@ -351,7 +442,8 @@ void DescribeSoftBodies(const char* stage) {
             stage,ObjectName(actor),ObjectName(*reinterpret_cast<void**>(actor+0x24)),ObjectName(body),
             body ? ObjectName(*reinterpret_cast<void**>(body+0x24)) : "<null>",
             body ? *reinterpret_cast<void**>(body) : nullptr);
-        if(body && !strcmp(ObjectName(*reinterpret_cast<void**>(body+0x24)),"ESBStripDoor")) {
+        if(body && (!strcmp(ObjectName(*reinterpret_cast<void**>(body+0x24)),"ESBStripDoor")
+            || !strcmp(ObjectName(*reinterpret_cast<void**>(body+0x24)),"ESBPatch"))) {
             const auto stem=std::string(stage)+"_"+ObjectName(actor);
             std::ofstream raw(directory/(stem+"_body.bin"),std::ios::binary);
             raw.write(reinterpret_cast<char*>(body),0x1A4);
@@ -389,6 +481,8 @@ void DescribeSoftBodies(const char* stage) {
 }
 
 int __fastcall ObserveExec(void* exec, void*, const char* command, void* output) {
+    if (command && strstr(command,"MAP EXPORT") && strstr(command,"Imported.t3d"))
+        DescribeSoftBodies("imported");
     if (command && strstr(command,"MAP EXPORT")
         && (strstr(command,"Actors.t3d") || strstr(command,"Imported.t3d"))) {
         auto objects = *reinterpret_cast<unsigned char***>(0x11697B70);
@@ -437,6 +531,40 @@ int __fastcall ObserveExec(void* exec, void*, const char* command, void* output)
             fflush(report);
         }
         DescribeSoftBodies("cooked");
+        DescribeLighting("cooked");
+        if (relightCookedMeshes) {
+            auto editor = *reinterpret_cast<unsigned char**>(kEditor);
+            auto level = *reinterpret_cast<unsigned char**>(editor + 0x130);
+            auto actors = *reinterpret_cast<unsigned char***>(level + 0x2C);
+            const int count = *reinterpret_cast<int*>(level + 0x30);
+            Record("relighting_cooked_meshes", "Native mesh illumination only; BSP is unchanged and no map is saved.");
+            using Illuminate = void(__thiscall*)(void*, void*, int);
+            for (int i = 0; actors && i < count; ++i) {
+                auto actor = actors[i];
+                auto mesh = actor ? *reinterpret_cast<void**>(actor + 0x100) : nullptr;
+                if (mesh && *reinterpret_cast<void**>(actor + 0x22C)) {
+                    // A cooked load has no editor leaf-membership cache yet.
+                    // Refresh it before Illuminate gathers candidate lights.
+                    using GetRenderData = void*(__thiscall*)(void*);
+                    using UpdateRenderData = void(__thiscall*)(void*);
+                    reinterpret_cast<GetRenderData>(0x110B2690)(actor);
+                    reinterpret_cast<UpdateRenderData>(0x110B15A0)(actor);
+                    reinterpret_cast<Illuminate>(0x110E8190)(mesh, actor, 0);
+                    // Same actor finalization immediately following Illuminate
+                    // in the native LIGHT APPLY loop (1108122F).
+                    using FinishActorLighting = void(__thiscall*)(void*);
+                    reinterpret_cast<FinishActorLighting>((*reinterpret_cast<void***>(actor))[0x8C / 4])(actor);
+                    reinterpret_cast<UpdateRenderData>(0x110B15A0)(actor);
+                    // Illuminate builds shadow masks; LIGHT APPLY then bakes
+                    // the final colour stream separately at 110087B2.
+                    using BakeColors = void(__cdecl*)(void*, void*, void*);
+                    reinterpret_cast<BakeColors>(0x11195230)(mesh,
+                        *reinterpret_cast<void**>(actor + 0x22C),
+                        reinterpret_cast<GetRenderData>(0x110B2690)(actor));
+                }
+            }
+            DescribeLighting("relit_cooked_meshes");
+        }
         DumpNativeBsp("NativeCookedBsp.json");
         auto editor = *reinterpret_cast<unsigned char**>(kEditor);
         auto level = *reinterpret_cast<unsigned char**>(editor+0x130);
@@ -467,6 +595,11 @@ int __fastcall ObserveExec(void* exec, void*, const char* command, void* output)
         }
     }
     int result=originalExec(exec, command, output);
+    if (result && command && strstr(command, "MAP EXPORT")) {
+        if (strstr(command, "Imported.t3d")) DescribeLighting("imported");
+        if (strstr(command, "Built.t3d")) DescribeLighting("built");
+        if (strstr(command, "Reopened.t3d")) DescribeLighting("reopened");
+    }
     if (inspectCookedOnly && result && command && strstr(command,"MAP EXPORT") && strstr(command,"Actors.t3d")) {
         // Keep the native cooked export, then deliberately stop conversion
         // before reconstruction. Production cleanup disposes of the level.
@@ -714,6 +847,8 @@ void RunTest() {
     ObserveEditorExec();
     traceSoftBodies=GetPrivateProfileIntA("test","trace_soft_bodies",0,configuration.c_str())!=0;
     traceLeafLights=GetPrivateProfileIntA("test","trace_leaf_lights",0,configuration.c_str())!=0;
+    traceLighting=GetPrivateProfileIntA("test","trace_lighting",0,configuration.c_str())!=0;
+    relightCookedMeshes=GetPrivateProfileIntA("test","relight_cooked_meshes",0,configuration.c_str())!=0;
     inspectCookedOnly=GetPrivateProfileIntA("test","inspect_cooked_only",0,configuration.c_str())!=0;
     compactionEnabled=GetPrivateProfileIntA("test","compact_points",0,configuration.c_str())!=0;
     char pointText[128]={},actorText[128]={};

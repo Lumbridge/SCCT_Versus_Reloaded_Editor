@@ -121,6 +121,10 @@ namespace RecoveredPolygonImport
 
         bool OnSegment(const Vec3& point,const Vec3& start,const Vec3& end)
         {
+            // An unchanged endpoint lies on its edge exactly, even when
+            // subtracting widely separated float coordinates would round in
+            // double (EDE64 has edges from roughly -5.7e-14 to 384).
+            if (Equal(point,start) || Equal(point,end)) return true;
             Vec3 edge,offset;
             if (!ExactDifference(end.x,start.x,edge.x)
                 || !ExactDifference(end.y,start.y,edge.y)

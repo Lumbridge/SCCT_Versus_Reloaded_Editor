@@ -18,6 +18,8 @@ param(
     [switch]$RestoreTextNormals,
     [switch]$TraceSoftBodies,
     [switch]$TraceLeafLights,
+    [switch]$TraceLighting,
+    [switch]$RelightCookedMeshes,
     [switch]$InspectCookedOnly,
     [switch]$CompactPoints,
     [string]$TracePoint,
@@ -27,6 +29,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
 $nativeDll = (Resolve-Path -LiteralPath $EditorDll).Path
+if ($RelightCookedMeshes -and (!$InspectCookedOnly -or !$TraceLighting)) { throw 'RelightCookedMeshes requires InspectCookedOnly and TraceLighting.' }
 if ($ImportBaseline -and !$GenerateFixture) { throw 'ImportBaseline requires GenerateFixture.' }
 if ($ImportTextOnly -and ($GenerateFixture -or $ReopenOnly -or $ExpectRecoveryFailure -or $EditGeometry)) { throw 'ImportTextOnly requires a standalone T3D input.' }
 if ($BuildImportedText -and !$ImportTextOnly) { throw 'BuildImportedText requires ImportTextOnly.' }
@@ -124,6 +127,8 @@ build_imported_text=$([int][bool]$BuildImportedText)
 restore_text_normals=$([int][bool]$RestoreTextNormals)
 trace_soft_bodies=$([int][bool]$TraceSoftBodies)
 trace_leaf_lights=$([int][bool]$TraceLeafLights)
+trace_lighting=$([int][bool]$TraceLighting)
+relight_cooked_meshes=$([int][bool]$RelightCookedMeshes)
 inspect_cooked_only=$([int][bool]$InspectCookedOnly)
 compact_points=$([int][bool]$CompactPoints)
 trace_point=$TracePoint

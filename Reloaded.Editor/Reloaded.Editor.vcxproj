@@ -178,6 +178,7 @@
     <ClInclude Include="DeintersectFix.h" />
     <ClInclude Include="MapUnlock.h" />
     <ClInclude Include="MapRecovery.h" />
+    <ClInclude Include="RecoveredBspLighting.h" />
     <ClInclude Include="RecoveredBspGeometry.h" />
     <ClInclude Include="RecoveredSurfacePartition.h" />
     <ClInclude Include="RecoveredPolygonImport.h" />
@@ -235,6 +236,7 @@
     <ClCompile Include="DeintersectFix.cpp" />
     <ClCompile Include="MapUnlock.cpp" />
     <ClCompile Include="MapRecovery.cpp" />
+    <ClCompile Include="RecoveredBspLighting.cpp" />
     <ClCompile Include="RecoveredBspGeometry.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
