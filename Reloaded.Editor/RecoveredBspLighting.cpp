@@ -146,7 +146,11 @@ std::shared_ptr<Snapshot> Capture(void* model,AssetPath path,const char* package
             if(count<3 || section<0) continue;
             if(section>=sections.count || start<0) throw std::runtime_error("Invalid original BSP render section");
             const auto* render=sections.data+section*0x38;
-            const int primary=Read<int>(render,0x28),secondary=Read<int>(render,0x2C);
+            // BuildRenderData (110D1500) uses the secondary binding only on
+            // Xbox. PC source files may retain an out-of-range Xbox index.
+            const auto context=*reinterpret_cast<unsigned char**>(0x11691D7C);
+            const bool xbox=context && Read<int>(context,0x78)==1;
+            const int primary=Read<int>(render,0x28),secondary=xbox ? Read<int>(render,0x2C) : -1;
             if(primary<0 && secondary<0) continue;
             if(primary>=textures.count || secondary>=textures.count) throw std::runtime_error("Invalid original BSP lightmap binding");
             const auto vertices=GetArray(render,4);
@@ -188,7 +192,11 @@ std::shared_ptr<Snapshot> Capture(void* model,AssetPath path,const char* package
     }
     catch(const std::exception& exception) { error=exception.what();return {}; }
 }
-void Activate(const std::shared_ptr<Snapshot>& snapshot) { active=snapshot; }
+void Activate(const std::shared_ptr<Snapshot>& snapshot)
+{
+    active=snapshot;
+    if(active) { active->error.clear();active->mapped=active->unmapped=active->atlases=0; }
+}
 void Deactivate() { active.reset(); }
 
 void RestoreAtlas(void* pixels,const void* model,const void* texture) noexcept
@@ -275,11 +283,11 @@ void RestoreAtlas(void* pixels,const void* model,const void* texture) noexcept
     catch(const std::exception& exception) { active->error=exception.what(); }
     catch(...) { active->error="Unknown failure transferring BSP lighting"; }
 }
-bool Result(const std::shared_ptr<Snapshot>& snapshot,std::string& error)
+bool Result(const std::shared_ptr<Snapshot>& snapshot,std::string& error,bool allowUnmatched)
 {
     if(!snapshot) {error="No original BSP lighting snapshot";return false;}
     if(!snapshot->error.empty()) {error=snapshot->error;return false;}
-    if(!snapshot->triangles.empty() && !snapshot->mapped) {error="No original BSP lighting could be mapped onto the rebuilt surfaces";return false;}
+    if(!allowUnmatched && !snapshot->triangles.empty() && !snapshot->mapped) {error="No original BSP lighting could be mapped onto the rebuilt surfaces";return false;}
     Logger::log("MapRecovery: transferred original BSP lighting to "+std::to_string(snapshot->mapped)
         +" texels across "+std::to_string(snapshot->atlases)+" atlases; unmatched chart texels="+std::to_string(snapshot->unmapped));
     return true;

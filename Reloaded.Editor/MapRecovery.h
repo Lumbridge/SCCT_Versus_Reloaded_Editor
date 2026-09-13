@@ -21,6 +21,9 @@ namespace MapRecovery
                          const std::filesystem::path& destination,
                          std::string& error);
     bool HandleSaveCommand(UINT commandId);
+    constexpr UINT kRecalculateLightingCommandId = 40929;
+    void InitializeLightingProtection();
+    void RecalculateLighting(HWND owner);
     void* ResolveBuilderBrushActor(void* level);
     bool IsRecoveredMapActive();
     bool UsesRecoveredBspLayout();

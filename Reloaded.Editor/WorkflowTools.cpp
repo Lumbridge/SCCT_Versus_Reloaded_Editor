@@ -5,6 +5,8 @@
 #include "WorkflowEditor.h"
 #include "WorkflowGraph.h"
 #include "MagicEventWorkbench.h"
+#include "MapPackageDialog.h"
+#include "MapRecovery.h"
 #include "MemoryWriter.h"
 #include <commctrl.h>
 #include <algorithm>
@@ -105,16 +107,38 @@ namespace
         name=fields[0].value;
         if(name.empty() || name.size()>120 || name.find_first_of("\r\n")!=std::string::npos) throw std::runtime_error("Enter a name between 1 and 120 characters."); return true;
     }
-    struct TagPreviewText { std::string title,summary,assignments; };
+    struct TagPreviewText { std::string title,summary; Json* preview; bool ready=false; };
+    void UpdateTagChecks(HWND window,TagPreviewText& data)
+    {
+        auto list=GetDlgItem(window,1000);size_t tags=0,events=0;
+        (*data.preview)["excluded"]=Json::array();
+        for(size_t i=0;i<data.preview->at("changes").size();++i)
+            if(!ListView_GetCheckState(list,static_cast<int>(i)))(*data.preview)["excluded"].push_back(i);
+            else if(data.preview->at("changes")[i].at("property")=="Tag")++tags;else ++events;
+        auto summary=data.summary+std::to_string(tags)+" actor Tags and "+std::to_string(events)+" Event assignments checked.\r\n"
+            "Unchecked assignments keep their old value. Partial renames split the group's connections; check which targets each Event should reach.";
+        SetWindowTextA(GetDlgItem(window,1001),summary.c_str());EnableWindow(GetDlgItem(window,IDOK),tags>0);
+    }
     INT_PTR CALLBACK TagPreviewProc(HWND window,UINT message,WPARAM w,LPARAM l)
     {
         if(message==WM_INITDIALOG)
         {
-            auto data=reinterpret_cast<TagPreviewText*>(l);SetWindowTextA(window,data->title.c_str());RECT r{};GetClientRect(window,&r);
-            Control(window,"STATIC",data->summary,0,0,12,12,r.right-24,95);
-            Control(window,"EDIT",data->assignments,ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|ES_AUTOHSCROLL|WS_VSCROLL|WS_HSCROLL,1000,12,110,r.right-24,r.bottom-160);
-            Control(window,"BUTTON","Rename group",BS_DEFPUSHBUTTON,IDOK,r.right-245,r.bottom-38,125,27);Control(window,"BUTTON","Cancel",0,IDCANCEL,r.right-110,r.bottom-38,95,27);return TRUE;
+            auto data=reinterpret_cast<TagPreviewText*>(l);SetWindowLongPtr(window,DWLP_USER,l);SetWindowTextA(window,data->title.c_str());RECT r{};GetClientRect(window,&r);
+            Control(window,"STATIC",data->summary,0,1001,12,12,r.right-24,95);
+            auto list=Control(window,WC_LISTVIEWA,"",LVS_REPORT|LVS_SHOWSELALWAYS|WS_BORDER,1000,12,110,r.right-24,r.bottom-160);
+            ListView_SetExtendedListViewStyle(list,LVS_EX_FULLROWSELECT|LVS_EX_CHECKBOXES|LVS_EX_DOUBLEBUFFER);
+            const char* columns[]={"Entity","Assignment"};
+            for(int i=0;i<2;++i){LVCOLUMNA col{};col.mask=LVCF_TEXT|LVCF_WIDTH;col.cx=i?230:r.right-280;col.pszText=const_cast<char*>(columns[i]);SendMessageA(list,LVM_INSERTCOLUMNA,i,reinterpret_cast<LPARAM>(&col));}
+            int row=0;for(const auto& change:data->preview->at("changes"))
+            {
+                auto actor=change.at("actor").at("path").get<std::string>();auto property=change.at("property").get<std::string>();
+                LVITEMA item{};item.mask=LVIF_TEXT;item.iItem=row;item.pszText=actor.data();SendMessageA(list,LVM_INSERTITEMA,0,reinterpret_cast<LPARAM>(&item));
+                item.iSubItem=1;item.pszText=property.data();SendMessageA(list,LVM_SETITEMTEXTA,row,reinterpret_cast<LPARAM>(&item));ListView_SetCheckState(list,row,TRUE);++row;
+            }
+            Control(window,"BUTTON","Rename checked",BS_DEFPUSHBUTTON,IDOK,r.right-245,r.bottom-38,125,27);Control(window,"BUTTON","Cancel",0,IDCANCEL,r.right-110,r.bottom-38,95,27);
+            data->ready=true;UpdateTagChecks(window,*data);return TRUE;
         }
+        if(message==WM_NOTIFY){auto data=reinterpret_cast<TagPreviewText*>(GetWindowLongPtr(window,DWLP_USER));auto hdr=reinterpret_cast<NMHDR*>(l);if(data && data->ready && hdr->idFrom==1000 && hdr->code==LVN_ITEMCHANGED)UpdateTagChecks(window,*data);}
         if(message==WM_COMMAND && (LOWORD(w)==IDOK || LOWORD(w)==IDCANCEL)){EndDialog(window,LOWORD(w));return TRUE;}
         if(message==WM_CLOSE){EndDialog(window,IDCANCEL);return TRUE;}return FALSE;
     }
@@ -501,6 +525,8 @@ namespace
 }
 bool HandleCommand(UINT command)
 {
+    if(command==MapRecovery::kRecalculateLightingCommandId){MapRecovery::RecalculateLighting(GetActiveWindow());return true;}
+    if(command==MapPackageDialog::Command){try{MapPackageDialog::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Map Packaging",MB_OK|MB_ICONERROR);}return true;}
     if(command==MagicEventWorkbench::Command){try{MagicEventWorkbench::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"SMagicEvent Workbench",MB_OK|MB_ICONERROR);}return true;}
     if(command<kConnections || command>kSaveAssembly) return false;
     try
@@ -528,14 +554,7 @@ void RenameActorTag(HWND owner,std::string path,std::string type)
         auto preview=Editor::PreviewTagRename(identity,tag);size_t targets=0,events=0;
         for(const auto& c:preview.at("changes"))if(c.at("property")=="Tag")++targets;else ++events;
         std::string text="Rename Tag '"+preview.at("old").get<std::string>()+"' to '"+tag+"'?\n\n";
-        if(targets>1)text+="SHARED TAG: all "+std::to_string(targets)+" actors using this Tag will be renamed together. Their one-to-many connections will be preserved.\n\n";
-        text+=std::to_string(targets)+" actor Tags and "+std::to_string(events)+" dependent Event / EventGroup assignments will change in one undo operation.\n\n";
-        std::string assignments;
-        for(const auto& c:preview.at("changes"))
-        {
-            assignments+=c.at("actor").at("path").get<std::string>()+" : "+c.at("property").get<std::string>()+"\r\n";
-        }
-        TagPreviewText details{targets>1?"Rename Shared Tag Group":"Preview Tag Rename",text,assignments};
+        TagPreviewText details{targets>1?"Rename Shared Tag Group":"Preview Tag Rename",text,&preview};
         if(!ConfirmTagRename(owner,details))return;
         Editor::RenameTag(preview);
     }
@@ -559,6 +578,7 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
     {
         Json q=Json::parse(request),result; std::string op=q.at("op");
         if(op=="actors") result=Editor::Actors(q.value("selected",false));
+        else if(op=="package.preview") {MapPackageDialog::Preview(GetActiveWindow(),q.at("map").get<std::string>());result=true;}
         else if(op=="magic.classes") result=Editor::EventClasses();
         else if(op=="magic.assets") result=Editor::EventAssets(q.at("type"),q.value("classes",false));
         else if(op=="magic.component") result=Editor::CreateEventComponent(q.at("snapshot"),q.at("class"));

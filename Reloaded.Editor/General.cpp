@@ -559,6 +559,10 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
     __asm {
         cmp dword ptr [esp+4], 40927
         je workflow_dispatch
+        cmp dword ptr [esp+4], 40928 // Package Map for Sharing
+        je workflow_dispatch
+        cmp dword ptr [esp+4], 40929 // Explicit lighting recalculation
+        je workflow_dispatch
         cmp dword ptr [esp+4], 40920
         jb workflow_continue
         cmp dword ptr [esp+4], 40923

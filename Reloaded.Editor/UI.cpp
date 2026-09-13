@@ -6,6 +6,7 @@
 #include "WindowDriftFix.h"
 #include "RebuildAllMaps.h"
 #include "WorkflowTools.h"
+#include "MapPackageDialog.h"
 
 INIT_HOOKS;
 
@@ -124,6 +125,8 @@ static void InjectReloadedMenuItems(HWND frame)
     HMENU file = GetSubMenu(bar, 0);
     if (file)
     {
+        if (MenuPosByCommand(file, MapPackageDialog::Command) < 0)
+            AppendMenuA(file, MF_STRING, MapPackageDialog::Command, "Package Map for &Sharing...");
         // File starts with New, Open, then a separator in the stock editor.
         if (MenuPosByCommand(file, MapRecovery::kCommandId) < 0)
             InsertMenuA(file, 2, MF_BYPOSITION | MF_STRING,
@@ -140,6 +143,12 @@ static void InjectReloadedMenuItems(HWND frame)
                         "Convert &Legacy Recovered Map...");
     }
 
+    HMENU lightingBuild = SubMenuWithCommand(bar, 40038);
+    if (lightingBuild && MenuPosByCommand(lightingBuild, MapRecovery::kRecalculateLightingCommandId) < 0)
+    {
+        AppendMenuA(lightingBuild, MF_SEPARATOR, 0, nullptr);
+        AppendMenuA(lightingBuild, MF_STRING, MapRecovery::kRecalculateLightingCommandId, "&Recalculate Lighting...");
+    }
     // -UnlockPackages is what lets it save over the stock maps.
     if (RebuildAllMaps::Available())
     {

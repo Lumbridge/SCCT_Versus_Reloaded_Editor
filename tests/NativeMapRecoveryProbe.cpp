@@ -41,6 +41,8 @@ bool stepCookedSoftBodies;
 bool traceLeafLights;
 bool traceLighting;
 bool relightCookedMeshes;
+bool allLeafLightCandidates;
+bool skipMeshShadowOcclusion;
 bool inspectCookedOnly;
 bool inspectedCooked;
 void Snapshot(const char* stage);
@@ -415,8 +417,32 @@ void DescribeLighting(const char* stage) {
             text << '\n';
             auto instance = *reinterpret_cast<unsigned char**>(actor + 0x22C);
             text << "  mesh=" << ObjectName(mesh) << " instance=" << ObjectName(instance) << '\n';
+            auto meshBytes=static_cast<unsigned char*>(mesh);
+            const int meshColors=*reinterpret_cast<int*>(meshBytes+0x80);
+            text << "  asset_vertex_colors=" << meshColors << " multiply_vertex_colors=" << *reinterpret_cast<int*>(meshBytes+0x180) << '\n';
+            if(meshColors>=0 && meshColors<=1000000)
+                dump(std::string("asset_")+ObjectName(mesh)+"_colors.bin",*reinterpret_cast<void**>(meshBytes+0x7C),static_cast<size_t>(meshColors)*4);
             dump(actorName + "_instance.bin", instance, 0x50);
             if (instance) {
+                text << "  scale_glow=" << *reinterpret_cast<float*>(actor+0x258) << '\n';
+                auto shadows=*reinterpret_cast<unsigned char**>(instance+0x28);
+                const int shadowCount=*reinterpret_cast<int*>(instance+0x2C);
+                if(shadowCount>=0 && shadowCount<10000)for(int shadow=0;shadows && shadow<shadowCount;++shadow)
+                {
+                    auto entry=shadows+shadow*0x14;auto lightActor=*reinterpret_cast<unsigned char**>(entry);
+                    auto mask=*reinterpret_cast<unsigned char**>(entry+4);int bytes=*reinterpret_cast<int*>(entry+8);
+                    unsigned visible=0;
+                    if(bytes>=0 && bytes<1000000)for(int byte=0;mask && byte<bytes;++byte)for(int bit=0;bit<8;++bit)visible+=(mask[byte]>>bit)&1;
+                    text << "  shadow_light=" << ObjectName(lightActor) << " bytes=" << bytes << " visible=" << visible << " baked=" << *reinterpret_cast<int*>(entry+0x10);
+                    if(lightActor)
+                    {
+                        using LightData=unsigned char*(__thiscall*)(void*);
+                        auto data=reinterpret_cast<LightData>(0x110B1510)(lightActor);
+                        if(data)text << " render_flags=" << static_cast<unsigned>(data[0x38])
+                            << " rgb=" << reinterpret_cast<float*>(data+0xC)[0] << ',' << reinterpret_cast<float*>(data+0xC)[1] << ',' << reinterpret_cast<float*>(data+0xC)[2];
+                    }
+                    text << '\n';
+                }
                 const int colorCount = *reinterpret_cast<int*>(instance + 0x3C);
                 if (colorCount >= 0 && colorCount <= 1000000)
                     dump(actorName + "_colors.bin", *reinterpret_cast<void**>(instance + 0x38),
@@ -425,6 +451,24 @@ void DescribeLighting(const char* stage) {
                 dump("instance_vtable.bin", *reinterpret_cast<void**>(instance), 0x100);
             }
         }
+    }
+}
+
+void DescribeBspLighting(const char* stage) {
+    if (!traceLighting) return;
+    auto folder=directory/(std::string("lighting_")+stage);
+    std::filesystem::create_directories(folder);
+    auto level=*reinterpret_cast<unsigned char**>(*reinterpret_cast<unsigned char**>(kEditor)+0x130);
+    auto model=*reinterpret_cast<unsigned char**>(level+0x13c);
+    auto textures=*reinterpret_cast<unsigned char**>(model+0xe0);
+    const int count=*reinterpret_cast<int*>(model+0xe4);
+    for(int i=0;i<count && i<4096;++i) {
+        auto compressed=textures+i*0x70+0x14;
+        using Load=void*(__thiscall*)(void*,int);
+        auto pixels=reinterpret_cast<Load>(0x111b2400)(compressed,0);
+        const int size=*reinterpret_cast<int*>(compressed+0x14);
+        if(pixels && size>0 && size<=2048*2048*4)
+            std::ofstream(folder/("bsp_atlas_"+std::to_string(i)+".bin"),std::ios::binary).write(static_cast<char*>(pixels),size);
     }
 }
 
@@ -555,7 +599,20 @@ int __fastcall ObserveExec(void* exec, void*, const char* command, void* output)
                     using UpdateRenderData = void(__thiscall*)(void*);
                     reinterpret_cast<GetRenderData>(0x110B2690)(actor);
                     reinterpret_cast<UpdateRenderData>(0x110B15A0)(actor);
+                    struct Leaves {int* data;int count,capacity;};
+                    auto& leafArray=*reinterpret_cast<Leaves*>(actor+0x1C4);auto savedLeaves=leafArray;
+                    std::vector<int> allLeaves;
+                    if(allLeafLightCandidates)
+                    {
+                        auto model=*reinterpret_cast<unsigned char**>(level+0x13C);int leaves=*reinterpret_cast<int*>(model+0xC0);
+                        for(int leaf=0;leaf<leaves;++leaf)allLeaves.push_back(leaf);
+                        leafArray={allLeaves.data(),leaves,leaves};
+                    }
+                    auto& shadowFlags=*reinterpret_cast<unsigned*>(actor+0x2EC);auto originalShadowFlags=shadowFlags;
+                    if(skipMeshShadowOcclusion)shadowFlags&=~0x08000000u;
                     reinterpret_cast<Illuminate>(0x110E8190)(mesh, actor, 0);
+                    shadowFlags=originalShadowFlags;
+                    leafArray=savedLeaves;
                     // Same actor finalization immediately following Illuminate
                     // in the native LIGHT APPLY loop (1108122F).
                     using FinishActorLighting = void(__thiscall*)(void*);
@@ -806,6 +863,8 @@ bool CheckCollisionBoxConstructor(bool stress) {
 }
 
 bool Rebuild() {
+    DescribeLighting("before_normal_build");
+    DescribeBspLighting("before_normal_build");
     struct Array { void* data{}; int count{}; int capacity{}; } first, second;
     void* editor = *reinterpret_cast<void**>(kEditor);
     using Bracket = void(__thiscall*)(void*, void*, void*);
@@ -819,6 +878,8 @@ bool Rebuild() {
     auto context = *reinterpret_cast<unsigned char**>(0x11691D7C);
     using CacheMeshLighting = void(__thiscall*)(void*, int);
     if (ok) reinterpret_cast<CacheMeshLighting>(0x10E06605)(editor, *reinterpret_cast<int*>(context + 0x78));
+    DescribeLighting("after_normal_build");
+    DescribeBspLighting("after_normal_build");
     return ok;
 }
 
@@ -913,6 +974,46 @@ bool MakeFixture(const char* runtimePath, bool rootOutside) {
 
 } // namespace (keep standard/JSON headers outside the anonymous namespace)
 #include "WorkflowNativeTests.h"
+
+using LightingBytes=std::map<std::string,std::vector<unsigned char>>;
+LightingBytes ReadLightingBytes(bool bsp) {
+    LightingBytes result;
+    auto level=*reinterpret_cast<unsigned char**>(*reinterpret_cast<unsigned char**>(kEditor)+0x130);
+    auto actors=*reinterpret_cast<unsigned char***>(level+0x2c);
+    const int count=*reinterpret_cast<int*>(level+0x30);
+    for(int i=0;i<count;++i) {
+        auto actor=actors[i];if(!actor || !*reinterpret_cast<void**>(actor+0x100))continue;
+        auto instance=*reinterpret_cast<unsigned char**>(actor+0x22c);if(!instance)continue;
+        auto colors=*reinterpret_cast<unsigned char**>(instance+0x38);
+        int size=*reinterpret_cast<int*>(instance+0x3c)*4;
+        if(colors && size>0 && size<4000000)result[ObjectName(actor)]={colors,colors+size};
+    }
+    if(bsp) {
+        auto model=*reinterpret_cast<unsigned char**>(level+0x13c);
+        auto textures=*reinterpret_cast<unsigned char**>(model+0xe0);
+        for(int i=0;i<*reinterpret_cast<int*>(model+0xe4);++i) {
+            auto compressed=textures+i*0x70+0x14;
+            using Load=unsigned char*(__thiscall*)(void*,int);
+            auto pixels=reinterpret_cast<Load>(0x111b2400)(compressed,0);
+            int size=*reinterpret_cast<int*>(compressed+0x14);
+            if(pixels && size>0 && size<=2048*2048*4)result["bsp_"+std::to_string(i)]={pixels,pixels+size};
+        }
+    }
+    return result;
+}
+int lightingAnswer=IDNO;
+bool lightingAnswered=false;
+void CALLBACK AnswerLighting(HWND,UINT,UINT_PTR,DWORD) {
+    auto dialog=WorkflowProbe::FindDialog("Recalculate Lighting");
+    if(dialog) {lightingAnswered=true;SendMessage(GetDlgItem(dialog,lightingAnswer),BM_CLICK,0,0);}
+}
+bool ChooseLighting(int answer) {
+    lightingAnswer=answer;lightingAnswered=false;
+    auto timer=SetTimer(nullptr,0,50,AnswerLighting);
+    SendMessage(frameWindow,WM_COMMAND,40929,0);
+    KillTimer(nullptr,timer);
+    return lightingAnswered;
+}
 namespace {
 #include "NativeRecoveryMenuProbe.h"
 
@@ -938,6 +1039,8 @@ void RunTest() {
     traceLeafLights=GetPrivateProfileIntA("test","trace_leaf_lights",0,configuration.c_str())!=0;
     traceLighting=GetPrivateProfileIntA("test","trace_lighting",0,configuration.c_str())!=0;
     relightCookedMeshes=GetPrivateProfileIntA("test","relight_cooked_meshes",0,configuration.c_str())!=0;
+    allLeafLightCandidates=GetPrivateProfileIntA("test","all_leaf_light_candidates",0,configuration.c_str())!=0;
+    skipMeshShadowOcclusion=GetPrivateProfileIntA("test","skip_mesh_shadow_occlusion",0,configuration.c_str())!=0;
     inspectCookedOnly=GetPrivateProfileIntA("test","inspect_cooked_only",0,configuration.c_str())!=0;
     compactionEnabled=GetPrivateProfileIntA("test","compact_points",0,configuration.c_str())!=0;
     char pointText[128]={},actorText[128]={};
@@ -983,10 +1086,17 @@ void RunTest() {
             Record("FAIL", "Fresh-process ordinary source load failed."); return;
         }
         Snapshot("fresh_normal_reopen");
+        const bool verifyLighting=GetPrivateProfileIntA("test","verify_preserved_lighting",0,configuration.c_str())!=0;
+        auto originalLighting=verifyLighting ? ReadLightingBytes(false) : LightingBytes{};
         if (!Rebuild() || !HasGeometry()) {
             Record("FAIL", "Fresh-process source rebuild failed."); return;
         }
         Snapshot("fresh_normal_rebuild");
+        auto rebuiltLighting=verifyLighting ? ReadLightingBytes(true) : LightingBytes{};
+        if(verifyLighting && (originalLighting.empty() || originalLighting!=ReadLightingBytes(false)
+            || !Exec("LIGHT APPLY") || rebuiltLighting!=ReadLightingBytes(true))) {
+            Record("FAIL","Default rebuild or ordinary lighting command changed protected mesh lighting.");return;
+        }
         const auto saved = directory.parent_path()/"Packages"/"MapsEd"/std::filesystem::path(source).filename();
         auto mainFrame=*reinterpret_cast<unsigned char**>(0x1165E80C);
         using SetFilename=void(__thiscall*)(void*,const char*);
@@ -995,6 +1105,16 @@ void RunTest() {
         SendMessageA(frameWindow,WM_COMMAND,40007,0);
         if (!Exec("MAP NEW") || !Exec("MAP LOAD FILE=\""+saved.string()+"\"") || !HasGeometry()) {
             Record("FAIL", "Fresh-process source save/reopen failed."); return;
+        }
+        DescribeLighting("after_saved_reopen");
+        DescribeBspLighting("after_saved_reopen");
+        if(verifyLighting) {
+            if(rebuiltLighting!=ReadLightingBytes(true)) {Record("FAIL","Preserved mesh/BSP lighting changed during File Save/reopen.");return;}
+            if(!ChooseLighting(IDNO) || rebuiltLighting!=ReadLightingBytes(true)) {Record("FAIL","Cancelling recalculation changed lighting.");return;}
+            if(!ChooseLighting(IDYES) || rebuiltLighting==ReadLightingBytes(true)) {Record("FAIL","Explicit lighting recalculation did not replace the bake.");return;}
+            auto recalculated=ReadLightingBytes(true);
+            if(!Exec("LIGHT APPLY") || recalculated!=ReadLightingBytes(true)) {Record("FAIL","New bake was not protected after explicit recalculation.");return;}
+            Record("preserved_lighting","Exact mesh preservation, BSP/mesh save roundtrip, cancellation, explicit recalculation and resumed protection verified.");
         }
         if (!Exec("MAP EXPORT FILE=\"" + (directory / "fresh_source.t3d").string() + "\"")) {
             Record("FAIL", "Fresh-process source export failed."); return;

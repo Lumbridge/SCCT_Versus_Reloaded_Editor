@@ -600,9 +600,11 @@ Json PreviewTagRename(const Json& identity,const std::string& newTag)
 void RenameTag(const Json& preview)
 {
     auto fresh=PreviewTagRename(preview.at("actor"),preview.at("new"));
-    if(fresh!=preview)throw std::runtime_error("The map or its links changed after the preview. Review the rename again.");
+    auto original=preview;original.erase("excluded");
+    if(fresh!=original)throw std::runtime_error("The map or its links changed after the preview. Review the rename again.");
+    const auto selected=SelectedTagChanges(preview);
     auto slots=TagSlots();std::vector<TagSlot> changes;std::set<Address> owners;
-    for(const auto& change:preview.at("changes"))
+    for(const auto& change:selected)
     {
         auto actor=ResolveIdentity(change.at("actor"));
         auto found=std::find_if(slots.begin(),slots.end(),[&](const TagSlot& s){return s.actor==actor && s.property==change.at("property").get<std::string>() && s.value==change.at("before").get<std::string>();});

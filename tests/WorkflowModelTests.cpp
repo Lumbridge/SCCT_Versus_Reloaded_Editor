@@ -11,6 +11,13 @@ int main()
 {
     try
     {
+        Json rename={{"changes",Json::array({{{"property","Tag"}},{{"property","Tag"}},{{"property","Event"}},{{"property","Groups[0].EventGroup[0].Event"}}})}};
+        Check(SelectedTagChanges(rename).size()==4,"rename includes all assignments by default");
+        rename["excluded"]={1,3};auto partial=SelectedTagChanges(rename);
+        Check(partial.size()==2 && partial[0]["property"]=="Tag" && partial[1]["property"]=="Event","selectively exclude tags and nested events");
+        rename["excluded"]={0,1};Reject([&]{SelectedTagChanges(rename);},"rename requires a target tag");
+        for(const auto& bad:{Json::array({-1}),Json::array({4}),Json::array({1,1}),Json::array({1.5}),Json::array({"1"})})
+        {rename["excluded"]=bad;Reject([&]{SelectedTagChanges(rename);},"invalid exclusions rejected");}
         std::string text="Begin Map\nBegin Actor Class=Engine.Trigger Name=A\n Tag=OpenDoor\n Event=CloseDoor\n Message=\"Actor'MyLevel.B'\"\n Target=Actor'\"MyLevel.B\"'\n Begin Object Class=Engine.Object Name=Owned\n Target=Actor'MyLevel.B'\n End Object\n Location=(X=0,Y=0,Z=0)\nEnd Actor\nBegin Actor Class=Engine.Mover Name=B\n Tag=CloseDoor\n Event=OpenDoor\nEnd Actor\nEnd Map\n";
         auto actors=ParseActors(text);Check(actors.size()==2,"parse actors with owned subobject");
         Check(References(text).size()==2,"do not treat authored strings as typed references");

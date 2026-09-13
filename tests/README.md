@@ -1,5 +1,11 @@
 # Regression tests
 
+## Map packaging and selective Tag renaming
+
+Run `tools\test_map_package.cmd` from an x86 Visual Studio developer prompt after installing the manifest dependencies. The packaging suite covers compressed and raw SCCT package tables, older name encodings, transitive/cyclic dependencies, missing and ambiguous packages, texture counterparts, byte-identical base comparisons, exclusions, stale files, archive paths, and no-overwrite publication. `MapPackageTests.exe <game-root> <playable-map> [new-zip]` also supports read-only inspection or packaging of real maps.
+
+The workflow model and native suites cover excluded Tag/Event assignments, stale previews, partial rename undo, and the actual popup checkboxes. Native screenshots include `tag_rename_exclusions.bmp` and `map_package_preview.bmp`. The packaging dialog check scans a saved playable map and verifies that its checkbox cannot be cleared.
+
 ## Editing workflow tools
 
 The SMagicEvent workbench adds model validation tests plus native fixtures for
@@ -240,8 +246,19 @@ cooked/imported/built/reopened stages in `System/lighting_*`. The trace includes
 -RelightCookedMeshes` additionally refreshes mesh render data and runs native
 mesh shadow-mask generation and colour baking against the original BSP in the
 disposable editor. This diagnostic skips the full lighting command, BSP rebuild and map save.
+Lighting traces also include per-light shadow-mask visibility and before/after
+snapshots around an ordinary full rebuild. Add `-AllLeafLightCandidates` to the
+mesh-only diagnostic to test candidate gathering independently of spatial leaf
+membership; add `-SkipMeshShadowOcclusion` to isolate shadow rejection. Both
+experiments restore temporary actor state and do not save a map.
 The current OffsD findings and remaining limitations are recorded in
 [MapRecoveryLightingStatus.md](MapRecoveryLightingStatus.md).
+`-ReopenOnly -VerifyPreservedLighting` checks a recovered source with nontrivial
+lighting: mesh bytes must survive an ordinary build, mesh/BSP bytes must survive
+File Save/reopen, cancelling Recalculate Lighting must change nothing, accepting
+it must replace the bake, and later ordinary lighting commands must preserve the
+replacement. `-TraceLighting` also dumps BSP atlas bytes before/after the build
+and after saving/reopening for independent comparison.
 Ordinary recovery verifies strip-door topology, rest lengths, fixed anchors,
 physical settings and all exported authored actor properties at import, build
 and reopening. Decorative sheet tests check native polygon acceptance and

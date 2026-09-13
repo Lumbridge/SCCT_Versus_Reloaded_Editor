@@ -71,6 +71,10 @@ nlohmann::json MagicSchema()
 }
 std::string formName;
 bool cancelTagPreview=false;
+std::string excludeTagEntity;
+std::filesystem::path previewScreenshot;
+void Screenshot(HWND window,const std::filesystem::path& path);
+bool packagePreviewChecked=false;
 HWND FindDialog(const char* title)
 {
     struct Search { const char* title;HWND result; } search{title,nullptr};
@@ -93,6 +97,34 @@ void CALLBACK Answer(HWND,UINT,UINT_PTR,DWORD)
         if(!strcmp(cls,"#32770") && GetDlgItem(w,IDOK))
         {
             char title[256]{};GetWindowTextA(w,title,256);
+            if(!strcmp(title,"Select saved playable map (save/build your edits first)"))
+            {
+                packagePreviewChecked=true;
+                SendMessage(w,WM_COMMAND,IDCANCEL,0);
+                return TRUE;
+            }
+            if(!strcmp(title,"Package Map for Sharing"))
+            {
+                if(IsWindowEnabled(GetDlgItem(w,103)))
+                {
+                    packagePreviewChecked=IsWindowEnabled(GetDlgItem(w,IDOK)) && ListView_GetItemCount(GetDlgItem(w,100))>0;
+                    ListView_SetCheckState(GetDlgItem(w,100),0,FALSE);
+                    packagePreviewChecked=packagePreviewChecked && ListView_GetCheckState(GetDlgItem(w,100),0);
+                    if(!previewScreenshot.empty())Screenshot(w,previewScreenshot);
+                    SendMessage(w,WM_COMMAND,IDCANCEL,0);
+                }
+                return TRUE;
+            }
+            if(strstr(title,"Tag") && !excludeTagEntity.empty())
+            {
+                auto list=GetDlgItem(w,1000);char controlClass[100]{};GetClassNameA(list,controlClass,100);
+                if(!strcmp(controlClass,WC_LISTVIEWA))for(int row=0;row<ListView_GetItemCount(list);++row)
+                {
+                    char actor[2048]{};LVITEMA item{};item.iSubItem=0;item.pszText=actor;item.cchTextMax=sizeof(actor);SendMessageA(list,LVM_GETITEMTEXTA,row,reinterpret_cast<LPARAM>(&item));
+                    if(excludeTagEntity==actor)ListView_SetCheckState(list,row,FALSE);
+                }
+                if(!previewScreenshot.empty())Screenshot(w,previewScreenshot);
+            }
             SendMessage(w,WM_COMMAND,cancelTagPreview && strstr(title,"Tag")?IDCANCEL:IDOK,0);
         }
         return TRUE;
@@ -321,6 +353,15 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
         bool collision=false;try{call({{"op","tag.preview"},{"actor",linkInstance["members"][1]},{"tag",tag0}});}catch(const std::exception&){collision=true;}require(collision,"rename rejects a Tag already used by another group");
         bool invalid=false;try{call({{"op","tag.preview"},{"actor",linkInstance["members"][1]},{"tag","None"}});}catch(const std::exception&){invalid=true;}require(invalid,"rename rejects None without disconnecting targets");
         bool stale=false;try{call({{"op","tag.rename"},{"preview",sharedPreview}});}catch(const std::exception&){stale=true;}require(stale,"stale rename previews are rejected without mutation");
+        auto partialPreview=call({{"op","tag.preview"},{"actor",linkInstance["members"][1]},{"tag","WorkflowPartial"}});
+        partialPreview["excluded"]=J::array();
+        for(size_t i=0;i<partialPreview["changes"].size();++i)
+            if(partialPreview["changes"][i]["actor"]["path"]!=linkInstance["members"][1]["path"] || partialPreview["changes"][i]["property"]!="Tag")partialPreview["excluded"].push_back(i);
+        call({{"op","tag.rename"},{"preview",partialPreview}});
+        require(currentTag(linkInstance["members"][1])=="WorkflowPartial" && currentTag(linkInstance["members"][2])=="WorkflowSharedRenamed","partial rename leaves excluded actor unchanged");
+        auto remaining=call({{"op","connections"},{"actor",magicInstance["members"][0]["path"]}});
+        require(remaining.size()==magicEdges.size()-1,"excluded nested event still targets the unrenamed group member");
+        Exec("TRANSACTION UNDO");require(currentTag(linkInstance["members"][1])=="WorkflowSharedRenamed" && call({{"op","connections"},{"actor",magicInstance["members"][0]["path"]}})==magicEdges,"undo restores partial rename and connections");
         std::ofstream(directory/"workflow_actors.json")<<actors.dump(2);
         J members=J::array();for(const auto& a:actors) if(a.at("class")=="Engine.Brush" && a.at("path")!=actors.at(1).at("path")) members.push_back(a);
         require(!members.empty(),"authored brush selected for assembly");
@@ -403,6 +444,10 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
         require(call({{"op","connections"},{"actor",magicInstance["members"][0]["path"]}})==magicEdges,"graph rename dialog preserves dependent links");
         WorkflowProbe::cancelTagPreview=true;WorkflowProbe::Click(graph,112,"CancelledTag");WorkflowProbe::cancelTagPreview=false;
         require(currentTag(linkInstance["members"][1])=="GraphSharedRenamed","cancelling graph rename preview leaves Tags unchanged");
+        WorkflowProbe::previewScreenshot=directory/"tag_rename_exclusions.bmp";
+        WorkflowProbe::excludeTagEntity=linkInstance["members"][2]["path"].get<std::string>();WorkflowProbe::Click(graph,112,"GraphPartialRenamed");WorkflowProbe::excludeTagEntity.clear();WorkflowProbe::previewScreenshot.clear();
+        require(currentTag(linkInstance["members"][1])=="GraphPartialRenamed" && currentTag(linkInstance["members"][2])=="GraphSharedRenamed","popup checkbox excludes an entity from shared tag rename");
+        Exec("TRANSACTION UNDO");require(currentTag(linkInstance["members"][1])=="GraphSharedRenamed","popup partial rename is one undo operation");
         WorkflowProbe::Click(graph,109); // fit the searched node's island
         WorkflowProbe::Screenshot(graph,directory/"workflow_graph_island.bmp");
         SendMessage(GetDlgItem(graph,100),CB_SETCURSEL,0,0);SendMessage(graph,WM_COMMAND,MAKEWPARAM(100,CBN_SELCHANGE),0);WorkflowProbe::Click(graph,107);
@@ -446,6 +491,15 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
         std::ofstream(directory/"magic_setpiece.json")<<savedMagic.dump(2);
         call({{"op","select"},{"actors",J::array({setEvent})}});SendMessage(frameWindow,WM_COMMAND,40927,0);auto setWindow=WorkflowProbe::FindDialog("SMagicEvent Workbench");require(setWindow!=nullptr,"set piece opens in the same workbench");WorkflowProbe::Screenshot(setWindow,directory/"magic_setpiece_workbench.bmp");SendMessage(setWindow,WM_CLOSE,0,0);
         require(reinterpret_cast<Save>(0x10E0416B)(*reinterpret_cast<void**>(kEditor),destination)!=0,"save final workflow map for restart test");
+        auto playable=directory.parent_path()/"Packages"/"Maps"/std::filesystem::path(destination).filename();
+        WorkflowProbe::previewScreenshot=directory/"map_package_preview.bmp";WorkflowProbe::packagePreviewChecked=false;
+        auto packageTimer=SetTimer(nullptr,0,50,WorkflowProbe::Answer);
+        call({{"op","package.preview"},{"map",playable.string()}});KillTimer(nullptr,packageTimer);WorkflowProbe::previewScreenshot.clear();
+        require(WorkflowProbe::packagePreviewChecked,"packaging dialog scans the saved map and keeps the playable map checked");
+        WorkflowProbe::packagePreviewChecked=false;
+        packageTimer=SetTimer(nullptr,0,50,WorkflowProbe::Answer);
+        SendMessage(frameWindow,WM_COMMAND,40928,0);KillTimer(nullptr,packageTimer);
+        require(WorkflowProbe::packagePreviewChecked,"File menu packaging command opens its map chooser");
         std::ofstream(directory/"workflow_result.json")<<J({{"view",view},{"instance",instance}}).dump(2);
         Record("PASS","Native workflow replacement, connections, views, assembly insertion and in-place updates, undo/redo, rebuild and save/reopen verified.");
     }

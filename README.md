@@ -9,6 +9,8 @@ An unofficial editor patch for Splinter Cell: Chaos Theory Versus, compatible wi
 | **Compiled-map recovery** | Turns compiled maps into editable brushes, actors, and assets. |
 | **SMagicEvent Workbench** | Edit event groups, triggers, actions, and timing in one panel. |
 | **Gameplay Connections** | View actor links in a list or graph, jump to connected actors, and rename Tags with their linked events. |
+| **Selective Tag renaming** | Uncheck individual actor Tags or linked Event assignments before renaming a shared group. |
+| **Map packaging** | Create a playable-map ZIP with dependencies, map-selection images, and an installation report. |
 | **Working Views** | Save and restore viewport cameras, display settings, and visibility. |
 | **Actor Assemblies** | Save groups of actors and brushes, edit their contents, and reuse them across maps. |
 | **Find Usages** | Find where textures and meshes are used, then replace selected assignments. |
@@ -29,6 +31,17 @@ Download the ZIP from [Releases](https://github.com/Lumbridge/SCCT_Versus_Reload
 Recovered maps, including Clarity Soft, are available in [SCCT-Maps](https://github.com/Lumbridge/SCCT-Maps).
 
 <details>
+<summary>Package a map for sharing</summary>
+
+Save/build your latest edits, then choose **File > Package Map for Sharing...** and select the saved playable `.sdc` from `Packages/Maps`. Review the dependency list and choose **Create ZIP...**. The archive keeps the game's folder layout and includes `MapPackage-README.txt` with installation instructions and dependencies.
+
+All discovered asset files are checked initially. Use **Exclude base files...** with a separate base installation to uncheck byte-identical dependencies, or uncheck files manually when recipients already have them. Omitted dependencies remain listed as required in the report. The playable map always stays included.
+
+Missing, ambiguous, unreadable, or changed dependencies prevent packaging. The scan follows package imports and includes the map's `-i` image package when present; files loaded only through script string paths may need to be supplied separately. Existing ZIPs are never overwritten. Archives are limited to 4 GB and currently require a destination filesystem that supports hard links, such as NTFS.
+
+</details>
+
+<details>
 <summary>Map recovery instructions</summary>
 
 
@@ -36,7 +49,9 @@ Save your work, then choose **File > Recover Compiled Map...**. Recovery can tak
 
 The editable copy goes in `Packages/MapsEd`, the playable copy in `Packages/Maps`, and any extracted mesh assets in `Packages/StaticMeshes`. Keep those assets with the map when sharing it. Reports and T3D exports are saved in `Packages/MapsEd/Recovery`.
 
-Recovery is experimental. Original brush history cannot be restored, reconstructed geometry may be fragmented, and later lighting rebuilds can change the appearance. Check the result in the editor and in game. Use **File > Convert Legacy Recovered Map...** for files made by the older recovery mode.
+Recovered source maps preserve their existing baked lighting by default, including after reopening the editor. Ordinary builds retain mesh colours and transfer BSP lighting onto matching rebuilt surfaces. **Build > Recalculate Lighting...** explicitly replaces the bake after confirmation; subsequent builds protect that new bake. New surfaces or incompatible mesh vertex layouts use recalculated lighting. Geometry and light changes can leave preserved lighting outdated; review the result and use the explicit action when needed. If an earlier build already darkened a map, recover again from the original compiled file to restore its bake.
+
+Recovery is experimental. Original brush history cannot be restored and reconstructed geometry may be fragmented. Check the result in the editor and in game. Use **File > Convert Legacy Recovered Map...** for files made by the older recovery mode.
 
 </details>
 
@@ -53,6 +68,6 @@ if ($LASTEXITCODE -ne 0) { throw 'Release build failed' }
 ./tools/package_release.ps1
 ```
 
-The three-file release ZIP is written to `bin/Reloaded_Editor.zip`. See [tests/README.md](tests/README.md) for test instructions.
+The three-file release ZIP is written to `bin/Reloaded_Editor.zip`. Packaging downloads the unchanged AllyPal v1.2 launcher and verifies both archive and executable SHA-256 hashes. To use a local copy of that exact launcher, pass `-LauncherPath 'path/to/Reloaded_Editor.exe'`. The newly built DLL supplies the editor updates; packaging does not use the rebuilt launcher. See [tests/README.md](tests/README.md) for test instructions.
 
 </details>

@@ -16,6 +16,8 @@ namespace Workflow
     struct ActorText { std::string name, type, text; };
     struct Reference { std::string type, path; size_t begin{}, end{}; };
     std::string Fold(std::string value);
+    // Exclusions identify exact preview rows; never accept replacement changes.
+    Json SelectedTagChanges(const Json& preview);
     std::string Id();
     std::string Timestamp();
     Json ReadDocument(const std::filesystem::path& path, const Json& empty);

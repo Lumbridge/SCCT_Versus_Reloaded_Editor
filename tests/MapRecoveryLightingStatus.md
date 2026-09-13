@@ -2,6 +2,98 @@
 
 Updated 13 September 2026. Follow-up testing confirmed that the Play Level profile issue and recovered-map Play Here crash are no longer present. The notes below record the earlier lighting and visibility investigation; later results supersede the test plans and open questions in older entries.
 
+## Default preservation during ordinary builds (13 September)
+
+Recovered source maps now protect their existing bake automatically. Recognition
+uses the recovery's serialized structural brush/model identities, so reopening
+or saving under another filename does not depend on a session flag or filename
+convention. Initial recovery keeps its original capture/transfer pipeline.
+
+The editor captures BSP lighting on source load, before brush edits can replace
+the old render sections. Ordinary MAP/BSP builds rebuild chart structures and
+transfer the captured lighting to matching surfaces, restore compatible mesh
+colour streams, and commit the platform lighting cache. A single session
+snapshot avoids repeated resampling from successive build results. New surfaces
+and incompatible vertex layouts keep their newly calculated lighting. The Build
+menu flags that a preserved bake may be outdated after geometry/light edits.
+
+Ordinary LIGHT APPLY preserves the bake. Build > Recalculate Lighting explicitly
+runs the native bake after confirmation and replaces the protected baseline.
+This is a preservation policy, **not a fix for the native bake's darkening**.
+An already darkened saved map needs recovery from the original compiled map to
+recover its original colours.
+
+Native testing on OffsD_Recovered_12 verified all 629 mesh colour streams remain
+byte-identical across an ordinary full rebuild. All mesh streams and 14 rebuilt
+BSP atlas textures remain byte-identical across File Save/reopen. Cancelling
+recalculation leaves all bytes intact; accepting it changes the bake, and an
+ordinary lighting command then preserves that replacement. The generated fixture
+also passes initial recovery, geometry editing, saving and reopening. Workflow
+tests pass initial/restarted processes, including the actual File packaging menu.
+
+The source-load test exposed an inactive platform binding: render-section+2C
+is the secondary Xbox lightmap index and can exceed the PC atlas count. Native
+BuildRenderData at 110D1500 compares it only on platform 1. Capture now follows
+that condition instead of treating an unused Xbox index as a PC atlas.
+
+Verified runs: `scct-source-recovery-bd363945940746df9a7e523e794c3f6a` (OffsD, final load-time capture),
+`scct-source-recovery-dd6aa512a8f649c78c022ab250552413` (geometry edit), and
+`scct-source-recovery-1bd4ca48e63844d2b48593188dad0f8b` (workflows/restart).
+
+## Fresh rebuild and light-candidate isolation (13 September)
+
+The ordinary source rebuild still reproduces the darkening. An isolated
+`-ReopenOnly -TraceLighting` run on `OffsD_Recovered_12.sdc` loaded the preserved
+bake, ran the native geometry/BSP/lighting/path build with the normal actor-state
+bracket and platform cache finalizer, then saved and reopened successfully.
+`lighting_before_normal_build` and `lighting_after_normal_build` record the
+actual colour buffers before and after that build.
+
+Additional original-BSP tests used the native mesh Illuminate and colour-baking
+functions. `-AllLeafLightCandidates` temporarily supplies every valid BSP leaf
+to each mesh's candidate gathering, then restores its real leaf membership.
+`-SkipMeshShadowOcclusion` additionally disables the mesh's shadow-occlusion
+test only during that diagnostic call; its original flags are restored.
+These switches require `-RelightCookedMeshes`, affect only the isolated probe,
+and never save the experimental lighting.
+
+Mean stored RGB component values:
+
+| Actor | Original bake | Full source rebuild | Original BSP, all leaf candidates | All candidates, no shadow occlusion |
+| --- | ---: | ---: | ---: | ---: |
+| StaticMeshActor266 | 3.543 | 0 | 0 | 0.549 |
+| StaticMeshActor273 | 7.667 | 0 | 0 | 0.511 |
+| Mover10 | 39.860 | 3.519 | 51.076 | 51.076 |
+
+The crate meshes have ScaleGlow=1. Native shadow records for Light1567 and
+Light1616 contain no visible vertices in the ordinary original-BSP relight.
+Supplying all leaves also considers Light3332 and Light1607, but their masks
+are likewise empty. Disabling occlusion makes vertices visible while still
+producing substantially less colour than the original bake. Mover10 gains
+Light1548 against the original BSP; this contribution is absent after the
+source rebuild.
+
+A separate cooked-file inspection also checked the static-mesh asset colour
+stream and the native bake's multiply-vertex-colours setting. `fac_woodbox`
+has 105 asset colours and multiplication is disabled, so an extra multiplication
+by dark asset colours does not explain these crates' loss. The trace now records
+this setting and dumps the asset colour stream alongside instance colours.
+
+These results rule out candidate-list expansion or disabling occlusion alone
+as a complete fix. They do not establish whether the original authoring data,
+build settings, or a different lighting calculation supplied the missing
+contribution. No production lighting change has been made from these experiments.
+Matching a fresh bake still needs investigation; preserving an existing bake
+is a separate behaviour choice rather than a demonstrated recalculation fix.
+
+Isolated results for this investigation:
+
+- Ordinary rebuild: `scct-source-recovery-ad6fb33e39724a2bb00c0edab248a3a9`
+- Original-BSP relight: `scct-source-recovery-bb5b149fc53c44ed8934c45c11e5650b`
+- All leaf candidates: `scct-source-recovery-1a360ef27dfa4dcba92d8cd336d80141`
+- All candidates, unoccluded: `scct-source-recovery-b8c6929e45a946d5b533484dcdc423dc`
+- Asset colour inspection: `scct-source-recovery-ed95152aa6b04f158eed9457a8cc3f4e`
+
 ## Current window visibility and map-check results
 
 Separate solid-side portal visit records fixed office-window visibility in

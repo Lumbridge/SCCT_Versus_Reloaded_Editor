@@ -23,7 +23,10 @@ param(
     [switch]$StepCookedSoftBodies,
     [switch]$TraceLeafLights,
     [switch]$TraceLighting,
+    [switch]$VerifyPreservedLighting,
     [switch]$RelightCookedMeshes,
+    [switch]$AllLeafLightCandidates,
+    [switch]$SkipMeshShadowOcclusion,
     [switch]$InspectCookedOnly,
     [switch]$CompactPoints,
     [string]$TracePoint,
@@ -31,11 +34,14 @@ param(
     [string[]]$ExtraAssetPackage = @()
 )
 $ErrorActionPreference = 'Stop'
+if ($VerifyPreservedLighting -and !$ReopenOnly) { throw 'VerifyPreservedLighting requires ReopenOnly and a recovered source with nontrivial lighting.' }
 if ($StepCookedSoftBodies -and !$TraceSoftBodies) { throw 'StepCookedSoftBodies requires TraceSoftBodies.' }
 if ($RecoveryMenu -and ($GenerateFixture -or $ReopenOnly -or $ImportTextOnly -or $ExpectRecoveryFailure -or $WorkflowTools)) { throw 'RecoveryMenu requires a standalone compiled map recovery test.' }
 $repository = Split-Path -Parent $PSScriptRoot
 $nativeDll = (Resolve-Path -LiteralPath $EditorDll).Path
 if ($RelightCookedMeshes -and (!$InspectCookedOnly -or !$TraceLighting)) { throw 'RelightCookedMeshes requires InspectCookedOnly and TraceLighting.' }
+if ($AllLeafLightCandidates -and !$RelightCookedMeshes) { throw 'AllLeafLightCandidates requires RelightCookedMeshes.' }
+if ($SkipMeshShadowOcclusion -and !$RelightCookedMeshes) { throw 'SkipMeshShadowOcclusion requires RelightCookedMeshes.' }
 if ($ImportBaseline -and !$GenerateFixture) { throw 'ImportBaseline requires GenerateFixture.' }
 if ($ImportTextOnly -and ($GenerateFixture -or $ReopenOnly -or $ExpectRecoveryFailure -or $EditGeometry)) { throw 'ImportTextOnly requires a standalone T3D input.' }
 if ($BuildImportedText -and !$ImportTextOnly) { throw 'BuildImportedText requires ImportTextOnly.' }
@@ -138,7 +144,10 @@ fpu_bounds_probe=$([int][bool]$FpuBoundsProbe)
 step_cooked_soft_bodies=$([int][bool]$StepCookedSoftBodies)
 trace_leaf_lights=$([int][bool]$TraceLeafLights)
 trace_lighting=$([int][bool]$TraceLighting)
+verify_preserved_lighting=$([int][bool]$VerifyPreservedLighting)
 relight_cooked_meshes=$([int][bool]$RelightCookedMeshes)
+all_leaf_light_candidates=$([int][bool]$AllLeafLightCandidates)
+skip_mesh_shadow_occlusion=$([int][bool]$SkipMeshShadowOcclusion)
 inspect_cooked_only=$([int][bool]$InspectCookedOnly)
 compact_points=$([int][bool]$CompactPoints)
 trace_point=$TracePoint

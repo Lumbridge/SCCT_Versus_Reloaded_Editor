@@ -130,6 +130,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     LightCullFix::Initialize();
     BspLeafLightFix::Initialize();
     BspCollisionFix::Initialize();
+    MapRecovery::InitializeLightingProtection();
     ProjectorDetachFix::Initialize();
     SizingBoxFix::Initialize();
     LightmapPacker::Initialize();

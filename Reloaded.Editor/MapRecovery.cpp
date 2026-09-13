@@ -10,6 +10,7 @@
 #include "RecoveredBspLighting.h"
 #include "RecoveredSoftBodySettings.h"
 #include "BspCollisionFix.h"
+#include "MemoryWriter.h"
 #include "logger.h"
 
 #include <commdlg.h>
@@ -25,6 +26,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+namespace { bool lightingProtectionSuspended = false; void PrimeRecoveredLighting(); }
 
 #pragma comment(lib, "comdlg32.lib")
 
@@ -1255,7 +1258,7 @@ namespace
     }
 
     bool TransferMeshLighting(void* level, RecoveredLighting& lighting,
-                             bool restore, std::string& error)
+                             bool restore, std::string& error, const char* embeddedPackage = nullptr)
     {
         const RawArray actors = ReadRawArray(level, kLevelActorsDataOffset);
         if (!IsValidArray(actors))
@@ -1279,7 +1282,7 @@ namespace
             if (!mesh || !instance || !IsValidArray(colors)
                 || colors.count <= 0
                 || (!restore && colors.count != static_cast<int>(expected.colors.size()))
-                || !FormatExternalObjectPath(mesh, meshPath, sizeof(meshPath))
+                || !FormatExternalObjectPath(mesh, meshPath, sizeof(meshPath), embeddedPackage)
                 || _stricmp(meshPath, expected.meshPath.c_str()) != 0)
             {
                 if (mesh) FormatExternalObjectPath(mesh, meshPath, sizeof(meshPath));
@@ -3009,6 +3012,9 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
                                   const std::filesystem::path& destination,
                                   std::string& error)
 {
+    const bool previousSuspension = lightingProtectionSuspended;
+    lightingProtectionSuspended = true;
+    struct ResumeProtection { bool previous; ~ResumeProtection() { lightingProtectionSuspended = previous; } } resume{previousSuspension};
     error.clear();
     try
     {
@@ -3528,10 +3534,12 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
         report << "Compatible original baked mesh colours are preserved during conversion; mismatched vertex counts "
                   "use verified recalculated lighting. Original BSP lighting is resampled "
                   "onto matching rebuilt surfaces, with atlas-content checks after saving and reopening. "
-                  "Unmatched chart texels retain recalculated lighting. A later lighting rebuild recalculates "
-                  "lighting and may differ from the original compiled bake.\n";
+                  "Unmatched chart texels retain recalculated lighting. Ordinary builds preserve the existing bake. "
+                  "Use Build > Recalculate Lighting explicitly to replace it; a fresh bake may differ from the original.\n";
         std::string reportError;
         if (!WriteTextFile(scratch / "Recovery.txt", report.str(), reportError)) Logger::log(reportError);
+        lightingProtectionSuspended = previousSuspension;
+        PrimeRecoveredLighting();
         return true;
     }
     catch (const std::exception& exception)
@@ -3555,3 +3563,179 @@ void MapRecovery::Run(HWND owner) { ChooseSourceRecovery(owner, false); }
 void MapRecovery::RunEditable(HWND owner) { Run(owner); }
 void MapRecovery::OpenRecovered(HWND owner) { ChooseSourceRecovery(owner, true); }
 void MapRecovery::ExportRecoveredBrushes(HWND owner) { OpenRecovered(owner); }
+
+namespace
+{
+    using ProtectedExec = int(__thiscall*)(void*, const char*, void*);
+    ProtectedExec lightingPreviousExec = nullptr;
+    void* lightingLevel = nullptr;
+    bool protectedSource = false, lightingReentry = false;
+    std::shared_ptr<RecoveredBspLighting::Snapshot> buildLighting;
+
+    bool LightingCommand(const char* text, const char* prefix)
+    {
+        if (!text) return false;
+        while (*text == ' ' || *text == '\t') ++text;
+        const size_t size = strlen(prefix);
+        return !_strnicmp(text, prefix, size)
+            && (!text[size] || text[size] == ' ' || text[size] == '\t');
+    }
+    void* LightingLevel()
+    {
+        auto editor = *reinterpret_cast<unsigned char**>(kGEditor);
+        return editor ? ReadRaw<void*>(editor, kEditorLevelOffset) : nullptr;
+    }
+    void LightingNotice(bool review)
+    {
+        auto frame = *reinterpret_cast<unsigned char**>(0x1165DF84);
+        auto window = frame ? ReadRaw<HWND>(frame, 4) : nullptr;
+        auto menu = window ? GetMenu(window) : nullptr;
+        if (menu)
+        {
+            ModifyMenuA(menu, MapRecovery::kRecalculateLightingCommandId, MF_BYCOMMAND | MF_STRING,
+                MapRecovery::kRecalculateLightingCommandId, review
+                ? "Recalculate Lighting... (preserved bake may be outdated)" : "&Recalculate Lighting...");
+            DrawMenuBar(window);
+        }
+    }
+    void ResetBuildLighting()
+    {
+        lightingLevel = nullptr; protectedSource = false; buildLighting.reset();
+        LightingNotice(false);
+    }
+    bool RecoveredSourceLighting()
+    {
+        auto level = LightingLevel();
+        if (!level || lightingProtectionSuspended || MapRecovery::UsesRecoveredBspLayout()) return false;
+        if (level == lightingLevel) return protectedSource;
+        ResetBuildLighting(); lightingLevel = level;
+        const auto actors = ReadRawArray(level, kLevelActorsDataOffset);
+        if (!IsValidArray(actors)) return false;
+        // Structural brush/model identities are serialized in the map, survive
+        // Save As and restart, and also identify source recoveries made before
+        // this protection existed. Do not infer recovery from a map filename.
+        for (int i = 0; i < actors.count; ++i)
+        {
+            auto actor = reinterpret_cast<unsigned char* const*>(actors.data)[i];
+            char actorName[256]{}, modelName[256]{};
+            if (!actor || ReadRaw<void*>(actor, 0x24) != reinterpret_cast<void*>(0x1181B048)) continue;
+            auto brush = ReadRaw<void*>(actor, 0x238);
+            if (brush && CopyObjectName(actor, actorName, sizeof(actorName))
+                && CopyObjectName(brush, modelName, sizeof(modelName))
+                && (!strncmp(actorName, "RecoveredVolume", 15) || !strncmp(modelName, "RecoveredModel", 14)))
+            { protectedSource = true; break; }
+        }
+        return protectedSource;
+    }
+    bool LightingAssetPath(void* object, char* path, size_t size, const char*)
+    {
+        return FormatExternalObjectPath(object, path, size, "MyLevel");
+    }
+    void PrimeRecoveredLighting()
+    {
+        if (!RecoveredSourceLighting()) return;
+        // Capture before brush edits can replace the original render sections.
+        // The snapshot owns its bytes and carries no engine object pointers.
+        std::string error;
+        buildLighting = RecoveredBspLighting::Capture(CurrentModel(), LightingAssetPath, "MyLevel", error);
+        if (!buildLighting) Logger::log("RecoveredLighting: could not capture loaded bake: " + error);
+    }
+    void CommitMeshLighting()
+    {
+        auto editor = *reinterpret_cast<void**>(kGEditor);
+        auto context = *reinterpret_cast<unsigned char**>(kGSerializationContext);
+        if (!editor || !context) throw std::runtime_error("Cannot commit preserved mesh lighting to the current platform.");
+        using Commit = void(__thiscall*)(void*, int);
+        reinterpret_cast<Commit>(0x10E06605)(editor, ReadRaw<int>(context, 0x78));
+    }
+    int __fastcall PreserveBuildLighting(void* self, void*, const char* command, void* output)
+    {
+        if (lightingReentry) return lightingPreviousExec(self, command, output);
+        if (LightingCommand(command, "MAP LOAD") || LightingCommand(command, "MAP NEW")
+            || LightingCommand(command, "MAP IMPORT"))
+        {
+            ResetBuildLighting();
+            int result = lightingPreviousExec(self, command, output);
+            if (result && LightingCommand(command, "MAP LOAD")) PrimeRecoveredLighting();
+            return result;
+        }
+        if (lightingProtectionSuspended) return lightingPreviousExec(self, command, output);
+        const bool geometry = LightingCommand(command, "MAP REBUILD") || LightingCommand(command, "BSP REBUILD");
+        const bool light = LightingCommand(command, "LIGHT APPLY");
+        if ((!geometry && !light) || !RecoveredSourceLighting()) return lightingPreviousExec(self, command, output);
+        if (light)
+        {
+            Logger::log("RecoveredLighting: preserved existing bake. Use Build > Recalculate Lighting to replace it.");
+            LightingNotice(true);
+            return 1;
+        }
+        try
+        {
+            std::string error;
+            auto level = LightingLevel();
+            if (!buildLighting) buildLighting = RecoveredBspLighting::Capture(CurrentModel(), LightingAssetPath, "MyLevel", error);
+            if (!buildLighting) throw std::runtime_error(error);
+            RecoveredLighting meshes;
+            if (!CaptureMeshLighting(level, "MyLevel", meshes, error)) throw std::runtime_error(error);
+            lightingReentry = true;
+            struct Finish { ~Finish() { RecoveredBspLighting::Deactivate(); lightingReentry = false; } } finish;
+            if (!lightingPreviousExec(self, command, output)) throw std::runtime_error("Geometry build failed.");
+            // Geometry rebuilds discard chart bindings. Rebuild those structures
+            // synchronously and reproject from the session's pre-build bake;
+            // reusing that snapshot avoids cumulative resampling on each build.
+            RecoveredBspLighting::Activate(buildLighting);
+            if (!lightingPreviousExec(self, "LIGHT APPLY", output)
+                || !RecoveredBspLighting::Result(buildLighting, error, true)
+                || !TransferMeshLighting(level, meshes, true, error, "MyLevel"))
+                throw std::runtime_error(error.empty() ? "Could not restore existing lighting." : error);
+            CommitMeshLighting();
+            LightingNotice(true);
+            Logger::log("RecoveredLighting: preserved mesh colours and matching BSP lighting after geometry build. "
+                "Review lighting after geometry or light edits; unmatched surfaces use the new bake.");
+            return 1;
+        }
+        catch (const std::exception& e)
+        {
+            Logger::log(std::string("RecoveredLighting: build failed: ") + e.what());
+            MessageBoxA(nullptr, (std::string("Lighting preservation failed. Do not save this build; reopen your saved map.\n\n")
+                + e.what()).c_str(), "Recovered Lighting", MB_OK | MB_ICONERROR);
+            return 0;
+        }
+    }
+}
+
+void MapRecovery::InitializeLightingProtection()
+{
+    constexpr uintptr_t slot = 0x1147B9B4;
+    lightingPreviousExec = *reinterpret_cast<ProtectedExec*>(slot);
+    auto hook = &PreserveBuildLighting;
+    if (!MemoryWriter::WriteBytes(slot, &hook, sizeof(hook)))
+        Logger::log("RecoveredLighting: could not install build protection.");
+}
+
+void MapRecovery::RecalculateLighting(HWND owner)
+{
+    if (!LightingLevel()) return;
+    if (MessageBoxA(owner,
+        "Replace this map's existing baked lighting with a fresh calculation?\n\n"
+        "Recovered maps may become darker. Save a backup first. Geometry and light edits may require "
+        "a new bake; ordinary builds preserve existing lighting on recovered maps.",
+        "Recalculate Lighting", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
+    auto editor = *reinterpret_cast<unsigned char**>(kGEditor);
+    auto output = *reinterpret_cast<void**>(kGWarn);
+    struct Array { void* data{}; int count{}, capacity{}; } first, second;
+    using Bracket = void(__thiscall*)(void*, void*, void*);
+    reinterpret_cast<Bracket>(0x10E06A1A)(editor, &first, &second);
+    const int ok = lightingPreviousExec(editor + 0x28, "LIGHT APPLY", output);
+    reinterpret_cast<Bracket>(0x10E02EEC)(editor, &first, &second);
+    try
+    {
+        if (!ok) throw std::runtime_error("The lighting calculation failed.");
+        CommitMeshLighting();
+        buildLighting.reset();
+        PrimeRecoveredLighting();
+        LightingNotice(false);
+        Logger::log("RecoveredLighting: explicit recalculation completed; future builds preserve the new bake.");
+    }
+    catch (const std::exception& e) { MessageBoxA(owner, e.what(), "Recalculate Lighting", MB_OK | MB_ICONERROR); }
+}

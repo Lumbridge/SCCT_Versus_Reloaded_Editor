@@ -360,4 +360,25 @@ Json PreparePlacement(const Json& definition,const Pose& frame,const std::string
     }
     result["t3d"]=t3d+"End Map\n"; return result;
 }
+Json SelectedTagChanges(const Json& preview)
+{
+    const auto& changes=preview.at("changes");
+    auto excluded=preview.value("excluded",Json::array());
+    if(!excluded.is_array())throw std::runtime_error("Invalid tag exclusions.");
+    std::set<size_t> indices;
+    for(const auto& value:excluded)
+    {
+        if(!value.is_number_unsigned() && !value.is_number_integer())throw std::runtime_error("Invalid tag exclusion index.");
+        auto index=value.get<int64_t>();
+        if(index<0 || static_cast<uint64_t>(index)>=changes.size() || !indices.insert(static_cast<size_t>(index)).second)
+            throw std::runtime_error("Invalid or duplicate tag exclusion index.");
+    }
+    Json selected=Json::array();bool target=false;
+    for(size_t i=0;i<changes.size();++i)if(!indices.count(i))
+    {
+        selected.push_back(changes[i]);if(changes[i].at("property")=="Tag")target=true;
+    }
+    if(!target)throw std::runtime_error("Keep at least one actor Tag checked.");
+    return selected;
+}
 }
