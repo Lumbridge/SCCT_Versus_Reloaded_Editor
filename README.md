@@ -22,7 +22,7 @@ All listed features are included in current Release builds. See below for the re
 
 ## Install
 
-Recovered map files: [Clarity Soft (ClarD)](maps/Clarity-Soft).
+Recovered map files: [Clarity Soft (ClarD)](https://github.com/Lumbridge/SCCT-Maps/tree/feature/map-collection/recovered/Clarity%20Soft).
 
 - Copy the built patch files, or extract a release archive, into the game's `System` directory, where `ChaosTheory_Editor.exe` is located.
 - Run `Reloaded_Editor.exe` and check that the title bar displays **Reloaded Chaos Theory Editor** to confirm the patch is active.
