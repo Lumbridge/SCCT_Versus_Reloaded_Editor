@@ -38,7 +38,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Release build failed' }
 ./tools/package_release.ps1
 ```
 
-The archive is written to `bin/Reloaded_Editor.zip`. Use `-ArchivePath` to choose a new filename for subsequent builds. It contains the editor DLL, launcher, game renderer, this guide, license, and the optional Play Level guard script. The GitHub Actions build packages the same files. Play Level still requires a separately installed Reloaded Core and the manual guard step described below.
+The archive is written to `bin/Reloaded_Editor.zip`. Use `-ArchivePath` to choose a new filename for subsequent builds. It contains only `Reloaded_Editor.exe`, `Reloaded.Editor.dll` and `README.md`. The GitHub Actions build packages the same three files. Play Level requires a separately installed Reloaded Core and the manual guard step described below.
 
 Release builds also include Sound Browser diagnostics: hold **Shift** when opening sound Properties to dump the current package's sound flags, and inspect `Packages/Sounds/<map>.uas.buildlog.txt` after a streaming-audio build.
 
@@ -110,9 +110,9 @@ Use **View > Reset Property Window Positions** to bring misplaced property windo
 
 Play Level launches through `SCCT_Versus.exe`, which injects Reloaded. The editor supplies the raw game executable name before the map arguments because Reloaded's launcher forwards those arguments as the game's complete command line. Without that executable token, native startup discards the map URL. The map, game mode and selected team are preserved, and `HWND=0` gives the game its own window. `Reloaded.Core.dll` is required.
 
-Reloaded uses its own renderer and the existing `SCCT_Versus.config` settings. Its `labs_borderless_fullscreen` option keeps presentation windowed without changing the desktop display mode. The separate bundled `d3d8.dll` does not control Reloaded's renderer.
+Reloaded uses its own renderer and the existing `SCCT_Versus.config` settings. Its `labs_borderless_fullscreen` option keeps presentation windowed without changing the desktop display mode.
 
-The tested Reloaded v3.0a build needs guards for three recorded null dereferences: the scoreboard query, overlay callback and controller callback assume `SPlayerProfile` and its player owner exist. `tools/patch_reloaded_play_level.py` guards the query and defers the two callbacks until the level context, profile and owner are available. When they are available, the callbacks use their original implementations.
+The tested Reloaded v3.0a build needs guards for three recorded null dereferences: the scoreboard query, overlay callback and controller callback assume `SPlayerProfile` and its player owner exist. The optional [Play Level guard script](https://github.com/Lumbridge/SCCT_Versus_Reloaded_Editor/blob/main/tools/patch_reloaded_play_level.py), available in this repository, guards the query and defers the two callbacks until the level context, profile and owner are available. When they are available, the callbacks use their original implementations.
 
 The same patch fixes three unsafe filename copies in Reloaded's normal map selector. Longer custom map names could overwrite buffers allocated for a previously selected short name and crash during selection or loading. The selector now uses the stock game's string assignment to resize each buffer and update its length, including when selecting recovered maps.
 

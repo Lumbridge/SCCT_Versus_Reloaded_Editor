@@ -76,7 +76,7 @@ jobs:
       id: date
       run: '"current_date=$(Get-Date -Format yyyyMMddHHmmss)" >> $env:GITHUB_OUTPUT'
 
-    - name: Package all editor features and supporting tools
+    - name: Package editor release
       run: ./tools/package_release.ps1
 
     - uses: actions/upload-artifact@v4

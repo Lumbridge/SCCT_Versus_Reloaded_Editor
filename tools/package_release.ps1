@@ -5,16 +5,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
 
-# Package only the shipping binaries, never local test executables or stale DLLs.
+# Editor releases contain only the launcher, editor DLL and README.
 # Build Release|x86 before invoking this script.
 $files = [ordered]@{
     'Reloaded_Editor.exe' = Join-Path $BinaryDirectory 'Reloaded_Editor.exe'
     'Reloaded.Editor.dll' = Join-Path $BinaryDirectory 'Reloaded.Editor.dll'
-    'd3d8.dll' = Join-Path $BinaryDirectory 'd3d8.dll'
     'README.md' = Join-Path $repository 'README.md'
-    'LICENSE' = Join-Path $repository 'LICENSE'
-    'licenses/d3d8to9-LICENSE.md' = Join-Path $repository 'Reloaded.Editor/Include/d3d8to9/LICENSE.md'
-    'tools/patch_reloaded_play_level.py' = Join-Path $repository 'tools/patch_reloaded_play_level.py'
 }
 foreach ($source in $files.Values) {
     if (!(Test-Path -LiteralPath $source -PathType Leaf)) {

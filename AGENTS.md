@@ -8,3 +8,4 @@
 ## Release notes
 
 - Omit validation sections from future release notes.
+- Editor release archives contain only `Reloaded_Editor.exe`, `Reloaded.Editor.dll` and `README.md`.
