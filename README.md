@@ -50,7 +50,7 @@ Recovery targets the PC version of a map. It uses the compiled PC level's actual
 
 Zone/portal divider brushes are retained and hidden by default. Their boundaries preserve where ZoneInfo lighting, fog and sound settings apply, without cluttering the initial editing view. They remain ordinary editable brushes and participate in normal rebuilds. ZoneInfo actors and occlusion volumes are retained too.
 
-Recovery commits rebuilt per-object lighting to the editor's platform cache before saving, then checks that the baked mesh lighting survives ordinary reopening.
+Recovery preserves the compiled map's original baked mesh colours after building the source geometry. It checks mesh asset identities and vertex counts before restoring colours, commits them to the platform cache, and verifies every preserved colour byte after ordinary saving and reopening. If a matching mesh has a different render-vertex count, recovery keeps and verifies its newly calculated lighting instead, and records that fallback in the recovery report. For supported RGBA8 BSP lightmaps, recovery also resamples the original baked lighting onto matching rebuilt surfaces and checks atlas contents after reopening. Unmatched lightmap texels keep recalculated lighting. A later lighting rebuild recalculates lighting and may be darker than the original compiled bake; initial preservation does not resolve that rebuild discrepancy.
 
 Supported procedural strip-curtain doors are regenerated from their editable settings. Recovery checks their point connections, rest lengths, fixed anchors and physical settings against the original; moving cloth starts from its rest pose. Unsupported custom cloth constraints stop conversion. Embedded occlusion volumes are retained in the recovered asset package.
 
@@ -147,6 +147,11 @@ Select exactly one BSP surface, open its context menu, and choose **Copy Texture
 
 Pasting uses the editor's native undo path and preserves the Texture Browser's current material selection. The copied material is available within the current editor session while that material remains loaded.
 
+To find the brush behind a BSP face, select the face in a viewport, right-click it,
+and choose **Select Brush**. Its source brush becomes the actor selection in all
+viewports without moving the cameras. Multiple selected faces select each owning
+brush once. The action is disabled if a selected face has no editable source brush.
+
 ### Quick Grid Size Adjustment
 
 Hold **Ctrl** and scroll over a 2D or 3D level viewport to change the grid size. Scroll up selects the next larger grid preset; scroll down selects the next smaller one. Each wheel notch moves one preset, stopping at the smallest or largest size.
@@ -208,6 +213,69 @@ The Reloaded Editor increases all selectable lightmap resolutions by 2x. The pre
     </tr>
   </table>
 </div>
+
+### Editing workflow tools
+
+**View > SMagicEvent Workbench…** opens the dark event authoring window. Open an
+existing event from the event picker, actor context menu, or Gameplay Connections
+graph; new and existing events use the same live, undoable workflow.
+
+- Create an event, add groups, then create actors or search existing actors by
+  name, Tag or class. Attach multiple triggers with **Attach as trigger**, and
+  schedule targets with **Add action using actor**. The actor filter can show
+  participants, current map selection, or individual actor categories.
+- Drag actions to change their delay, or select an action and edit its precise
+  settings in the inspector. Snap uses 0.1 seconds. Duplicate, remove and reorder
+  groups/actions, zoom with Ctrl+wheel, scroll rows with the wheel, or Fit the
+  timeline. Removing actions and detaching triggers keeps their actors.
+- **Sequence** means one action per matching activation, not automatic playback
+  of a sequence. **Repeat** is -1 for disabled, 0 for unlimited cycles, or a
+  positive cycle limit. Delays are relative to activation. Type and ValidOn
+  expose the game's Trigger/Untrigger behaviour; selecting a setting explains
+  its meaning in the status bar. The timing preview is illustrative; use
+  **Play Level** to check gameplay, effects and audio.
+- The inspector prioritizes actor setup and category-specific settings for
+  movers, triggers, sounds, emitters and volumes, with other editable fields
+  under Advanced. Search also finds advanced categories. Apply or Enter commits
+  a field; enum choices commit on selection. Native undo groups each completed
+  edit or timeline drag into one operation.
+- Create damage volumes from the builder brush or a 256-unit box. Use transforms
+  and scale to position/resize them. Movers use mesh assets; **Capture key from
+  builder pose** records the builder's position/rotation into a selected
+  KeyPos[1] or later key, relative to the mover's base pose.
+- **Assets / actors / components…** searches loaded compatible references,
+  uses a selected map actor/Tag, adds particle emitter components, or opens their
+  properties. Load additional asset packages through the existing browsers.
+
+Gameplay data stays in native map actors. Splitter, zoom and snap preferences are
+stored separately in `System/ReloadedEditor/magic-workbench.json`. The workbench
+rejects stale edits after external changes and map switches. Native semantics and
+test coverage are documented in [tests/SMagicEventSemantics.md](tests/SMagicEventSemantics.md).
+
+The following native Windows panels are available in both Debug and Release:
+
+- **Find Usages…** in the Texture and Static Mesh browser context menus lists direct map assignments and indirect shared-asset dependencies. Select a replacement in the same browser, exclude individual rows, then use **Replace Checked…**. The selection scope uses the selection captured at Refresh. Shared mesh/material contents are read-only. BSP replacements update their source polygons and use one native undo operation per batch.
+- **View > Gameplay Connections…** lists incoming/outgoing authored actor references and Event/Tag relationships. Double-click a resolved relationship to select and focus its counterpart; use Follow Selection or Refresh to inspect another actor. Unmatched events are identified separately from optional null properties.
+- **View > Working Views…** saves level viewport cameras, display modes, zoom, show flags and editor visibility. Restore a view, adjust the workspace and choose **Update Selected from Current** to overwrite that same entry. Its name and identity remain unchanged. Save New, Rename and Delete are separate actions.
+- **Save Selection as Assembly…**, also available from the actor context menu, captures reusable actor/ordinary brush selections. **View > Actor Assemblies…** places them at a supplied position and rotation, with explicit choices for external actor bindings. Required asset packages remain external; rebuild BSP after inserting brushes.
+
+To update an assembly, choose **Edit Contents…** and select an existing tracked instance or place an editable copy. Edit actors normally, use **Add Selected** / **Remove Selected** to adjust membership, and **Save Changes…** to review and update the same library entry. Remove Selected leaves the actor in the map. **Update from Selection…** is a shortcut for replacing the saved contents with your current selection. Updates preserve the entry's name, identity and pivot; they affect future placements only. Cancel leaves the saved definition unchanged, while scene edits use ordinary editor undo.
+
+Versioned data is written atomically to `System/ReloadedEditor/library.json`; the map format is unchanged. Working views and instance membership are keyed by source-map path. Untitled-map views stay in memory until first save, and Save As copies them to the new identity. Deleted actors are skipped on restore. Keep the library when moving an editor installation. GE geometry and editor infrastructure are not assembly contents; legacy recovered BSP maps must first be converted to ordinary source maps.
+
+In **Gameplay Connections…**, click **Graph…** for a connection diagram:
+
+- **Selected Actor** shows incoming/outgoing neighbours; **Expand** adds another step, up to ten. Follow Selection tracks the actor selected in the level.
+- **Whole Level** lays out separate connection islands around their most-connected actor. Related branches spread outward in rings, with spacing that grows to accommodate busy event groups without wrapping into extra columns. Unconnected actors are hidden until **Show unconnected** is enabled. Islands reflect the current relationship and class filters.
+- Type icons identify lights, triggers, sound actors, movers and brushes, with a generic actor icon for other classes. Blue arrows indicate actor references, purple arrows indicate Event/Tag relationships, and orange warning nodes identify unresolved targets. Hover for actor paths or connection properties, including parallel links.
+- Actor nodes include their **Tag**, with the full value in hover details and tag matching in **Find Next**. Both the list and graph include `SMagicEvent.Groups[i].EventGroup[j].Event` links to actors with matching Tags. Every matching actor is retained, `None` is skipped, and unmatched names appear as unresolved targets. These links are included in the Event/Tag filter and island grouping.
+- Drag the canvas to pan, use the mouse wheel to zoom, and choose **Fit Graph** or click a node and **Fit Island**. Search the visible graph with **Find Next**. Double-click a node or use **Select and Focus** to navigate to its actor. Home fits the graph, arrow keys pan and Enter focuses the highlighted node.
+
+Right-click an actor node and choose **Rename Tag…** to rename its Tag and dependent current-map `Event` and `SMagicEvent.Groups[].EventGroup[].Event` assignments in one undoable operation. If several actors share the old Tag, **all actors in that group are renamed together**, preserving one-to-many relationships. The scrollable preview lists every changed assignment and highlights shared groups; Cancel changes nothing. New Tags must be unused, with 1–63 letters/digits/underscores, starting with a letter or underscore. `None`, case-only renames and stale previews are rejected. Assigning a Tag to a previously untagged actor does not redirect `None` events. Direct actor references remain unchanged, and saved assembly definitions are independent.
+
+The existing connection list remains available. Graph layout state is temporary; map fields change only when a Tag rename is confirmed. The graph supports up to 20,000 actors and 100,000 connections; large graphs may require zooming into an island for readable names.
+
+Build and test instructions are in [tests/README.md](tests/README.md#editing-workflow-tools). Clear the `SCCT` environment variable before building when you do not want the existing post-build deployment steps to copy binaries into your installed game. Rebuild the solution when switching Debug/Release, because its native renderer library shares the output directory.
 
 ### Increase Audio File Size Limit
 

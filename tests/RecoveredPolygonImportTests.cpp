@@ -147,6 +147,11 @@ namespace
     {
         const std::vector<Vec3> square{{0,0,0},{1,0,0},{1,1,0},{0,1,0}};
         assert(PreservesOutline(square,Prepare(square)));
+        const std::vector<Vec3> ede64 = {
+            {4608,1792,static_cast<float>(-5.6841697689859194e-14)},
+            {4608,2048,static_cast<float>(-5.6401050821906773e-14)},
+            {4608,2048,384},{4608,1792,384}};
+        assert(PreservesOutline(ede64,Prepare(ede64)));
         const std::vector<Vec3> straight{{0,0,0},{0.001f,0,0},{1,0,0},{1,1,0},{0,1,0}};
         assert(Prepare(straight).collapsedVertexCount==1);
         assert(PreservesOutline(straight,Prepare(straight)));

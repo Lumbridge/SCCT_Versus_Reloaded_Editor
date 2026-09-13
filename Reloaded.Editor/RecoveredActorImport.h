@@ -31,9 +31,9 @@ namespace RecoveredActorImport
         std::size_t clearedDeletedActorReferenceCount = 0;
         std::vector<std::string> unsupportedReferences;
         std::vector<ExternalizedAsset> externalizedAssets;
-        // Native procedural strip doors rebuild their level-owned simulation
+        // Native procedural strip doors and patches rebuild their level-owned simulation
         // from actor settings. Callers must also verify their native topology.
-        std::vector<std::string> regeneratedStripDoors;
+        std::vector<std::string> regeneratedSoftBodies;
     };
 
     // Targets PC: native PC runtime actor membership overrides stale platform

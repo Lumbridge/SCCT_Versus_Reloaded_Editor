@@ -7,6 +7,7 @@ param(
     [int]$TimeoutSeconds = 300,
     [switch]$PrepareOnly,
     [switch]$GenerateFixture,
+    [switch]$WorkflowTools,
     [switch]$ImportBaseline,
     [switch]$ReopenOnly,
     [switch]$RootOutside,
@@ -17,6 +18,8 @@ param(
     [switch]$RestoreTextNormals,
     [switch]$TraceSoftBodies,
     [switch]$TraceLeafLights,
+    [switch]$TraceLighting,
+    [switch]$RelightCookedMeshes,
     [switch]$InspectCookedOnly,
     [switch]$CompactPoints,
     [string]$TracePoint,
@@ -26,6 +29,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
 $nativeDll = (Resolve-Path -LiteralPath $EditorDll).Path
+if ($RelightCookedMeshes -and (!$InspectCookedOnly -or !$TraceLighting)) { throw 'RelightCookedMeshes requires InspectCookedOnly and TraceLighting.' }
 if ($ImportBaseline -and !$GenerateFixture) { throw 'ImportBaseline requires GenerateFixture.' }
 if ($ImportTextOnly -and ($GenerateFixture -or $ReopenOnly -or $ExpectRecoveryFailure -or $EditGeometry)) { throw 'ImportTextOnly requires a standalone T3D input.' }
 if ($BuildImportedText -and !$ImportTextOnly) { throw 'BuildImportedText requires ImportTextOnly.' }
@@ -101,7 +105,7 @@ $compileScript = Join-Path $testSystem 'compile_test.cmd'
 @if errorlevel 1 exit /b 1
 @cl /nologo /W4 /EHsc /std:c++20 /MT /O2 "$repository\tests\NativeMapRecoveryDriver.cpp" /Fe:"$testSystem\NativeMapRecoveryDriver.exe" /Fo:"$testSystem\NativeMapRecoveryDriver.obj" /link user32.lib
 @if errorlevel 1 exit /b 1
-@cl /nologo /W4 /EHsc /std:c++20 /MT /O2 /LD "$repository\tests\NativeMapRecoveryProbe.cpp" /Fe:"$testSystem\NativeMapRecoveryProbe.dll" /Fo:"$testSystem\NativeMapRecoveryProbe.obj" /link user32.lib
+@cl /nologo /W4 /EHsc /std:c++20 /MT /O2 /LD "$repository\tests\NativeMapRecoveryProbe.cpp" /Fe:"$testSystem\NativeMapRecoveryProbe.dll" /Fo:"$testSystem\NativeMapRecoveryProbe.obj" /link user32.lib gdi32.lib
 @exit /b %errorlevel%
 "@ | Set-Content -LiteralPath $compileScript -Encoding ascii
 & cmd.exe /d /c $compileScript
@@ -112,6 +116,7 @@ source=$inputMap
 destination=$outputMap
 editor_dll=$injectedDll
 generate_fixture=$([int][bool]$GenerateFixture)
+workflow_tools=$([int][bool]$WorkflowTools)
 import_baseline=$([int][bool]$ImportBaseline)
 reopen_only=$([int][bool]$ReopenOnly)
 root_outside=$([int][bool]$RootOutside)
@@ -122,6 +127,8 @@ build_imported_text=$([int][bool]$BuildImportedText)
 restore_text_normals=$([int][bool]$RestoreTextNormals)
 trace_soft_bodies=$([int][bool]$TraceSoftBodies)
 trace_leaf_lights=$([int][bool]$TraceLeafLights)
+trace_lighting=$([int][bool]$TraceLighting)
+relight_cooked_meshes=$([int][bool]$RelightCookedMeshes)
 inspect_cooked_only=$([int][bool]$InspectCookedOnly)
 compact_points=$([int][bool]$CompactPoints)
 trace_point=$TracePoint
@@ -138,6 +145,7 @@ if ($LASTEXITCODE) { throw "Isolated editor launch failed; files retained at $te
 $editorProcessId = [int]($launchedId | Select-Object -Last 1)
 $report = Join-Path $testSystem 'native_recovery_report.txt'
 $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+$workflowRestarted = $false
 try {
     while ([DateTime]::UtcNow -lt $deadline) {
         if (Test-Path -LiteralPath $report) {
@@ -145,6 +153,22 @@ try {
             if ($result -match '(?m)^(PASS|FAIL) ') {
                 Write-Output $result
                 if ($result -match '(?m)^FAIL ') { throw 'Native map recovery test failed.' }
+                if ($WorkflowTools -and !$workflowRestarted) {
+                    $owned = Get-Process -Id $editorProcessId -ErrorAction Stop
+                    if ($owned.Path -ne $testExecutable) { throw 'Unexpected isolated editor path.' }
+                    Stop-Process -Id $editorProcessId -Force
+                    $owned.WaitForExit(10000) | Out-Null
+                    Move-Item -LiteralPath $report -Destination (Join-Path $testSystem 'workflow_first_process_report.txt')
+                    $workflowConfig = Join-Path $testSystem 'native_recovery_test.ini'
+                    $workflowText = (Get-Content -LiteralPath $workflowConfig -Raw).Replace('generate_fixture=1','generate_fixture=0')
+                    Set-Content -LiteralPath $workflowConfig -Value ($workflowText + "`r`nworkflow_restart=1`r`n") -Encoding ascii
+                    $launchedId = & $driver $testExecutable $injectedDll $probe
+                    if ($LASTEXITCODE) { throw 'Workflow restart launch failed.' }
+                    $editorProcessId = [int]($launchedId | Select-Object -Last 1)
+                    $workflowRestarted = $true
+                    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+                    continue
+                }
                 return
             }
         }

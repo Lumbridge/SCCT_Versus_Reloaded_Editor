@@ -3,6 +3,7 @@
 
 #include "MemoryWriter.h"
 #include "logger.h"
+#include "WorkflowEditor.h"
 
 #include <cstring>
 
@@ -225,6 +226,13 @@ namespace
         if (applyPosition < 0)
             return menu;
 
+        bool canSelectBrush = false;
+        try { canSelectBrush = !Workflow::Editor::SelectedSurfaceBrushes().empty(); }
+        catch (const std::exception&) { /* Missing master polygons are normal on cooked BSP. */ }
+        AppendMenuA(context, MF_SEPARATOR, 0, nullptr);
+        AppendMenuA(context, MF_STRING | (canSelectBrush ? MF_ENABLED : MF_GRAYED),
+                    BspTextureClipboard::kSelectBrushCommandId, "Select &Brush");
+
         InsertMenuA(context, applyPosition,
                     MF_BYPOSITION | MF_STRING |
                         (canCopy ? MF_ENABLED : MF_GRAYED),
@@ -258,6 +266,20 @@ void BspTextureClipboard::PasteTexture()
 
     if (!ApplyCopiedMaterial(g_CopiedMaterial))
         Logger::log("BspTextureClipboard: POLY SETTEXTURE failed");
+}
+
+void BspTextureClipboard::SelectBrush()
+{
+    try
+    {
+        // Re-resolve after the popup closes; no pointers or selection are cached.
+        const auto brushes = Workflow::Editor::SelectedSurfaceBrushes();
+        Workflow::Editor::Select(brushes, false);
+    }
+    catch (const std::exception& e)
+    {
+        MessageBoxA(GetActiveWindow(), e.what(), "Select Brush", MB_OK | MB_ICONINFORMATION);
+    }
 }
 
 void BspTextureClipboard::Initialize()

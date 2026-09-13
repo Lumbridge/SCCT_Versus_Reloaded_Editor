@@ -157,6 +157,14 @@
     <ClInclude Include="MemoryWriter.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="WorkflowGraph.h" />
+    <ClInclude Include="WorkflowGraphModel.h" />
+    <ClInclude Include="WorkflowModel.h" />
+    <ClInclude Include="WorkflowEditor.h" />
+    <ClInclude Include="WorkflowTools.h" />
+    <ClInclude Include="MagicEventWorkbench.h" />
+    <ClInclude Include="MagicEventModel.h" />
+    <ClInclude Include="MagicEventNative.inl" />
     <ClInclude Include="StringOperations.h" />
     <ClInclude Include="SoundBrowser.h" />
     <ClInclude Include="TextureBrowser.h" />
@@ -170,6 +178,7 @@
     <ClInclude Include="DeintersectFix.h" />
     <ClInclude Include="MapUnlock.h" />
     <ClInclude Include="MapRecovery.h" />
+    <ClInclude Include="RecoveredBspLighting.h" />
     <ClInclude Include="RecoveredBspGeometry.h" />
     <ClInclude Include="RecoveredSurfacePartition.h" />
     <ClInclude Include="RecoveredPolygonImport.h" />
@@ -193,6 +202,11 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AmbientSoundZone.cpp" />
+    <ClCompile Include="WorkflowModel.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
+    <ClCompile Include="WorkflowEditor.cpp" />
+    <ClCompile Include="WorkflowGraph.cpp" />
+    <ClCompile Include="WorkflowTools.cpp" />
+    <ClCompile Include="MagicEventWorkbench.cpp" />
     <ClCompile Include="AnimationBrowser.cpp" />
     <ClCompile Include="BrowserOpenDir.cpp" />
     <ClCompile Include="BspDiagnostics.cpp" />
@@ -222,6 +236,7 @@
     <ClCompile Include="DeintersectFix.cpp" />
     <ClCompile Include="MapUnlock.cpp" />
     <ClCompile Include="MapRecovery.cpp" />
+    <ClCompile Include="RecoveredBspLighting.cpp" />
     <ClCompile Include="RecoveredBspGeometry.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>

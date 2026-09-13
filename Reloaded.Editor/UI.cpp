@@ -5,6 +5,7 @@
 #include "MapRecovery.h"
 #include "WindowDriftFix.h"
 #include "RebuildAllMaps.h"
+#include "WorkflowTools.h"
 
 INIT_HOOKS;
 
@@ -94,6 +95,15 @@ static void InjectReloadedMenuItems(HWND frame)
     HMENU view = SubMenuWithCommand(bar, 40065); // "Advanced Options" lives in View
     if (view)
     {
+        if (MenuPosByCommand(view, WorkflowTools::kViews) < 0)
+        {
+            AppendMenuA(view, MF_SEPARATOR, 0, nullptr);
+            AppendMenuA(view, MF_STRING, WorkflowTools::kConnections, "Gameplay &Connections...");
+            AppendMenuA(view, MF_STRING, 40927, "SMagicEvent Workbench...");
+            AppendMenuA(view, MF_STRING, WorkflowTools::kViews, "&Working Views...");
+            AppendMenuA(view, MF_STRING, WorkflowTools::kAssemblies, "Actor &Assemblies...");
+            AppendMenuA(view, MF_STRING, WorkflowTools::kSaveAssembly, "Save Selection as Assembly...");
+        }
         int pos = MenuPosByCommand(view, 19004); // after "Show Actor Class Browser"
         if (pos >= 0 && MenuPosByCommand(view, 40067) < 0)
             InsertMenuA(view, pos + 1, MF_BYPOSITION | MF_STRING, 40067, "Show &Animation Browser");

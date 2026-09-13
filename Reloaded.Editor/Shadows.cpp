@@ -7,6 +7,7 @@
 #include <cmath>
 #include <vector>
 #include "ShadowMapFilter.h"
+#include "RecoveredBspLighting.h"
 
 INIT_HOOKS;
 
@@ -133,6 +134,7 @@ static void FilterLightmapTexture(void* sourceBuffer, void* targetBuffer, const 
     // The filter allocates, and this runs under a naked hook that cannot unwind.
     try {
         ShadowMapFilter::ProcessLightmapAtlas(sourceBuffer, targetBuffer, rects);
+        RecoveredBspLighting::RestoreAtlas(targetBuffer, model, texture);
     }
     catch (...) {
     }
