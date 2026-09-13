@@ -1,5 +1,7 @@
 # OffsD lighting investigation — 12 September 2026
 
+> Status update — 13 September 2026: the user confirms that the Play Level profile limitation and recovered-map Play Here crash are no longer current limitations. References below describe the earlier investigation.
+
 ## Confirmed window visibility and map-check findings
 
 User confirms the office-window visibility issue is fixed by the separate

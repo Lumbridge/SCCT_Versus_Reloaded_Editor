@@ -202,11 +202,7 @@ revision reproduced the overlay crash. The initialized scoreboard cases exclude
 the unrelated settings-persistence call. These isolated checks do not establish
 complete profile initialization or control parity.
 
-Timed live launches under a debugger reached the selected level and accepted
-keyboard input with the guards installed. Memory inspection showed that direct
-Play Level startup still had no `SPlayerProfile`; normal frontend startup did
-construct one. Overlay/controller deferral therefore persists in direct playtests.
-Full Reloaded controls and other profile-dependent behavior remain unfinished.
+Earlier timed debugger launches reached the selected level and accepted keyboard input, but recorded missing profile initialization and deferred callbacks. These are historical findings: on 13 September 2026 the user confirmed that the Play Level profile limitation and recovered-map Play Here crash are no longer current limitations.
 
 End-to-end verification additionally requires a live editor playtest with both
 updated editor DLL installed and the guarded Reloaded Core present: the selected level should load,

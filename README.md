@@ -11,14 +11,14 @@ This is my fork of [AllyPal's Reloaded Editor](https://github.com/AllyPal/SCCT_V
 | [Compiled-map recovery](#compiled-map-recovery-experimental) | Recover cooked maps into normal source maps with editable geometry, actors and assets. | Included |
 | [BSP and crash diagnostics](#bsp-and-crash-diagnostics) | Investigate failed builds and work with BSP point indices beyond the stock signed 16-bit limit. | Included |
 | [Property-window fixes](#property-window-fixes) | Bring misplaced property windows back into view. | Included |
-| [Play Level compatibility (experimental)](#play-level-compatibility-experimental) | Launch editor playtests through Reloaded with startup guards; profile setup remains incomplete. | Included |
+| [Play Level compatibility](#play-level-compatibility) | Launch editor playtests through Reloaded with startup guards. | Included |
 | [Texture Browser Favorites](#texture-browser-favorites) | Keep frequently used materials together in a persistent thumbnail tab. | Included |
 | [Static Mesh Browser Favorites](#static-mesh-browser-favorites) | Browse saved meshes across packages without repeatedly switching package filters. | Included |
 | [BSP texture copy and paste](#bsp-texture-copy-and-paste) | Reuse a surface's material on other surfaces while retaining their alignment. | Included |
 | [Quick grid size adjustment](#quick-grid-size-adjustment) | Change the grid preset with **Ctrl + mouse wheel** directly over a level viewport. | Included |
 | [Builder-brush repair](#builder-brush-repair) | Rebuild a missing or damaged builder brush as a default cube. | Included |
 
-**Availability:** Release builds from this checkout include every feature listed above, including the tools previously labelled Local development. Older release archives do not gain these features automatically. Compiled-map recovery and Play Level retain the experimental limitations described below.
+**Availability:** Release builds from this checkout include every feature listed above, including the tools previously labelled Local development. Older release archives do not gain these features automatically. Compiled-map recovery retains the experimental limitations described below.
 
 ## Install
 
@@ -107,21 +107,19 @@ to 65,535, and journals when either threshold is crossed.
 
 Use **View > Reset Property Window Positions** to bring misplaced property windows back to the current editor monitor while preserving their size and visibility.
 
-### Play Level Compatibility (Experimental)
-
-**Play Level remains experimental and incomplete.** The guarded launch has loaded the selected level and accepted keyboard input during a timed live test, but direct editor startup does not create `SPlayerProfile`. Full Reloaded controls and profile-dependent features are therefore not restored. The remaining work is to initialize and load the player's profile before enabling those callbacks; the guards alone do not complete that setup.
+### Play Level Compatibility
 
 Play Level uses `SCCT_Versus.exe` to inject Reloaded rather than bypassing its launcher. The editor supplies the raw game executable name before the map arguments because Reloaded's launcher forwards those arguments as the game's complete command line. Without that executable token, native startup discards the map URL. The map, game mode and selected team are preserved, and `HWND=0` gives the game its own window. `Reloaded.Core.dll` is required.
 
 Reloaded uses its own renderer and the existing `SCCT_Versus.config` settings. Its `labs_borderless_fullscreen` option keeps presentation windowed without changing the desktop display mode. The separate bundled `d3d8.dll` does not control Reloaded's renderer.
 
-The tested Reloaded v3.0a build needs guards for three recorded null dereferences: the scoreboard query, overlay callback and controller callback assume `SPlayerProfile` and its player owner exist. `tools/patch_reloaded_play_level.py` guards the query and defers the two callbacks until the level context, profile and owner are available. When they are available, the callbacks use their original implementations. During direct Play Level startup the profile remains absent, so those callbacks remain deferred.
+The tested Reloaded v3.0a build needs guards for three recorded null dereferences: the scoreboard query, overlay callback and controller callback assume `SPlayerProfile` and its player owner exist. `tools/patch_reloaded_play_level.py` guards the query and defers the two callbacks until the level context, profile and owner are available. When they are available, the callbacks use their original implementations.
 
 The same patch fixes three unsafe filename copies in Reloaded's normal map selector. Longer custom map names could overwrite buffers allocated for a previously selected short name and crash during selection or loading. The selector now uses the stock game's string assignment to resize each buffer and update its length, including when selecting recovered maps.
 
 With the game closed, run `python tools/patch_reloaded_play_level.py "<System>/Reloaded.Core.dll" --check` to verify compatibility, then use `--apply` to install the fixes. The script accepts the supported original build or earlier guard revisions, verifies the entire original DLL hash, preserves an unmodified `.before-play-level-guard.bak` backup, and refuses unknown builds. It does not change `SCCT_Versus.config`. Restore the backup with the game closed to undo the fixes. This is a separate, manual step: building the editor does not patch Reloaded Core automatically. The repository contains the patch script, not a redistributed Core DLL.
 
-Validation includes 24 isolated CPU checks for the recorded failures, scoreboard behavior and callback readiness transitions, plus timed launches under a debugger. These establish the current partial behavior; they do not establish parity with normal Reloaded startup. See [test instructions](tests/README.md).
+Validation includes 24 isolated CPU checks for the recorded failures, scoreboard behavior and callback readiness transitions, plus timed launches under a debugger. See [test instructions](tests/README.md).
 
 Playtests render at the current display resolution by default. The editor generates `System/Reloaded_PlayLevel.ini` from the game's `Default.ini`, sets all three native viewport resolution pairs, and supplies it through the game's `INI=` argument. This changes the actual game resolution instead of stretching a 640×480 render; the original configuration is left intact. An explicit `INI=` argument is respected. To use a fixed playtest resolution, add `ResolutionX=1920` and `ResolutionY=1080` under `[PlayLevel]` in `System/Reloaded_Editor.ini`. Set both to `0` to follow the display again.
 
