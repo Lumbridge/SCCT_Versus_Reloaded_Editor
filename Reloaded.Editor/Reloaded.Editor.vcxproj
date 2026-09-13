@@ -179,6 +179,7 @@
     <ClInclude Include="MapUnlock.h" />
     <ClInclude Include="MapRecovery.h" />
     <ClInclude Include="RecoveredBspLighting.h" />
+    <ClInclude Include="RecoveredSoftBodySettings.h" />
     <ClInclude Include="RecoveredBspGeometry.h" />
     <ClInclude Include="RecoveredSurfacePartition.h" />
     <ClInclude Include="RecoveredPolygonImport.h" />
@@ -189,6 +190,8 @@
     <ClInclude Include="DdsImportFix.h" />
     <ClInclude Include="LightCullFix.h" />
     <ClInclude Include="BspLeafLightFix.h" />
+    <ClInclude Include="BspCollisionFix.h" />
+    <ClInclude Include="CollisionBox.h" />
     <ClInclude Include="BspLeafLightTable.h" />
     <ClInclude Include="ProjectorDetachFix.h" />
     <ClInclude Include="SizingBoxFix.h" />
@@ -257,6 +260,7 @@
     <ClCompile Include="DdsImportFix.cpp" />
     <ClCompile Include="LightCullFix.cpp" />
     <ClCompile Include="BspLeafLightFix.cpp" />
+    <ClCompile Include="BspCollisionFix.cpp" />
     <ClCompile Include="ProjectorDetachFix.cpp" />
     <ClCompile Include="SizingBoxFix.cpp" />
     <ClCompile Include="EngineLog.cpp" />

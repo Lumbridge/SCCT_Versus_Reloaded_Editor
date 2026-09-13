@@ -27,6 +27,7 @@
 #include "DdsImportFix.h"
 #include "LightCullFix.h"
 #include "BspLeafLightFix.h"
+#include "BspCollisionFix.h"
 #include "ProjectorDetachFix.h"
 #include "SizingBoxFix.h"
 #include "MapRecovery.h"
@@ -128,6 +129,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     DdsImportFix::Initialize();
     LightCullFix::Initialize();
     BspLeafLightFix::Initialize();
+    BspCollisionFix::Initialize();
     ProjectorDetachFix::Initialize();
     SizingBoxFix::Initialize();
     LightmapPacker::Initialize();

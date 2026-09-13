@@ -4,15 +4,15 @@ d3d8to9
 [![GitHub Actions Status](https://github.com/crosire/d3d8to9/actions/workflows/build.yml/badge.svg)](https://github.com/crosire/d3d8to9/actions/workflows/build.yml)
 [![AppVeyor Status](https://ci.appveyor.com/api/projects/status/aqupdda60ixgenyd?svg=true)](https://ci.appveyor.com/project/crosire/d3d8to9)
 
-This is a pseudo-driver module that intends to improve compatibility and stability in games using Direct3D 8 for rendering by converting all API calls and low-level shaders to equivalent Direct3D 9 ones. By that it also opens those games to new possibilities from proven modding tools written for Direct3D 9, including [ReShade](http://reshade.me).
+d3d8to9 translates Direct3D 8 API calls and low-level shaders to Direct3D 9. This lets Direct3D 8 games use Direct3D 9 modding tools, including [ReShade](http://reshade.me).
 
-Note that d3d8to9 does exact translation from Direct3D 8 to Direct3D 9 only. But on recent versions of Windows, depending on system settings, GPU drivers and other factors, rendering behavior in Direct3D 9 using d3d8to9 may differ from native Direct3D 8. One common issue is VSync getting enabled with d3d8to9, even though it appears inactive in native Direct3D 8, despite the application enabling it. This may give an inaccurate impression of lower performance with d3d8to9, while it actually follows what the application requests. If you want to tweak this behavior, such as forcing VSync to be off, it is recommended to use a separate tool, such as [dxwrapper](https://github.com/elishacloud/dxwrapper), which uses d3d8to9 internally for API call conversion, but adds additional configuration opportunities.
+d3d8to9 translates the calls as requested by the game. Windows settings and GPU drivers can still produce different results from native Direct3D 8. For example, a game may request VSync but only get it when running through d3d8to9, making the frame rate appear lower. To override settings such as VSync, use [dxwrapper](https://github.com/elishacloud/dxwrapper), which adds configuration options around d3d8to9.
 
 ## Building
 
-You'll need Visual Studio 2013 or higher to build d3d8to9. It is recommended to install the old standalone DirectX end-user runtime, which is required for the D3DX libraries used for disassembling and assembling the shaders.
+You'll need Visual Studio 2013 or higher to build d3d8to9. Install the old standalone DirectX end-user runtime for the D3DX libraries used to disassemble and assemble shaders.
 
-A quick overview of what some of the source code files contain:
+Source files:
 
 |File                                                      |Description                                                                      |
 |----------------------------------------------------------|---------------------------------------------------------------------------------|
@@ -24,9 +24,9 @@ A quick overview of what some of the source code files contain:
 
 ## Contributing
 
-Any contributions to the project are welcomed, it's recommended to use GitHub [pull requests](https://help.github.com/articles/using-pull-requests/).
+Submit changes through GitHub [pull requests](https://help.github.com/articles/using-pull-requests/).
 
-A big shout-out to all the existing [contributors](https://github.com/crosire/d3d8to9/graphs/contributors) who worked on improving compatibility, especially [elishacloud](https://github.com/elishacloud)!
+Thanks to the [contributors](https://github.com/crosire/d3d8to9/graphs/contributors) who improved compatibility, especially [elishacloud](https://github.com/elishacloud).
 
 ## License
 

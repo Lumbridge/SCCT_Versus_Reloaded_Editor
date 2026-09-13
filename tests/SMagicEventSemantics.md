@@ -1,4 +1,4 @@
-# SMagicEvent native contract
+# SMagicEvent engine behaviour
 
 Verified against `ChaosTheory_Editor.exe`, SHA-256
 `BCE63AA2F44ACBB5104DAD09B00325CF32AE6A38EFE97AB2EBF6A44DCB9819A3`.
@@ -14,14 +14,14 @@ transaction buffer snapshots the owning actor, including its nested arrays.
 ## Activation and timing
 
 `SMagicEvent.NativeTrigger` resolves to the native thunk at `0x111d30f0`.
-Its group loop at `0x111d31ab` establishes these rules:
+The group loop at `0x111d31ab` works as follows:
 
 - Groups with Repeat <= -1 do nothing. Zero allows unlimited cycles. Positive
   values decrement after a cycle; reaching zero changes the counter to -1.
 - Sequence=False visits all EventGroup entries on each incoming activation.
 - Sequence=True visits the current SequenceIndex entry only. It advances on a
   matching activation and wraps after the last entry; only wrapping consumes a
-  repeat. This is **not** a cumulative-delay timeline or automatic timed loop.
+  repeat. Each step needs an activation; delays do not accumulate between steps.
 - ValidOn=EVT_Trigger accepts Trigger; EVT_Untrigger accepts Untrigger. Both
   combined enum values accept either activation. A nonmatching sequential entry
   does not advance the index.
@@ -29,8 +29,7 @@ Its group loop at `0x111d31ab` establishes these rules:
   copy whose due time is Level.TimeSeconds + Delay (`0x111d327b`, `0x111d339a`).
   Every action scheduled by the same activation shares that time origin.
 - The queue inserts at its front and dispatches through the update routine at
-  `0x111d2ff0`. Do not promise stable authored ordering for equal-time queued
-  events. Use distinct delays where order matters.
+  `0x111d2ff0`. Queued events with equal times may run in a different order from the editor list. Use distinct delays where order matters.
 - Triggering from StopActor clears the pending queue.
 
 Dispatch at `0x111d2f10` handles the four Type enum values:
@@ -53,7 +52,7 @@ origins, Repeat consumption, Sequence advancement, and ValidOn filtering.
 
 ## Creation and editing
 
-- Actor creation uses the existing verified native paste path within one
+- Actor creation uses the native paste function in one
   transaction, including position restoration and event wiring.
 - CLASS_Abstract is bit 0 at UClass +0x8c, checked by StaticAllocateObject at
   `0x10fada50`. Abstract classes are omitted from creation pickers.
@@ -62,10 +61,10 @@ origins, Repeat consumption, Sequence advancement, and ValidOn filtering.
   are retained. Volumes are actors, not additive/subtractive level geometry.
 - Movers in this build are mesh actors, not Brush subclasses. KeyPos/KeyRot and
   NumKeys are reflected authored arrays despite not carrying CPF_Edit. The
-  workbench explicitly exposes them and Location/Rotation; other noneditable
+  workbench lets you edit them and Location/Rotation; other noneditable
   properties remain hidden. Capture uses the builder's world pose relative to
   the mover's base pose derived from its current key.
-- Particle components use the existing verified StaticConstructObject entry at
+- Particle components use StaticConstructObject at
   `0x10fadf80`, with a transactional owning emitter and engine-managed reference
   array. Only map-owned, currently referenced components can be edited.
 - Engine names are normalized to remove diagnostic `§(index)` annotations
@@ -73,16 +72,15 @@ origins, Repeat consumption, Sequence advancement, and ValidOn filtering.
 
 ## Limits and regression coverage
 
-Authoring limits are 4096 entries per array, 100,000 values per reflected root,
-12 levels of nesting, bounded strings, and finite delays from 0 to 86400 seconds.
+The limits are 4096 entries per array, 100,000 values per reflected root,
+and 12 levels of nesting. Strings have length limits, and delays must be finite
+values from 0 to 86400 seconds.
 Unsupported properties are reported without writing them. Runtime group
 SequenceIndex is retained but not offered as an editable control.
 
 Run `tools/test_workflow_tools.cmd` and the isolated `-WorkflowTools` harness.
-The harness retains schema diagnostics, screenshots, activation evidence, and a
-seven-actor set piece with two triggers. It checks compound undo/redo and exact
+The harness saves schema diagnostics, screenshots, activation logs, and a
+seven-actor test scene with two triggers. It checks compound undo/redo and exact
 editable-property equality after a full save/reopen, then edits that reopened
-event through the same bridge. It also exercises the actual workbench's group
-button and timeline drag. Gameplay rendering/audio should additionally be
-checked through Play Level; the workbench preview intentionally never executes
-gameplay in the editing scene.
+event through the same bridge. It also tests the workbench's group button and timeline drag. Check rendering
+and audio through Play Level; the workbench preview does not run gameplay.

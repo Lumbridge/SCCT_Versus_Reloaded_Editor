@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "CollisionBox.h"
 #include "StaticMeshCollisionFix.h"
 #include "Hooks.h"
 #include "MemoryWriter.h"
@@ -99,9 +100,24 @@ bool StaticMeshCollisionFix::WasCollisionTruncated()
     return g_SMCollisionNodeCapHit != 0;
 }
 
+static void* __fastcall ConstructCollisionBox(void* destination, void*, const float* first, const float* second)
+{
+    if (CollisionBox::FromEndpoints(static_cast<float*>(destination), first, second)) return destination;
+    // Keep the engine's diagnostics for invalid input. Only the compressed
+    // collision decoder uses this replacement; other FBox callers are unchanged.
+    using Constructor = void*(__thiscall*)(void*, const float*, const float*);
+    return reinterpret_cast<Constructor>(0x10EC26E0)(destination, first, second);
+}
+
 void StaticMeshCollisionFix::Initialize()
 {
     INSTALL_HOOKS;
+
+    constexpr uintptr_t boxCall = 0x11172427;
+    const unsigned char expected[] = {0xE8, 0x51, 0x1A, 0xC9, 0xFF};
+    if (!memcmp(reinterpret_cast<const void*>(boxCall), expected, sizeof(expected)))
+        MemoryWriter::WriteCall(boxCall, reinterpret_cast<void(*)()>(&ConstructCollisionBox));
+    else Logger::log("StaticMeshCollisionFix: collision-box constructor call mismatch; replacement skipped.");
 
     PatchByte(0x11172469, 0x8D, 0x83, "collision node bounds check");  // 0F 8D condition byte: JGE -> JAE
     PatchByte(0x1117424D, 0x74, 0xEB, "degenerate bounds assert");     // JZ over the assert body -> JMP

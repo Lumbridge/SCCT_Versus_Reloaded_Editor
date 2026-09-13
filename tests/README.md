@@ -4,11 +4,11 @@
 
 The SMagicEvent workbench adds model validation tests plus native fixtures for
 array edits, precise timeline drags, actor/component and brush-volume creation,
-mover keys, compound rollback and undo/redo, and stale snapshot rejection.
-The fixture exercises the actual native activation thunk to verify delay,
+mover keys, rollback, undo/redo, and rejection of edits made from outdated snapshots.
+The fixture calls the native activation thunk to check delay,
 Sequence, Repeat and ValidOn semantics, then saves and reopens a complete event
 with two triggers, mover, sound, emitter and damage volume in a second process.
-See [SMagicEventSemantics.md](SMagicEventSemantics.md) for the verified contract.
+See [SMagicEventSemantics.md](SMagicEventSemantics.md) for the engine behaviour.
 Screenshots and `magic_*.json` diagnostics remain in the isolated test directory.
 
 From an **x86 Native Tools Command Prompt for Visual Studio**:
@@ -62,15 +62,60 @@ is verified at `0x10fb9610` with `NAME_Add=1`; existing FName spellings are neve
 Build both solution configurations with `SCCT` cleared. Use **Rebuild** when switching
 configurations: the renderer static library currently shares its output path. The new
 modules are included unconditionally in the editor project. The native integration
-is specific to the supported ChaosTheory editor executable and must be reverified
-before changing native addresses or property layouts.
+is specific to the supported ChaosTheory editor executable and must be checked again
+if native addresses or property layouts change.
 
-Additional manual acceptance coverage: static-mesh replacement with material overrides,
+Also check these cases manually: static-mesh replacement with material overrides,
 game-specific array/structure actor links,
 Save As/map switching, GE selections, and external-binding changes during assembly edits.
 Use disposable source maps and include stale/deleted instance members and missing packages.
 
 ## Map recovery
+
+ClarD soft-body regression (2026-09-13): one native simulation step before
+recovery reproduced the import error on ESBStripDoorActor1009. Points and springs
+matched, but the old settings comparison included timestep fields at 0x12C/0x130
+and the zero-to-0.01 damping change made by Reloaded's realtime hook.
+The comparison now skips simulation scratch at 0x11C..0x133 and treats that
+specific damping fallback as unchanged only when the actor's EnergyFactor is
+zero. Other physical settings still require an exact match.
+
+The portable settings test checks scratch changes, default damping, nonzero
+authored damping and changes to every compared byte. For a native reproduction,
+add `-TraceSoftBodies -StepCookedSoftBodies` to the ClarD recovery command. This
+steps each supported cooked soft body once before capturing its recovery data.
+ClarD also exceeded the PC engine's signed 16-bit collision-bound index limit.
+On overflow, recovery now sorts its generated structural cells by longest extent
+and rebuilds with fewer BSP splits. It leaves polygon coordinates, materials and
+non-solid sheet order unchanged. Ordinary rebuilds keep the saved brush order;
+maps close to the collision limit start with the same BSP settings.
+The fallback produced 32,575 collision slots with a highest start index of
+32,564; the final BSP build reduced that to 32,431 slots. Recovery preserved
+109 portal outlines and passed 12,206 solid/empty probes.
+The native source checks now reject collision indices outside the PC range after
+recovery, reopening and rebuilding.
+The ClarD run passed recovery after a soft-body simulation step, ordinary
+rebuilding, a solid-brush and actor Tag edit, File Save, reopening and export.
+A separate fresh-editor run also passed load/rebuild/File Save/reopen without
+invoking recovery. Both runs used the Release DLL built on 2026-09-13.
+
+A later user run hit the static-mesh collision-box assertion at `0x10EC27F2`
+during lighting. Its retained endpoints were finite and ordered. The compressed
+collision decoder now builds bounds through integer comparisons of the float
+bits, preserving the coordinates and avoiding x87 register use. Non-finite
+endpoints still go through the native constructor and its diagnostics.
+The native constructor comparison covers 10,000 endpoint pairs. A full x87 stack
+produced incorrect bounds with the stock constructor and exact bounds with the
+replacement. Portable tests cover the dump's endpoints, 100,000 finite random
+pairs, aliased inputs and non-finite rejection. The original user assertion has
+not been reproduced in a full recovery run.
+With the replacement, menu-driven ClarD recovery completed its lighting,
+save/reopen and retained-data checks. A separate fresh-process test passed
+ordinary geometry/BSP/lighting/path rebuilding, File Save, reopening and export.
+
+Use `-RecoveryMenu -VisibleEditor` for the actual recovery menu, file picker and
+confirmation dialog in the isolated test. `-FpuBoundsProbe` checks native bounds
+with a full x87 stack; combined with `-RecoveryMenu`, it then runs recovery.
 
 Sub18 regression (2026-09-13): retained portal surface 1282 has a vertex
 0.074219 units from its cooked BSP plane. Recovery accepts the native BSP
@@ -85,14 +130,14 @@ The isolated Sub18 run passed recovery, saving, ordinary reopening and a further
 geometry/BSP/lighting/path rebuild: 17 patches, 71 portal outlines, 333 structural
 brushes, 1812 retained actors and 3980 solid/empty probes. The portable recovery
 suites also pass, including patch class/setting mismatch rejection and the new
-ZoneEffect classes. This verifies conversion, not a gameplay or visual review.
+ZoneEffect classes. Visual and gameplay checks were not part of this run.
 
 EDE64 regression (2026-09-13): retained portal 121 faces opposite its cooked
 surface, and some portal surfaces lack PF_NotSolid. Recovery preserves authored
 portal winding while validating the undirected plane and reconstructing solid
 space independently. Arena and Cave audio effects are preserved as dependencies.
 The polygon-import suite includes the actual EDE64 edge from approximately
-`-5.7e-14` to `384`: unchanged endpoints prove membership without a rounded
+`-5.7e-14` to `384`: unchanged endpoints lie on the edge without needing a rounded
 subtraction, while removed intermediate points still require exact collinearity.
 The isolated run passed recovery, ordinary save/reopen and subsequent rebuild:
 259 structural brushes, 1403 actors, nine strip doors, 80 portal outlines and
@@ -118,12 +163,11 @@ Surface fixtures also cover concave and non-planar non-solid sheets: triangulati
 retains their original 3D float vertices and supplies each triangle's normal.
 Native import applies additional consecutive-vertex and small-area cleanup.
 The polygon-import suite reproduces those rules, including their float arithmetic,
-and checks exact outline preservation. Recovery preflights every emitted polygon
-so native cleanup cannot silently open a brush. Surface tests cover exact convex
+and checks exact outline preservation. Recovery checks every exported polygon before import, since native cleanup
+can otherwise leave a gap in a brush. Surface tests cover exact convex
 coalescing, material divisions at native import and BSP split precision, and removal of collapsed bevels
-while preserving the remaining planes and proving closed geometry. Brush ordering
-tests preserve coordinates and reject mixed CSG operations. Native rebuild/space
-checks and visual inspection remain necessary, especially around thin geometry.
+while keeping the remaining planes and checking that each brush is closed. Brush ordering
+tests preserve coordinates and reject mixed CSG operations. Also rebuild and inspect the map in the editor, especially around thin geometry.
 
 The [native editor integration test](#native-editor-integration) also exercises
 conversion, geometry edits, ordinary reopening and builds in a disposable editor.
@@ -175,7 +219,7 @@ limits, centring on monitors with negative origins, and placement/reset reentran
 The renderer applies placement after the first successful presentation and after
 successful resets, without repeatedly recentering an already placed window.
 
-The configuration tests write only temporary INIs and verify actual native
+The configuration tests write only temporary INIs and verify native
 viewport resolution settings, display/fixed resolution selection, original-file
 preservation and error handling. No game is launched.
 
@@ -193,28 +237,25 @@ This test maps the DLL with `DONT_RESOLVE_DLL_REFERENCES` and supplies synthetic
 `SPlayerProfile`, player-owner and level-context objects. Eight scoreboard cases
 check null profile, null owner, eligibility, blocked state and unchanged visibility.
 Eight cases for each of the overlay and controller callbacks check deferral while
-required objects are absent and dispatch once they exist. Ready dispatch uses an
-in-memory callee probe, avoiding graphics/UI execution; it never changes the DLL
-file. Graphics modules remain unloaded throughout. All 24 cases pass.
+required objects are absent and dispatch once they exist. Ready callbacks call an in-memory test function, so the test runs no graphics
+or UI code and leaves the DLL file unchanged. Graphics modules remain unloaded throughout. All 24 cases pass.
 
 The original DLL reproduced the first recorded crash, and the scoreboard-only
 revision reproduced the overlay crash. The initialized scoreboard cases exclude
-the unrelated settings-persistence call. These isolated checks do not establish
-complete profile initialization or control parity.
+the unrelated settings-persistence call. These tests cover the guards rather than the full startup sequence.
 
-Earlier timed debugger launches reached the selected level and accepted keyboard input, but recorded missing profile initialization and deferred callbacks. These are historical findings: on 13 September 2026 the user confirmed that the Play Level profile limitation and recovered-map Play Here crash are no longer current limitations.
+Earlier debugger runs found missing profile initialization and deferred callbacks, although the level loaded and accepted keyboard input. Follow-up testing confirmed on 13 September 2026 that the profile issue and recovered-map Play Here crash were no longer present.
 
-End-to-end verification additionally requires a live editor playtest with both
-updated editor DLL installed and the guarded Reloaded Core present: the selected level should load,
-Reloaded.Core.dll should be loaded, its configured controls and frame timing should work,
-the render should be sharp at the selected resolution, the window should be large
-and centred, mouse input should remain correct,
-and switching back to the editor should not change the desktop display mode.
+For a full playtest, install the updated editor DLL and guarded Reloaded Core.
+Check that the selected level and Reloaded.Core.dll load, the configured controls
+and frame timing work, and mouse input behaves correctly. The game should render
+sharply at the selected resolution in a large, centred window. Switching back to
+the editor should leave the desktop display mode unchanged.
 
 ## Native editor integration
 
-Native source-map recovery can be exercised against the supported installed
-editor without replacing its DLL, configuration, or maps. From PowerShell:
+Run recovery tests in a temporary copy of the supported editor. The installed
+DLL, configuration and maps are left alone. From PowerShell:
 
 ```powershell
 ./tools/run_native_map_recovery_test.ps1 -EditorDll ./bin/Reloaded.Editor.dll -GenerateFixture
@@ -259,8 +300,7 @@ conversion clears the previous normal File Save target, then loads the original
 source and verifies that a new geometry edit rebuilds normally.
 `-ImportTextOnly -SourceMap <fixture.t3d>` isolates ordinary native T3D import
 and export without recovery, rebuilding or saving. It writes
-`System/import_only.t3d`; its completion result requires a separate comparison
-of that output to verify the fixture's properties. This mode confirmed that
+`System/import_only.t3d`; compare that output with the fixture to check its properties. This mode confirmed that
 spaced object paths require nested quotes, for example
 `StaticMesh=StaticMesh'"Oilrig_SM.Third Floor.topcatwalk"'`, and polygon material
 paths require double quotes, for example
@@ -269,20 +309,17 @@ Adding `-BuildImportedText` runs ordinary geometry and BSP rebuilding before
 export and writes `System/NativeImportedBsp.json` for spatial comparisons.
 The probe also writes cooked and failed BSP trees as JSON for spatial diagnosis.
 `-InspectCookedOnly` loads and exports a compiled file, records its native BSP
-arrays and player-start occupancy, then deliberately stops before reconstruction.
-Its completion result confirms inspection only, not conversion or gameplay.
+arrays and player-start occupancy, then stops before reconstruction.
 `-TraceSoftBodies` additionally records native soft-body fields and strip-door
 point/spring arrays for comparing procedural regeneration with cooked data.
 `-TraceLeafLights` writes the native leaf indices and light tables after builds
 and reopening to diagnose visibility-table limits.
 `-TraceLighting` records reflected light settings, loaded light-actor membership,
 mesh leaf-light candidates, and each mesh instance's baked BGRA colour stream at
-cooked/imported/built/reopened stages in `System/lighting_*`. It measures content,
-not just the existence of lighting objects. `-InspectCookedOnly -TraceLighting
+cooked/imported/built/reopened stages in `System/lighting_*`. The trace includes the colour bytes. `-InspectCookedOnly -TraceLighting
 -RelightCookedMeshes` additionally refreshes mesh render data and runs native
 mesh shadow-mask generation and colour baking against the original BSP in the
-disposable editor. This diagnostic does not run the complete normal lighting
-command, rebuild BSP, or save a map; its results are not a gameplay acceptance test.
+disposable editor. This diagnostic skips the full lighting command, BSP rebuild and map save.
 The current OffsD findings and remaining limitations are recorded in
 [MapRecoveryLightingStatus.md](MapRecoveryLightingStatus.md).
 Ordinary recovery verifies strip-door topology, rest lengths, fixed anchors,
@@ -297,11 +334,10 @@ UI's platform-lighting cache finalizer before subsequent saves.
 `-CompactPoints` is a separate native compaction experiment that wraps completed
 CSG operation boundaries; it is excluded from ordinary source recovery checks.
 The first trial reclaimed unused points but later encountered a stale point
-reference, so this experiment is not a validated rebuild fix.
+reference, so it is not ready for normal builds.
 Reports, source/runtime maps, interchange files and crash dumps remain in the
 printed `TestRoot` for inspection. The disposable editor is stopped on finish
-or timeout. This checks the authoring pipeline; it does not launch a gameplay
-session or validate a map's complete gameplay behavior.
+or timeout. The harness tests map editing and saving. Test gameplay separately.
 
 Map-name assignment regression (x86 native tools prompt):
 

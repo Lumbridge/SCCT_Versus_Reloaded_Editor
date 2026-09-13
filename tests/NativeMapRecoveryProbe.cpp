@@ -2,6 +2,7 @@
 // Run engine commands on the editor's UI thread, never on the injection thread.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <commdlg.h>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -15,7 +16,6 @@
 #include <set>
 
 namespace {
-HMODULE self;
 HHOOK hook;
 HWND frameWindow;
 std::filesystem::path directory;
@@ -37,6 +37,7 @@ int compactionCount;
 bool startupFailed;
 bool compactionEnabled;
 bool traceSoftBodies;
+bool stepCookedSoftBodies;
 bool traceLeafLights;
 bool traceLighting;
 bool relightCookedMeshes;
@@ -444,6 +445,11 @@ void DescribeSoftBodies(const char* stage) {
             body ? *reinterpret_cast<void**>(body) : nullptr);
         if(body && (!strcmp(ObjectName(*reinterpret_cast<void**>(body+0x24)),"ESBStripDoor")
             || !strcmp(ObjectName(*reinterpret_cast<void**>(body+0x24)),"ESBPatch"))) {
+            if (stepCookedSoftBodies && !strcmp(stage,"cooked")) {
+                using Update = void(__thiscall*)(void*, float);
+                reinterpret_cast<Update>(0x110D4610)(body, 1.0f / 60.0f);
+                fprintf(report,"stepped_cooked_soft_body actor=%s\n",ObjectName(actor));
+            }
             const auto stem=std::string(stage)+"_"+ObjectName(actor);
             std::ofstream raw(directory/(stem+"_body.bin"),std::ios::binary);
             raw.write(reinterpret_cast<char*>(body),0x1A4);
@@ -720,8 +726,83 @@ bool HasGeometry() {
     auto editor = *reinterpret_cast<unsigned char**>(kEditor);
     auto level = editor ? *reinterpret_cast<unsigned char**>(editor + 0x130) : nullptr;
     auto model = level ? *reinterpret_cast<unsigned char**>(level + 0x13C) : nullptr;
-    return model && *reinterpret_cast<int*>(model + 0x58) > 0
-        && *reinterpret_cast<int*>(model + 0x98) > 0;
+    if (!model || *reinterpret_cast<int*>(model + 0x58) <= 0
+        || *reinterpret_cast<int*>(model + 0x98) <= 0) return false;
+    auto nodes = *reinterpret_cast<unsigned char**>(model + 0x54);
+    int count = *reinterpret_cast<int*>(model + 0x58);
+    int hullSlots = *reinterpret_cast<int*>(model + 0xB4);
+    int invalid = 0, highest = -1;
+    for (int i = 0; i < count; ++i) {
+        unsigned index = *reinterpret_cast<unsigned short*>(nodes + size_t(i)*0x5C + 0x54);
+        if (index == 0xFFFF) continue;
+        highest = (std::max)(highest, static_cast<int>(index));
+        if (index >= 0x8000 || index >= static_cast<unsigned>(hullSlots)) ++invalid;
+    }
+    fprintf(report, "collision_bounds slots=%d highest_start=%d invalid=%d\n", hullSlots, highest, invalid);
+    fflush(report);
+    return hullSlots >= 0 && hullSlots <= 65535 && invalid == 0;
+}
+
+using CollisionBoxConstructor = void*(__thiscall*)(void*, const float*, const float*);
+
+int ConstructBoxWithFullX87(CollisionBoxConstructor constructor, float* box) {
+    const unsigned words[6] = {0xC31DA05B,0xC2AC8914,0x42A7FE1F,0x3C0AC10D,0x42F5FAF4,0x42A8007C};
+    float endpoints[6];
+    memcpy(endpoints, words, sizeof(words));
+    unsigned char saved[108];
+    int result = 1;
+    __asm {
+        fnsave saved
+        fldcw saved
+        fld1
+        fld1
+        fld1
+        fld1
+        fld1
+        fld1
+        fld1
+        fld1
+    }
+    __try { constructor(box, endpoints, endpoints + 3); }
+    __except (GetExceptionCode() == EXCEPTION_BREAKPOINT ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        result = 0;
+    }
+    __asm { frstor saved }
+    return result;
+}
+
+bool CheckCollisionBoxConstructor(bool stress) {
+    constexpr uintptr_t call = 0x11172427;
+    if (*reinterpret_cast<unsigned char*>(call) != 0xE8) return false;
+    auto target = call + 5 + *reinterpret_cast<int*>(call + 1);
+    using Constructor = void*(__thiscall*)(void*, const float*, const float*);
+    auto native = reinterpret_cast<Constructor>(0x10EC26E0);
+    auto replacement = reinterpret_cast<Constructor>(target);
+    if (target == 0x10E03E7D) { Record("collision_box_constructor", "stock"); return !stress; }
+    unsigned seed = 0xC1A4D;
+    for (int trial = 0; trial < 10000; ++trial) {
+        float endpoints[6], expected[6], actual[6];
+        for (auto& value : endpoints) {
+            seed = seed * 1664525u + 1013904223u;
+            value = (static_cast<int>(seed >> 8) - 8388608) / 32.0f;
+        }
+        native(expected, endpoints, endpoints + 3);
+        if (replacement(actual, endpoints, endpoints + 3) != actual
+            || memcmp(actual, expected, sizeof(actual))) return false;
+    }
+    Record("collision_box_constructor", "10000 native comparisons matched");
+    if (stress) {
+        float nativeBox[6] = {}, replacementBox[6] = {};
+        int stockResult = ConstructBoxWithFullX87(native, nativeBox);
+        int replacementResult = ConstructBoxWithFullX87(replacement, replacementBox);
+        const unsigned expected[6] = {0xC31DA05B,0xC2AC8914,0x42A7FE1F,0x3C0AC10D,0x42F5FAF4,0x42A8007C};
+        fprintf(report, "full_x87_stack native_returned=%d native_exact=%d replacement_returned=%d replacement_exact=%d\n",
+            stockResult, !memcmp(nativeBox, expected, sizeof(expected)), replacementResult,
+            !memcmp(replacementBox, expected, sizeof(expected)));
+        fflush(report);
+        if (!replacementResult || memcmp(replacementBox, expected, sizeof(expected))) return false;
+    }
+    return true;
 }
 
 bool Rebuild() {
@@ -833,6 +914,8 @@ bool MakeFixture(const char* runtimePath, bool rootOutside) {
 } // namespace (keep standard/JSON headers outside the anonymous namespace)
 #include "WorkflowNativeTests.h"
 namespace {
+#include "NativeRecoveryMenuProbe.h"
+
 void RunTest() {
     auto configuration = (directory / "native_recovery_test.ini").string();
     char source[MAX_PATH] = {}, destination[MAX_PATH] = {}, dll[MAX_PATH] = {};
@@ -843,9 +926,15 @@ void RunTest() {
     report = _fsopen((directory / "native_recovery_report.txt").string().c_str(), "w", _SH_DENYNO);
     if (!report) return;
     Record("started");
+    bool boundsProbe = GetPrivateProfileIntA("test", "fpu_bounds_probe", 0, configuration.c_str()) != 0;
+    if (!CheckCollisionBoxConstructor(boundsProbe)) { Record("FAIL", "Collision box constructor differs from native bounds."); return; }
+    if (boundsProbe && !GetPrivateProfileIntA("test", "recovery_menu", 0, configuration.c_str())) {
+        Record("PASS", "Native collision bounds comparison and full x87 stack probe completed."); return;
+    }
     ProbeNativeNormalThreshold();
     ObserveEditorExec();
     traceSoftBodies=GetPrivateProfileIntA("test","trace_soft_bodies",0,configuration.c_str())!=0;
+    stepCookedSoftBodies=GetPrivateProfileIntA("test","step_cooked_soft_bodies",0,configuration.c_str())!=0;
     traceLeafLights=GetPrivateProfileIntA("test","trace_leaf_lights",0,configuration.c_str())!=0;
     traceLighting=GetPrivateProfileIntA("test","trace_lighting",0,configuration.c_str())!=0;
     relightCookedMeshes=GetPrivateProfileIntA("test","relight_cooked_meshes",0,configuration.c_str())!=0;
@@ -975,7 +1064,9 @@ void RunTest() {
         Record("previous_map_filename", previousFilename.string().c_str());
     }
     Record("recovering", source);
-    if (!recover(source, destination, error, sizeof(error))) {
+    bool menuRecovery = GetPrivateProfileIntA("test", "recovery_menu", 0, configuration.c_str()) != 0;
+    if (!(menuRecovery ? RecoverThroughMenu(editorDll, source, destination, sizeof(destination))
+                       : recover(source, destination, error, sizeof(error)))) {
         if (inspectCookedOnly && inspectedCooked) {
             Record("PASS", "Cooked-file inspection completed; no source reconstruction or gameplay validation was performed.");
             return;
@@ -1109,7 +1200,8 @@ BOOL CALLBACK FindEditorWindow(HWND window, LPARAM threadAddress) {
     DWORD process = 0;
     DWORD thread = GetWindowThreadProcessId(window, &process);
     if (process != GetCurrentProcessId()) return TRUE;
-    ShowWindow(window, SW_HIDE);
+    if (!GetPrivateProfileIntA("test", "visible_editor", 0,
+        (directory / "native_recovery_test.ini").string().c_str())) ShowWindow(window, SW_HIDE);
     char title[256] = {};
     GetWindowTextA(window, title, sizeof(title));
     char klass[128] = {};
@@ -1151,7 +1243,8 @@ DWORD WINAPI WaitUntilReady(void*) {
             // Initial windows exist before startup completes. Wait briefly,
             // then execute through the frame's actual UI-thread message hook.
             Sleep(5000);
-            hook = SetWindowsHookExA(WH_CALLWNDPROC, OnMessage, self, uiThread);
+            // Both threads are in this process; no cross-process DLL load is needed.
+            hook = SetWindowsHookExA(WH_CALLWNDPROC, OnMessage, nullptr, uiThread);
             if (report) { fprintf(report, "hook=%p error=%lu\n", hook, GetLastError()); fflush(report); }
             DWORD_PTR result = 0;
             if (hook && SendMessageTimeoutA(frameWindow, kRun, 0, 0,
@@ -1166,7 +1259,6 @@ DWORD WINAPI WaitUntilReady(void*) {
 
 BOOL WINAPI DllMain(HMODULE module, DWORD reason, void*) {
     if (reason == DLL_PROCESS_ATTACH) {
-        self = module;
         DisableThreadLibraryCalls(module);
         char path[MAX_PATH] = {};
         GetModuleFileNameA(module, path, MAX_PATH);

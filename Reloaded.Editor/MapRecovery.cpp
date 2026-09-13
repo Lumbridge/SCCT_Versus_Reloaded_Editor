@@ -8,6 +8,8 @@
 #include "LightmapFix.h"
 #include "BspLeafLightFix.h"
 #include "RecoveredBspLighting.h"
+#include "RecoveredSoftBodySettings.h"
+#include "BspCollisionFix.h"
 #include "logger.h"
 
 #include <commdlg.h>
@@ -2733,8 +2735,7 @@ namespace
                 || !std::isfinite(length) || length < 0) return fail("invalid spring");
             structure.springs.insert(structure.springs.end(), spring, spring + 12);
         }
-        structure.settings.insert(structure.settings.end(), body + 0xB8, body + 0x114);
-        structure.settings.insert(structure.settings.end(), body + 0x11C, body + 0x15C);
+        structure.settings = RecoveredSoftBodySettings::Capture(body, ReadRaw<uint32_t>(actor, 0x370));
         return true;
     }
 
@@ -3360,6 +3361,7 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
             }
             ~RestoreBuildState() { try { Finish(); } catch (...) {} }
         } restoreBuildState{editor, stateA, stateB};
+        BspCollisionFix::RecoveryScope collisionRecovery;
         bool built = HasLiveSourceLevelInfo() && exec("MAP REBUILD")
             && BspLeafLightFix::Validate(CurrentModel(), error)
             && ValidateCollisionBounds(CurrentModel(), error)

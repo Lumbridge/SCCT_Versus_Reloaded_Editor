@@ -17,6 +17,10 @@ param(
     [switch]$BuildImportedText,
     [switch]$RestoreTextNormals,
     [switch]$TraceSoftBodies,
+    [switch]$VisibleEditor,
+    [switch]$RecoveryMenu,
+    [switch]$FpuBoundsProbe,
+    [switch]$StepCookedSoftBodies,
     [switch]$TraceLeafLights,
     [switch]$TraceLighting,
     [switch]$RelightCookedMeshes,
@@ -27,6 +31,8 @@ param(
     [string[]]$ExtraAssetPackage = @()
 )
 $ErrorActionPreference = 'Stop'
+if ($StepCookedSoftBodies -and !$TraceSoftBodies) { throw 'StepCookedSoftBodies requires TraceSoftBodies.' }
+if ($RecoveryMenu -and ($GenerateFixture -or $ReopenOnly -or $ImportTextOnly -or $ExpectRecoveryFailure -or $WorkflowTools)) { throw 'RecoveryMenu requires a standalone compiled map recovery test.' }
 $repository = Split-Path -Parent $PSScriptRoot
 $nativeDll = (Resolve-Path -LiteralPath $EditorDll).Path
 if ($RelightCookedMeshes -and (!$InspectCookedOnly -or !$TraceLighting)) { throw 'RelightCookedMeshes requires InspectCookedOnly and TraceLighting.' }
@@ -105,7 +111,7 @@ $compileScript = Join-Path $testSystem 'compile_test.cmd'
 @if errorlevel 1 exit /b 1
 @cl /nologo /W4 /EHsc /std:c++20 /MT /O2 "$repository\tests\NativeMapRecoveryDriver.cpp" /Fe:"$testSystem\NativeMapRecoveryDriver.exe" /Fo:"$testSystem\NativeMapRecoveryDriver.obj" /link user32.lib
 @if errorlevel 1 exit /b 1
-@cl /nologo /W4 /EHsc /std:c++20 /MT /O2 /LD "$repository\tests\NativeMapRecoveryProbe.cpp" /Fe:"$testSystem\NativeMapRecoveryProbe.dll" /Fo:"$testSystem\NativeMapRecoveryProbe.obj" /link user32.lib gdi32.lib
+@cl /nologo /W4 /EHsc /std:c++20 /MT /O2 /LD "$repository\tests\NativeMapRecoveryProbe.cpp" /Fe:"$testSystem\NativeMapRecoveryProbe.dll" /Fo:"$testSystem\NativeMapRecoveryProbe.obj" /link user32.lib gdi32.lib comdlg32.lib
 @exit /b %errorlevel%
 "@ | Set-Content -LiteralPath $compileScript -Encoding ascii
 & cmd.exe /d /c $compileScript
@@ -126,6 +132,10 @@ import_text_only=$([int][bool]$ImportTextOnly)
 build_imported_text=$([int][bool]$BuildImportedText)
 restore_text_normals=$([int][bool]$RestoreTextNormals)
 trace_soft_bodies=$([int][bool]$TraceSoftBodies)
+visible_editor=$([int][bool]$VisibleEditor)
+recovery_menu=$([int][bool]$RecoveryMenu)
+fpu_bounds_probe=$([int][bool]$FpuBoundsProbe)
+step_cooked_soft_bodies=$([int][bool]$StepCookedSoftBodies)
 trace_leaf_lights=$([int][bool]$TraceLeafLights)
 trace_lighting=$([int][bool]$TraceLighting)
 relight_cooked_meshes=$([int][bool]$RelightCookedMeshes)
