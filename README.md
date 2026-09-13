@@ -4,9 +4,7 @@ An unofficial editor patch for Splinter Cell: Chaos Theory Versus, compatible wi
 
 ## Install
 
-1. Download an editor ZIP from [Releases](https://github.com/Lumbridge/SCCT_Versus_Reloaded_Editor/releases).
-2. Extract `Reloaded_Editor.exe`, `Reloaded.Editor.dll`, and `README.md` into the game's `System` folder, beside `ChaosTheory_Editor.exe`.
-3. Run `Reloaded_Editor.exe`.
+Download the ZIP from [Releases](https://github.com/Lumbridge/SCCT_Versus_Reloaded_Editor/releases) and extract it into the same folder as `SCCT_Versus.exe`. Run `Reloaded_Editor.exe`.
 
 Recovered maps, including Clarity Soft, are available in [SCCT-Maps](https://github.com/Lumbridge/SCCT-Maps).
 
