@@ -1016,7 +1016,10 @@ namespace
                     // material from a portal splitter. It is not itself an
                     // authored visibility portal or antiportal.
                     auto material = surfaces[piece.materialIndex];
-                    material.flags &= ~kSurfEditorPolyFlags;
+                    // A material donor may be a non-solid sheet or semisolid
+                    // surface. Its CSG flags must not turn a closing wall of
+                    // this reconstructed structural volume into an opening.
+                    material.flags &= ~(kSurfEditorPolyFlags | 0x08u | 0x20u);
                     if (!emit(piece.vertices, face.normal, material, true, true))
                     {
                         auto failedFace = face;

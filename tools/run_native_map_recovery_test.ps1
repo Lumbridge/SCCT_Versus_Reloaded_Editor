@@ -8,6 +8,7 @@ param(
     [switch]$PrepareOnly,
     [switch]$GenerateFixture,
     [switch]$WorkflowTools,
+    [switch]$BrushGridSnapOnly,
     [switch]$ImportBaseline,
     [switch]$ReopenOnly,
     [switch]$RootOutside,
@@ -45,7 +46,7 @@ if ($MatchLightingAfterLoad -and (!$ReopenOnly -or !$LightingBrush)) { throw 'Ma
 if ($GeometryOnlyBuild -and !$ReopenOnly) { throw 'GeometryOnlyBuild requires ReopenOnly.' }
 if ($VerifyPlayMapSave -and !$ReopenOnly) { throw 'VerifyPlayMapSave requires ReopenOnly.' }
 if ($StepCookedSoftBodies -and !$TraceSoftBodies) { throw 'StepCookedSoftBodies requires TraceSoftBodies.' }
-if ($RecoveryMenu -and ($GenerateFixture -or $ReopenOnly -or $ImportTextOnly -or $ExpectRecoveryFailure -or $WorkflowTools)) { throw 'RecoveryMenu requires a standalone compiled map recovery test.' }
+if ($RecoveryMenu -and ($GenerateFixture -or $ReopenOnly -or $ImportTextOnly -or $ExpectRecoveryFailure -or $WorkflowTools -or $BrushGridSnapOnly)) { throw 'RecoveryMenu requires a standalone compiled map recovery test.' }
 $repository = Split-Path -Parent $PSScriptRoot
 $nativeDll = (Resolve-Path -LiteralPath $EditorDll).Path
 if ($RelightCookedMeshes -and (!$InspectCookedOnly -or !$TraceLighting)) { throw 'RelightCookedMeshes requires InspectCookedOnly and TraceLighting.' }
@@ -137,7 +138,8 @@ source=$inputMap
 destination=$outputMap
 editor_dll=$injectedDll
 generate_fixture=$([int][bool]$GenerateFixture)
-workflow_tools=$([int][bool]$WorkflowTools)
+workflow_tools=$([int][bool]($WorkflowTools -or $BrushGridSnapOnly))
+brush_grid_snap_only=$([int][bool]$BrushGridSnapOnly)
 import_baseline=$([int][bool]$ImportBaseline)
 reopen_only=$([int][bool]$ReopenOnly)
 root_outside=$([int][bool]$RootOutside)
@@ -186,7 +188,7 @@ try {
             if ($result -match '(?m)^(PASS|FAIL) ') {
                 Write-Output $result
                 if ($result -match '(?m)^FAIL ') { throw 'Native map recovery test failed.' }
-                if ($WorkflowTools -and !$workflowRestarted) {
+                if ($WorkflowTools -and !$BrushGridSnapOnly -and !$workflowRestarted) {
                     $owned = Get-Process -Id $editorProcessId -ErrorAction Stop
                     if ($owned.Path -ne $testExecutable) { throw 'Unexpected isolated editor path.' }
                     Stop-Process -Id $editorProcessId -Force

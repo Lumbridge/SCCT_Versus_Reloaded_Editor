@@ -292,6 +292,27 @@ namespace RecoveredSurfacePartition
             return true;
         }
 
+        bool RemoveBoundarySpikes(Polygon& polygon,Work& work,double tolerance)
+        {
+            // Cooked BSP can contain an out-and-back edge with no area.
+            // The caller supplies the float bound, or native coincident-point
+            // precision when explicitly preparing for the editor.
+            for (std::size_t index=0;polygon.size()>=3 && index<polygon.size();)
+            {
+                if (!work.Spend(1)) return false;
+                const Point a=polygon[(index+polygon.size()-1)%polygon.size()];
+                const Point b=polygon[index],c=polygon[(index+1)%polygon.size()];
+                if (std::fabs(Side(b,a,c))<=tolerance*std::hypot(c.x-a.x,c.y-a.y)
+                    && (a.x-b.x)*(c.x-b.x)+(a.y-b.y)*(c.y-b.y)>0)
+                {
+                    polygon.erase(polygon.begin()+index);
+                    index=0;
+                }
+                else ++index;
+            }
+            return true;
+        }
+
         bool OnSegment(const Point& point,const Point& a,const Point& b)
         {
             return Side(point,a,b)==0 && point.x>=(std::min)(a.x,b.x)
@@ -478,7 +499,7 @@ namespace RecoveredSurfacePartition
             return true;
         }
 
-        bool NativeStable(const Polygon& polygon,const Frame& frame,const Work& work)
+        bool NativeStable(const Polygon& polygon,const Frame& frame,const Work& work,bool requireSplitWidth=true)
         {
             if (polygon.empty()) return true;
             // FPoly::SplitWithPlane uses a 0.25-unit distance band during
@@ -489,7 +510,7 @@ namespace RecoveredSurfacePartition
             // This only guides complementary material cuts, never the shape
             // or width of an original structural face.
             constexpr double minimumSplitWidth=0.5;
-            for (std::size_t i=0;i<polygon.size();++i)
+            for (std::size_t i=0;requireSplitWidth && i<polygon.size();++i)
             {
                 const Point a=polygon[i],b=polygon[(i+1)%polygon.size()];
                 const double length=std::hypot(b.x-a.x,b.y-a.y);
@@ -598,7 +619,10 @@ namespace RecoveredSurfacePartition
                     static_cast<double>(RecoveredPolygonImport::kMinimumNormalSquared))*0.5;
                 return Area(piece)<=(std::max)(minimumArea,perimeter*tolerance*std::sqrt(3.0));
             };
-            if (NativeStable(polygon,frame,work))
+            // An original structural face may itself be narrower than the
+            // split band. Keep it intact if it imports correctly, rather
+            // than subdividing it into fragments the importer discards.
+            if (NativeStable(polygon,frame,work,false))
             {
                 if (Area(inside)<=Area(outside) && microscopic(inside))
                 {
@@ -884,6 +908,18 @@ namespace RecoveredSurfacePartition
             if (!coplanar) continue;
             Clean(boundary);
             if (DisjointBounds(boundary,original)) continue;
+            // Bounding boxes overlap across diagonal faces even when the
+            // material is entirely outside. A separating face edge proves
+            // no positive-area overlap, including for malformed boundaries.
+            bool separated=false;
+            for (std::size_t edge=0;edge<original.size() && !separated;++edge)
+            {
+                if (!work.Spend(boundary.size())) return false;
+                const Point a=original[edge],b=original[(edge+1)%original.size()];
+                separated=std::all_of(boundary.begin(),boundary.end(),[&](const Point& p)
+                { return Side(p,a,b)<=0; });
+            }
+            if (separated) continue;
             if (Dot(candidateNormal,frame.normal) < 0)
                 std::reverse(boundary.begin(),boundary.end());
             std::vector<Polygon> masks;
@@ -895,7 +931,9 @@ namespace RecoveredSurfacePartition
                 masks.push_back(std::move(boundary));
                 error.clear();
             }
-            else if (TriangulateSimple(boundary,masks,work))
+            else if (RemoveBoundarySpikes(boundary,work,(std::max)(FloatSourceTolerance(candidate,frame),
+                         limits.matchEditorPrecision ? double(RecoveredPolygonImport::kCoincidentVertexTolerance) : 0.0))
+                     && TriangulateSimple(boundary,masks,work))
                 error.clear();
             else
             {

@@ -1280,6 +1280,51 @@ void RunTest() {
             Record("FAIL", "Fresh-process ordinary source load failed."); return;
         }
         Snapshot("fresh_normal_reopen");
+        char authoringFile[32768]{};
+        if(GetEnvironmentVariableA("SCCT_AUTHORING_VERIFY",authoringFile,sizeof(authoringFile)))
+        {
+            try
+            {
+                using J=nlohmann::json;using Request=int(__cdecl*)(const char*,char*,unsigned);
+                auto module=GetModuleHandleA(std::filesystem::path(dll).filename().string().c_str());
+                auto request=reinterpret_cast<Request>(GetProcAddress(module,"ReloadedWorkflowRequest"));
+                if(!request)request=reinterpret_cast<Request>(GetProcAddress(module,"_ReloadedWorkflowRequest"));
+                if(!request)throw std::runtime_error("Authoring API missing.");
+                auto call=[&](const J& q){std::vector<char> buffer(64*1024*1024);auto text=q.dump();auto ok=request(text.c_str(),buffer.data(),static_cast<unsigned>(buffer.size()));if(ok!=1)throw std::runtime_error(buffer.data());return J::parse(buffer.data()).at("result");};
+                auto snapshot=call({{"op","authoring.export"}});std::ofstream(directory/"authoring-live-snapshot.json")<<snapshot.dump(2);
+                if(strcmp(authoringFile,"snapshot"))
+                {
+                    J patch;std::ifstream(authoringFile)>>patch;patch["map"]=snapshot.at("map");
+                    auto preview=call({{"op","authoring.preview"},{"document",patch}});std::ofstream(directory/"authoring-file-preview.json")<<preview.dump(2);
+                    auto result=call({{"op","authoring.apply"},{"document",patch}});J states=J::array();
+                    for(const auto& id:result.at("created"))states.push_back(call({{"op","magic.inspect"},{"actor",id}}));
+                    for(const auto& op:patch.at("operations"))if(op.at("op")=="update")states.push_back(call({{"op","magic.inspect"},{"actor",op.at("actor")}}));
+                    std::ofstream(directory/"authoring-file-expected.json")<<states.dump(2);
+                    J bounds=J::array();
+                    for(const auto& id:result.at("created"))
+                    {
+                        auto op=std::find_if(patch.at("operations").begin(),patch.at("operations").end(),[&](const J& o){return o.at("op")=="create" && id.at("path").get<std::string>().ends_with("."+o.at("id").get<std::string>());});
+                        if(op!=patch.at("operations").end() && op->at("properties").contains("StaticMesh")){call({{"op","select"},{"actors",J::array({id})}});bounds.push_back({{"actor",id},{"bounds",call({{"op","mesh.bounds"}})}});}
+                    }
+                    std::ofstream(directory/"authoring-file-bounds.json")<<bounds.dump(2);
+                    Exec("TRANSACTION UNDO");Exec("TRANSACTION REDO");
+                    for(const auto& a:states)if(call({{"op","magic.inspect"},{"actor",a.at("actor")}}).at("values")!=a.at("values"))throw std::runtime_error("Authoring redo mismatch.");
+                    using Save=int(__thiscall*)(void*,const char*);
+                    if(!reinterpret_cast<Save>(0x10E0416B)(*reinterpret_cast<void**>(kEditor),destination))throw std::runtime_error("Authoring save failed.");
+                    if(!Exec(std::string("MAP LOAD FILE=\"")+destination+"\""))throw std::runtime_error("Authoring reopen failed.");
+                    J mismatches=J::array();
+                    for(const auto& a:states){auto current=call({{"op","magic.inspect"},{"actor",a.at("actor")}});if(current.at("values")!=a.at("values"))mismatches.push_back({{"actor",a.at("actor")},{"diff",J::diff(a.at("values"),current.at("values"))}});}
+                    std::ofstream(directory/"authoring-file-reopen-diff.json")<<mismatches.dump(2);
+                    if(!mismatches.empty())throw std::runtime_error("Authoring reopen mismatch; see authoring-file-reopen-diff.json.");
+                    for(const auto& b:bounds){call({{"op","select"},{"actors",J::array({b.at("actor")})}});if(call({{"op","mesh.bounds"}})!=b.at("bounds"))throw std::runtime_error("Mesh appearance bounds changed on save/reopen.");}
+                    std::ofstream(directory/"authoring-file-result.json")<<states.dump(2);
+                }
+                Record("PASS","Authoring file snapshot/validation, import, undo/redo and save/reopen probe completed.");
+            }
+            catch(const std::exception& e){Record("FAIL",e.what());}
+            return;
+        }
+
         if(GetPrivateProfileIntA("test","match_lighting_after_load",0,configuration.c_str())) {
             auto level=*reinterpret_cast<unsigned char**>(*reinterpret_cast<unsigned char**>(kEditor)+0x130);
             auto actors=*reinterpret_cast<unsigned char***>(level+0x2c);
@@ -1396,7 +1441,8 @@ void RunTest() {
     HMODULE editorDll = GetModuleHandleA(dll);
     if (!editorDll) editorDll = GetModuleHandleA(std::filesystem::path(dll).filename().string().c_str());
     if (GetPrivateProfileIntA("test", "workflow_tools", 0, configuration.c_str())) {
-        RunWorkflowTests(editorDll, destination, GetPrivateProfileIntA("test", "workflow_restart", 0, configuration.c_str()) != 0);
+        RunWorkflowTests(editorDll, destination, GetPrivateProfileIntA("test", "workflow_restart", 0, configuration.c_str()) != 0,
+            GetPrivateProfileIntA("test", "brush_grid_snap_only", 0, configuration.c_str()) != 0);
         return;
     }
     using RecoverFn = int(__cdecl*)(const char*, const char*, char*, unsigned int);

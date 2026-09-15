@@ -1,5 +1,17 @@
 # Regression tests
 
+## Brush edge grid snap
+
+`tools/test_workflow_tools.cmd` runs the standalone `BrushGridSnapTests.cpp`
+checks for nearest bounds, negative coordinates, ties, per-axis spacing, no-ops
+and invalid inputs. The native `-WorkflowTools -GenerateFixture` suite exercises
+the brush and BSP-face context menus, axis isolation, preserved dimensions,
+Undo/Redo, and rejection of an empty selection.
+Use `-BrushGridSnapOnly -GenerateFixture` for the focused native snapping run.
+This also checks the vertex right-click popup, selection preservation on cancel,
+world-space selected-corner alignment, exact preservation of unselected vertices,
+shared polygon corners, and vertex Undo/Redo.
+
 ## Local BSP lighting matching
 
 Compile and run `tests/LocalLightingMatchTests.cpp` with C++17 or later. It tests
@@ -27,6 +39,36 @@ Run `tools\test_map_package.cmd` from an x86 Visual Studio developer prompt afte
 The workflow model and native suites cover excluded Tag/Event assignments, stale previews, partial rename undo, and the actual popup checkboxes. Native screenshots include `tag_rename_exclusions.bmp` and `map_package_preview.bmp`. The packaging dialog check scans a saved playable map and verifies that its checkbox cannot be cleared.
 
 ## Editing workflow tools
+
+Map JSON tests cover document validation, nested symbolic references, a native
+scene containing light/sound/emitter/trigger/event actors and particle components,
+forward references, delayed links, exact placement, stale updates, batch rollback,
+Undo/Redo, file dialogs, preview cancellation/application and save/reopen. See
+[MapAuthoring.md](../docs/MapAuthoring.md) for the format and fixture artifacts.
+
+SMagicEvent JSON tests cover export/import round trips, field and version
+validation using the live schema, protected actor identity/placement, invalid
+later actions and missing object references leaving the event unchanged,
+stale snapshots, one-step undo/redo, and the actual Save/Open dialogs including
+cancellation. `magic_event_export.json` and `event-ui-roundtrip.json` are retained
+in the disposable native fixture. See [SMagicEventJson.md](SMagicEventJson.md).
+
+The native workflow suite checks the static-mesh **Position the builder brush
+around this** menu action with signed nonuniform scale, rotation and PrePivot,
+then verifies the six box faces, centered placement, multiple-mesh bounds,
+preserved selection and viewports, one-step undo/redo, and rejection of empty
+or mixed selections. It also checks selected-material assignment and a valid
+default texture on all six faces when no material is selected. All brush
+and mesh changes occur in the disposable fixture.
+
+The SCamNetwork suite checks separate networks, linear and circular ordering,
+singleton loops, broken references, inconsistent first flags, duplicate/missing
+cameras, and rejection of partial-network edits. Native tests verify camera
+creation and reciprocal link edits in a single undo step, stale-edit rejection,
+the manager menu, rename, next-camera preview and exact viewport restoration,
+reordering, detach, DPI layouts, and camera persistence after restarting the editor.
+The isolated test directory includes `camera_network_manager.bmp`,
+`camera_network_manager_144dpi.bmp`, and `camera_network_saved.json`.
 
 The SMagicEvent workbench adds model validation tests plus native fixtures for
 array edits, precise timeline drags, actor/component and brush-volume creation,

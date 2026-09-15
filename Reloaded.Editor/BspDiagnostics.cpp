@@ -1733,6 +1733,22 @@ namespace
         return true;
     }
 
+    bool InstallNativePointReusePatch()
+    {
+        // bspAddPoint normally bypasses its existing-point lookup during
+        // fast rebuilds. Oil Rig accumulates >100k entries that way, beyond
+        // FVert's 16-bit index capacity. Enable the native lookup without
+        // changing editor flags or renumbering any existing point indices.
+        constexpr uintptr_t address=0x11084565;
+        const unsigned char expected[]={0xf7,0xd0,0x83,0xe0,0x01};
+        const unsigned char replacement[]={0xb8,0x01,0x00,0x00,0x00};
+        if (SafeBytesMatch(address,replacement,sizeof(replacement))) return true;
+        if (!SafeBytesMatch(address,expected,sizeof(expected)))
+        { JournalLine("COMPAT PATCH SKIPPED nativePointReuse: byte mismatch");return false; }
+        if (!MemoryWriter::WriteBytes(address,replacement,sizeof(replacement)))
+        { JournalLine("COMPAT PATCH FAILED nativePointReuse: write failed");return false; }
+        JournalLine("COMPAT PATCH INSTALLED nativePointReuse");return true;
+    }
     bool InstallPointIndexSentinelPatch()
     {
         // This compact/remap loop originally skipped every value with its sign
@@ -1944,6 +1960,7 @@ void BspDiagnostics::Initialize(const std::wstring& dllPath)
     }
 
     InstallUnsignedPointIndexPatches();
+    InstallNativePointReusePatch();
     InstallHooks();
     Logger::log(std::string("BspDiagnostics: build journal: ") + g_journalPath);
 }

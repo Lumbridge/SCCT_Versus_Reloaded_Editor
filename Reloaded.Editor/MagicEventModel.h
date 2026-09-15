@@ -83,6 +83,38 @@ namespace Workflow::Magic
         if(kind=="StrProperty")return "\"\"";
         return "0";
     }
+    inline bool JsonEventProperty(const std::string& name,const Json& schema)
+    {
+        return schema.value("category",std::string{})=="SMagicEvent" || name=="InitialState" || name=="Event";
+    }
+    inline Json ExportEvent(const Json& snapshot,const Json& actors,const std::string& map)
+    {
+        Json properties=Json::object(),schema=Json::object(),targets=Json::array();
+        for(auto it=snapshot.at("schema").begin();it!=snapshot.at("schema").end();++it)
+            if(JsonEventProperty(it.key(),it.value())){properties[it.key()]=snapshot.at("values").at(it.key());schema[it.key()]=it.value();}
+        if(!properties.contains("Groups"))throw std::runtime_error("Open an SMagicEvent before exporting JSON.");
+        for(const auto& actor:actors)if(actor.value("authorable",false))targets.push_back({{"path",actor.at("path")},{"class",actor.at("class")},{"tag",actor.at("tag")},{"event",actor.at("event")}});
+        return {{"format","scct.smagic-event"},{"version",1},{"class",snapshot.at("actor").at("class")},
+            {"properties",properties},{"schema",schema},{"context",{{"map",map},{"actor",snapshot.at("actor")},{"tag",snapshot.at("values").value("Tag",Json("None"))},{"actors",targets}}},
+            {"instructions","Edit properties, then import into the event open in SMagicEvent Workbench. Property leaves are strings; keep every field in each group/action. Schema and context are reference information only. Import preserves the destination actor's Tag and transform and does not create or modify linked actors. Event fields refer to actor Tags; object references such as StopActor must exist in the destination map. Missing properties stay unchanged; supplied arrays replace their previous contents. Use New Event before importing to create a separate event."}};
+    }
+    inline Json ImportEventChanges(const Json& snapshot,const Json& document)
+    {
+        if(!document.is_object() || document.value("format",std::string{})!="scct.smagic-event" || document.value("version",0)!=1)
+            throw std::runtime_error("This is not a supported SMagicEvent JSON file (version 1).");
+        if(document.at("class")!=snapshot.at("actor").at("class"))throw std::runtime_error("The JSON event class does not match the open event.");
+        const auto& properties=document.at("properties");
+        if(!properties.is_object() || properties.empty())throw std::runtime_error("The JSON file has no event properties.");
+        Json changes=Json::object();
+        for(auto it=properties.begin();it!=properties.end();++it)
+        {
+            const auto& schema=snapshot.at("schema");
+            if(!schema.contains(it.key()) || !JsonEventProperty(it.key(),schema.at(it.key())))throw std::runtime_error("Unsupported event property: "+it.key());
+            Validate(schema.at(it.key()),it.value());
+            if(it.value()!=snapshot.at("values").at(it.key()))changes[it.key()]=it.value();
+        }
+        return changes;
+    }
     inline void Move(Json& entries,int index,int direction)
     {
         int target=index+direction;

@@ -317,6 +317,10 @@ int main()
     VerifyNativePrecisionMaterials();
     VerifyNativeBrushBevel();
     CheckCoalescing();
+    VerifyOffsDNativeCoincidentSpike();
+    VerifyNarrowParentMaterialCut();
+    VerifyOffsDFloatSpike();
+    VerifyOffsDBoundarySpike();
     VerifyNativeOffsDSurfaceCase();
     VerifyNativeOffsDSurfaceJoinCase();
     VerifyNativeLegacyD1SurfaceCase();

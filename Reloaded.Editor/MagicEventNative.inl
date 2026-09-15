@@ -109,6 +109,14 @@ namespace
             }
             return;
         }
+        if(IsA(p,"StrProperty"))
+        {
+            // ImportText with flags=0 tokenizes whitespace. Assign the decoded
+            // FString through the native assignment used by RestoreView instead.
+            auto text=ConvertText(Json::parse(value.get<std::string>()).get<std::string>(),CP_UTF8,CP_ACP);
+            reinterpret_cast<void*(__thiscall*)(void*,const char*)>(0x10e03770)(reinterpret_cast<void*>(at),text.c_str());
+            return;
+        }
         auto text=ConvertText(Magic::Text(value),CP_UTF8,CP_ACP);
         auto end=Call<const char*>(p,0x94,text.c_str(),reinterpret_cast<void*>(at),0u);
         if(!end || *end)throw std::runtime_error("The editor rejected the property value.");
@@ -122,7 +130,8 @@ namespace
     void MagicSet(Address actor,const std::string& key,const Json& value)
     {
         auto p=Property(actor,key);if(!p || !MagicEditable(p,actor))throw std::runtime_error("Property is not editable: "+key);
-        Magic::Validate(MagicSchema(p),value);MagicImport(p,actor+Read<int>(p+0x3c),value);
+        Magic::Validate(MagicSchema(p),value);
+        try{MagicImport(p,actor+Read<int>(p+0x3c),value);}catch(const std::exception& e){throw std::runtime_error(key+": "+e.what());}
     }
     void MagicReferences(const Json& schema,const Json& value)
     {
@@ -186,7 +195,12 @@ Json EventAssets(const std::string& type,bool classes)
             std::set<Address> seen;for(auto c=object;c && seen.insert(c).second && seen.size()<256;c=Read<Address>(c+0x28))if(Path(c)==type || NameOf(c)==type)match=true;
         }
         else if(!classes && IsA(object,type))match=true;
-        if(match && (!classes || !(Read<unsigned>(object+0x8c)&1)))out.push_back({{"path",Path(object)},{"class",Path(Read<Address>(object+0x24))}});
+        if(match && (!classes || !(Read<unsigned>(object+0x8c)&1)))
+        {
+            Json entry={{"path",Path(object)},{"class",Path(Read<Address>(object+0x24))}};
+            if(!classes && IsA(object,"StaticMesh"))entry["bounds"]=Read<std::array<float,6>>(object+0x28);
+            out.push_back(std::move(entry));
+        }
         if(out.size()>50000)throw std::runtime_error("Too many matching assets. Use a more specific type.");
     }
     std::sort(out.begin(),out.end(),[](const Json& a,const Json& b){return a.at("path")<b.at("path");});return out;
@@ -234,9 +248,24 @@ Json InspectActor(const Json& identity)
     }
     return result;
 }
-void EditActor(const Json& snapshot,const Json& changes)
+Json ExportEventJson(const Json& identity)
 {
-    MagicCheck(snapshot);auto actor=MagicResolve(snapshot.at("actor"));
+    auto actor=MagicResolve(identity);
+    if(!actor || !IsA(actor,"SBase.SMagicEvent"))throw std::runtime_error("Open an SMagicEvent before exporting JSON.");
+    return Magic::ExportEvent(InspectActor(identity),Actors(),LevelPath());
+}
+void ImportEventJson(const Json& snapshot,const Json& document)
+{
+    auto actor=MagicResolve(snapshot.at("actor"));
+    if(!actor || !IsA(actor,"SBase.SMagicEvent"))throw std::runtime_error("Open an SMagicEvent before importing JSON.");
+    // Use the live schema, never schema supplied by the JSON file.
+    MagicCheck(snapshot);
+    auto changes=Magic::ImportEventChanges(InspectActor(snapshot.at("actor")),document);
+    EditActor(snapshot,changes);
+}
+void ValidateActorChanges(const Json& snapshot,const Json& changes)
+{
+    auto actor=MagicResolve(snapshot.at("actor"));
     if(!changes.is_object() || changes.empty())return;
     for(auto it=changes.begin();it!=changes.end();++it)
     {
@@ -252,6 +281,12 @@ void EditActor(const Json& snapshot,const Json& changes)
         if(it.key()=="NumKeys" && (Magic::Number(it.value())<1 || Magic::Number(it.value())>snapshot.at("values").at("KeyPos").size()))throw std::runtime_error("Mover key count is out of range.");
         if(it.key()=="KeyNum" && IsA(actor,"Mover") && Magic::Number(it.value())>=snapshot.at("values").at("KeyPos").size())throw std::runtime_error("The selected mover key is outside its key array.");
     }
+}
+void EditActor(const Json& snapshot,const Json& changes)
+{
+    MagicCheck(snapshot);ValidateActorChanges(snapshot,changes);
+    if(!changes.is_object() || changes.empty())return;
+    auto actor=MagicResolve(snapshot.at("actor"));
     Transaction transaction("Edit SMagicEvent workbench");Modify(actor);auto owner=actor;while(owner && !IsA(owner,"Actor"))owner=Read<Address>(owner+0x18);if(owner && owner!=actor)Modify(owner);
     for(auto it=changes.begin();it!=changes.end();++it)MagicSet(actor,it.key(),it.value());
     Call(actor,0x44);if(owner && owner!=actor)Call(owner,0x44);transaction.Commit();Redraw();

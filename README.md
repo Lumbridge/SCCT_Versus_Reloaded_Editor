@@ -27,6 +27,9 @@ changed shadows, or reconstruct missing lights. Check the approximation in game.
 | **Compiled-map recovery** | Turns compiled maps into editable brushes, actors, and assets. |
 | **Selective lighting** | Recalculate selected BSP faces, brushes and static meshes while preserving lighting elsewhere. |
 | **SMagicEvent Workbench** | Edit event groups, triggers, actions, and timing in one panel. |
+| **Map JSON import/export** | Export map data to JSON; preview and import actor, effect and event-connection changes with batch Undo. |
+| **SMagicEvent JSON exchange** | Export event settings for assisted editing, then import changes with validation and one-step Undo. |
+| **SCamNetwork Manager** | Create, name, preview and reorder cameras, with automatic reciprocal links and first-camera flags. |
 | **Gameplay Connections** | View actor links in a list or graph, jump to connected actors, and rename Tags with their linked events. |
 | **Selective Tag renaming** | Uncheck individual actor Tags or linked Event assignments before renaming a shared group. |
 | **Map packaging** | Create a playable-map ZIP with dependencies, map-selection images, and an installation report. |
@@ -36,7 +39,10 @@ changed shadows, or reconstruct missing lights. Check the approximation in game.
 | **Texture and mesh favorites** | Keep frequently used materials and meshes together across packages. |
 | **BSP texture copy/paste** | Copy a surface's material while keeping the destination's texture alignment. |
 | **Select Brush** | Select the source brush directly from a BSP surface. |
+| **Fit builder brush to meshes** | Right-click selected static meshes and choose **Position the builder brush around this** to create a surrounding box. |
 | **Quick grid adjustment** | Change grid size with **Ctrl + mouse wheel** over a viewport. |
+| **Brush edge grid snap** | Right-click a brush or BSP face → **Snap brush edge to grid** → **X axis**, **Y axis**, **Z axis**, or **All axes**. |
+| **Selected vertex grid snap** | In **Vertex Editing**, select vertices, then right-click a vertex and choose **X axis**, **Y axis**, **Z axis**, or **All axes**. |
 | **Play Level resolution** | Launch playtests at the current resolution of the editor's monitor. |
 | **Property-window reset** | Bring off-screen property windows back onto the editor monitor. |
 | **Builder-brush repair** | Restore a missing or damaged builder brush as a default cube. |
@@ -44,11 +50,62 @@ changed shadows, or reconstruct missing lights. Check the approximation in game.
 
 Also includes AllyPal's original fixes: faster selection, restored Echelon lighting, improved lightmaps, and larger WAV imports.
 
+Brush edge snapping uses the current grid spacing and moves the nearest outer
+bound onto a grid line along each chosen axis. It translates the whole brush;
+multiple selected brushes move together using their combined bounds. Shapes and
+spacing are preserved, and each move supports Undo/Redo. A face selection targets
+its source brush. Rebuild geometry after moving BSP brushes as usual.
+
+Vertex snapping moves each selected vertex to its nearest world grid line on the
+chosen axes, reshaping the brush. Unselected vertices stay in place. Right-click
+opens the axis menu while preserving the vertex selection; cancelling changes
+nothing. The move supports Undo/Redo. Rebuild geometry after editing BSP vertices.
+
 ## Install
 
 Download the ZIP from [Releases](https://github.com/Lumbridge/SCCT_Versus_Reloaded_Editor/releases) and extract it into the same folder as `SCCT_Versus.exe`. Run `Reloaded_Editor.exe`.
 
+Choose **View > SCamNetwork Manager...** to manage surveillance cameras. Each
+connected network appears separately. **New network** creates its first camera;
+**Add camera to network** inserts another at the builder brush. Navigate the
+perspective viewport and use **Place at viewport position + aim** to position it.
+Rename changes the in-game `CamName` without changing actor Tags.
+
+Use **Move up**, **Move down**, or **Make first camera** to change the game order.
+The manager updates `NextCam`, `PrevCam`, and `bFirstCam` together in one undo step.
+Check **Loop last camera back to first** and **Apply order** for a circular network.
+Broken links are flagged for review; **Apply order / repair links** rewires the
+displayed network. **Detach** keeps the actor as a separate network. To merge
+networks, select all their cameras in the map and choose **Link selected cameras**.
+
+Double-click a camera or use **Previous / Next** to preview its position and aim
+in the first perspective viewport. **Return to original view** or closing the panel
+restores that viewport. **More camera properties** opens native properties for
+rotation constraints, materials and other settings. Save the map to retain edits.
+
 Recovered maps, including Clarity Soft, are available in [SCCT-Maps](https://github.com/Lumbridge/SCCT-Maps).
+
+Use **View > Export Map to JSON...** to export the loaded map's actors, properties,
+available classes and assets, and geometry context. Use **View > Import Map from JSON...**
+to preview and apply a JSON change file in one Undo step. Actors, particle components,
+property edits and delayed event links are supported. The exported snapshot includes
+a change-file template; importing uses that change format rather than replacing the
+whole map with the snapshot. Save afterwards; lighting and geometry are not rebuilt
+automatically. See the [map JSON guide](docs/MapAuthoring.md).
+
+In **SMagicEvent Workbench**, use **Export JSON...** to share an event for help
+editing it. Use **Import JSON...** to apply the edited settings to the event open
+in the workbench, or choose **New Event** first for a separate event. Import keeps
+the destination Tag and placement; linked actors must be created separately.
+Undo reverses the import. See [the JSON format guide](tests/SMagicEventJson.md).
+
+To box in a static mesh, select it and right-click **Position the builder brush
+around this**. The builder brush becomes a world-aligned box enclosing the
+mesh's transformed bounds. Rotation, scale and pivot offsets are included;
+multiple selected meshes are enclosed together. Flat bounds get a minimum
+thickness of one unit. Faces use the selected material, or the default texture
+if none is selected. The meshes stay selected and unchanged. Undo restores
+the builder brush's previous shape and placement in one step.
 
 <details>
 <summary>Package a map for sharing</summary>

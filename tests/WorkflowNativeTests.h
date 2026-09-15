@@ -2,7 +2,23 @@
 #include "../Reloaded.Editor/Include/nlohmann/json.hpp"
 #include <stdexcept>
 #include <commctrl.h>
+#include <commdlg.h>
+#include <dlgs.h>
 namespace WorkflowProbe {
+bool vertexPopupChecked=false;
+void CALLBACK InspectVertexPopup(HWND,UINT,UINT_PTR,DWORD)
+{
+    EnumThreadWindows(GetCurrentThreadId(),[](HWND window,LPARAM)->BOOL {
+        char cls[64]{};GetClassNameA(window,cls,sizeof(cls));
+        if(!strcmp(cls,"#32768")){
+            auto menu=reinterpret_cast<HMENU>(SendMessage(window,0x01e1,0,0)); // MN_GETHMENU
+            auto state=GetMenuState(menu,40944,MF_BYCOMMAND);
+            vertexPopupChecked=state!=UINT(-1) && !(state&(MF_DISABLED|MF_GRAYED));
+            EndMenu();return FALSE;
+        }
+        return TRUE;
+    },0);
+}
 unsigned char* MagicActor(const nlohmann::json& identity)
 {
     auto path=identity.at("path").get<std::string>();auto name=path.substr(path.find_last_of('.')+1);
@@ -75,6 +91,33 @@ std::string excludeTagEntity;
 std::filesystem::path previewScreenshot;
 void Screenshot(HWND window,const std::filesystem::path& path);
 bool packagePreviewChecked=false;
+std::wstring jsonDialogPath;
+bool jsonDialogCancel=false;
+bool authoringPreviewCancel=false,authoringPreviewSeen=false;
+int jsonDialogTicks=0;
+void CALLBACK AnswerJsonDialog(HWND,UINT,UINT_PTR,DWORD)
+{
+    ++jsonDialogTicks;
+    EnumThreadWindows(GetCurrentThreadId(),[](HWND w,LPARAM)->BOOL {
+        wchar_t title[256]{};GetWindowTextW(w,title,256);
+        if(!wcscmp(title,L"Map JSON")){PostMessage(w,WM_COMMAND,IDOK,0);return TRUE;}
+        if(!wcscmp(title,L"Preview Map JSON Import"))
+        {
+            authoringPreviewSeen=true;if(!previewScreenshot.empty())Screenshot(w,previewScreenshot);
+            PostMessage(w,WM_COMMAND,authoringPreviewCancel?IDCANCEL:IDOK,0);return TRUE;
+        }
+        if(wcscmp(title,L"Export Map to JSON") && wcscmp(title,L"Import Map from JSON") && wcscmp(title,L"Export SMagicEvent as JSON") && wcscmp(title,L"Import JSON into the open SMagicEvent"))return TRUE;
+        if(jsonDialogCancel || jsonDialogTicks>40){PostMessage(w,WM_COMMAND,IDCANCEL,0);return TRUE;}
+        if(jsonDialogTicks!=2 || !IsWindowEnabled(w))return TRUE;
+        SendMessageW(w,CDM_SETCONTROLTEXT,edt1,reinterpret_cast<LPARAM>(jsonDialogPath.c_str()));
+        EnumChildWindows(w,[](HWND child,LPARAM)->BOOL {
+            wchar_t cls[64]{};GetClassNameW(child,cls,64);
+            if(!wcscmp(cls,L"Edit") && (GetDlgCtrlID(child)==1001 || GetDlgCtrlID(child)==edt1 || GetDlgCtrlID(GetParent(child))==cmb13 || GetDlgCtrlID(GetParent(GetParent(child)))==cmb13))SetWindowTextW(child,jsonDialogPath.c_str());
+            return TRUE;
+        },0);
+        PostMessage(w,WM_COMMAND,IDOK,0);return TRUE;
+    },0);
+}
 HWND FindDialog(const char* title)
 {
     struct Search { const char* title;HWND result; } search{title,nullptr};
@@ -147,7 +190,7 @@ void Screenshot(HWND window,const std::filesystem::path& path)
     DeleteObject(bitmap);DeleteDC(dc);ReleaseDC(window,screen);
 }
 }
-void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=false)
+void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=false, bool snapOnly=false)
 {
     using J=nlohmann::json;
     try
@@ -190,6 +233,19 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             require(selected.size()==1 && selected[0]["path"]==expected[0]["path"],"face menu command selects its source brush through native actor selection");
             require(call({{"op","view.capture"}})["cameras"]==cameras,"selecting source brush preserves all viewport cameras");
             require((read(surfaces+0x14)&0x02000000u)!=0,"brush selection preserves selected face");
+            {
+                auto actor=WorkflowProbe::MagicActor(expected[0]);float original[3];memcpy(original,actor+0x80,12);
+                for(int axis=0;axis<3;++axis)reinterpret_cast<float*>(actor+0x80)[axis]+=.375f;
+                const auto before=call({{"op","brush.snap.bounds"},{"surfaces",true}});
+                using Load=HMENU(WINAPI*)(HINSTANCE,LPCSTR);
+                auto menu=(*reinterpret_cast<Load*>(0x11af23f0))(GetModuleHandle(nullptr),MAKEINTRESOURCEA(108));
+                require(menu && GetMenuState(GetSubMenu(menu,0),40943,MF_BYCOMMAND)!=UINT(-1),"surface context offers all-axis edge snap");DestroyMenu(menu);
+                SendMessage(frameWindow,WM_COMMAND,40943,0);
+                const auto after=call({{"op","brush.snap.bounds"},{"surfaces",true}});
+                for(int axis=0;axis<3;++axis){double grid=after["grid"][axis];bool aligned=false;for(const char* bound:{"min","max"}){double v=after[bound][axis].get<double>()/grid;aligned|=std::abs(v-std::round(v))<.0001;}require(aligned,"face menu snaps source brush bounds");}
+                Exec("TRANSACTION UNDO");require(call({{"op","brush.snap.bounds"},{"surfaces",true}})==before,"surface snap Undo restores source brush and selection");
+                memcpy(actor+0x80,original,12);
+            }
             auto poly=read(surfaces+0x20);*reinterpret_cast<uintptr_t*>(surfaces+0x20)=0;
             require(!menuEnabled(),"face without source polygon disables Select Brush");
             bool rejected=false;try{call({{"op","surface.brushes"}});}catch(const std::exception&){rejected=true;}
@@ -206,6 +262,10 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
         if(restart)
         {
             require(Exec(std::string("MAP LOAD FILE=\"")+destination+"\"")!=0,"fresh editor opens saved workflow map");
+            J savedAuthoring;std::ifstream(directory/"map_authoring_saved.json")>>savedAuthoring;
+            for(const auto& actor:savedAuthoring)require(call({{"op","magic.inspect"},{"actor",actor.at("actor")}})["values"]==actor.at("values"),"batch-authored actors, particle components and delayed links survive restart");
+            J savedCameras;std::ifstream cameraInput(directory/"camera_network_saved.json");cameraInput>>savedCameras;
+            for(const auto& camera:savedCameras)require(call({{"op","magic.inspect"},{"actor",camera.at("actor")}})["values"]==camera.at("values"),"camera names, pose and network links survive editor restart");
             std::ifstream magicInput(directory/"magic_setpiece.json");J savedMagic;magicInput>>savedMagic;
             for(const auto& savedActor:savedMagic)require(call({{"op","magic.inspect"},{"actor",savedActor.at("actor")}})["values"]==savedActor.at("values"),"set piece actor settings survive a full editor restart");
             auto reopenedEvent=call({{"op","magic.inspect"},{"actor",savedMagic[0]["actor"]}});auto reopenedGroups=reopenedEvent["values"]["Groups"];reopenedGroups[0]["EventGroup"][0]["Delay"]="1.5";
@@ -228,6 +288,152 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
         }
         J actors=call({{"op","actors"}});require(actors.size()>=3,"fixture actors available");
         checkSurfaceBrushSelection(1);
+        {
+            auto selection=call({{"op","actors"},{"selected",true}});
+            auto brush=std::find_if(actors.begin(),actors.end(),[](const J& a){return a.at("class")=="Engine.Brush" && a.value("authorable",false);});
+            require(brush!=actors.end(),"grid snap fixture brush available");
+            auto native=WorkflowProbe::MagicActor(*brush);
+            float original[3];memcpy(original,native+0x80,12);
+            const float displaced[3]={original[0]+1.25f,original[1]-2.25f,original[2]+3.25f};memcpy(native+0x80,displaced,12);
+            auto editor=*reinterpret_cast<unsigned char**>(kEditor);float savedGrid[3];memcpy(savedGrid,editor+0x200,12);
+            const float grid[3]={16,32,8};memcpy(editor+0x200,grid,12);
+            call({{"op","select"},{"actors",J::array({*brush})}});
+            const auto before=call({{"op","brush.snap.bounds"}});
+            using Load=HMENU(WINAPI*)(HINSTANCE,LPCSTR);
+            auto menu=(*reinterpret_cast<Load*>(0x11af23f0))(GetModuleHandle(nullptr),MAKEINTRESOURCEA(107));
+            require(menu && GetMenuState(GetSubMenu(menu,0),40936,MF_BYCOMMAND)!=UINT(-1),"brush context has axis snap commands");DestroyMenu(menu);
+            SendMessage(frameWindow,WM_COMMAND,40936,0);
+            auto after=call({{"op","brush.snap.bounds"}});
+            auto aligned=[&](const J& b,int axis){for(const char* bound:{"min","max"}){double v=b.at(bound).at(axis).get<double>();if(std::abs(v/std::abs(grid[axis])-std::round(v/std::abs(grid[axis])))<.0001)return true;}return false;};
+            require(aligned(after,0),"X outer bound lands on active grid");
+            for(int axis=1;axis<3;++axis)require(after["min"][axis]==before["min"][axis] && after["max"][axis]==before["max"][axis],"X snap preserves other axes");
+            Exec("TRANSACTION UNDO");require(call({{"op","brush.snap.bounds"}})==before,"grid snap Undo restores bounds and selection");
+            Exec("TRANSACTION REDO");require(call({{"op","brush.snap.bounds"}})==after,"grid snap Redo restores snapped bounds");
+            call({{"op","brush.snap"},{"axes",7}});after=call({{"op","brush.snap.bounds"}});
+            for(int axis=0;axis<3;++axis){require(aligned(after,axis),"all-axis bounds snap");require(std::abs((after["max"][axis].get<double>()-after["min"][axis].get<double>())-(before["max"][axis].get<double>()-before["min"][axis].get<double>()))<.001,"snap preserves brush dimensions");}
+            call({{"op","brush.snap"},{"axes",7}});
+            Exec("TRANSACTION UNDO");require(aligned(call({{"op","brush.snap.bounds"}}),0),"already aligned snap does not add an Undo step");
+            Exec("TRANSACTION UNDO");require(call({{"op","brush.snap.bounds"}})==before,"two edits require two Undo steps");
+            call({{"op","select"},{"actors",J::array()}});bool rejected=false;
+            try{call({{"op","brush.snap"},{"axes",1}});}catch(const std::exception&){rejected=true;}require(rejected,"empty brush snap rejected");
+            memcpy(native+0x80,original,12);memcpy(editor+0x200,savedGrid,12);
+            call({{"op","select"},{"actors",selection}});
+        }
+        {
+            const auto brush=*std::find_if(actors.begin(),actors.end(),[](const J& a){return a.at("class")=="Engine.Brush" && a.value("authorable",false);});
+            call({{"op","select"},{"actors",J::array({brush})}});
+            auto actor=WorkflowProbe::MagicActor(brush),editor=*reinterpret_cast<unsigned char**>(kEditor);
+            auto model=*reinterpret_cast<unsigned char**>(actor+0x238),polys=*reinterpret_cast<unsigned char**>(model+0x50);
+            const int count=*reinterpret_cast<int*>(polys+0x2c);auto data=*reinterpret_cast<unsigned char**>(polys+0x28);
+            std::vector<unsigned char> original(data,data+count*0x14c);
+            const int mode=*reinterpret_cast<int*>(editor+0x1ac);*reinterpret_cast<int*>(editor+0x1ac)=0x19;
+            float grid[3];memcpy(grid,editor+0x200,12);const float testGrid[3]={16,16,16};memcpy(editor+0x200,testGrid,12);
+            auto selectionHeader=reinterpret_cast<uintptr_t*>(0x11685a9c);std::array<uintptr_t,3> savedHeader{selectionHeader[0],selectionHeader[1],selectionHeader[2]};
+            std::vector<std::array<uintptr_t,3>> entries;
+            float corner[3];memcpy(corner,data+0x18,12);
+            for(int pi=0;pi<count;++pi){auto p=data+pi*0x14c;for(int vi=0;vi<*reinterpret_cast<unsigned short*>(p+0x148);++vi){auto v=reinterpret_cast<float*>(p+0x18+vi*12);if(!memcmp(v,corner,12)){v[0]+=1.25f;v[1]-=2.25f;v[2]+=3.25f;entries.push_back({reinterpret_cast<uintptr_t>(actor),static_cast<uintptr_t>(pi),static_cast<uintptr_t>(vi)});}}}
+            require(entries.size()>=3,"vertex fixture includes all polygon copies of one corner");
+            selectionHeader[0]=reinterpret_cast<uintptr_t>(entries.data());selectionHeader[1]=selectionHeader[2]=entries.size();
+            auto before=call({{"op","vertex.selection"}});std::vector<unsigned char> displaced(data,data+count*0x14c);
+            unsigned cause[3]={0,0,2};auto timer=SetTimer(nullptr,0,50,WorkflowProbe::InspectVertexPopup);
+            reinterpret_cast<void(__thiscall*)(void*,void*,void*)>(0x10e045e9)(nullptr,cause,nullptr);KillTimer(nullptr,timer);
+            require(WorkflowProbe::vertexPopupChecked && call({{"op","vertex.selection"}})==before,"right-click vertex menu preserves selection and cancelled geometry");
+            SendMessage(frameWindow,WM_COMMAND,40944,0);auto after=call({{"op","vertex.selection"}});
+            for(size_t i=0;i<after.size();++i){double x=after[i]["world"][0];require(std::abs(x/16-std::round(x/16))<.0001,"selected vertex X snaps in world space");for(int axis=1;axis<3;++axis)require(before[i]["world"][axis]==after[i]["world"][axis],"vertex X snap preserves Y and Z");}
+            for(int pi=0;pi<count;++pi){auto p=data+pi*0x14c;for(int vi=0;vi<*reinterpret_cast<unsigned short*>(p+0x148);++vi){bool chosen=false;for(auto e:entries)chosen|=e[1]==pi && e[2]==vi;if(!chosen)require(!memcmp(p+0x18+vi*12,displaced.data()+pi*0x14c+0x18+vi*12,12),"unselected vertices remain exact");}}
+            Exec("TRANSACTION UNDO");auto undone=call({{"op","vertex.selection"}});if(undone!=before){Record("vertex_before",before.dump().c_str());Record("vertex_undone",undone.dump().c_str());}require(undone==before,"vertex snap Undo restores selected corner");
+            Exec("TRANSACTION REDO");require(call({{"op","vertex.selection"}})==after,"vertex snap Redo restores selected corner");
+            call({{"op","vertex.snap"},{"axes",7}});after=call({{"op","vertex.selection"}});
+            for(auto v:after)for(double coordinate:v["world"]){require(std::abs(coordinate/16-std::round(coordinate/16))<.0001,"selected corner all-axis alignment");}
+            require(after[0]["world"]==after.back()["world"],"shared corner stays joined");
+            Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");
+            // Undo may reallocate the UPolys array. Always resolve it again.
+            data=*reinterpret_cast<unsigned char**>(polys+0x28);memcpy(data,original.data(),original.size());
+            std::copy(savedHeader.begin(),savedHeader.end(),selectionHeader);*reinterpret_cast<int*>(editor+0x1ac)=mode;memcpy(editor+0x200,grid,12);
+        }
+        if(snapOnly){Record("PASS","native brush and selected-vertex grid snap commands and transactions");return;}
+        {
+            auto originalSelection=call({{"op","actors"},{"selected",true}});
+            require(Exec("OBJ LOAD FILE=\"..\\Packages\\StaticMeshes\\TestMapStaticM.usx\"")!=0,"load mesh fixture package");
+            auto assets=call({{"op","magic.assets"},{"type","StaticMesh"}});require(!assets.empty(),"mesh fixture asset available");
+            auto mesh=call({{"op","magic.create"},{"class","Engine.StaticMeshActor"}});
+            auto native=WorkflowProbe::MagicActor(mesh);
+            auto field=[&](const char* name)->unsigned char* {
+                for(auto type=*reinterpret_cast<unsigned char**>(native+0x24);type;type=*reinterpret_cast<unsigned char**>(type+0x28))
+                    for(auto p=*reinterpret_cast<unsigned char**>(type+0x58);p;p=*reinterpret_cast<unsigned char**>(p+0x40))
+                        if(!strcmp(ObjectName(p),name))return native+*reinterpret_cast<int*>(p+0x3c);
+                throw std::runtime_error(std::string("Mesh fixture property missing: ")+name);
+            };
+            auto wanted=assets[0]["path"].get<std::string>();auto objects=*reinterpret_cast<unsigned char***>(0x11697b70);int objectCount=*reinterpret_cast<int*>(0x11697b74);unsigned char* meshObject=nullptr;
+            for(int i=0;i<objectCount;++i)if(objects[i]){std::string path;for(auto object=objects[i];object;object=*reinterpret_cast<unsigned char**>(object+0x18))path=std::string(ObjectName(object))+(path.empty()?"":"."+path);if(path==wanted){meshObject=objects[i];break;}}
+            require(meshObject!=nullptr,"resolve fixture mesh object");*reinterpret_cast<void**>(field("StaticMesh"))=meshObject;
+            auto vector=[&](const char* name,float x,float y,float z){float value[3]={x,y,z};memcpy(field(name),value,sizeof(value));};
+            vector("Location",0,0,0);vector("PrePivot",0,0,0);vector("DrawScale3D",1,1,1);*reinterpret_cast<float*>(field("DrawScale"))=1;
+            memset(field("Rotation"),0,12);
+            call({{"op","select"},{"actors",J::array({mesh})}});
+            auto local=call({{"op","mesh.bounds"}});
+            vector("Location",200,-100,75);vector("PrePivot",3,5,7);vector("DrawScale3D",-1,0.5f,1.5f);*reinterpret_cast<float*>(field("DrawScale"))=2;
+            int rotation[3]={0,16384,0};memcpy(field("Rotation"),rotation,sizeof(rotation));
+            auto bounds=call({{"op","mesh.bounds"}});
+            // Independent quarter-turn oracle: world=(200-y, -100-2*x, 75+3*z), after subtracting PrePivot.
+            double lo[3]={200-(local["max"][1].get<double>()-5),-100-2*(local["max"][0].get<double>()-3),75+3*(local["min"][2].get<double>()-7)};
+            double hi[3]={200-(local["min"][1].get<double>()-5),-100-2*(local["min"][0].get<double>()-3),75+3*(local["max"][2].get<double>()-7)};
+            for(int axis=0;axis<3;++axis)require(std::abs(bounds["min"][axis].get<double>()-lo[axis])<0.01 && std::abs(bounds["max"][axis].get<double>()-hi[axis])<0.01,"mesh bounds include rotation, signed nonuniform scale and pivot");
+            auto level=*reinterpret_cast<unsigned char**>(*reinterpret_cast<uintptr_t*>(kEditor)+0x130);
+            auto builder=(*reinterpret_cast<unsigned char***>(level+0x2c))[1];
+            auto brushState=[&](){
+                J value={{"Location",{{"X",std::to_string(*reinterpret_cast<float*>(builder+0x80))},{"Y",std::to_string(*reinterpret_cast<float*>(builder+0x84))},{"Z",std::to_string(*reinterpret_cast<float*>(builder+0x88))}}}};
+                for(auto type=*reinterpret_cast<unsigned char**>(builder+0x24);type;type=*reinterpret_cast<unsigned char**>(type+0x28))
+                    for(auto p=*reinterpret_cast<unsigned char**>(type+0x58);p;p=*reinterpret_cast<unsigned char**>(p+0x40)){
+                        std::string name=ObjectName(p);if(name!="Rotation" && name!="PrePivot" && name!="DrawScale" && name!="DrawScale3D" && name!="MainScale" && name!="PostScale")continue;
+                        auto at=builder+*reinterpret_cast<int*>(p+0x3c);auto size=*reinterpret_cast<unsigned short*>(p+0x32);value[name]=std::vector<unsigned char>(at,at+size);
+                    }return value;
+            };
+            auto brushText=[&](){auto file=directory/"builder-fit.t3d";require(Exec("BRUSH EXPORT FILE=\""+file.string()+"\"")!=0,"export builder brush for verification");std::ifstream in(file);return std::string(std::istreambuf_iterator<char>(in),{});};
+            auto before=brushState();auto beforeText=brushText();auto viewBefore=call({{"op","view.capture"}})["cameras"];
+            using Load=HMENU(WINAPI*)(HINSTANCE,LPCSTR);
+            auto menu=(*reinterpret_cast<Load*>(0x11af23f0))(GetModuleHandle(nullptr),MAKEINTRESOURCEA(107));
+            require(menu && GetMenuState(GetSubMenu(menu,0),40933,MF_BYCOMMAND)!=UINT(-1),"static mesh context menu contains builder fit action");DestroyMenu(menu);
+            auto currentMaterial=reinterpret_cast<uintptr_t*>(*reinterpret_cast<uintptr_t*>(kEditor)+0x138);
+            auto oldMaterial=*currentMaterial;*currentMaterial=0;
+            SendMessage(frameWindow,WM_COMMAND,40933,0);
+            *currentMaterial=oldMaterial;
+            auto after=brushState();auto afterText=brushText();
+            require(afterText!=beforeText,"builder fit replaces brush geometry");
+            size_t materialCount=0;for(size_t pos=0;(pos=afterText.find("Texture=Engine.DefaultTexture",pos))!=std::string::npos;++pos)++materialCount;
+            require(materialCount==6,"builder fit assigns default texture to every face when no material is selected");
+            require(call({{"op","actors"},{"selected",true}})[0]["path"]==mesh["path"] && call({{"op","view.capture"}})["cameras"]==viewBefore,"builder fit preserves mesh selection and viewport cameras");
+            for(int axis=0;axis<3;++axis){const char* key=axis==0?"X":axis==1?"Y":"Z";require(std::abs(std::stod(after["Location"][key].get<std::string>())-(lo[axis]+hi[axis])*0.5)<0.01,"builder centered on mesh bounds");}
+            std::istringstream lines(afterText);std::string line;int vertices=0;
+            while(std::getline(lines,line)){auto pos=line.find("Vertex");if(pos==std::string::npos)continue;auto xyz=line.substr(pos+6);std::replace(xyz.begin(),xyz.end(),',',' ');std::istringstream values(xyz);double x,y,z;if(values>>x>>y>>z){double v[3]={x,y,z};for(int axis=0;axis<3;++axis)require(std::abs(std::abs(v[axis])-(hi[axis]-lo[axis])*0.5)<0.02,"builder vertices match fitted half extents");++vertices;}}
+            require(vertices==24,"builder fit creates six quad faces");
+            require(Exec("TRANSACTION UNDO")!=0,"undo builder fit");require(brushState()==before && brushText()==beforeText,"one undo restores builder geometry and transform");
+            require(Exec("TRANSACTION REDO")!=0,"redo builder fit");require(brushState()==after && brushText()==afterText,"redo restores fitted brush");
+            Exec("TRANSACTION UNDO");
+            call({{"op","select"},{"actors",J::array()}});bool rejected=false;try{call({{"op","builder.fit"}});}catch(const std::exception&){rejected=true;}
+            require(rejected && brushState()==before && brushText()==beforeText,"empty selection rejected without changing builder");
+            auto mixed=originalSelection;mixed.push_back(mesh);call({{"op","select"},{"actors",mixed}});
+            rejected=false;try{call({{"op","builder.fit"}});}catch(const std::exception&){rejected=true;}
+            require(rejected && brushState()==before && brushText()==beforeText,"mixed mesh and brush selection rejected without edits");
+            menu=(*reinterpret_cast<Load*>(0x11af23f0))(GetModuleHandle(nullptr),MAKEINTRESOURCEA(107));
+            require(menu && GetMenuState(GetSubMenu(menu,0),40933,MF_BYCOMMAND)==UINT(-1),"builder fit omitted from non-mesh context menu");DestroyMenu(menu);
+            auto second=call({{"op","magic.create"},{"class","Engine.StaticMeshActor"}});native=WorkflowProbe::MagicActor(second);
+            *reinterpret_cast<void**>(field("StaticMesh"))=meshObject;vector("Location",-200,300,400);vector("PrePivot",0,0,0);vector("DrawScale3D",1,1,1);*reinterpret_cast<float*>(field("DrawScale"))=1;memset(field("Rotation"),0,12);
+            call({{"op","select"},{"actors",J::array({mesh,second})}});auto combined=call({{"op","mesh.bounds"}});
+            require(combined["count"]==2,"builder fit includes both selected meshes");
+            const double offset[3]={-200,300,400};
+            for(int axis=0;axis<3;++axis){lo[axis]=(std::min)(lo[axis],local["min"][axis].get<double>()+offset[axis]);hi[axis]=(std::max)(hi[axis],local["max"][axis].get<double>()+offset[axis]);require(std::abs(combined["min"][axis].get<double>()-lo[axis])<0.01 && std::abs(combined["max"][axis].get<double>()-hi[axis])<0.01,"multiple mesh bounds form their union");}
+            uintptr_t selectedMaterial=0;
+            for(int i=0;i<objectCount;++i)if(objects[i] && !strcmp(ObjectName(objects[i]),"BETON_Lit_Spec")){selectedMaterial=reinterpret_cast<uintptr_t>(objects[i]);break;}
+            require(selectedMaterial!=0,"selected material fixture available");*currentMaterial=selectedMaterial;
+            call({{"op","builder.fit"}});auto together=brushState();*currentMaterial=oldMaterial;
+            auto textured=brushText();require(textured.find("Texture=TXT_INI.BSP.BETON_Lit_Spec")!=std::string::npos,"builder fit uses selected material when available");
+            for(int axis=0;axis<3;++axis){const char* key=axis==0?"X":axis==1?"Y":"Z";require(std::abs(std::stod(together["Location"][key].get<std::string>())-(lo[axis]+hi[axis])*0.5)<0.01,"builder centers on all selected meshes");}
+            require(call({{"op","actors"},{"selected",true}}).size()==2,"multi-mesh fit preserves both selected meshes");
+            Exec("TRANSACTION UNDO");require(brushState()==before && brushText()==beforeText,"multi-mesh fit undoes in one step");Exec("TRANSACTION UNDO");
+            // Remove this test actor and restore the original builder/selection before the remaining suite.
+            Exec("TRANSACTION UNDO");call({{"op","select"},{"actors",originalSelection}});
+        }
         J view=call({{"op","view.capture"}});require(!view.at("cameras").empty(),"capture native cameras");
         auto adjusted=view;
         for(auto& c:adjusted["cameras"]) {c["position"][0]=c["position"][0].get<double>()+32.0;}
@@ -267,6 +473,92 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
         auto magicInstance=call({{"op","assembly.place"},{"definition",magic},{"position",{0,512,0}},{"rotation",{0,0,0}},{"bindings",J::object()}});
         auto magicSnapshot=call({{"op","magic.inspect"},{"actor",magicInstance["members"][0]}});
         std::ofstream(directory/"magic_workbench_schema.json")<<magicSnapshot.dump(2);
+        {
+            auto document=call({{"op","magic.json.export"},{"actor",magicSnapshot["actor"]}});
+            std::ofstream(directory/"magic_event_export.json")<<document.dump(2);
+            require(document["properties"].contains("Groups") && !document["properties"].contains("Tag") && !document["properties"].contains("Location") && !document["context"]["actors"].empty(),"event JSON includes settings and actor context while preserving destination identity");
+            auto edited=document;edited["properties"]["Groups"][0]["EventGroup"][0]["Delay"]="2.25";edited["properties"]["Groups"][0]["Repeat"]="3";
+            call({{"op","magic.json.import"},{"snapshot",magicSnapshot},{"document",edited}});
+            auto imported=call({{"op","magic.inspect"},{"actor",magicSnapshot["actor"]}});
+            require(std::stod(imported["values"]["Groups"][0]["EventGroup"][0]["Delay"].get<std::string>())==2.25 && imported["values"]["Groups"][0]["Repeat"]=="3","JSON import applies group timing and repeat settings together");
+            require(imported["values"]["Tag"]==magicSnapshot["values"]["Tag"] && imported["values"]["Location"]==magicSnapshot["values"]["Location"],"JSON import preserves Tag and transform");
+            bool rejected=false;try{call({{"op","magic.json.import"},{"snapshot",magicSnapshot},{"document",document}});}catch(const std::exception&){rejected=true;}
+            require(rejected,"JSON import rejects a stale event snapshot");
+            Exec("TRANSACTION UNDO");require(call({{"op","magic.inspect"},{"actor",magicSnapshot["actor"]}})["values"]==magicSnapshot["values"],"JSON import is one undo step");
+            Exec("TRANSACTION REDO");require(call({{"op","magic.inspect"},{"actor",magicSnapshot["actor"]}})["values"]==imported["values"],"JSON import redo restores all changes");Exec("TRANSACTION UNDO");
+            auto invalid=edited;invalid["properties"]["Groups"][0]["EventGroup"][1]["Delay"]="-2";rejected=false;
+            try{call({{"op","magic.json.import"},{"snapshot",magicSnapshot},{"document",invalid}});}catch(const std::exception&){rejected=true;}
+            require(rejected && call({{"op","magic.inspect"},{"actor",magicSnapshot["actor"]}})["values"]==magicSnapshot["values"],"invalid later action leaves the whole event unchanged");
+            invalid=edited;invalid["properties"]["StopActor"]="Actor'MyLevel.MissingJsonTarget'";rejected=false;
+            try{call({{"op","magic.json.import"},{"snapshot",magicSnapshot},{"document",invalid}});}catch(const std::exception&){rejected=true;}
+            require(rejected && call({{"op","magic.inspect"},{"actor",magicSnapshot["actor"]}})["values"]==magicSnapshot["values"],"missing JSON object reference is rejected before edits");
+        }
+
+        {
+            auto selectionBefore=call({{"op","actors"},{"selected",true}});
+            auto exported=call({{"op","authoring.export"}});
+            require(exported["actors"].size()>0 && exported["classes"].size()>0 && exported.contains("geometryT3d"),"map authoring exports actor properties, schemas, assets and world geometry");
+            require(call({{"op","actors"},{"selected",true}})==selectionBefore,"map export preserves selection");
+            std::ofstream(directory/"map-authoring.json")<<exported.dump(2);
+            auto doc=exported["changes"];
+            auto location=J{{"X","128"},{"Y","96"},{"Z","64"}};
+            auto create=[&](const char* id,const char* type){return J{{"op","create"},{"id",id},{"class",type},{"properties",{{"Location",location}}}};};
+            doc["operations"]=J::array({create("AuthoringEvent","SBase.SMagicEvent"),create("AuthoringLight","Engine.Light"),create("AuthoringSound","SBase.SAmbientSoundTrigger"),create("AuthoringSteam","SBase.SSpawnableEmitter"),create("AuthoringTrigger","Engine.Trigger"),
+                {{"op","component"},{"id","SteamParticles"},{"owner","AuthoringSteam"},{"class","Engine.SpriteEmitter"},{"properties",J::object()}},
+                {{"op","link"},{"event","AuthoringEvent"},{"target","AuthoringTrigger"},{"trigger",true}},
+                {{"op","link"},{"event","AuthoringEvent"},{"target","AuthoringSound"},{"trigger",false}},
+                {{"op","link"},{"event","AuthoringEvent"},{"target","AuthoringSteam"},{"trigger",false}}});
+            doc["operations"][0]["properties"]["StopActor"]={{"$ref","AuthoringLight"}};
+            doc["operations"].back()["delay"]="1.5";
+            std::ofstream(directory/"map-changes.json")<<doc.dump(2);
+            const auto beforeActors=call({{"op","actors"}});
+            auto preview=call({{"op","authoring.preview"},{"document",doc}});
+            require(!preview["changes"].empty() && call({{"op","actors"}})==beforeActors,"preview lists map changes without mutating actors");
+            auto invalid=doc;invalid["operations"][0]["properties"]["StopActor"]={{"$ref","Missing"}};
+            bool rejected=false;try{call({{"op","authoring.apply"},{"document",invalid}});}catch(...){rejected=true;}
+            require(rejected && call({{"op","actors"}})==beforeActors,"missing batch references fail without partial creation");
+            invalid=doc;invalid["operations"].push_back({{"op","link"},{"event","AuthoringEvent"},{"target","AuthoringSound"},{"trigger",false},{"group",999}});
+            rejected=false;try{call({{"op","authoring.apply"},{"document",invalid}});}catch(...){rejected=true;}
+            require(rejected && call({{"op","actors"}})==beforeActors,"late batch failure rolls back all created actors and links");
+            auto applied=call({{"op","authoring.apply"},{"document",doc}});
+            require(applied["created"].size()==6,"batch creates lights, sound, trigger, event, emitter and particle component");
+            J states=J::array();for(const auto& identity:applied["created"])states.push_back(call({{"op","magic.inspect"},{"actor",identity}}));
+            require(states[0]["values"]["StopActor"].get<std::string>().find("AuthoringLight")!=std::string::npos,"forward actor references resolve after batch creation");
+            require(states[4]["values"]["Event"]==states[0]["values"]["Tag"] && states[0]["values"]["Groups"][0]["EventGroup"].size()==2,"batch connects trigger and timed-event targets");
+            require(std::stod(states[0]["values"]["Groups"][0]["EventGroup"][1]["Delay"].get<std::string>())==1.5,"batch preserves an authored action delay");
+            require(std::stod(states[1]["values"]["Location"]["X"].get<std::string>())==128 && std::stod(states[1]["values"]["Location"]["Y"].get<std::string>())==96 && std::stod(states[1]["values"]["Location"]["Z"].get<std::string>())==64,"batch places actors at exact absolute coordinates");
+            require(states[3]["values"]["Emitters"].size()==1,"batch attaches an owned particle component");
+            require(call({{"op","actors"},{"selected",true}})==selectionBefore,"batch preserves selection");
+            Exec("TRANSACTION UNDO");require(call({{"op","actors"}})==beforeActors,"one undo removes the entire set piece");
+            Exec("TRANSACTION REDO");
+            for(const auto& state:states)require(call({{"op","magic.inspect"},{"actor",state["actor"]}})["values"]==state["values"],"one redo restores set piece properties and connections");
+            auto existingLink=exported["changes"];existingLink["operations"]=J::array({{{"op","link"},{"event",states[0]["actor"]["path"]},{"target",states[2]["actor"]["path"]},{"trigger",false}}});
+            rejected=false;try{call({{"op","authoring.preview"},{"document",existingLink}});}catch(...){rejected=true;}
+            require(rejected,"linking existing actors requires exported before values");
+            existingLink["expect"]={{states[0]["actor"]["path"].get<std::string>(),states[0]["values"]},{states[2]["actor"]["path"].get<std::string>(),states[2]["values"]}};
+            call({{"op","authoring.apply"},{"document",existingLink}});
+            rejected=false;try{call({{"op","authoring.apply"},{"document",existingLink}});}catch(...){rejected=true;}
+            require(rejected,"changed event wiring rejects stale link expectations");
+            Exec("TRANSACTION UNDO");
+            auto update=exported["changes"];update["operations"]=J::array({{{"op","update"},{"actor",states[1]["actor"]},{"before",states[1]["values"]},{"properties",{{"LightBrightness","123"}}}}});
+            call({{"op","authoring.apply"},{"document",update}});
+            rejected=false;try{call({{"op","authoring.apply"},{"document",update}});}catch(...){rejected=true;}
+            require(rejected,"map authoring rejects stale existing-actor edits");
+            Exec("TRANSACTION UNDO");require(call({{"op","magic.inspect"},{"actor",states[1]["actor"]}})["values"]==states[1]["values"],"batch update undo restores old light settings");
+            Exec("TRANSACTION UNDO");
+            require(call({{"op","actors"}})==beforeActors,"authoring fixture leaves pre-existing actors unchanged");
+            auto uiFile=directory/"map-authoring-ui.json";WorkflowProbe::jsonDialogPath=uiFile.wstring();WorkflowProbe::jsonDialogCancel=false;WorkflowProbe::jsonDialogTicks=0;
+            auto timer=SetTimer(nullptr,0,100,WorkflowProbe::AnswerJsonDialog);SendMessage(frameWindow,WM_COMMAND,40934,0);KillTimer(nullptr,timer);
+            require(std::filesystem::exists(uiFile),"map authoring export menu saves through the native file dialog");
+            WorkflowProbe::jsonDialogPath=(directory/"map-changes.json").wstring();WorkflowProbe::jsonDialogTicks=0;WorkflowProbe::authoringPreviewCancel=true;WorkflowProbe::authoringPreviewSeen=false;
+            WorkflowProbe::previewScreenshot=directory/"map_authoring_preview.bmp";
+            timer=SetTimer(nullptr,0,100,WorkflowProbe::AnswerJsonDialog);SendMessage(frameWindow,WM_COMMAND,40935,0);KillTimer(nullptr,timer);
+            require(WorkflowProbe::authoringPreviewSeen && call({{"op","actors"}})==beforeActors,"cancelled map preview leaves actors unchanged");
+            WorkflowProbe::previewScreenshot.clear();WorkflowProbe::jsonDialogTicks=0;WorkflowProbe::authoringPreviewCancel=false;WorkflowProbe::authoringPreviewSeen=false;
+            timer=SetTimer(nullptr,0,100,WorkflowProbe::AnswerJsonDialog);SendMessage(frameWindow,WM_COMMAND,40935,0);KillTimer(nullptr,timer);
+            require(WorkflowProbe::authoringPreviewSeen && call({{"op","actors"}}).size()==beforeActors.size()+5,"map import menu applies the reviewed set piece");
+            Exec("TRANSACTION UNDO");require(call({{"op","actors"}})==beforeActors,"UI batch import has one-step Undo");
+        }
         std::ofstream(directory/"magic_workbench_classes.json")<<call({{"op","magic.classes"}}).dump(2);
         for(const auto* type:{"Engine.Trigger","Engine.Mover","SBase.SAmbientSoundTrigger","SBase.SSpawnableEmitter","SBase.SDamageVolume"})
         {
@@ -321,6 +613,20 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
         Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");
         call({{"op","select"},{"actors",J::array({magicInstance["members"][0]})}});
         SendMessage(frameWindow,WM_COMMAND,40927,0);auto workbench=WorkflowProbe::FindDialog("SMagicEvent Workbench");require(workbench!=nullptr,"SMagicEvent workbench opens for an existing actor");
+        {
+            require(IsWindowEnabled(GetDlgItem(workbench,144)) && IsWindowEnabled(GetDlgItem(workbench,145)),"JSON buttons enabled for open event");
+            auto path=directory/L"event-ui-roundtrip.json";WorkflowProbe::jsonDialogPath=path.wstring();WorkflowProbe::jsonDialogCancel=false;WorkflowProbe::jsonDialogTicks=0;
+            auto timer=SetTimer(nullptr,0,100,WorkflowProbe::AnswerJsonDialog);SendMessage(workbench,WM_COMMAND,144,0);KillTimer(nullptr,timer);
+            require(std::filesystem::exists(path),"Export JSON button saves a file through the native dialog");
+            J document;{std::ifstream input(path);input>>document;}require(document["format"]=="scct.smagic-event","UI exports versioned event JSON");
+            document["properties"]["Groups"][0]["EventGroup"][0]["Delay"]="3.5";{std::ofstream output(path);output<<document.dump(2);}
+            WorkflowProbe::jsonDialogTicks=0;timer=SetTimer(nullptr,0,100,WorkflowProbe::AnswerJsonDialog);SendMessage(workbench,WM_COMMAND,145,0);KillTimer(nullptr,timer);
+            require(std::stod(call({{"op","magic.inspect"},{"actor",magicSnapshot["actor"]}})["values"]["Groups"][0]["EventGroup"][0]["Delay"].get<std::string>())==3.5,"Import JSON button applies edited file and refreshes event");
+            WorkflowProbe::Click(workbench,104);
+            require(call({{"op","magic.inspect"},{"actor",magicSnapshot["actor"]}})["values"]==magicSnapshot["values"],"Workbench Undo restores JSON import");
+            WorkflowProbe::jsonDialogCancel=true;WorkflowProbe::jsonDialogTicks=0;timer=SetTimer(nullptr,0,100,WorkflowProbe::AnswerJsonDialog);SendMessage(workbench,WM_COMMAND,145,0);KillTimer(nullptr,timer);
+            require(call({{"op","magic.inspect"},{"actor",magicSnapshot["actor"]}})["values"]==magicSnapshot["values"],"cancelled JSON import leaves event untouched");WorkflowProbe::jsonDialogCancel=false;
+        }
         WorkflowProbe::Click(workbench,116);require(call({{"op","magic.inspect"},{"actor",magicInstance["members"][0]}})["values"]["Groups"].size()==3,"workbench Add Group changes native groups");WorkflowProbe::Click(workbench,104);
         SendMessage(GetDlgItem(workbench,115),CB_SETCURSEL,0,0);SendMessage(workbench,WM_COMMAND,MAKEWPARAM(115,CBN_SELCHANGE),0);
         SendMessage(GetDlgItem(workbench,121),WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(175,72));SendMessage(GetDlgItem(workbench,121),WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(305,72));SendMessage(GetDlgItem(workbench,121),WM_LBUTTONUP,0,MAKELPARAM(305,72));
@@ -490,6 +796,59 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
         J savedMagic=J::array();for(const auto& identity:setpiece){auto snapshot=call({{"op","magic.inspect"},{"actor",identity}});savedMagic.push_back({{"actor",identity},{"values",snapshot["values"]}});}
         std::ofstream(directory/"magic_setpiece.json")<<savedMagic.dump(2);
         call({{"op","select"},{"actors",J::array({setEvent})}});SendMessage(frameWindow,WM_COMMAND,40927,0);auto setWindow=WorkflowProbe::FindDialog("SMagicEvent Workbench");require(setWindow!=nullptr,"set piece opens in the same workbench");WorkflowProbe::Screenshot(setWindow,directory/"magic_setpiece_workbench.bmp");SendMessage(setWindow,WM_CLOSE,0,0);
+        {
+            auto snapshot=call({{"op","camera.snapshot"}});require(snapshot.empty(),"camera fixture starts empty");
+            J paths=J::array(),identities=J::array();
+            for(int i=0;i<3;++i)
+            {
+                auto actor=call({{"op","camera.add"},{"snapshot",snapshot},{"paths",paths},{"loop",true}});
+                paths.push_back(actor.at("path"));identities.push_back(actor);snapshot=call({{"op","camera.snapshot"}});
+            }
+            auto original=snapshot;
+            Exec("TRANSACTION UNDO");require(call({{"op","camera.snapshot"}}).size()==2,"adding a camera and updating its neighbours undo together");
+            Exec("TRANSACTION REDO");require(call({{"op","camera.snapshot"}})==original,"camera creation redo restores all reciprocal links");
+            auto reversed=J::array({paths[2],paths[1],paths[0]});
+            call({{"op","camera.order"},{"snapshot",snapshot},{"paths",reversed},{"loop",true}});
+            auto first=call({{"op","magic.inspect"},{"actor",identities[2]}});
+            require(first["values"]["bFirstCam"]=="True" && first["values"]["NextCam"].get<std::string>().find(paths[1].get<std::string>())!=std::string::npos,"reorder sets first flag and next camera");
+            bool rejected=false;try{call({{"op","camera.order"},{"snapshot",original},{"paths",paths}});}catch(...){rejected=true;}require(rejected,"stale network snapshot is rejected");
+            Exec("TRANSACTION UNDO");require(call({{"op","camera.snapshot"}})==original,"reordering all cameras uses one undo");
+            rejected=false;try{call({{"op","camera.order"},{"snapshot",original},{"paths",J::array({paths[0]})}});}catch(...){rejected=true;}
+            require(rejected && call({{"op","camera.snapshot"}})==original,"partial component edits leave camera links unchanged");
+            call({{"op","select"},{"actors",J::array({identities[0]})}});SendMessage(frameWindow,WM_COMMAND,40932,0);
+            auto manager=WorkflowProbe::FindDialog("SCamNetwork Manager");require(manager!=nullptr,"camera manager menu opens");
+            require(SendMessage(GetDlgItem(manager,101),LB_GETCOUNT,0,0)==3,"camera manager shows all three cameras in network order");
+            SetWindowTextA(GetDlgItem(manager,107),"Loading bay east");WorkflowProbe::Click(manager,108);
+            first=call({{"op","magic.inspect"},{"actor",identities[0]}});
+            require(first["values"]["CamName"]=="\"Loading bay east\"","camera manager renames in-game display name");
+            auto oldTag=first["values"]["Tag"];
+            SetWindowTextA(GetDlgItem(manager,107),"Loading bay \"east\"");WorkflowProbe::Click(manager,108);
+            first=call({{"op","magic.inspect"},{"actor",identities[0]}});
+            require(first["values"]["CamName"]==J("Loading bay \"east\"").dump() && first["values"]["Tag"]==oldTag,"camera names preserve spaces and quotes without changing Tags");
+            WorkflowProbe::Click(manager,105);require(call({{"op","magic.inspect"},{"actor",identities[0]}})["values"]["CamName"]=="\"Loading bay east\"","rename undo restores the previous display name");
+            WorkflowProbe::Click(manager,119);first=call({{"op","magic.inspect"},{"actor",identities[0]}});
+            auto capturedViews=call({{"op","view.capture"}})["cameras"];
+            require(std::stod(first["values"]["Location"]["X"].get<std::string>())==capturedViews[0]["position"][0].get<double>(),"place at viewport captures camera position");
+            auto camerasBefore=call({{"op","view.capture"}})["cameras"];
+            WorkflowProbe::Click(manager,115);require(SendMessage(GetDlgItem(manager,101),LB_GETCURSEL,0,0)==1,"Next steps to the second camera");
+            auto previewViews=call({{"op","view.capture"}})["cameras"];auto second=call({{"op","magic.inspect"},{"actor",identities[1]}});
+            require(previewViews[0]["position"][0].get<double>()==std::stod(second["values"]["Location"]["X"].get<std::string>()),"Next previews the selected camera position");
+            WorkflowProbe::Click(manager,117);require(call({{"op","view.capture"}})["cameras"]==camerasBefore,"return view restores the original viewport cameras exactly");
+            WorkflowProbe::Click(manager,109);first=call({{"op","magic.inspect"},{"actor",identities[1]}});
+            require(first["values"]["bFirstCam"]=="True","Move up rewires and sets the first camera");
+            WorkflowProbe::Click(manager,120);snapshot=call({{"op","camera.snapshot"}});first=call({{"op","magic.inspect"},{"actor",identities[1]}});
+            require(snapshot.size()==3 && first["values"]["NextCam"]=="None" && first["values"]["PrevCam"]=="None","detach keeps the camera actor and removes both links");
+            WorkflowProbe::Click(manager,105);require(call({{"op","magic.inspect"},{"actor",identities[1]}})["values"]["bFirstCam"]=="True","detach undo restores the original network");
+            WorkflowProbe::Screenshot(manager,directory/"camera_network_manager.bmp");
+            RECT cameraWindow{};GetWindowRect(manager,&cameraWindow);RECT cameraScaled{cameraWindow.left,cameraWindow.top,cameraWindow.left+1500,cameraWindow.top+1095};SendMessage(manager,WM_DPICHANGED,MAKEWPARAM(144,144),reinterpret_cast<LPARAM>(&cameraScaled));WorkflowProbe::Screenshot(manager,directory/"camera_network_manager_144dpi.bmp");SendMessage(manager,WM_DPICHANGED,MAKEWPARAM(96,96),reinterpret_cast<LPARAM>(&cameraWindow));
+            SendMessage(manager,WM_CLOSE,0,0);std::ofstream(directory/"camera_network_saved.json")<<call({{"op","camera.snapshot"}}).dump(2);
+        }
+        {
+            J document;std::ifstream(directory/"map-changes.json")>>document;document["map"]=call({{"op","authoring.export"}}).at("map");
+            auto applied=call({{"op","authoring.apply"},{"document",document}});J states=J::array();
+            for(const auto& actor:applied["created"])states.push_back(call({{"op","magic.inspect"},{"actor",actor}}));
+            std::ofstream(directory/"map_authoring_saved.json")<<states.dump(2);
+        }
         require(reinterpret_cast<Save>(0x10E0416B)(*reinterpret_cast<void**>(kEditor),destination)!=0,"save final workflow map for restart test");
         auto playable=directory.parent_path()/"Packages"/"Maps"/std::filesystem::path(destination).filename();
         WorkflowProbe::previewScreenshot=directory/"map_package_preview.bmp";WorkflowProbe::packagePreviewChecked=false;

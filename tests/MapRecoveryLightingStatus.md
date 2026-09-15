@@ -1,5 +1,39 @@
 # OffsD lighting investigation
 
+## OffsE black-world recovery (13 September, 23:05)
+
+The user reported a black world with working HUD/audio, also black in night
+vision. The installed OffsD worked. The published enhanced OffsE runtime
+(`646C9A338450B7AAE0263247CC80EC2A147F99F9A1AC366595008E3C8FC2ACDF`),
+installed separately as OffsP, also worked in the user's game test.
+
+The failing OffsE runtime hash was
+`AE0BC4DFA80BBCDB516961039D131A6E2E03B455D35C18944CC24133F052515A`.
+Native inspection found valid geometry indices, open player-start positions,
+and the same zone connectivity, surface flag counts and static-mesh lighting
+colours as the published copy. This did not establish the failure's cause.
+
+A fresh-process `run_native_map_recovery_test.ps1 -ReopenOnly
+-VerifyPreservedLighting -TraceLighting` run on the latest MapsEd/OffsE.sdc
+passed rebuild, lighting preservation and ordinary File Save/reopen checks.
+Artifacts: `%TEMP%/scct-source-recovery-c4672138eb5a4e4f8783d82df24c2896`.
+The saved runtime predates the test's explicit lighting-recalculation check;
+that check changes only the subsequently reopened in-memory map.
+The user confirmed this rebuilt runtime, installed as OffsR, displayed normally.
+
+Both rebuilt files were then installed as OffsE in
+`C:/Users/ryans/Desktop/Enhanced SCCT Versus 3.6 (Map editing copy)/Packages`:
+
+- Maps runtime: `488C4873018589F7F3E7FA6DA8BF5F2973C7776FCE5A3D24AAB02E10CCCB2048`
+- MapsEd source: `FEB70CA60574D3EF83892914EAEA74FA11672C5DC593627E29D17C60615B4185`
+
+The previous files were hash-verified in that installation's
+`MapBackups/OffsE-black-world-20260913-230543/{Maps,MapsEd}` before replacement.
+No production editor code or display settings changed. The exact trigger is
+unresolved; success under the diagnostic filename does not alone rule out a
+filename/cache issue. Normal OffsE launch and Play Here after reopening the
+installed source still require user confirmation.
+
 ## Match-lighting collision accessor crash (13 September, 17:02)
 
 The installed editor crashed at `10EB299D`, the FBox minimum accessor's native

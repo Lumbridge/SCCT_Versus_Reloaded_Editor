@@ -2,12 +2,17 @@
 #undef min
 #undef max
 #include "WorkflowEditor.h"
+#include "BrushGridSnapModel.h"
 #include "MagicEventModel.h"
+#include "MapAuthoringModel.h"
+#include "CameraNetworkModel.h"
 #include "MapRecovery.h"
 #include "MemoryWriter.h"
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <iomanip>
+#include <limits>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -627,6 +632,208 @@ Pose BuilderPose()
     auto actors=LiveActors(); if(actors.size()<2) throw std::runtime_error("No builder brush is available.");
     return {Position(actors[1]),{}};
 }
+Json SelectedMeshBounds()
+{
+    Vector minimum{},maximum{};size_t count=0;
+    for(auto actor:LiveActors())
+    {
+        if(!(Read<unsigned>(actor+0x2f4)&0x40))continue;
+        auto property=Property(actor,"StaticMesh");
+        auto mesh=property?Read<Address>(actor+Read<int>(property+0x3c)):0;
+        if(!mesh || !IsA(mesh,"StaticMesh"))throw std::runtime_error("Select only static meshes with valid mesh assets.");
+        // UPrimitive's local FBox, also returned by GetRenderBoundingBox(nullptr)
+        // at 0x110c2b60. SCCT stores six floats (no IsValid byte).
+        auto box=Read<std::array<float,6>>(mesh+0x28);
+        auto scale=Read<float>(Field(actor,"DrawScale"));
+        auto scale3=Read<std::array<float,3>>(Field(actor,"DrawScale3D"));
+        auto pivot=Read<std::array<float,3>>(Field(actor,"PrePivot"));
+        for(int axis=0;axis<3;++axis)
+            if(!std::isfinite(box[axis]) || !std::isfinite(box[axis+3]) || box[axis]>box[axis+3]
+                || !std::isfinite(scale) || !std::isfinite(scale3[axis]) || !std::isfinite(pivot[axis]))
+                throw std::runtime_error("The selected mesh has invalid bounds or scale.");
+        Pose pose{Position(actor),RotationOf(actor)};
+        for(int corner=0;corner<8;++corner)
+        {
+            Vector local{};
+            for(int axis=0;axis<3;++axis)local[axis]=(static_cast<double>(box[axis+((corner&(1<<axis))?3:0)])-pivot[axis])*scale*scale3[axis];
+            auto world=TransformPoint(local,pose);
+            for(int axis=0;axis<3;++axis)
+            {
+                if(!std::isfinite(world[axis]) || std::abs(world[axis])>10000000)throw std::runtime_error("The selected mesh bounds are out of range.");
+                if(!count && !corner)minimum[axis]=maximum[axis]=world[axis];
+                else {minimum[axis]=std::min(minimum[axis],world[axis]);maximum[axis]=std::max(maximum[axis],world[axis]);}
+            }
+        }
+        ++count;
+    }
+    if(!count)throw std::runtime_error("Select a static mesh first.");
+    return {{"min",minimum},{"max",maximum},{"count",count}};
+}
+Json SelectedBrushVertices()
+{
+    if(Read<int>(Engine()+0x1ac)!=0x19)throw std::runtime_error("Switch to Vertex Editing and select vertices first.");
+    Json result=Json::array();
+    std::set<Address> brushes;
+    for(auto actor:LiveActors())if(IsA(actor,"Brush"))brushes.insert(actor);
+    // Native vertexedit_AddPosition stores (brush, polygon index, vertex index).
+    for(auto entry:Array(0x11685a9c,12))
+    {
+        auto actor=Read<Address>(entry);if(!brushes.count(actor) || !(Read<unsigned>(actor+0x2f4)&0x40))throw std::runtime_error("Vertex selection is stale. Reselect the vertices.");
+        if(auto p=Property(actor,"bLockLocation"))if(Read<unsigned>(actor+Read<int>(p+0x3c))&Read<unsigned>(p+0x64))throw std::runtime_error("Unlock the selected brush before snapping.");
+        auto model=Read<Address>(actor+0x238),polys=model?Read<Address>(model+0x50):0;
+        const int pi=Read<int>(entry+4),vi=Read<int>(entry+8);
+        if(!polys || pi<0 || pi>=Read<int>(polys+0x2c))throw std::runtime_error("Selected polygon is no longer available.");
+        auto poly=Read<Address>(polys+0x28)+pi*0x14c;const int count=Read<unsigned short>(poly+0x148);
+        if(count<3 || count>16 || vi<0 || vi>=count)throw std::runtime_error("Selected vertex is no longer available.");
+        auto local=Read<std::array<float,3>>(poly+0x18+vi*12);std::array<float,12> coords{};std::array<float,3> world{};
+        // Same actor ToWorld coordinates and FVector::TransformPointBy as the native vertex tool.
+        Call<void*>(actor,0xac,coords.data());
+        reinterpret_cast<void*(__thiscall*)(void*,void*,const void*)>(0x10eb2ba0)(local.data(),world.data(),coords.data());
+        for(float v:world)if(!std::isfinite(v) || std::abs(v)>10000000)throw std::runtime_error("Vertex position is out of range.");
+        result.push_back({{"actor",Identity(actor)},{"polygon",pi},{"vertex",vi},{"local",local},{"world",world}});
+    }
+    if(result.empty())throw std::runtime_error("Select vertices with the Vertex Editing tool first.");
+    return result;
+}
+void SnapSelectedBrushVertices(unsigned axes)
+{
+    const auto selected=SelectedBrushVertices();const auto grid=Read<std::array<float,3>>(Engine()+0x200);
+    struct Edit {Address actor,model,polys,poly,vertex;std::array<float,3> next;};std::vector<Edit> edits;
+    for(const auto& item:selected)
+    {
+        auto world=item.at("world").get<Vector>();Vector spacing{grid[0],grid[1],grid[2]};
+        auto delta=BrushGridSnap::Translation(world,world,spacing,axes);
+        if(delta==Vector{})continue;
+        auto actor=ResolveIdentity(item.at("actor")),model=Read<Address>(actor+0x238),polys=Read<Address>(model+0x50);
+        std::array<float,3> target{},local{};std::array<float,12> coords{};
+        for(int axis=0;axis<3;++axis)target[axis]=static_cast<float>(world[axis]+delta[axis]);
+        Call<void*>(actor,0xa8,coords.data());
+        reinterpret_cast<void*(__thiscall*)(void*,void*,const void*)>(0x10eb2ba0)(target.data(),local.data(),coords.data());
+        for(float v:local)if(!std::isfinite(v) || std::abs(v)>10000000)throw std::runtime_error("Snapped vertex is out of range.");
+        auto poly=Read<Address>(polys+0x28)+item.at("polygon").get<int>()*0x14c;
+        auto vertex=poly+0x18+item.at("vertex").get<int>()*12;
+        if(local!=Read<std::array<float,3>>(vertex))edits.push_back({actor,model,polys,poly,vertex,local});
+    }
+    if(edits.empty())return;
+    Transaction transaction("Snap selected vertices to grid");std::set<Address> objects,models,polygons,arrays;
+    for(const auto& e:edits){objects.insert(e.actor);objects.insert(e.model);objects.insert(e.polys);models.insert(e.model);polygons.insert(e.poly);arrays.insert(e.polys+0x28);}
+    for(auto object:objects)Modify(object);
+    // UPolys skips its TTransArray payload during UObject transaction serialization.
+    // Record the array separately, exactly as native MoveVertex does.
+    auto undo=Read<Address>(0x11691d6c);if(!undo)throw std::runtime_error("Vertex Undo transaction is unavailable.");
+    for(auto array:arrays)Call(undo,4,Read<Address>(array+12),array,0,Read<int>(array+4),0,0x14c,Address(0x10e0303b),Address(0x10e04c47));
+    for(const auto& e:edits)Write(e.vertex,e.next);
+    // Refresh polygon normals and brush bounds using the native vertex-release path.
+    for(auto poly:polygons)reinterpret_cast<void(__cdecl*)(void*)>(0x10eb8d70)(reinterpret_cast<void*>(poly));
+    for(auto model:models)reinterpret_cast<void(__thiscall*)(void*)>(0x110ce0d0)(reinterpret_cast<void*>(model));
+    transaction.Commit();Redraw();
+}
+Json BrushSnapBounds(bool surfaces)
+{
+    Engine();
+    auto identities=surfaces?SelectedSurfaceBrushes():SelectedIdentities();
+    if(identities.empty())throw std::runtime_error("Select an editable brush first.");
+    Vector minimum{},maximum{};size_t vertices=0;
+    for(const auto& identity:identities)
+    {
+        auto actor=ResolveIdentity(identity);
+        if(!actor || !IsA(actor,"Brush"))throw std::runtime_error("Select only editable brushes to snap.");
+        if(auto p=Property(actor,"bLockLocation"))
+            if(Read<unsigned>(actor+Read<int>(p+0x3c))&Read<unsigned>(p+0x64))
+                throw std::runtime_error("Unlock the selected brush location before snapping.");
+        auto model=Read<Address>(actor+0x238),polys=model?Read<Address>(model+0x50):0;
+        if(!polys || Read<int>(polys+0x2c)<=0)throw std::runtime_error("A selected brush has no editable polygons.");
+        // Use the same native BuildCoords/point transform as polyUpdateMaster.
+        // This build bakes brush rotation/scale into authored polygons; the
+        // native helper is authoritative rather than an actor mesh transform.
+        std::array<float,24> coords{};
+        reinterpret_cast<float(__thiscall*)(void*,void*,void*)>(0x10eb2eb0)(reinterpret_cast<void*>(actor),coords.data(),nullptr);
+        auto pivot=Read<std::array<float,3>>(Field(actor,"PrePivot"));auto location=Position(actor);
+        size_t count=0;
+        for(auto poly:Array(polys+0x28,0x14c))
+        {
+            const auto n=Read<unsigned short>(poly+0x148);
+            if(n<3 || n>16)throw std::runtime_error("A selected brush has invalid polygon vertices.");
+            for(unsigned i=0;i<n;++i)
+            {
+                auto local=Read<std::array<float,3>>(poly+0x18+i*12);std::array<float,3> transformed{};
+                for(int axis=0;axis<3;++axis)local[axis]-=pivot[axis];
+                reinterpret_cast<void(__cdecl*)(const void*,const void*,void*)>(0x10eb2a70)(coords.data(),local.data(),transformed.data());
+                for(int axis=0;axis<3;++axis)
+                {
+                    const double value=transformed[axis]+location[axis];
+                    if(!std::isfinite(value) || std::abs(value)>10000000)throw std::runtime_error("Brush bounds are out of range.");
+                    if(!vertices)minimum[axis]=maximum[axis]=value;
+                    else {minimum[axis]=std::min(minimum[axis],value);maximum[axis]=std::max(maximum[axis],value);}
+                }
+                ++vertices;++count;
+            }
+        }
+        if(!count)throw std::runtime_error("A selected brush has no vertices.");
+    }
+    auto nativeGrid=Read<std::array<float,3>>(Engine()+0x200);
+    return {{"min",minimum},{"max",maximum},{"actors",identities},{"grid",nativeGrid}};
+}
+void SnapBrushesToGrid(unsigned axes,bool surfaces)
+{
+    const auto bounds=BrushSnapBounds(surfaces);
+    const auto delta=BrushGridSnap::Translation(bounds.at("min").get<Vector>(),bounds.at("max").get<Vector>(),bounds.at("grid").get<Vector>(),axes);
+    std::vector<std::pair<Address,Vector>> moves;
+    for(const auto& identity:bounds.at("actors"))
+    {
+        auto actor=ResolveIdentity(identity);if(!actor)throw std::runtime_error("The selected brush is no longer available.");
+        auto old=Position(actor),next=old;
+        for(int axis=0;axis<3;++axis)
+        {
+            next[axis]=static_cast<float>(old[axis]+delta[axis]);
+            if(!std::isfinite(next[axis]) || std::abs(next[axis])>10000000)throw std::runtime_error("Snapped position is out of range.");
+        }
+        if(next!=old)moves.emplace_back(actor,next);
+    }
+    if(moves.empty())return;
+    Transaction transaction("Snap brush edges to grid");
+    for(const auto& move:moves){Modify(move.first);SetPosition(move.first,move.second);Call(move.first,0x44);}
+    transaction.Commit();Redraw();
+}
+void FitBuilderBrushToMeshes()
+{
+    // Re-resolve at activation, never retain actor pointers from the popup.
+    auto bounds=SelectedMeshBounds();auto minimum=bounds.at("min").get<Vector>(),maximum=bounds.at("max").get<Vector>();
+    Vector center{},extent{};
+    for(int axis=0;axis<3;++axis)
+    {
+        center[axis]=static_cast<float>((minimum[axis]+maximum[axis])*0.5);
+        // Round outwards, including the rounding of the brush's float location.
+        double half=std::max({center[axis]-minimum[axis],maximum[axis]-center[axis],0.5});
+        extent[axis]=std::nextafter(static_cast<float>(half),std::numeric_limits<float>::infinity());
+    }
+    auto material=Read<Address>(Engine()+0x138);
+    if(!material || !IsA(material,"Material"))material=Find("Engine.DefaultTexture");
+    if(!material)throw std::runtime_error("Select a material before fitting the builder brush.");
+    auto texture=ConvertText(Path(material),CP_UTF8,CP_ACP);
+    const int faces[6][4][3]={{{1,-1,-1},{1,1,-1},{1,1,1},{1,-1,1}},{{-1,-1,-1},{-1,-1,1},{-1,1,1},{-1,1,-1}},{{-1,1,-1},{-1,1,1},{1,1,1},{1,1,-1}},{{-1,-1,-1},{1,-1,-1},{1,-1,1},{-1,-1,1}},{{-1,-1,1},{1,-1,1},{1,1,1},{-1,1,1}},{{-1,-1,-1},{-1,1,-1},{1,1,-1},{1,-1,-1}}};
+    std::ostringstream text;text.imbue(std::locale::classic());text<<std::setprecision(9)<<"BRUSH SET\r\nBegin PolyList\r\n";
+    for(const auto& face:faces)
+    {
+        text<<"Begin Polygon Texture="<<texture<<" Flags=0\r\n";
+        for(const auto& vertex:face)text<<"Vertex "<<vertex[0]*extent[0]<<','<<vertex[1]*extent[1]<<','<<vertex[2]*extent[2]<<"\r\n";
+        text<<"End Polygon\r\n";
+    }
+    text<<"End PolyList\r\n";
+    auto builder=reinterpret_cast<Address>(MapRecovery::ResolveBuilderBrushActor(reinterpret_cast<void*>(Level())));
+    if(!builder)throw std::runtime_error("The builder brush is unavailable.");
+    auto model=Read<Address>(builder+0x238),polys=model?Read<Address>(model+0x50):0;
+    if(!polys)throw std::runtime_error("Rebuild the builder brush before using this command.");
+    Transaction transaction("Position builder brush around static meshes");
+    Modify(builder);Modify(model);Modify(polys);
+    if(!Exec("BRUSH RESET") || !Exec(text.str()))throw std::runtime_error("Could not resize the builder brush.");
+    SetPosition(builder,center);
+    Write(Field(builder,"Rotation"),Rotation{});
+    Write(Field(builder,"PrePivot"),std::array<float,3>{});
+    Write(Field(builder,"DrawScale"),1.0f);
+    Write(Field(builder,"DrawScale3D"),std::array<float,3>{1,1,1});
+    Call(builder,0x44);transaction.Commit();Redraw();
+}
 Json CaptureAssembly(const Json& members,const Pose& frame)
 {
     if(members.empty()) throw std::runtime_error("Select at least one actor or brush.");
@@ -755,4 +962,6 @@ Json PlaceAssembly(const Json& definition,const Pose& frame,const std::map<std::
     Select(members); return {{"id",Id()},{"assembly",definition.at("id")},{"members",members},{"names",names},{"position",frame.position},{"rotation",frame.rotation}};
 }
 #include "MagicEventNative.inl"
+#include "MapAuthoringNative.inl"
+#include "CameraNetworkNative.inl"
 }

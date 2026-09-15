@@ -8,10 +8,13 @@
 #include <commctrl.h>
 #include <windowsx.h>
 #include <uxtheme.h>
+#include <commdlg.h>
+#include <fstream>
 #include <algorithm>
 #include <memory>
 #include <set>
 #pragma comment(lib,"uxtheme.lib")
+#pragma comment(lib,"comdlg32.lib")
 
 namespace MagicEventWorkbench
 {
@@ -21,7 +24,7 @@ namespace
 constexpr COLORREF Background=RGB(240,240,240),Panel=RGB(255,255,255),Ink=RGB(0,0,0),Muted=RGB(96,96,96),Accent=RGB(0,102,204);
 enum Id { EventSearch=100,Events,New,Refresh,Undo,Redo,Play,ActorSearch,Category,Actors,Focus,Attach,CreateTarget,CreateTrigger,AttachTrigger,
     Groups,AddGroup,DuplicateGroup,RemoveGroup,GroupUp,GroupDown,Timeline,DuplicateAction,RemoveAction,ActionUp,ActionDown,ZoomIn,ZoomOut,Snap,
-    InspectEvent,InspectActor,PropertySearch,Properties,Value,Choices,Commit,AddItem,DeleteItem,CaptureKey,UseSelected,Status,DetachTrigger,Fit,Preview };
+    InspectEvent,InspectActor,PropertySearch,Properties,Value,Choices,Commit,AddItem,DeleteItem,CaptureKey,UseSelected,Status,DetachTrigger,Fit,Preview,ExportJson,ImportJson,JsonHint };
 struct Binding { std::string pointer,root;Json schema; };
 struct State
 {
@@ -69,6 +72,14 @@ void Layout(State& s)
     Bounds(s,Value,rx,h-184,s.right-102,28);Bounds(s,Choices,rx,h-184,s.right-102,300);Bounds(s,Commit,w-88,h-184,76,28);
     Bounds(s,AddItem,rx,h-148,(s.right-24)/2,28);Bounds(s,DeleteItem,rx+(s.right-24)/2+6,h-148,(s.right-24)/2,28);
     Bounds(s,CaptureKey,rx,h-112,s.right-18,28);Bounds(s,UseSelected,rx,h-76,s.right-18,28);Bounds(s,Status,12,h-34,w-24,26);
+    // A separate file row keeps the event picker and toolbar usable at minimum width.
+    Bounds(s,ExportJson,12,50,116,28);Bounds(s,ImportJson,134,50,116,28);Bounds(s,JsonHint,264,54,w-280,24);
+    for(int id:{ActorSearch,Category,Actors,Groups,InspectEvent,AddGroup,DuplicateGroup,RemoveGroup,GroupUp,GroupDown,Timeline,InspectActor,PropertySearch,Properties})
+    {
+        RECT child{};GetWindowRect(Item(s,id),&child);MapWindowPoints(nullptr,s.window,reinterpret_cast<POINT*>(&child),2);
+        int height=child.bottom-child.top;if(id==Actors || id==Timeline || id==Properties)height-=Px(s,38);
+        MoveWindow(Item(s,id),child.left,child.top+Px(s,38),child.right-child.left,std::max(1,height),TRUE);
+    }
 }
 Json& GroupValues(State& s){return s.eventSnapshot.at("values").at("Groups");}
 Json IdentityFor(State& s,const std::string& path){for(const auto& a:s.actors)if(a.at("path")==path)return a;if(!s.component.is_null() && s.component.at("path")==path)return s.component;throw std::runtime_error("Actor is no longer in this map.");}
@@ -123,6 +134,7 @@ void RefreshAll(State& s,bool inspect)
     Combo(Item(s,Events),names,selected);
     if(!exists){s.eventPath.clear();s.eventSnapshot=Json{};s.inspector=Json{};s.inspectedPath.clear();}
     else s.eventSnapshot=Editor::InspectActor(IdentityFor(s,s.eventPath));
+    EnableWindow(Item(s,ExportJson),!s.eventSnapshot.is_null());EnableWindow(Item(s,ImportJson),!s.eventSnapshot.is_null());
     names.clear();
     if(!s.eventSnapshot.is_null() && s.eventSnapshot.at("values").contains("Groups"))
     {
@@ -388,6 +400,34 @@ void ReferenceMenu(State& s)
 }
 void CommandAction(State& s,int id)
 {
+    if(id==ExportJson || id==ImportJson)
+    {
+        if(s.eventSnapshot.is_null())throw std::runtime_error("Create or open an event first.");
+        const auto snapshot=Editor::InspectActor(s.eventSnapshot.at("actor"));
+        wchar_t path[32768]=L"SMagicEvent.json";
+        OPENFILENAMEW dialog{};dialog.lStructSize=sizeof(dialog);dialog.hwndOwner=s.window;
+        dialog.lpstrFilter=L"SMagicEvent JSON (*.json)\0*.json\0All files (*.*)\0*.*\0\0";dialog.lpstrFile=path;dialog.nMaxFile=static_cast<DWORD>(std::size(path));
+        dialog.lpstrDefExt=L"json";dialog.lpstrTitle=id==ExportJson?L"Export SMagicEvent as JSON":L"Import JSON into the open SMagicEvent";
+        dialog.Flags=OFN_EXPLORER|OFN_NOCHANGEDIR|OFN_PATHMUSTEXIST|(id==ExportJson?OFN_OVERWRITEPROMPT:OFN_FILEMUSTEXIST);
+        const bool chosen=(id==ExportJson?GetSaveFileNameW(&dialog):GetOpenFileNameW(&dialog))!=FALSE;
+        if(!chosen){if(CommDlgExtendedError())throw std::runtime_error("The JSON file dialog could not be opened.");return;}
+        if(id==ExportJson)
+        {
+            WriteDocument(std::filesystem::path(path),Editor::ExportEventJson(snapshot.at("actor")));
+            StatusText(s,"JSON exported. Share the file to get help editing the event.");
+        }
+        else
+        {
+            const std::filesystem::path file(path);
+            if(std::filesystem::file_size(file)>8*1024*1024)throw std::runtime_error("Event JSON exceeds 8 MiB.");
+            std::ifstream input(file,std::ios::binary);if(!input)throw std::runtime_error("Could not read the event JSON file.");
+            std::string text((std::istreambuf_iterator<char>(input)),{});
+            auto document=Json::parse(text,[](int depth,Json::parse_event_t,Json&){if(depth>64)throw std::runtime_error("Event JSON is nested too deeply.");return true;});
+            Editor::ImportEventJson(snapshot,document);s.eventPath=snapshot.at("actor").at("path");s.inspectedPath=s.eventPath;s.group=0;s.action=-1;RefreshAll(s);
+            StatusText(s,"JSON imported into the open event. Undo restores the previous settings; save the map to keep changes.");
+        }
+        return;
+    }
     if(id==New){auto actor=Editor::CreateEventActor("SBase.SMagicEvent");SendMessage(Item(s,Category),CB_SETCURSEL,1,0);LoadEvent(s,actor.at("path"));return;}
     if(id==Refresh){RefreshAll(s);StatusText(s,"Refreshed from the current map.");return;}
     if(id==Undo || id==Redo){Editor::Exec(id==Undo?"TRANSACTION UNDO":"TRANSACTION REDO");RefreshAll(s);return;}
@@ -481,6 +521,7 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
         {
             s->dpi=GetDpiForWindow(w);s->font=CreateFontA(-Px(*s,14),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,"Segoe UI");s->background=CreateSolidBrush(Background);s->panel=CreateSolidBrush(Panel);
             Add(*s,"EDIT","",EventSearch,ES_AUTOHSCROLL);Add(*s,"COMBOBOX","",Events,CBS_DROPDOWNLIST|WS_VSCROLL);Button(*s,"New Event",New);Button(*s,"Refresh",Refresh);Button(*s,"Undo",Undo);Button(*s,"Redo",Redo);Button(*s,"Play Level",Play);
+            Button(*s,"Export JSON...",ExportJson);Button(*s,"Import JSON...",ImportJson);Add(*s,"STATIC","Export an event for editing; import into the open event. Linked actors must already exist.",JsonHint);
             Add(*s,"EDIT","",ActorSearch,ES_AUTOHSCROLL);Add(*s,"COMBOBOX","",Category,CBS_DROPDOWNLIST|WS_VSCROLL);Combo(Item(*s,Category),{"In this event","All actors","Selected in map","Triggers","Movers","Emitters","Sounds","Volumes","Other"});
             Add(*s,"LISTBOX","",Actors,LBS_NOTIFY|WS_VSCROLL|WS_HSCROLL);Button(*s,"Select and focus",Focus);Button(*s,"Add action using actor",Attach);Button(*s,"Attach as trigger",AttachTrigger);Button(*s,"New actor",CreateTarget);Button(*s,"New trigger",CreateTrigger);Button(*s,"Detach trigger (keep actor)",DetachTrigger);
             Add(*s,"COMBOBOX","",Groups,CBS_DROPDOWNLIST|WS_VSCROLL);Button(*s,"Event settings",InspectEvent);Button(*s,"+ Group",AddGroup);Button(*s,"Duplicate",DuplicateGroup);Button(*s,"Remove",RemoveGroup);Button(*s,"Earlier",GroupUp);Button(*s,"Later",GroupDown);

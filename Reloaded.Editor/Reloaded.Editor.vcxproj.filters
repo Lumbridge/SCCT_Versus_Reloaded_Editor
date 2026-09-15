@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="Source Files">
@@ -18,11 +18,18 @@
     <ClInclude Include="WorkflowGraph.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="WorkflowGraphModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="WorkflowModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="BrushGridSnapModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapPackage.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapPackageDialog.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="WorkflowEditor.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="WorkflowTools.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MagicEventWorkbench.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="CameraNetworkPanel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="CameraNetworkModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="CameraNetworkNative.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MapAuthoringModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MapAuthoringNative.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MapAuthoringDialog.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MagicEventModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MagicEventNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="resource.h">
@@ -318,7 +325,9 @@
     <ClCompile Include="WorkflowEditor.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="WorkflowGraph.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="WorkflowTools.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="MapAuthoringDialog.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MagicEventWorkbench.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="CameraNetworkPanel.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="AmbientSoundZone.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -158,11 +158,18 @@
     <ClInclude Include="WorkflowGraph.h" />
     <ClInclude Include="WorkflowGraphModel.h" />
     <ClInclude Include="WorkflowModel.h" />
+    <ClInclude Include="BrushGridSnapModel.h" />
     <ClInclude Include="MapPackage.h" />
     <ClInclude Include="MapPackageDialog.h" />
     <ClInclude Include="WorkflowEditor.h" />
     <ClInclude Include="WorkflowTools.h" />
     <ClInclude Include="MagicEventWorkbench.h" />
+    <ClInclude Include="CameraNetworkPanel.h" />
+    <ClInclude Include="CameraNetworkModel.h" />
+    <ClInclude Include="CameraNetworkNative.inl" />
+    <ClInclude Include="MapAuthoringDialog.h" />
+    <ClInclude Include="MapAuthoringModel.h" />
+    <ClInclude Include="MapAuthoringNative.inl" />
     <ClInclude Include="MagicEventModel.h" />
     <ClInclude Include="MagicEventNative.inl" />
     <ClInclude Include="StringOperations.h" />
@@ -214,7 +221,9 @@
     <ClCompile Include="WorkflowEditor.cpp" />
     <ClCompile Include="WorkflowGraph.cpp" />
     <ClCompile Include="WorkflowTools.cpp" />
+    <ClCompile Include="MapAuthoringDialog.cpp" />
     <ClCompile Include="MagicEventWorkbench.cpp" />
+    <ClCompile Include="CameraNetworkPanel.cpp" />
     <ClCompile Include="AnimationBrowser.cpp" />
     <ClCompile Include="BrowserOpenDir.cpp" />
     <ClCompile Include="BspDiagnostics.cpp" />

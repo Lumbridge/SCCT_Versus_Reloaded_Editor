@@ -31,3 +31,76 @@ inline void VerifyNativeOffsDSurfaceJoinCase()
     const auto areas=MaterialAreas(pieces,face.normal);
     assert(areas.count(240)==1 && areas.at(240)>10038 && areas.at(240)<10040);
 }
+
+// OffsD material 2044 has an exact zero-area spike along its closing edge.
+inline void VerifyOffsDBoundarySpike()
+{
+    const Vec3 up{0,0,1};
+    const std::vector<Vec3> boundary{{-1152,538.50958251953125,80},{-1152,363.999786376953125,80},{-1135.9951171875,363.99981689453125,80},{-1135.9951171875,522.1717529296875,80},{-1152,538.1766357421875,80}};
+    Face face{{{-1200,300,80},{-1100,300,80},{-1100,600,80},{-1200,600,80}},up,0};
+    const auto pieces=PartitionFace(face,{{boundary,up,2044}});
+    const auto areas=MaterialAreas(pieces,up);
+    assert(std::fabs(areas.at(2044)-Area(boundary,up))<1e-8);
+    for (int x=0;x<30;++x) for (int y=0;y<30;++y)
+    {
+        const Vec3 point{-1200+(x+0.137)*100/30,300+(y+0.391)*10,80};
+        int matches=0;
+        for (const auto& piece:pieces) if (Contains(piece.vertices,up,point)) ++matches;
+        assert(matches==1);
+    }
+    auto crossing=boundary;
+    crossing[0].x+=1; // A real crossing must not qualify as an exact spike.
+    std::vector<Piece> rejected;std::string error;
+    assert(!Partition(face,{{crossing,up,2044}},99,rejected,error));
+    // Real recovery face: the bad candidate's bounds overlap, but the
+    // candidate lies wholly outside the diagonal edge and is irrelevant.
+    Face diagonal{{{-774.17640814345737,363.99978637695312,80},{-1136,725.82337823349576,80},{-1136,915.99664306640625,80},{-111.9951171875,915.99664306640625,80},{-111.9951171875,363.99978637695312,80}},{0,0,-1},0};
+    const auto disjoint=PartitionFace(diagonal,{{crossing,up,2044}});
+    const auto disjointAreas=MaterialAreas(disjoint,diagonal.normal);
+    assert(disjointAreas.count(2044)==0 && disjointAreas.count(99)==1);
+}
+
+// Native OffsD material 599: near-collinear backtracking at float precision.
+inline void VerifyOffsDFloatSpike()
+{
+    Face face{{{-455.9998136870228,1864,-448},{-455.9995088403063,1864,-4288},{-243.92287025438026,1864,-4288},{-243.92287025438026,1864,-448}},{0,-1,0},0};
+    std::vector<Surface> surfaces{
+        {{{-455.9998779296875,1864,-480.04296875},{-455.9998474121094,1864,-448},{-243.92283630371094,1864,-448},{-243.9228973388672,1864,-453},{-243.9228973388672,1864,-449},{-243.9228973388672,1864,-450},{-243.92282104492188,1864,-467},{-243.9228973388672,1864,-466},{-243.9228973388672,1864,-468},{-243.92283630371094,1864,-480.04296875}},{0,1,0},599},
+        {{{-455.9998779296875,1864,-480.04296875},{-243.92283630371094,1864,-480.04296875},{-243.92271423339844,1864,-4288},{-455.9999694824219,1864,-4288}},{0,1,0},599},
+        {{{-455.99981689453125,1864,544},{-243.92286682128906,1864,544},{-243.92283630371094,1864,-448},{-455.9998474121094,1864,-448}},{0,1,0},1923},
+    };
+    const auto pieces=PartitionFace(face,surfaces);
+    assert(!pieces.empty());
+}
+
+inline void VerifyNarrowParentMaterialCut()
+{
+    const Vec3 up{0,0,1};
+    Face face{Rectangle(0,0,10,0.1),up,0};
+    Surface sliver{{{0,0,0},{0.004,0,0},{0,0.048,0}},up,1};
+    Limits limits;limits.matchEditorPrecision=true;
+    std::vector<Piece> pieces;std::string error;
+    assert(Partition(face,{sliver},99,pieces,error,limits));
+    double area=0;
+    for (const auto& piece:pieces)
+    {
+        assert(RecoveredPolygonImport::Prepare(piece.vertices).accepted());
+        area+=Area(piece.vertices,up);
+    }
+    assert(std::fabs(area-1)<1e-9);
+}
+
+inline void VerifyOffsDNativeCoincidentSpike()
+{
+    const Vec3 down{0,0,-1};
+    Face face{{{-1200,300,64},{-1200,600,64},{-1100,600,64},{-1100,300,64}},down,0};
+    Surface source{{{-1151.9989013671875,363.99981689453125,64},{-1151.998291015625,538.51123046875,64},{-1152,538.1766357421875,64},{-1135.9910888671875,522.167724609375,64},{-1135.9910888671875,363.99981689453125,64}},down,2049};
+    std::vector<Piece> pieces;std::string error;
+    assert(!Partition(face,{source},99,pieces,error));
+    Limits limits;limits.matchEditorPrecision=true;
+    assert(Partition(face,{source},99,pieces,error,limits));
+    double total=0;for (const auto& piece:pieces) total+=Area(piece.vertices,down);
+    assert(std::fabs(total-30000)<1e-7);
+    source.vertices[1].x+=0.1;
+    assert(!Partition(face,{source},99,pieces,error,limits));
+}

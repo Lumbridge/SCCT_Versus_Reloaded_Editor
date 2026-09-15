@@ -658,6 +658,19 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         je workflow_dispatch
         cmp dword ptr [esp+4], 40931 // Match selected BSP lighting
         je workflow_dispatch
+        cmp dword ptr [esp+4], 40932 // SCamNetwork Manager
+        je workflow_dispatch
+        cmp dword ptr [esp+4], 40934 // Export Map to JSON
+        je workflow_dispatch
+        cmp dword ptr [esp+4], 40935 // Import Map from JSON
+        je workflow_dispatch
+        cmp dword ptr [esp+4], 40933 // Fit builder brush around static meshes
+        je workflow_dispatch
+        cmp dword ptr [esp+4], 40936 // Brush/surface edge snap commands
+        jb workflow_legacy_range
+        cmp dword ptr [esp+4], 40947
+        jbe workflow_dispatch
+    workflow_legacy_range:
         cmp dword ptr [esp+4], 40920
         jb workflow_continue
         cmp dword ptr [esp+4], 40923

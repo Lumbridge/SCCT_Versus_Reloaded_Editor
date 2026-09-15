@@ -19,5 +19,23 @@ int main()
     groups[0]["EventGroup"][1]["Delay"]="2.5";assert(groups[0]["SequenceIndex"]=="2" && groups[0]["Repeat"]=="4" && groups[0]["EventGroup"][0]==value);
     assert(Magic::Text(Json::array())=="()");auto box=Magic::BoxPolygons();size_t count=0,position=0;while((position=box.find("Begin Polygon",position))!=std::string::npos){++count;++position;}assert(count==6);Reject([&]{Magic::BoxPolygons(0);});
     assert(Magic::Category("SBase.SAmbientSoundTrigger")=="Sounds");
+    Json groupSchema={{"kind","ArrayProperty"},{"category","SMagicEvent"},{"inner",action}};
+    Json snapshot={{"actor",{{"path","MyLevel.EventA"},{"class","SBase.SMagicEvent"}}},
+        {"schema",{{"Groups",groupSchema},{"Tag",name},{"Location",{{"kind","FloatProperty"}}}}},
+        {"values",{{"Groups",Json::array({value})},{"Tag","EventA"},{"Location","12"}}}};
+    Json targets=Json::array({{{"path","MyLevel.Door"},{"class","Engine.Mover"},{"tag","DoorA"},{"event","None"},{"authorable",true}}});
+    auto document=Magic::ExportEvent(snapshot,targets,"MyLevel");
+    assert(document["properties"].size()==1 && document["context"]["actors"][0]["tag"]=="DoorA");
+    assert(Magic::ImportEventChanges(snapshot,Json::parse(document.dump(2))).empty());
+    document["properties"]["Groups"][0]["Delay"]="2.5";
+    assert(Magic::ImportEventChanges(snapshot,document)["Groups"][0]["Delay"]=="2.5");
+    auto invalid=document;invalid["version"]=2;Reject([&]{Magic::ImportEventChanges(snapshot,invalid);});
+    invalid=document;invalid["class"]="Engine.Mover";Reject([&]{Magic::ImportEventChanges(snapshot,invalid);});
+    invalid=document;invalid["properties"]["Tag"]="OtherEvent";Reject([&]{Magic::ImportEventChanges(snapshot,invalid);});
+    invalid=document;invalid["properties"]["Location"]="999";Reject([&]{Magic::ImportEventChanges(snapshot,invalid);});
+    invalid=document;invalid["properties"]["Groups"][0]["Delay"]="NaN";invalid["schema"]["Groups"]={{"kind","StrProperty"}};Reject([&]{Magic::ImportEventChanges(snapshot,invalid);});
+    invalid=document;invalid["properties"]["Groups"][0].erase("Type");Reject([&]{Magic::ImportEventChanges(snapshot,invalid);});
+    invalid=document;invalid["properties"]["Groups"][0]["Event"]="DoorA,Injected=1";Reject([&]{Magic::ImportEventChanges(snapshot,invalid);});
+    invalid=document;invalid["properties"]=Json::array();Reject([&]{Magic::ImportEventChanges(snapshot,invalid);});
     std::cout<<"Magic event model tests passed\n";
 }

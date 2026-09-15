@@ -5,6 +5,8 @@
 #include "WorkflowEditor.h"
 #include "WorkflowGraph.h"
 #include "MagicEventWorkbench.h"
+#include "CameraNetworkPanel.h"
+#include "MapAuthoringDialog.h"
 #include "MapPackageDialog.h"
 #include "MapRecovery.h"
 #include "MemoryWriter.h"
@@ -511,25 +513,94 @@ namespace
         HWND window=CreateWindowExA(WS_EX_CONTROLPARENT,wc.lpszClassName,title,WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,1000,650,owner,nullptr,wc.hInstance,s);
         if(window) ShowWindow(window,SW_SHOW); return window;
     }
+    void __fastcall VertexClickHook(void* self,void*,void* cause,void* hit)
+    {
+        auto editor=*reinterpret_cast<unsigned char**>(0x1165dfa0);
+        auto buttons=*reinterpret_cast<unsigned*>(static_cast<unsigned char*>(cause)+8);
+        if(editor && *reinterpret_cast<int*>(editor+0x1ac)==0x19 && (buttons&2) && !(buttons&0x80))
+        {
+            auto menu=CreatePopupMenu();if(!menu)return;
+            bool available=false;try{Editor::SelectedBrushVertices();available=true;}catch(const std::exception&){}
+            AppendMenuA(menu,MF_STRING|MF_DISABLED,0,"Snap selected vertices to grid");
+            AppendMenuA(menu,MF_SEPARATOR,0,nullptr);
+            const char* labels[]={"X axis","Y axis","Z axis","All axes"};
+            for(unsigned i=0;i<4;++i)AppendMenuA(menu,MF_STRING|(available?0:MF_GRAYED),kVertexSnapX+i,labels[i]);
+            POINT point{};GetCursorPos(&point);
+            auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,point.x,point.y,0,GetActiveWindow(),nullptr);
+            DestroyMenu(menu);if(command)HandleCommand(command);return;
+        }
+        reinterpret_cast<void(__thiscall*)(void*,void*,void*)>(0x10ed5c20)(self,cause,hit);
+    }
     using LoadMenuFn=HMENU(WINAPI*)(HINSTANCE,LPCSTR); LoadMenuFn previousLoadMenu=nullptr;
     HMENU WINAPI LoadMenuHook(HINSTANCE instance,LPCSTR resource)
     {
         auto menu=previousLoadMenu(instance,resource);
         if(menu && reinterpret_cast<uintptr_t>(resource)<=65535)
         {
+            const auto id=reinterpret_cast<uintptr_t>(resource);
+            if(id==107 || id==108) if(auto context=GetSubMenu(menu,0))
+            {
+                bool available=false;
+                try {Editor::BrushSnapBounds(id==108);available=true;}catch(const std::exception&){}
+                if(available)
+                {
+                    auto snap=CreatePopupMenu();
+                    if(snap)
+                    {
+                        const UINT first=id==108?kSurfaceSnapX:kBrushSnapX;
+                        AppendMenuA(snap,MF_STRING,first,"&X axis");
+                        AppendMenuA(snap,MF_STRING,first+1,"&Y axis");
+                        AppendMenuA(snap,MF_STRING,first+2,"&Z axis");
+                        AppendMenuA(snap,MF_SEPARATOR,0,nullptr);
+                        AppendMenuA(snap,MF_STRING,first+3,"&All axes");
+                        AppendMenuA(context,MF_POPUP,reinterpret_cast<UINT_PTR>(snap),"Snap brush &edge to grid");
+                    }
+                }
+            }
             // Actor context resource 107 (verified native menu resource).
-            if(reinterpret_cast<uintptr_t>(resource)==107) if(auto sub=GetSubMenu(menu,0)) {AppendMenuA(sub,MF_STRING,kSaveAssembly,"Save Selection as &Assembly...");AppendMenuA(sub,MF_STRING,MagicEventWorkbench::Command,"Edit SMagicEvent...");}
+            if(reinterpret_cast<uintptr_t>(resource)==107) if(auto sub=GetSubMenu(menu,0))
+            {
+                AppendMenuA(sub,MF_STRING,kSaveAssembly,"Save Selection as &Assembly...");AppendMenuA(sub,MF_STRING,MagicEventWorkbench::Command,"Edit SMagicEvent...");
+                try
+                {
+                    Editor::SelectedMeshBounds();
+                    AppendMenuA(sub,MF_STRING,kFitBuilderBrush,"Position the builder brush around this");
+                }
+                catch(const std::exception&) { /* Only available for valid static-mesh selections. */ }
+            }
         }
         return menu;
     }
 }
 bool HandleCommand(UINT command)
 {
+    if(command>=kVertexSnapX && command<=kVertexSnapAll)
+    {
+        try{const auto axis=command-kVertexSnapX;Editor::SnapSelectedBrushVertices(axis==3?7u:1u<<axis);}
+        catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Snap Selected Vertices",MB_OK|MB_ICONINFORMATION);}
+        return true;
+    }
+    if(command>=kBrushSnapX && command<=kSurfaceSnapAll)
+    {
+        const bool surfaces=command>=kSurfaceSnapX;
+        const auto choice=command-(surfaces?kSurfaceSnapX:kBrushSnapX);
+        try {Editor::SnapBrushesToGrid(choice==3?7u:1u<<choice,surfaces);}
+        catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Snap Brush Edge to Grid",MB_OK|MB_ICONINFORMATION);}
+        return true;
+    }
+    if(command==kFitBuilderBrush)
+    {
+        try { Editor::FitBuilderBrushToMeshes(); }
+        catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Position Builder Brush",MB_OK|MB_ICONINFORMATION); }
+        return true;
+    }
     if(command==MapRecovery::kRecalculateLightingCommandId){MapRecovery::RecalculateLighting(GetActiveWindow());return true;}
     if(command==MapRecovery::kRecalculateSelectedLightingCommandId){MapRecovery::RecalculateSelectedLighting(GetActiveWindow());return true;}
     if(command==MapRecovery::kMatchSelectedLightingCommandId){MapRecovery::RecalculateSelectedLighting(GetActiveWindow(),true);return true;}
     if(command==MapPackageDialog::Command){try{MapPackageDialog::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Map Packaging",MB_OK|MB_ICONERROR);}return true;}
+    if(command==MapAuthoringDialog::Export || command==MapAuthoringDialog::Import){MapAuthoringDialog::Open(GetActiveWindow(),command==MapAuthoringDialog::Export);return true;}
     if(command==MagicEventWorkbench::Command){try{MagicEventWorkbench::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"SMagicEvent Workbench",MB_OK|MB_ICONERROR);}return true;}
+    if(command==CameraNetworkPanel::Command){try{CameraNetworkPanel::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"SCamNetwork Manager",MB_OK|MB_ICONERROR);}return true;}
     if(command<kConnections || command>kSaveAssembly) return false;
     try
     {
@@ -568,6 +639,7 @@ void Initialize()
     INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_LISTVIEW_CLASSES}; InitCommonControlsEx(&controls);
     previousLoadMenu=*reinterpret_cast<LoadMenuFn*>(0x11AF23F0);
     auto hook=&LoadMenuHook; MemoryWriter::WriteBytes(0x11AF23F0,&hook,sizeof(hook));
+    MemoryWriter::WriteJump(0x10e045e9,reinterpret_cast<void(*)()>(&VertexClickHook));
 }
 }
 
@@ -581,11 +653,19 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         Json q=Json::parse(request),result; std::string op=q.at("op");
         if(op=="actors") result=Editor::Actors(q.value("selected",false));
         else if(op=="package.preview") {MapPackageDialog::Preview(GetActiveWindow(),q.at("map").get<std::string>());result=true;}
+        else if(op=="authoring.export") result=Editor::ExportMapAuthoring();
+        else if(op=="authoring.preview") result=Editor::PreviewMapAuthoring(q.at("document"));
+        else if(op=="authoring.apply") result=Editor::ApplyMapAuthoring(q.at("document"));
         else if(op=="magic.classes") result=Editor::EventClasses();
+        else if(op=="camera.snapshot") result=Editor::CameraNetworks();
+        else if(op=="camera.order") {Editor::OrderCameras(q.at("snapshot"),q.at("paths"),q.value("loop",false),q.value("detach",std::string{}));result=true;}
+        else if(op=="camera.add") result=Editor::AddNetworkCamera(q.at("snapshot"),q.at("paths"),q.value("loop",false));
         else if(op=="magic.assets") result=Editor::EventAssets(q.at("type"),q.value("classes",false));
         else if(op=="magic.component") result=Editor::CreateEventComponent(q.at("snapshot"),q.at("class"));
         else if(op=="magic.key") {Editor::CaptureMoverKey(q.at("snapshot"),q.at("key"));result=true;}
         else if(op=="magic.inspect") result=Editor::InspectActor(q.at("actor"));
+        else if(op=="magic.json.export") result=Editor::ExportEventJson(q.at("actor"));
+        else if(op=="magic.json.import") {Editor::ImportEventJson(q.at("snapshot"),q.at("document"));result=true;}
         else if(op=="magic.edit") {Editor::EditActor(q.at("snapshot"),q.at("changes"));result=true;}
         else if(op=="magic.create") result=Editor::CreateEventActor(q.at("class"),q.value("event",Json{}),q.value("trigger",false),q.value("geometry",std::string("point")),q.value("group",0));
         else if(op=="magic.link") {Editor::LinkEventActor(q.at("event"),q.at("target"),q.value("trigger",false),q.value("group",0));result=true;}
@@ -596,6 +676,12 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="replace") {Editor::ReplaceUsages(q.at("usages"),q.at("source"),q.at("replacement"));result=true;}
         else if(op=="connections") result=Editor::Connections(q.at("actor"));
         else if(op=="surface.brushes") result=Editor::SelectedSurfaceBrushes();
+        else if(op=="mesh.bounds") result=Editor::SelectedMeshBounds();
+        else if(op=="builder.fit") {Editor::FitBuilderBrushToMeshes();result=true;}
+        else if(op=="brush.snap.bounds") result=Editor::BrushSnapBounds(q.value("surfaces",false));
+        else if(op=="vertex.selection") result=Editor::SelectedBrushVertices();
+        else if(op=="vertex.snap") {Editor::SnapSelectedBrushVertices(q.at("axes").get<unsigned>());result=true;}
+        else if(op=="brush.snap") {Editor::SnapBrushesToGrid(q.at("axes").get<unsigned>(),q.value("surfaces",false));result=true;}
         else if(op=="tag.preview") result=Editor::PreviewTagRename(q.at("actor"),q.at("tag"));
         else if(op=="tag.rename") {Editor::RenameTag(q.at("preview"));result=true;}
         else if(op=="assembly.capture") result=Editor::CaptureAssembly(q.at("members"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()});
