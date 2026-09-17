@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace SCDAMapConverter;
 
-record MapProbe(string File, long Bytes, string Variant, string Magic, string Status, string[] CompanionFiles);
+record MapProbe(string File, long Bytes, string Variant, string Magic, string Status, string[] CompanionFiles, Dictionary<string, int> ClassCounts, string[] ObjectNames);
 
 static class Program
 {
@@ -44,8 +44,20 @@ sealed class MainForm : Form
     {
         using var stream = File.OpenRead(path); Span<byte> header = stackalloc byte[8]; stream.ReadExactly(header);
         var magic = Convert.ToHexString(header); var name = Path.GetFileNameWithoutExtension(path); var companions = Directory.EnumerateFiles(Path.GetDirectoryName(path)!, name + "*", SearchOption.TopDirectoryOnly).Select(Path.GetFileName).Where(n => n is not null).Cast<string>().ToArray();
-        return new(path, stream.Length, name.EndsWith("_VS", StringComparison.OrdinalIgnoreCase) ? "Versus" : "Offline", magic, magic.StartsWith("C1832A9E", StringComparison.OrdinalIgnoreCase) ? "Recognized SCDA compiled map container; geometry extraction is not yet implemented." : "Unknown map container.", companions);
+        var bytes = File.ReadAllBytes(path); var strings = ExtractStrings(bytes); var classes = strings.Where(IsClassName).GroupBy(s => s, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+        return new(path, stream.Length, name.EndsWith("_VS", StringComparison.OrdinalIgnoreCase) ? "Versus" : "Offline", magic, magic.StartsWith("C1832A9E", StringComparison.OrdinalIgnoreCase) ? "Recognized SCDA compiled map container; object inventory extracted; geometry reconstruction is the next stage." : "Unknown map container.", companions, classes, strings.Where(s => s.Contains("Actor", StringComparison.OrdinalIgnoreCase) || s.Contains("Mesh", StringComparison.OrdinalIgnoreCase) || s.Contains("Brush", StringComparison.OrdinalIgnoreCase)).Take(500).ToArray());
     }
+    static IEnumerable<string> ExtractStrings(byte[] bytes)
+    {
+        var current = new StringBuilder();
+        foreach (var b in bytes)
+        {
+            if (b is >= 32 and <= 126) current.Append((char)b);
+            else { if (current.Length >= 4) yield return current.ToString(); current.Clear(); }
+        }
+        if (current.Length >= 4) yield return current.ToString();
+    }
+    static bool IsClassName(string value) => value is "Actor" or "Brush" or "StaticMesh" or "StaticMeshActor" or "Texture" or "Light" or "Trigger" or "Mover" || value.EndsWith("Actor", StringComparison.OrdinalIgnoreCase);
     void Inspect()
     {
         if (map.SelectedIndex < 0) { Scan(); if (map.SelectedIndex < 0) return; }
