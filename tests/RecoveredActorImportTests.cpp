@@ -454,6 +454,23 @@ int main(int argc, char** argv)
         "Conditions=(Count=2)", "Conditions=(Count=2,Target=Trigger'MyLevel.Trigger0')"), error));
     assert(!VerifySourceMap(bad, Replace(omittedNestedNull,
         "Conditions=(Count=2)", "Conditions=(Count=2,Target=\"None\")"), error));
+    // HELI02 omits complete MoversToLock entries after references to deleted
+    // movers become null. Missing live bindings or other fields remain errors.
+    for (const auto& value : {"(MoverToLock=None)", "(MoverToLock=None,Other=None)",
+                              "(MoverToLock=Trigger'MyLevel.Trigger0')",
+                              "(MoverToLock=None,Count=2)", "(MoverToLock=\"None\",Other=None)"})
+    {
+        const std::string assignment=std::string("MoversToLock(10)=")+value;
+        const auto alarm=Replace(kRecovered,"Event=\"Trigger event\"",
+            std::string("Event=\"Trigger event\"\n")+assignment);
+        assert(Prepare(alarm,bad,error));
+        assert(ComposeSourceMap(bad,kFresh,kGeometry,composed,error));
+        const bool nullOnly=std::string(value)=="(MoverToLock=None)"
+            || std::string(value)=="(MoverToLock=None,Other=None)";
+        assert(VerifySourceMap(bad,Replace(composed,assignment,""),error)==nullOnly);
+        assert(!VerifySourceMap(bad,Replace(composed,assignment,
+            "MoversToLock(10)=(MoverToLock=Trigger'MyLevel.Trigger0',Count=9)"),error));
+    }
     assert(!Prepare(deletedMap, bad, error, "", {"MyLevel.OtherDeleted0"}));
     assert(!Prepare(kRecovered, bad, error, "", {"MyLevel.Trigger0"}));
     assert(error.find("present in the exported actor snapshot") != std::string::npos);

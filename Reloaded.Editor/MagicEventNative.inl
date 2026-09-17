@@ -180,6 +180,8 @@ Json EventClasses()
 void PlayLevel()
 {
     Engine();auto frame=Read<Address>(0x1165df84);auto window=frame?reinterpret_cast<HWND>(Read<Address>(frame+4)):nullptr;
+    // This global owns the bottom bar; menu commands must reach its root frame.
+    window=window?GetAncestor(window,GA_ROOT):nullptr;
     if(!window || !IsWindow(window))throw std::runtime_error("The main editor window is unavailable.");
     // Native menu resource: &Play Level (Ctrl+P), command 0x9c4f.
     SendMessage(window,WM_COMMAND,40015,0);

@@ -644,11 +644,12 @@ namespace
             const unsigned count = poly ? ReadRaw<unsigned short>(poly, 0x148) : 0;
             bool matched = false;
             if (count >= 3 && count <= 19)
-                for (size_t candidate = 0; candidate < expected.size() && !matched; ++candidate)
+                for (size_t candidate = 0; candidate < expected.size(); ++candidate)
                 {
                     const auto& vertices = expected[candidate].vertices;
                     if (vertices.size() != count) continue;
-                    for (unsigned start = 0; start < count && !matched; ++start)
+                    bool candidateMatched = false;
+                    for (unsigned start = 0; start < count && !candidateMatched; ++start)
                     {
                         bool equal = true;
                         for (unsigned vertex = 0; vertex < count && equal; ++vertex)
@@ -659,7 +660,10 @@ namespace
                                 && std::fabs(actual.y - original.y) <= 0.02f
                                 && std::fabs(actual.z - original.z) <= 0.02f;
                         }
-                        if (equal) { found[candidate] = true; matched = true; }
+                        // Multiple cooked surfaces can retain the same portal
+                        // outline (HELI02). Every equivalent outline is present;
+                        // stopping at the first leaves duplicates falsely missing.
+                        if (equal) { found[candidate] = true; matched = candidateMatched = true; }
                     }
                 }
             if (!matched)

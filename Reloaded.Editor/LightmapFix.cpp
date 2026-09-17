@@ -308,7 +308,7 @@ static void __cdecl WarnIfMapDamaged(const char* cmd)
         MessageBoxA(nullptr, message, "Reloaded Editor", MB_OK | MB_ICONWARNING);
 }
 
-// Every map load - File > Open, the MRU, the bulk rebuild - reaches Exec as MAP LOAD FILE="..".
+// Every map load/save, including Play Level's runtime copy, reaches Exec.
 JMP_HOOK(0x110183b0, EditorExecHook)
 {
     static int Resume = 0x110183b5;

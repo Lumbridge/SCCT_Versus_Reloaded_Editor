@@ -6,6 +6,7 @@
 #include "MagicEventModel.h"
 #include "MapAuthoringModel.h"
 #include "CameraNetworkModel.h"
+#include "MapDesignModel.h"
 #include "MapRecovery.h"
 #include "MemoryWriter.h"
 #include <algorithm>
@@ -963,5 +964,45 @@ Json PlaceAssembly(const Json& definition,const Pose& frame,const std::map<std::
 }
 #include "MagicEventNative.inl"
 #include "MapAuthoringNative.inl"
+Json AddObjectiveActor(const Json& owner,const std::string& type)
+{
+    MagicCheck(owner);
+    auto parent=ResolveIdentity(owner.at("actor"));
+    const bool objective=type=="SBase.SObjective",flag=type=="SBase.SFlag";
+    if(!objective && !flag && type!="SBase.SComputerObjectiveTrigger" && type!="SBase.SBombTargetObjectiveTrigger")
+        throw std::runtime_error("Unsupported objective actor type.");
+    if(!parent || (objective?!IsA(parent,"SBase.SMission"):(!IsA(parent,"SBase.SObjective") || IsA(parent,"SBase.SMission"))))
+        throw std::runtime_error(objective?"Select one SMission to add an SObjective.":"Select one SObjective to add a trigger.");
+    const char* property=objective?"Objectives":"Triggers";
+    auto links=owner.at("values").at(property);
+    if(!links.is_array())throw std::runtime_error("Objective links are unavailable.");
+    std::set<std::string> used;for(const auto& slot:TagSlots())used.insert(Fold(slot.value));
+    std::string id,dropId;const auto stem=type.substr(type.find_last_of('.')+1)+"_";
+    for(int suffix=1;;++suffix)
+    {
+        id=stem+std::to_string(suffix);dropId=id+"_DropZone";
+        if(!used.count(Fold(id)) && !Find(LevelPath()+"."+id) &&
+            (!flag || (!used.count(Fold(dropId)) && !Find(LevelPath()+"."+dropId))))break;
+    }
+    auto position=Position(parent);position[0]+=32;
+    auto location=[&](const Vector& p)->Json{return {{"X",std::to_string(p[0])},{"Y",std::to_string(p[1])},{"Z",std::to_string(p[2])}};};
+    Json properties={{"Location",location(position)}};
+    Json operations=Json::array();
+    if(flag)
+    {
+        auto cls=Find(type);auto schema=AuthoringSchema(cls).at("DropZone");
+        if(schema.at("kind")!="FixedArray" || schema.at("dimension").get<int>()<1)throw std::runtime_error("Flag drop-zone slots are unavailable.");
+        auto zones=Json::array();for(int i=0;i<schema.at("dimension").get<int>();++i)zones.push_back("None");
+        zones[0]={{"$ref",dropId}};properties["DropZone"]=zones;
+        auto dropPosition=Position(parent);dropPosition[1]+=32;
+        operations.push_back({{"op","create"},{"id",dropId},{"class","SBase.SFlagDropZone"},{"properties",{{"Location",location(dropPosition)}}}});
+    }
+    operations.push_back({{"op","create"},{"id",id},{"class",type},{"properties",properties}});
+    links.push_back({{"$ref",id}});
+    operations.push_back({{"op","update"},{"actor",owner.at("actor")},{"before",owner.at("values")},{"properties",{{property,links}}}});
+    auto result=ApplyMapAuthoring({{"format","scct.map-changes"},{"version",1},{"map",AuthoringMapKey()},{"description","Add objective actors and connections"},{"operations",operations}});
+    Select(result.at("created"));Redraw();return result.at("created");
+}
 #include "CameraNetworkNative.inl"
+#include "MapDesignNative.inl"
 }

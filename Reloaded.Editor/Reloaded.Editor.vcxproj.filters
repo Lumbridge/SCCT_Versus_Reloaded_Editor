@@ -29,6 +29,9 @@
     <ClInclude Include="CameraNetworkNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapAuthoringModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapAuthoringNative.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MapDesignModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MapDesignNative.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MapDesignPanel.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapAuthoringDialog.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MagicEventModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MagicEventNative.inl"><Filter>Header Files</Filter></ClInclude>

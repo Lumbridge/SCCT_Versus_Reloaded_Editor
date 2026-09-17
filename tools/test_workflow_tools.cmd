@@ -2,6 +2,10 @@
 setlocal
 rem Run from an x86 Native Tools Command Prompt for Visual Studio.
 pushd "%~dp0.."
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\MapDesignModelTests.cpp Reloaded.Editor\WorkflowModel.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MapDesignModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\MapDesignModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\BrushGridSnapTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\BrushGridSnapTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\BrushGridSnapTests.exe"

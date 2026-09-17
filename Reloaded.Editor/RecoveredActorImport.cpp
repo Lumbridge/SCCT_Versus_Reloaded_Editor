@@ -1299,8 +1299,11 @@ bool RecoveredActorImport::VerifySourceMap(const PreparedMap& prepared,
             });
             if (!regenerated && !reference && !hasEmptyReference && !authoredActorProperties.count(property.first)) continue;
             const auto imported = importedProperties.find(property.first);
-            // Native export omits default null object properties after import.
-            if (emptyReference && imported == importedProperties.end()) continue;
+            // Native export omits default null objects, including an entire
+            // struct/array element whose only assignments are null objects
+            // (HELI02 SAlarm.MoversToLock). Keep checking every non-null field.
+            if (imported == importedProperties.end()
+                && (emptyReference || (hasEmptyReference && SameProperty(property.second,"()")))) continue;
             if (imported == importedProperties.end() || !SameProperty(property.second, imported->second))
             {
                 error = "The imported source changed the " + property.first

@@ -5,6 +5,25 @@
 #include <commdlg.h>
 #include <dlgs.h>
 namespace WorkflowProbe {
+UINT objectivePopupChoice=0;bool objectivePopupFound=false;int objectivePopupTicks=0;
+void CALLBACK ChooseObjectivePopup(HWND,UINT,UINT_PTR,DWORD)
+{
+    if(++objectivePopupTicks>20){EndMenu();return;}
+    if(objectivePopupFound)return;
+    EnumThreadWindows(GetCurrentThreadId(),[](HWND window,LPARAM)->BOOL {
+        char cls[64]{};GetClassNameA(window,cls,sizeof(cls));if(strcmp(cls,"#32768"))return TRUE;
+        auto menu=reinterpret_cast<HMENU>(SendMessage(window,0x01e1,0,0));
+        for(int i=0;i<GetMenuItemCount(menu);++i)if(GetMenuItemID(menu,i)==objectivePopupChoice)
+        {
+            objectivePopupFound=true;
+            GUITHREADINFO gui{sizeof(gui)};GetGUIThreadInfo(GetCurrentThreadId(),&gui);
+            auto receiver=gui.hwndMenuOwner?gui.hwndMenuOwner:window;
+            SendMessage(window,0x01e5,i,0); // MN_SELECTITEM: target this fixture's menu item.
+            PostMessage(receiver,WM_KEYDOWN,VK_RETURN,0);return FALSE;
+        }
+        return TRUE;
+    },0);
+}
 bool vertexPopupChecked=false;
 void CALLBACK InspectVertexPopup(HWND,UINT,UINT_PTR,DWORD)
 {
@@ -24,6 +43,19 @@ unsigned char* MagicActor(const nlohmann::json& identity)
     auto path=identity.at("path").get<std::string>();auto name=path.substr(path.find_last_of('.')+1);
     auto level=*reinterpret_cast<unsigned char**>(*reinterpret_cast<uintptr_t*>(kEditor)+0x130);auto data=*reinterpret_cast<unsigned char***>(level+0x2c);int count=*reinterpret_cast<int*>(level+0x30);
     for(int i=2;i<count;++i)if(data[i] && name==ObjectName(data[i]))return data[i];throw std::runtime_error("Magic fixture actor missing.");
+}
+void CALLBACK AcceptDesignPlay(HWND,UINT,UINT_PTR,DWORD)
+{
+    EnumThreadWindows(GetCurrentThreadId(),[](HWND w,LPARAM)->BOOL {char title[128]{};GetWindowTextA(w,title,sizeof(title));if(!strcmp(title,"Play Map Options"))SendMessage(GetDlgItem(w,IDOK),BM_CLICK,0,0);return TRUE;},0);
+}
+BOOL WINAPI DesignKeepEditorWindow(HWND){return TRUE;}
+nlohmann::json designLaunchStarts;
+bool designLaunchSeen=false,designLaunchPose=false;
+HINSTANCE WINAPI DesignCaptureLaunch(HWND,LPCSTR,LPCSTR,LPCSTR parameters,LPCSTR,INT)
+{
+    designLaunchSeen=parameters && strstr(parameters,"Editeur=true");designLaunchPose=true;
+    for(auto& start:designLaunchStarts){auto p=reinterpret_cast<float*>(MagicActor(start)+0x80);designLaunchPose=designLaunchPose && p[0]==300 && p[1]==400 && p[2]==500;}
+    return reinterpret_cast<HINSTANCE>(33);
 }
 nlohmann::json ActivateMagic(const nlohmann::json& identity,const nlohmann::json& source,bool activate)
 {
@@ -100,13 +132,13 @@ void CALLBACK AnswerJsonDialog(HWND,UINT,UINT_PTR,DWORD)
     ++jsonDialogTicks;
     EnumThreadWindows(GetCurrentThreadId(),[](HWND w,LPARAM)->BOOL {
         wchar_t title[256]{};GetWindowTextW(w,title,256);
-        if(!wcscmp(title,L"Map JSON")){PostMessage(w,WM_COMMAND,IDOK,0);return TRUE;}
+        if(!wcscmp(title,L"Map JSON")){PostMessage(w,WM_COMMAND,GetDlgItem(w,IDOK)?IDOK:IDCANCEL,0);return TRUE;}
         if(!wcscmp(title,L"Preview Map JSON Import"))
         {
             authoringPreviewSeen=true;if(!previewScreenshot.empty())Screenshot(w,previewScreenshot);
             PostMessage(w,WM_COMMAND,authoringPreviewCancel?IDCANCEL:IDOK,0);return TRUE;
         }
-        if(wcscmp(title,L"Export Map to JSON") && wcscmp(title,L"Import Map from JSON") && wcscmp(title,L"Export SMagicEvent as JSON") && wcscmp(title,L"Import JSON into the open SMagicEvent"))return TRUE;
+        if(wcscmp(title,L"Choose Reference Image") && wcscmp(title,L"Export Map to JSON") && wcscmp(title,L"Import Map from JSON") && wcscmp(title,L"Export SMagicEvent as JSON") && wcscmp(title,L"Import JSON into the open SMagicEvent"))return TRUE;
         if(jsonDialogCancel || jsonDialogTicks>40){PostMessage(w,WM_COMMAND,IDCANCEL,0);return TRUE;}
         if(jsonDialogTicks!=2 || !IsWindowEnabled(w))return TRUE;
         SendMessageW(w,CDM_SETCONTROLTEXT,edt1,reinterpret_cast<LPARAM>(jsonDialogPath.c_str()));
@@ -352,6 +384,143 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             std::copy(savedHeader.begin(),savedHeader.end(),selectionHeader);*reinterpret_cast<int*>(editor+0x1ac)=mode;memcpy(editor+0x200,grid,12);
         }
         if(snapOnly){Record("PASS","native brush and selected-vertex grid snap commands and transactions");return;}
+        {
+            auto inspect=[&](const J& actor){return call({{"op","magic.inspect"},{"actor",actor}});};
+            auto ref=[](const J& actor){auto type=actor.at("class").get<std::string>();return type.substr(type.find_last_of('.')+1)+"'"+actor.at("path").get<std::string>()+"'";};
+            auto add=[&](const J& owner,const char* type){return call({{"op","objective.add"},{"owner",inspect(owner)},{"class",type}});};
+            auto menuHas=[&](const J& actor,UINT command)
+            {
+                call({{"op","select"},{"actors",J::array({actor})}});
+                using Load=HMENU(WINAPI*)(HINSTANCE,LPCSTR);
+                auto menu=(*reinterpret_cast<Load*>(0x11af23f0))(GetModuleHandle(nullptr),MAKEINTRESOURCEA(107));
+                auto state=GetMenuState(GetSubMenu(menu,0),command,MF_BYCOMMAND);DestroyMenu(menu);return state!=UINT(-1);
+            };
+            auto mission=call({{"op","magic.create"},{"class","SBase.SMission"}});
+            require(menuHas(mission,40949) && !menuHas(mission,40950),"mission context offers Add SObjective only");
+            auto objective=add(mission,"SBase.SObjective").at(0);
+            auto second=add(mission,"SBase.SObjective").at(0);
+            require(inspect(mission)["values"]["Objectives"]==J::array({ref(objective),ref(second)}),"adding objectives preserves existing mission links");
+            require(menuHas(objective,40950) && menuHas(objective,40951) && menuHas(objective,40952) && !menuHas(objective,40949),"objective context offers computer, bomb and flag pair");
+            auto computer=add(objective,"SBase.SComputerObjectiveTrigger").at(0);
+            auto bomb=add(objective,"SBase.SBombTargetObjectiveTrigger").at(0);
+            auto before=inspect(objective);auto pair=add(objective,"SBase.SFlag");
+            require(pair.size()==2,"flag action creates two actors");
+            auto flag=pair.at(1),drop=pair.at(0);
+            require(inspect(flag)["values"]["DropZone"][0]==ref(drop),"flag references its new drop zone");
+            require(inspect(objective)["values"]["Triggers"]==J::array({ref(computer),ref(bomb),ref(flag)}),"objective retains all three linked triggers");
+            auto after=inspect(objective)["values"];
+            auto nearby=[&](const J& actor,const J& parent){auto a=inspect(actor)["values"]["Location"],b=inspect(parent)["values"]["Location"];double d=0;for(const char* axis:{"X","Y","Z"}){auto delta=std::stod(a[axis].get<std::string>())-std::stod(b[axis].get<std::string>());d+=delta*delta;}return d>0 && d<=32*32;};
+            require(nearby(objective,mission) && nearby(computer,objective) && nearby(bomb,objective) && nearby(flag,objective) && nearby(drop,objective),"all objective actors including drop zone are within 32 units of their parent");
+            auto count=call({{"op","actors"}}).size();
+            Exec("TRANSACTION UNDO");
+            require(inspect(objective)["values"]==before["values"] && call({{"op","actors"}}).size()==count-2,"one undo removes flag pair and restores objective links");
+            Exec("TRANSACTION REDO");
+            require(inspect(objective)["values"]==after && inspect(flag)["values"]["DropZone"][0]==ref(drop),"redo restores flag pair and all links");
+            auto edges=call({{"op","connections"},{"actor",flag["path"]}});
+            require(edges.size()>=2,"connections manager reports objective and drop-zone links");
+            bool stale=false;try{call({{"op","objective.add"},{"owner",before},{"class","SBase.SFlag"}});}catch(const std::exception&){stale=true;}
+            require(stale && call({{"op","actors"}}).size()==count,"stale objective request leaves map unchanged");
+            bool wrong=false;try{add(mission,"SBase.SComputerObjectiveTrigger");}catch(const std::exception&){wrong=true;}
+            require(wrong && call({{"op","actors"}}).size()==count,"wrong parent is rejected without creating actors");
+            call({{"op","select"},{"actors",J::array({mission})}});
+            SendMessage(frameWindow,WM_COMMAND,40949,0);
+            require(inspect(mission)["values"]["Objectives"].size()==3,"native context command creates and links objective");
+            Exec("TRANSACTION UNDO");
+            // Exercise the actual popup import with a non-frame owner; direct
+            // WM_COMMAND to frameWindow misses the viewport routing regression.
+            call({{"op","select"},{"actors",J::array({mission})}});
+            auto popupOwner=CreateWindowExA(0,"STATIC","Objective popup fixture",WS_POPUP,20,20,300,200,nullptr,nullptr,GetModuleHandle(nullptr),nullptr);
+            ShowWindow(popupOwner,SW_SHOWNOACTIVATE);
+            using Load=HMENU(WINAPI*)(HINSTANCE,LPCSTR);using Track=BOOL(WINAPI*)(HMENU,UINT,int,int,int,HWND,const RECT*);
+            auto menu=(*reinterpret_cast<Load*>(0x11af23f0))(GetModuleHandle(nullptr),MAKEINTRESOURCEA(107));
+            WorkflowProbe::objectivePopupChoice=40949;WorkflowProbe::objectivePopupFound=false;WorkflowProbe::objectivePopupTicks=0;
+            auto popupTimer=SetTimer(nullptr,0,50,WorkflowProbe::ChooseObjectivePopup);
+            auto popupResult=(*reinterpret_cast<Track*>(0x11af23c0))(GetSubMenu(menu,0),TPM_RIGHTBUTTON,40,40,0,popupOwner,nullptr);
+            KillTimer(nullptr,popupTimer);DestroyMenu(menu);DestroyWindow(popupOwner);
+            Record("objective_popup_result",(std::to_string(popupResult)+" ticks="+std::to_string(WorkflowProbe::objectivePopupTicks)).c_str());
+            require(WorkflowProbe::objectivePopupFound && inspect(mission)["values"]["Objectives"].size()==3,"viewport-style popup owner routes Add SObjective without the frame dispatcher");
+            Exec("TRANSACTION UNDO");
+            call({{"op","select"},{"actors",J::array({objective})}});
+            SendMessage(frameWindow,WM_COMMAND,40920,0);
+            auto manager=WorkflowProbe::FindDialog("Gameplay Connections");
+            require(manager && IsWindowEnabled(GetDlgItem(manager,202)),"connections manager enables objective creation for its current actor");
+            SendMessage(manager,WM_COMMAND,203,0);auto objectiveGraph=WorkflowProbe::FindDialog("Gameplay Connection Graph");
+            require(objectiveGraph!=nullptr,"objective graph opens");
+            SendMessage(GetDlgItem(objectiveGraph,104),BM_SETCHECK,BST_UNCHECKED,0);
+            call({{"op","select"},{"actors",J::array({mission})}});
+            WorkflowProbe::objectivePopupChoice=40952;WorkflowProbe::objectivePopupFound=false;WorkflowProbe::objectivePopupTicks=0;
+            popupTimer=SetTimer(nullptr,0,50,WorkflowProbe::ChooseObjectivePopup);
+            SendMessage(GetDlgItem(objectiveGraph,120),WM_CONTEXTMENU,0,MAKELPARAM(-1,-1));KillTimer(nullptr,popupTimer);
+            require(WorkflowProbe::objectivePopupFound && inspect(objective)["values"]["Triggers"].size()==4,"graph node popup adds linked flag pair to its node despite different viewport selection");
+            Exec("TRANSACTION UNDO");SendMessage(objectiveGraph,WM_CLOSE,0,0);
+            SendMessage(GetDlgItem(manager,103),BM_SETCHECK,BST_UNCHECKED,0);
+            call({{"op","select"},{"actors",J::array({computer})}});SendMessage(manager,WM_COMMAND,200,0);
+            require(IsWindowEnabled(GetDlgItem(manager,202)),"connections manager retains objective target with Follow Selection off");
+            SendMessage(GetDlgItem(manager,103),BM_SETCHECK,BST_CHECKED,0);SendMessage(manager,WM_COMMAND,200,0);
+            require(!IsWindowEnabled(GetDlgItem(manager,202)),"connections manager disables objective creation for unrelated actors");
+            SendMessage(manager,WM_CLOSE,0,0);
+            call({{"op","select"},{"actors",J::array()}});
+        }
+        {
+            auto baseline=call({{"op","design.scene"}});
+            require(Exec(std::string("MAP SAVE FILE=\"")+destination+"\"")!=0,"save disposable map before design metadata persistence checks");
+            using DesignFilename=void(__thiscall*)(void*,const char*);
+            reinterpret_cast<DesignFilename>(0x10e05e1c)(*reinterpret_cast<void**>(0x1165e80c),destination);
+            std::ofstream(directory/"design_clearances.json")<<call({{"op","design.clearances"}}).dump(2);
+            J spec={{"kind","Room"},{"width",512},{"length",768},{"height",256},{"thickness",16},{"steps",8},{"ceiling",true},{"name","Native design room"}};
+            auto create=[&](J value,J previous=J{}){return call({{"op","design.block"},{"spec",value},{"position",{1024,2048,64}},{"rotation",{0,16384,0}},{"previous",previous}});};
+            auto room=create(spec);require(room["members"].size()==7,"blockout creates subtractive space and six boundary brushes");
+            auto live=call({{"op","design.scene"}});require(live.size()==baseline.size()+7,"blockout native actor count");
+            for(auto& member:room["members"]){auto a=std::find_if(live.begin(),live.end(),[&](const J& item){return item["path"]==member["path"];});require(a!=live.end() && (*a)["edges"].size()==24,"blockout exports real native brush geometry");}
+            spec["width"]=640;auto resized=create(spec,room);require(call({{"op","design.scene"}}).size()==live.size(),"dimension edit replaces brushes without accumulating duplicates");
+            Exec("TRANSACTION UNDO");auto undone=call({{"op","design.scene"}});
+            require(undone.size()==live.size(),"resize undoes as one transaction");
+            for(auto& member:room["members"])require(std::any_of(undone.begin(),undone.end(),[&](const J& item){return item["path"]==member["path"];}),"resize undo restores original brush identities");
+            Exec("TRANSACTION REDO");call({{"op","design.layer"},{"members",resized["members"]},{"hidden",true},{"locked",true}});
+            auto hidden=call({{"op","design.scene"}});for(auto& member:resized["members"])for(auto& a:hidden)if(a["path"]==member["path"])require(a["hidden"]==true && a["locked"]==true,"native layer hides and locks actors");
+            Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");require(call({{"op","design.scene"}}).size()==baseline.size(),"blockout undo returns to baseline");
+            spec["kind"]="Stairs";auto stairs=create(spec);require(stairs["members"].size()==8,"native stair brush generation");Exec("TRANSACTION UNDO");
+            spec["kind"]="Ramp";auto ramp=create(spec);auto rampScene=call({{"op","design.scene"}});J selected=J::array();for(auto& a:rampScene)if(a["path"]==ramp["members"][0]["path"])selected.push_back(a);
+            require(selected.size()==1 && selected[0]["edges"].size()==18,"ramp imports five outward polygon faces");
+            call({{"op","design.align"},{"scene",selected},{"axis",0},{"mode","Align"}});Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");
+            auto starts=call({{"op","design.spawns"}});
+            if(starts.empty()){call({{"op","magic.create"},{"class","Engine.PlayerStart"}});starts=call({{"op","design.spawns"}});}
+            require(!starts.empty(),"temporary spawn candidates available");
+            call({{"op","design.play"},{"start",starts[0]},{"position",{300,400,500}},{"rotation",{0,16384,0}},{"launch",false}});
+            require(call({{"op","design.spawns"}})==starts,"temporary playtest restores exact spawn positions and rotations");
+            WorkflowProbe::designLaunchStarts=J::array();for(auto& start:starts)if(start["team"]==starts[0]["team"])WorkflowProbe::designLaunchStarts.push_back(start);
+            auto launchSlot=reinterpret_cast<void**>(0x11af228c);auto originalLaunch=*launchSlot;DWORD protection=0;require(VirtualProtect(launchSlot,sizeof(void*),PAGE_READWRITE,&protection)!=0,"test launch interception available");
+            auto minimizeSlot=reinterpret_cast<void**>(0x11af23cc);auto originalMinimize=*minimizeSlot;*minimizeSlot=reinterpret_cast<void*>(&WorkflowProbe::DesignKeepEditorWindow);
+            *launchSlot=reinterpret_cast<void*>(&WorkflowProbe::DesignCaptureLaunch);auto playTimer=SetTimer(nullptr,0,50,WorkflowProbe::AcceptDesignPlay);
+            try{call({{"op","design.play"},{"start",starts[0]},{"position",{300,400,500}},{"rotation",{0,16384,0}},{"launch",true}});}
+            catch(...){KillTimer(nullptr,playTimer);*minimizeSlot=originalMinimize;*launchSlot=originalLaunch;DWORD ignored;VirtualProtect(launchSlot,sizeof(void*),protection,&ignored);throw;}
+            KillTimer(nullptr,playTimer);*minimizeSlot=originalMinimize;*launchSlot=originalLaunch;DWORD ignored;VirtualProtect(launchSlot,sizeof(void*),protection,&ignored);
+            require(WorkflowProbe::designLaunchSeen && WorkflowProbe::designLaunchPose,"native Play Level reaches launch with the temporary team spawn pose");
+            require(call({{"op","design.spawns"}})==starts,"native Play Level returns with original editor spawns restored");
+            SendMessage(frameWindow,WM_COMMAND,40948,0);auto design=WorkflowProbe::FindDialog("Map Design");require(design!=nullptr,"Map Design menu opens native workspace");
+            WorkflowProbe::Click(design,706); // New blockout, then verify a preview has no native actors.
+            auto previewCount=call({{"op","actors"}}).size();WorkflowProbe::Screenshot(design,directory/"map_design_preview.bmp");
+            SendMessage(design,WM_COMMAND,708,0);require(call({{"op","actors"}}).size()==previewCount+7,"design preview applies through its actual Place button");
+            WorkflowProbe::Click(design,710); // Configurable player clearance guide.
+            SendMessage(design,WM_COMMAND,711,0);auto canvas=GetDlgItem(design,719);
+            SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(100,100));SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(300,100));
+            WorkflowProbe::Click(design,716);SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(200,220));SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(400,300));SendMessage(design,WM_COMMAND,717,0);
+            WorkflowProbe::Click(design,713,"Design layer");
+            // Generate a tiny reference image locally; no copyrighted reference
+            // imagery or user's files are needed for this UI test.
+            auto image=directory/"design_reference.bmp";BITMAPFILEHEADER bh{};BITMAPINFOHEADER bi{};bi.biSize=sizeof(bi);bi.biWidth=64;bi.biHeight=64;bi.biPlanes=1;bi.biBitCount=32;bh.bfType=0x4d42;bh.bfOffBits=sizeof(bh)+sizeof(bi);bh.bfSize=bh.bfOffBits+64*64*4;
+            {std::ofstream out(image,std::ios::binary);out.write(reinterpret_cast<char*>(&bh),sizeof(bh));out.write(reinterpret_cast<char*>(&bi),sizeof(bi));for(int y=0;y<64;++y)for(int x=0;x<64;++x){unsigned colour=(x%16<2||y%16<2)?0x00406080:0x00f0e0c0;out.write(reinterpret_cast<char*>(&colour),4);}}
+            WorkflowProbe::jsonDialogPath=image.wstring();WorkflowProbe::jsonDialogCancel=false;
+            auto fileTimer=SetTimer(nullptr,0,50,WorkflowProbe::AnswerJsonDialog);auto formTimer=SetTimer(nullptr,0,60,WorkflowProbe::Answer);SendMessage(design,WM_COMMAND,703,0);KillTimer(nullptr,fileTimer);KillTimer(nullptr,formTimer);
+            SendMessage(design,WM_COMMAND,704,0);SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(100,100));
+            formTimer=SetTimer(nullptr,0,50,WorkflowProbe::Answer);SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(300,100));KillTimer(nullptr,formTimer);
+            WorkflowProbe::Screenshot(design,directory/"map_design_workspace.bmp");
+            auto key=call({{"op","map"}})["key"].get<std::string>();std::ifstream libraryInput(directory/"ReloadedEditor"/"library.json");J designLibrary;libraryInput>>designLibrary;
+            auto savedDesign=designLibrary["maps"][key]["design"];
+            require(savedDesign["annotations"].size()==2 && savedDesign["layers"].size()==1 && savedDesign["guides"].size()==1 && savedDesign.contains("reference"),"design reference, measurement, route, guide and layer persist from actual dialogs");
+            DestroyWindow(design);Exec("TRANSACTION UNDO");
+            Record("workflow_check","Map Design native blockout, layers, spawn restoration and UI passed");
+        }
         {
             auto originalSelection=call({{"op","actors"},{"selected",true}});
             require(Exec("OBJ LOAD FILE=\"..\\Packages\\StaticMeshes\\TestMapStaticM.usx\"")!=0,"load mesh fixture package");

@@ -193,11 +193,18 @@ LRESULT CALLBACK CanvasProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
             auto node=s->graph.nodes[hit];auto level=s->level;auto generation=s->generation;s->selected=node.id;Repaint(*s);
             HMENU menu=CreatePopupMenu();AppendMenuA(menu,MF_STRING|(node.missing?MF_GRAYED:0),1,"Select and Focus");AppendMenuA(menu,MF_STRING|(node.missing?MF_GRAYED:0),2,"Rename Tag...");
             if(!node.missing && Editor::Compatible(node.id,"SBase.SMagicEvent"))AppendMenuA(menu,MF_STRING,3,"Edit SMagicEvent...");
+            Json objectiveSnapshot;
+            if(!node.missing && WorkflowTools::AppendObjectiveMenu(menu,node.identity))objectiveSnapshot=Editor::InspectActor(node.identity);
             int command=TrackPopupMenuEx(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,screen.x,screen.y,w,nullptr);DestroyMenu(menu);
             if(command && (level!=Editor::LevelIdentity() || generation!=Editor::MapGeneration())){Rebuild(*s,true,true);SetWindowTextA(s->status,"The map changed. Choose a node in the refreshed graph.");return 0;}
             if(command==1)FocusActor(*s);
             if(command==2){s->selected=node.id;SendMessage(s->window,WM_COMMAND,Rename,0);}
             if(command==3)MagicEventWorkbench::Open(s->window,node.id);
+            if(command>=WorkflowTools::kAddObjective && command<=WorkflowTools::kAddFlagObjective)
+            {
+                WorkflowTools::RunObjectiveCommand(command,objectiveSnapshot);
+                Rebuild(*s,true,true);
+            }
             return 0;
         }
         if(message==WM_LBUTTONDOWN){SetFocus(w);int hit=HitNode(*s,p);if(hit>=0)s->selected=s->graph.nodes[hit].id;s->dragging=true;s->last=p;SetCapture(w);Repaint(*s);return 0;}

@@ -26,6 +26,7 @@ namespace Workflow::Editor
     Json FindUsages(const std::string& asset);
     void ReplaceUsages(const Json& usages, const std::string& source, const std::string& replacement);
     Json Connections(const std::string& actor);
+    Json AddObjectiveActor(const Json& owner, const std::string& type);
     Json PreviewTagRename(const Json& actor,const std::string& newTag);
     void RenameTag(const Json& preview);
     Pose BuilderPose();
@@ -47,6 +48,13 @@ namespace Workflow::Editor
     Json CreateEventComponent(const Json& owner, const std::string& type);
     void CaptureMoverKey(const Json& mover, int key);
     void PlayLevel();
+    Json DesignScene();
+    Json DesignBlockout(const Json& spec,const Pose& frame,const Json& previous = Json{});
+    void DesignAlign(const Json& scene,int axis,const std::string& mode,double spacing);
+    void DesignLayer(const Json& members,bool hidden,bool locked);
+    Json DesignSpawns();
+    Json DesignClearances();
+    void DesignPlay(const Json& start,const Pose& pose,bool launch = true);
     Json InspectActor(const Json& identity);
     Json ExportEventJson(const Json& identity);
     void ImportEventJson(const Json& snapshot,const Json& document);

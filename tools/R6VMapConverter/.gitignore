@@ -1,0 +1,5 @@
+App/bin/
+App/obj/
+Native/bin/
+Tests/bin/
+Tests/obj/

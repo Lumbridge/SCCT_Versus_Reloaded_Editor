@@ -1,0 +1,124 @@
+{
+  "native_integration": [
+    {
+      "map": "MP_Casino_02",
+      "meshes": 297,
+      "placements": 2156,
+      "passed": true
+    },
+    {
+      "map": "MP_Dantes_01",
+      "meshes": 346,
+      "placements": 1846,
+      "passed": true
+    }
+  ],
+  "offline_stream_decoder": {
+    "textures_matching_previous_delivery": 781,
+    "passed": true
+  },
+  "native_cancellation": {
+    "passed": true,
+    "preserved_existing_editor": true
+  },
+  "backend_regressions": {
+    "passed": 5
+  },
+  "inspection": [
+    {
+      "map": "MP_Casino_01",
+      "ok": true,
+      "placements": 1979,
+      "errors": 0,
+      "examples": []
+    },
+    {
+      "map": "MP_Casino_02",
+      "ok": true,
+      "placements": 2156,
+      "errors": 0,
+      "examples": []
+    },
+    {
+      "map": "MP_Dantes_01",
+      "ok": true,
+      "placements": 1846,
+      "errors": 0,
+      "examples": []
+    },
+    {
+      "map": "MP_Hoover_01",
+      "ok": true,
+      "placements": 3133,
+      "errors": 0,
+      "examples": []
+    },
+    {
+      "map": "MP_Hoover_02",
+      "ok": true,
+      "placements": 2961,
+      "errors": 0,
+      "examples": []
+    },
+    {
+      "map": "MP_KillhouseDouble",
+      "ok": true,
+      "placements": 1353,
+      "errors": 0,
+      "examples": []
+    },
+    {
+      "map": "MP_LVU_01",
+      "ok": false,
+      "placements": 3137,
+      "errors": 2,
+      "examples": [
+        {
+          "component": "TheWorld.PersistentLevel.R6InteractiveDoorRotating_56.StaticMeshComponent_InteractiveActorMesh_0",
+          "error": "Unsupported serialized record: (244924, 13230)"
+        },
+        {
+          "component": "TheWorld.PersistentLevel.R6InteractiveDoorRotating_14.StaticMeshComponent_InteractiveActorMesh_1",
+          "error": "Unsupported serialized record: (401111, 13230)"
+        }
+      ]
+    },
+    {
+      "map": "MP_LVU_02",
+      "ok": true,
+      "placements": 4184,
+      "errors": 0,
+      "examples": []
+    },
+    {
+      "map": "MP_Mexico_01",
+      "ok": false,
+      "placements": 1894,
+      "errors": 29,
+      "examples": [
+        {
+          "component": "TheWorld.PersistentLevel.StaticMeshActor_Mexico_Ground_Arc4_4.StaticMeshComponent_StaticMeshComponent0_6",
+          "error": "Unsupported component layout: mesh field points to Engine.Sequence TheWorld.PersistentLevel.Main_Sequence"
+        },
+        {
+          "component": "TheWorld.PersistentLevel.StaticMeshActor_Mexico_Ground_Arc32_32.StaticMeshComponent_StaticMeshComponent0_34",
+          "error": "Unsupported component layout: mesh field points to Engine.Sequence TheWorld.PersistentLevel.Main_Sequence"
+        }
+      ]
+    },
+    {
+      "map": "MP_Streets_01",
+      "ok": true,
+      "placements": 1404,
+      "errors": 0,
+      "examples": []
+    }
+  ],
+  "live_recovery_wrapper": "Not exercised against a running Vegas process in this session.",
+  "path_discovery": {
+    "tests_passed": 12,
+    "maps_found_on_this_machine": 60,
+    "installation_detected_without_saved_path": true,
+    "ui_cache_matched": true
+  }
+}

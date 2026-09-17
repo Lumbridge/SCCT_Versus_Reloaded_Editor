@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "General.h"
+#include "BspTransientRenderFix.h"
+#include "ShadowEdgeCacheFix.h"
 #include "Hooks.h"
 #include "ReloadedOptions.h"
 #include "RealtimeFix.h"
@@ -668,7 +670,7 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         je workflow_dispatch
         cmp dword ptr [esp+4], 40936 // Brush/surface edge snap commands
         jb workflow_legacy_range
-        cmp dword ptr [esp+4], 40947
+        cmp dword ptr [esp+4], 40952 // Through objective creation commands
         jbe workflow_dispatch
     workflow_legacy_range:
         cmp dword ptr [esp+4], 40920
@@ -1356,6 +1358,8 @@ void General::Initialize()
     INSTALL_HOOKS;
     GridSizeShortcut::Initialize();
     InstallMemoryHooks();
+    BspTransientRenderFix::Initialize();
+    ShadowEdgeCacheFix::Initialize();
     InstallMinimizeOnPlayHook();
     InstallNoEmbedOnPlayPatch();
     InstallLegacyPlayLaunchHook();

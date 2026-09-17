@@ -1280,6 +1280,7 @@ namespace RecoveredSurfacePartition
         prepared.subtractive=brush.subtractive;
         std::vector<Vec3> anchors;
         const double tolerance=RecoveredPolygonImport::kCoincidentVertexTolerance;
+        bool smallNormalBevel=false;
         for (const auto& face:brush.faces)
         {
             RecoveredBspGeometry::Face result{{},face.normal,face.surfaceIndex};
@@ -1322,7 +1323,10 @@ namespace RecoveredSurfacePartition
                 && result.vertices.front().y==result.vertices.back().y
                 && result.vertices.front().z==result.vertices.back().z)
                 result.vertices.pop_back();
-            if (result.vertices.size()>=3) prepared.faces.push_back(face);
+            const auto imported=RecoveredPolygonImport::Prepare(result.vertices);
+            if (imported.reason==RecoveredPolygonImport::Reason::NormalTooSmall)
+                smallNormalBevel=true;
+            else if (result.vertices.size()>=3) prepared.faces.push_back(face);
         }
         if (prepared.faces.size()==brush.faces.size()) return true;
         if (prepared.faces.empty() || anchors.empty())
@@ -1332,7 +1336,11 @@ namespace RecoveredSurfacePartition
         }
         // Removing a sub-precision bevel must not bend adjoining planes.
         // Recompute their intersections from the retained original planes,
-        // then prove the expansion stays within native point precision.
+        // then bound the expansion. Three distinct corners can still have
+        // too little area for CalcNormal (HELI02). Such bevels use the native
+        // BSP split distance band; coincident-corner repairs retain the tighter
+        // point-pool bound. Neither case may create a distant intersection.
+        const double expansionTolerance=smallNormalBevel ? 0.25 : tolerance;
         std::vector<RecoveredBspGeometry::Node> planes;
         for (std::size_t index=0;index<prepared.faces.size();++index)
         {
@@ -1370,13 +1378,13 @@ namespace RecoveredSurfacePartition
                 if (inside) continue;
                 const bool near=std::any_of(anchors.begin(),anchors.end(),[&](const Vec3& old)
                 {
-                    return std::fabs(double(static_cast<float>(old.x))-static_cast<float>(point.x))<tolerance
-                        && std::fabs(double(static_cast<float>(old.y))-static_cast<float>(point.y))<tolerance
-                        && std::fabs(double(static_cast<float>(old.z))-static_cast<float>(point.z))<tolerance;
+                    return std::fabs(double(static_cast<float>(old.x))-static_cast<float>(point.x))<expansionTolerance
+                        && std::fabs(double(static_cast<float>(old.y))-static_cast<float>(point.y))<expansionTolerance
+                        && std::fabs(double(static_cast<float>(old.z))-static_cast<float>(point.z))<expansionTolerance;
                 });
                 if (!near)
                 {
-                    error="Removing a collapsed brush bevel would exceed native point precision.";
+                    error="Removing an unimportable brush bevel would exceed native precision.";
                     return false;
                 }
             }

@@ -231,6 +231,7 @@ namespace
 #include "RecoveredSurfacePartitionBrushFixture.h"
 #include "RecoveredSurfacePartitionEncodingFixture.h"
 #include "RecoveredSurfacePartitionSheetFixture.h"
+#include "RecoveredSurfacePartitionHeliFixture.h"
 
 void VerifyNativePrecisionMaterials()
 {
@@ -283,6 +284,37 @@ void VerifyNativePrecisionMaterials()
 
 void VerifyNativeBrushBevel()
 {
+    {
+        auto heli=Heli02SmallBevel();
+        const auto rejected=RecoveredPolygonImport::Prepare(heli.faces[3].vertices);
+        assert(rejected.reason==RecoveredPolygonImport::Reason::NormalTooSmall);
+        assert(rejected.vertices.size()==3);
+        const auto original=heli;
+        std::string diagnostic;
+        assert(CanonicalizeBrushForEditor(heli,diagnostic));
+        assert(heli.subtractive && heli.faces.size()==5);
+        std::vector<bool> collapsedFaces;
+        assert(ValidateEditorBrush(heli,collapsedFaces,diagnostic));
+        for (const auto& face:heli.faces)
+        {
+            assert(face.surfaceIndex!=147);
+            const auto donor=std::find_if(original.faces.begin(),original.faces.end(),[&](const auto& old)
+            { return old.surfaceIndex==face.surfaceIndex; });
+            assert(donor!=original.faces.end());
+            for (const auto& point:face.vertices)
+                assert(std::fabs(Dot(donor->normal,Sub(point,donor->vertices.front())))<1e-6);
+            std::vector<Piece> encoded;
+            assert(PrepareForEditor(face,{{face.vertices,0}},16,encoded,diagnostic));
+            for (const auto& piece:encoded)
+            {
+                const auto imported=RecoveredPolygonImport::Prepare(piece.vertices);
+                assert(imported.accepted() && RecoveredPolygonImport::PreservesOutline(piece.vertices,imported));
+            }
+        }
+        const auto repaired=heli;
+        assert(CanonicalizeBrushForEditor(heli,diagnostic));
+        assert(heli.faces.size()==repaired.faces.size());
+    }
     using Node=RecoveredBspGeometry::Node;
     std::vector<Node> nodes;
     const Vec3 normals[]={{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1},{1,1,1}};
@@ -310,6 +342,30 @@ void VerifyNativeBrushBevel()
     }
     RecoveredBspGeometry::Brush empty;
     assert(!CanonicalizeBrushForEditor(empty,error) && empty.faces.empty());
+
+    // A tiny cap on a long, nearly parallel taper must not be removed when
+    // the surviving planes would intersect far beyond the original brush.
+    nodes.clear();
+    const Vec3 taperNormals[]={{1,0,0.0001},{-1,0,0.0001},
+        {0,1,0.0001},{0,-1,0.0001},{0,0,1},{0,0,-1}};
+    for (int i=0;i<6;++i)
+        nodes.push_back({{-taperNormals[i].x,-taperNormals[i].y,-taperNormals[i].z},
+            i==4 ? -9990.0 : i==5 ? 0.0 : -1.0,i==5 ? -1 : i+1,-1,true,i});
+    assert(RecoveredBspGeometry::Reconstruct(nodes,false,{{-2,-2,-1},{2,2,10001}},geometry,error));
+    auto taper=geometry.brushes.front();
+    const auto before=taper;
+    assert(!CanonicalizeBrushForEditor(taper,error));
+    assert(error.find("exceed native precision")!=std::string::npos);
+    assert(taper.faces.size()==before.faces.size());
+    for (std::size_t f=0;f<taper.faces.size();++f)
+    {
+        assert(taper.faces[f].vertices.size()==before.faces[f].vertices.size());
+        for (std::size_t v=0;v<taper.faces[f].vertices.size();++v)
+        {
+            const auto difference=Sub(taper.faces[f].vertices[v],before.faces[f].vertices[v]);
+            assert(difference.x==0 && difference.y==0 && difference.z==0);
+        }
+    }
 }
 
 int main()

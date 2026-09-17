@@ -89,9 +89,11 @@ namespace RecoveredSurfacePartition
                              const Limits& limits = {});
 
     // Resolve native-coincident vertices consistently across every face of
-    // one brush, before material subdivision. A collapsed bevel is removed
+    // one brush, before material subdivision. A collapsed or low-area bevel is removed
     // only after the remaining faces prove closed, planar and positive-volume.
-    // Retained supporting planes are unchanged. Failure leaves the brush intact.
+    // Retained supporting planes are unchanged. Expansion is bounded by native
+    // point precision, or the 0.25-unit BSP split band for low-area bevels.
+    // Failure leaves the brush intact.
     bool CanonicalizeBrushForEditor(RecoveredBspGeometry::Brush& brush,
                                     std::string& error,const Limits& limits = {});
 

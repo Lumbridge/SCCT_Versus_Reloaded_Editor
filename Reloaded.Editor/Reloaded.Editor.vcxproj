@@ -170,6 +170,9 @@
     <ClInclude Include="MapAuthoringDialog.h" />
     <ClInclude Include="MapAuthoringModel.h" />
     <ClInclude Include="MapAuthoringNative.inl" />
+    <ClInclude Include="MapDesignModel.h" />
+    <ClInclude Include="MapDesignNative.inl" />
+    <ClInclude Include="MapDesignPanel.inl" />
     <ClInclude Include="MagicEventModel.h" />
     <ClInclude Include="MagicEventNative.inl" />
     <ClInclude Include="StringOperations.h" />

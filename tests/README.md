@@ -1,5 +1,34 @@
 # Regression tests
 
+## HELI02 compiled-map recovery
+
+`tools/test_map_recovery.cmd` covers the exact HELI02 brush whose three-vertex
+bevel falls below native `CalcNormal` minimum area. Repair keeps the remaining
+supporting planes and a closed brush within the native BSP precision band;
+a long tapered brush verifies that distant intersections are rejected without
+changing the input. Actor tests cover omitted all-null `MoversToLock` entries
+while retaining checks for live references and other struct fields.
+
+The native recovery harness with `-SourceMap <HELI02.sdc>` additionally checks
+the map's duplicate portal outlines (cooked surfaces 1165 and 1168), recovery,
+save, normal reopen and rebuild in a disposable installation.
+
+## Map Design
+
+`tools/test_workflow_tools.cmd` includes `MapDesignModelTests.cpp`: outward polygon
+winding and volume, room/corridor construction, stair rise, ramp geometry, invalid
+dimensions, image calibration, 3D measurement, stable distribution, and repeated
+brush/object/event reference remapping.
+
+The native `-GenerateFixture -WorkflowTools` run creates and resizes real brushes,
+checks Undo/Redo identities, imports ramps/stairs, toggles native layer flags,
+and verifies temporary spawn restoration. The Play Level test intercepts its
+launcher in the disposable process, checking the temporary pose at launch without
+starting a game. UI checks use the actual blockout, reference, calibration,
+measurement, clearance, layer and route dialogs. `map_design_preview.bmp`,
+`map_design_workspace.bmp` and `design_clearances.json` are retained in the fixture.
+All native tests use a separate temporary installation, never a working map.
+
 ## Brush edge grid snap
 
 `tools/test_workflow_tools.cmd` runs the standalone `BrushGridSnapTests.cpp`
@@ -39,6 +68,15 @@ Run `tools\test_map_package.cmd` from an x86 Visual Studio developer prompt afte
 The workflow model and native suites cover excluded Tag/Event assignments, stale previews, partial rename undo, and the actual popup checkboxes. Native screenshots include `tag_rename_exclusions.bmp` and `map_package_preview.bmp`. The packaging dialog check scans a saved playable map and verifies that its checkbox cannot be cleared.
 
 ## Editing workflow tools
+
+The native `-GenerateFixture -WorkflowTools` suite checks mission/objective
+context-menu availability and command dispatch, repeated additions preserving
+existing links, computer and bomb triggers, paired flag/drop-zone creation,
+single-step Undo/Redo, connection discovery, stale/wrong-parent rejection,
+and Gameplay Connections button state with Follow Selection enabled/disabled.
+It also clicks the native popup with a non-frame owner and the graph node popup
+with a different viewport selection, and checks that all created actors are
+within 32 units of their parent, including both members of a flag/drop-zone pair.
 
 Map JSON tests cover document validation, nested symbolic references, a native
 scene containing light/sound/emitter/trigger/event actors and particle components,

@@ -28,9 +28,11 @@ changed shadows, or reconstruct missing lights. Check the approximation in game.
 | **Selective lighting** | Recalculate selected BSP faces, brushes and static meshes while preserving lighting elsewhere. |
 | **SMagicEvent Workbench** | Edit event groups, triggers, actions, and timing in one panel. |
 | **Map JSON import/export** | Export map data to JSON; preview and import actor, effect and event-connection changes with batch Undo. |
+| **Map Design workspace** | Reference images, parametric blockout brushes, clearance guides, measurements, layers, repeated placement, temporary playtest positions and route/objective annotations. |
 | **SMagicEvent JSON exchange** | Export event settings for assisted editing, then import changes with validation and one-step Undo. |
 | **SCamNetwork Manager** | Create, name, preview and reorder cameras, with automatic reciprocal links and first-camera flags. |
 | **Gameplay Connections** | View actor links in a list or graph, jump to connected actors, and rename Tags with their linked events. |
+| **Objective creation** | Right-click an SMission to add an SObjective, or an SObjective to add a computer trigger, bomb target, or flag/drop-zone pair, with automatic links. Also available in Gameplay Connections. |
 | **Selective Tag renaming** | Uncheck individual actor Tags or linked Event assignments before renaming a shared group. |
 | **Map packaging** | Create a playable-map ZIP with dependencies, map-selection images, and an installation report. |
 | **Working Views** | Save and restore viewport cameras, display settings, and visibility. |
@@ -60,6 +62,22 @@ Vertex snapping moves each selected vertex to its nearest world grid line on the
 chosen axes, reshaping the brush. Unselected vertices stay in place. Right-click
 opens the axis menu while preserving the vertex selection; cancelling changes
 nothing. The move supports Undo/Redo. Rebuild geometry after editing BSP vertices.
+
+Select one mission or objective for the objective context-menu actions. In
+**Gameplay Connections**, use **Add Objective / Trigger...** or right-click the
+panel to add to the actor shown in its status line, or right-click a graph node.
+New actors appear 32 units beside their parent mission or objective. A flag and
+its drop zone appear on different sides, each 32 units from the objective.
+Existing mission/objective links are preserved. Each action supports one-step
+Undo/Redo, including creation of both flag actors and their drop-zone link.
+
+## Map Design
+
+For a new map, open **View > Map Design...**. Create and preview rooms, corridors,
+doorways, stairs, ramps and platforms, then place ordinary brushes in one Undo
+step. The workspace provides top/front/side design views with calibrated image
+references and planning overlays. See [Map Design](docs/MapDesign.md) for the eight
+tool groups, controls, persistence and current limits.
 
 ## Install
 

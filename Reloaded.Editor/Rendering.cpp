@@ -114,11 +114,17 @@ void WINAPI Direct3D9SetSwapEffectUpgradeShim(int unknown = 0)
 HRESULT CreateDevice(D3DPRESENT_PARAMETERS8* pPresentationParameters, UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow, DWORD BehaviorFlags, IDirect3DDevice8** ppReturnedDeviceInterface)
 {
     Logger::log("Hooked CreateDevice");
+    if (!d3d || !pPresentationParameters || !ppReturnedDeviceInterface)
+        return D3DERR_INVALIDCALL;
     Direct3D9SetSwapEffectUpgradeShim();
     Logger::log("d3d->CreateDevice:");
     PrintParams(pPresentationParameters);
 
     auto result = d3d->CreateDevice(Adapter, DeviceType, pPresentationParameters->hDeviceWindow, BehaviorFlags, pPresentationParameters, ppReturnedDeviceInterface);
+    if (FAILED(result) || !*ppReturnedDeviceInterface) {
+        Logger::log("CreateDevice failed: " + std::to_string(static_cast<unsigned long>(result)));
+        return FAILED(result) ? result : D3DERR_INVALIDCALL;
+    }
     pDevice = *ppReturnedDeviceInterface;
     pDevice8 = reinterpret_cast<Direct3DDevice8*>(pDevice);
     pDevice9 = pDevice8->GetProxyInterface();

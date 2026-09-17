@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <AssemblyName>R6V Map Converter</AssemblyName>
+    <Version>0.2.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="../Backend/**/*.py" Link="Backend/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../Backend/*.json" Link="Backend/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../Native/compatibility.json" Link="Native/compatibility.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../Native/PrepareEditor.ps1" Link="Native/PrepareEditor.ps1" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

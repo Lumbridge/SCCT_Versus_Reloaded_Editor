@@ -10,6 +10,11 @@
 #include "MapPackageDialog.h"
 #include "MapRecovery.h"
 #include "MemoryWriter.h"
+#include "MapDesignModel.h"
+#include <commdlg.h>
+#include <windowsx.h>
+#include <objidl.h>
+#include <gdiplus.h>
 #include <commctrl.h>
 #include <algorithm>
 #include <cmath>
@@ -17,6 +22,7 @@
 #include <set>
 #include <stdexcept>
 #pragma comment(lib,"comctl32.lib")
+#pragma comment(lib,"gdiplus.lib")
 
 namespace WorkflowTools
 {
@@ -26,6 +32,32 @@ namespace
     constexpr int kList=100,kName=101,kStatus=102,kFollow=103,kScope=104;
     enum Button { Refresh=200,Primary,Secondary,Third,Fourth,Fifth,Sixth,Seventh,Eighth,Ninth,Tenth,Eleventh };
     enum class Kind { Assets,Connections,Views,Assemblies };
+    Json ObjectiveOwner(const std::string& path = "")
+    {
+        auto actors=path.empty()?Editor::Actors(true):Editor::Actors();
+        if(path.empty())return actors.size()==1?actors[0]:Json{};
+        for(const auto& actor:actors)if(actor.at("path")==path)return actor;
+        return {};
+    }
+    bool ObjectiveMenu(HMENU menu,const Json& owner)
+    {
+        if(owner.is_null())return false;
+        const auto path=owner.at("path").get<std::string>();
+        if(Editor::Compatible(path,"SBase.SMission"))AppendMenuA(menu,MF_STRING,kAddObjective,"Add SObjective");
+        else if(Editor::Compatible(path,"SBase.SObjective"))
+        {
+            AppendMenuA(menu,MF_STRING,kAddComputerObjective,"Add SComputerObjectiveTrigger");
+            AppendMenuA(menu,MF_STRING,kAddBombObjective,"Add SBombTargetObjectiveTrigger");
+            AppendMenuA(menu,MF_STRING,kAddFlagObjective,"Add SFlag && SFlagDropZone");
+        }
+        else return false;
+        return true;
+    }
+    void AddObjective(UINT command,const Json& snapshot)
+    {
+        const char* types[]={"SBase.SObjective","SBase.SComputerObjectiveTrigger","SBase.SBombTargetObjectiveTrigger","SBase.SFlag"};
+        Editor::AddObjectiveActor(snapshot,types[command-kAddObjective]);
+    }
     Json document; uintptr_t level=0; std::string mapKey; bool loaded=false; unsigned mapEpoch=0,nativeMapGeneration=0;
     std::filesystem::path LibraryPath() { return Editor::Directory()/"library.json"; }
     Json EmptyMap() { return {{"views",Json::array()},{"instances",Json::array()}}; }
@@ -46,7 +78,11 @@ namespace
         auto current=Editor::LevelIdentity(); auto key=Editor::MapKey();auto generation=Editor::MapGeneration(); bool changed=current!=level || key!=mapKey || generation!=nativeMapGeneration;
         if(!changed) return false;
         Json next=document;
-        if(level && current==level && generation==nativeMapGeneration && key!=mapKey && !key.empty()) next["maps"][key]=next["maps"].value(mapKey,EmptyMap());
+        if(level && current==level && generation==nativeMapGeneration && key!=mapKey && !key.empty())
+        {
+            next["maps"][key]=next["maps"].value(mapKey,EmptyMap());
+            if(next["maps"][key].contains("design"))for(auto& piece:next["maps"][key]["design"]["pieces"])piece["map"]=key;
+        }
         else if(key.empty()) next["maps"][""]=EmptyMap();
         if(!next["maps"].contains(key)) next["maps"][key]=EmptyMap();
         if(current==level && !key.empty()) Save(next); else document=std::move(next);
@@ -76,7 +112,7 @@ namespace
                 auto& f=form->fields[i]; Control(window,"STATIC",f.label,0,0,12,y,200,22);
                 HWND input=Control(window,f.choices.empty()?"EDIT":"COMBOBOX",f.choices.empty()?f.value:"",f.choices.empty()?ES_AUTOHSCROLL:CBS_DROPDOWNLIST|WS_VSCROLL,1000+static_cast<int>(i),215,y-3,340,f.choices.empty()?24:240);
                 for(auto& choice:f.choices) SendMessageA(input,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(choice.c_str()));
-                if(!f.choices.empty()) SendMessage(input,CB_SETCURSEL,0,0);
+                if(!f.choices.empty()){auto selected=std::find(f.choices.begin(),f.choices.end(),f.value);SendMessage(input,CB_SETCURSEL,selected==f.choices.end()?0:selected-f.choices.begin(),0);}
                 form->controls.push_back(input); y+=34;
             }
             Control(window,"BUTTON","OK",BS_DEFPUSHBUTTON,IDOK,365,y,90,28); Control(window,"BUTTON","Cancel",0,IDCANCEL,465,y,90,28);
@@ -109,6 +145,7 @@ namespace
         name=fields[0].value;
         if(name.empty() || name.size()>120 || name.find_first_of("\r\n")!=std::string::npos) throw std::runtime_error("Enter a name between 1 and 120 characters."); return true;
     }
+    #include "MapDesignPanel.inl"
     struct TagPreviewText { std::string title,summary; Json* preview; bool ready=false; };
     void UpdateTagChecks(HWND window,TagPreviewText& data)
     {
@@ -196,6 +233,7 @@ namespace
             s.rows=s.connectionActor.empty()?Json::array():Editor::Connections(s.connectionActor);
             int i=0; for(const auto& j:s.rows) { bool outgoing=Fold(j.at("from").get<std::string>())==Fold(s.connectionActor); Row(s,i++,{outgoing?"Outgoing":"Incoming",outgoing?j.at("to").get<std::string>():j.at("from").get<std::string>(),j.at("property").get<std::string>()+" / "+j.at("kind").get<std::string>()+(j.at("resolved").get<bool>()?"":" / UNRESOLVED")}); }
             Status(s,s.connectionActor.empty()?"Select an actor in the level, then Refresh.":s.connectionActor);
+            EnableWindow(GetDlgItem(s.window,Secondary),!s.connectionActor.empty() && Editor::Compatible(s.connectionActor,"SBase.SObjective"));
         }
         else
         {
@@ -245,6 +283,10 @@ namespace
             auto snapshot=Editor::CaptureAssembly(members,Pose{}); Vector lo{},hi{}; bool first=true;
             for(const auto& a:snapshot.at("actors")) { Vector p=a.at("position").get<Vector>(); if(first) {lo=hi=p; first=false;} else for(int i=0;i<3;++i){lo[i]=std::min(lo[i],p[i]);hi[i]=std::max(hi[i],p[i]);} }
             for(int i=0;i<3;++i) frame.position[i]=(lo[i]+hi[i])/2;
+            std::vector<InputField> pivot={{"Pivot","Selection centre",{"Selection centre","Builder brush","First selected actor"}}};
+            if(!Ask(s.window,"Assembly Placement Pivot",pivot))return;
+            if(pivot[0].value=="Builder brush")frame=Editor::BuilderPose();
+            else if(pivot[0].value=="First selected actor")frame.position=snapshot.at("actors")[0].at("position").get<Vector>();
         }
         Json captured=Editor::CaptureAssembly(members,frame);
         auto names=session && s.instance.contains("names")?s.instance.at("names").get<std::map<std::string,std::string>>():std::map<std::string,std::string>{};
@@ -300,6 +342,7 @@ namespace
         auto frame=Editor::BuilderPose(); std::vector<InputField> fields;
         const char* labels[]={"Position X","Position Y","Position Z","Pitch (degrees)","Yaw (degrees)","Roll (degrees)"};
         for(int i=0;i<6;++i) fields.push_back({labels[i],i<3?std::to_string(frame.position[i]):"0",{}});
+        fields.push_back({"Copies","1",{}});fields.push_back({"Spacing X","128",{}});fields.push_back({"Spacing Y","0",{}});fields.push_back({"Spacing Z","0",{}});fields.push_back({"Yaw snap (degrees, 0=off)","15",{}});
         if(!Ask(s.window,"Place Assembly",fields)) return {};
         for(int i=0;i<6;++i)
         {
@@ -317,7 +360,11 @@ namespace
             if(!Ask(s.window,"Bind External Actor",binding)) return {};
             bindings[b.at("id")]=binding[0].value==choices[0]?"":binding[0].value;
         }
-        Json instance=Editor::PlaceAssembly(entry,frame,bindings); Json next=document;
+        double copies=Design::Number(fields[6].value,1,128);if(copies!=std::floor(copies))throw std::runtime_error("Copy count must be a whole number.");
+        double snap=Design::Number(fields[10].value,0,360);if(snap>0){double degrees=frame.rotation[1]*360.0/65536;frame.rotation[1]=static_cast<int>(std::round(degrees/snap)*snap*65536/360);}
+        auto definition=entry;
+        if(copies>1){if(!entry.at("bindings").empty())throw std::runtime_error("Repeated assemblies must contain their linked actors. Place a single bound copy otherwise.");definition=Design::Repeat(entry,static_cast<int>(copies),{Design::Number(fields[7].value),Design::Number(fields[8].value),Design::Number(fields[9].value)},0);}
+        Json instance=Editor::PlaceAssembly(definition,frame,bindings); Json next=document;
         next["maps"][mapKey]["instances"].push_back(instance);
         try { Save(next); }
         catch(...) { Editor::Exec("TRANSACTION UNDO"); throw; }
@@ -386,7 +433,23 @@ namespace
             }
             return;
         }
-        if(s.kind==Kind::Connections) { if(command==Third) WorkflowGraph::Open(s.window); else Activate(s); return; }
+        if(s.kind==Kind::Connections)
+        {
+            if(command==Third)WorkflowGraph::Open(s.window);
+            else if(command==Secondary)
+            {
+                if(s.connectionActor.empty())return;
+                auto owner=ObjectiveOwner(s.connectionActor);
+                if(owner.is_null() || !Editor::Compatible(s.connectionActor,"SBase.SObjective"))return;
+                auto snapshot=Editor::InspectActor(owner);
+                auto menu=CreatePopupMenu();if(!menu)throw std::runtime_error("Cannot open objective menu.");
+                ObjectiveMenu(menu,owner);POINT point{};GetCursorPos(&point);
+                auto choice=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,point.x,point.y,0,s.window,nullptr);DestroyMenu(menu);
+                if(choice){AddObjective(choice,snapshot);Populate(s);}
+            }
+            else Activate(s);
+            return;
+        }
         if(s.kind==Kind::Views)
         {
             if(command==Primary) { Activate(s); return; }
@@ -456,7 +519,7 @@ namespace
                 auto button=[&](int id,const char* name){s->buttons.push_back(Control(window,"BUTTON",name,0,id,0,0,200,27));};
                 button(Refresh,"Refresh");
                 if(s->kind==Kind::Assets) {button(Primary,"Select and Focus");button(Secondary,"Replace Checked...");Control(window,"BUTTON","Limit to selection captured at Refresh",BS_AUTOCHECKBOX,kScope,0,0,300,24);}
-                if(s->kind==Kind::Connections) {button(Primary,"Select and Focus");button(Third,"Graph...");auto f=Control(window,"BUTTON","Follow Selection",BS_AUTOCHECKBOX,kFollow,0,0,200,24);SendMessage(f,BM_SETCHECK,BST_CHECKED,0);}
+                if(s->kind==Kind::Connections) {button(Primary,"Select and Focus");button(Secondary,"Add Objective / Trigger...");button(Third,"Graph...");auto f=Control(window,"BUTTON","Follow Selection",BS_AUTOCHECKBOX,kFollow,0,0,200,24);SendMessage(f,BM_SETCHECK,BST_CHECKED,0);}
                 if(s->kind==Kind::Views) {button(Primary,"Restore");button(Secondary,"Save New...");button(Third,"Update Selected from Current");button(Fourth,"Rename...");button(Fifth,"Delete...");}
                 if(s->kind==Kind::Assemblies) {button(Primary,"Place...");button(Secondary,"Save Selection as New...");button(Third,"Edit Contents...");button(Sixth,"Update from Selection...");button(Fourth,"Rename...");button(Fifth,"Delete...");button(Seventh,"Add Selected");button(Eighth,"Remove Selected");button(Ninth,"Select Members");button(Tenth,"Save Changes...");button(Eleventh,"Cancel Editing");}
                 s->list=Control(window,WC_LISTVIEWA,"",LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_BORDER,kList,0,0,500,300);
@@ -466,6 +529,7 @@ namespace
                 s->status=Control(window,"STATIC","",0,kStatus,0,0,600,50); Layout(*s); Populate(*s); SetTimer(window,1,1000,nullptr); return 0;
             }
             if(message==WM_SIZE) { if(s->list) Layout(*s); return 0; }
+            if(message==WM_CONTEXTMENU && s->kind==Kind::Connections) {Command(*s,Secondary);return 0;}
             if(message==WM_GETMINMAXINFO) {auto m=reinterpret_cast<MINMAXINFO*>(l);m->ptMinTrackSize={680,430};return 0;}
             if(message==WM_COMMAND)
             {
@@ -532,6 +596,31 @@ namespace
         reinterpret_cast<void(__thiscall*)(void*,void*,void*)>(0x10ed5c20)(self,cause,hit);
     }
     using LoadMenuFn=HMENU(WINAPI*)(HINSTANCE,LPCSTR); LoadMenuFn previousLoadMenu=nullptr;
+    using TrackMenuFn=BOOL(WINAPI*)(HMENU,UINT,int,int,int,HWND,const RECT*);
+    TrackMenuFn previousTrackMenu=nullptr;
+    BOOL WINAPI TrackMenuHook(HMENU menu,UINT flags,int x,int y,int reserved,HWND window,const RECT* rect)
+    {
+        bool objective=false;for(UINT id=kAddObjective;id<=kAddFlagObjective;++id)
+            if(GetMenuState(menu,id,MF_BYCOMMAND)!=UINT(-1))objective=true;
+        if(!objective)return previousTrackMenu(menu,flags,x,y,reserved,window,rect);
+        try
+        {
+            auto owner=ObjectiveOwner();if(owner.is_null())return FALSE;
+            auto snapshot=Editor::InspectActor(owner);
+            // Native actor popups post to their viewport owner, bypassing the
+            // frame dispatcher. Consume our choices directly after the modal
+            // loop, and retain native notification semantics for stock items.
+            auto result=previousTrackMenu(menu,flags|TPM_RETURNCMD|TPM_NONOTIFY,x,y,reserved,window,rect);
+            if(result>=kAddObjective && result<=kAddFlagObjective)
+            {
+                AddObjective(result,snapshot);return (flags&TPM_RETURNCMD)?0:TRUE;
+            }
+            if(flags&TPM_RETURNCMD)return result;
+            if(result && !(flags&TPM_NONOTIFY))PostMessage(window,WM_COMMAND,MAKEWPARAM(result,0),0);
+            return result!=0;
+        }
+        catch(const std::exception& e){MessageBoxA(window,e.what(),"Add Objective / Trigger",MB_OK|MB_ICONERROR);return FALSE;}
+    }
     HMENU WINAPI LoadMenuHook(HINSTANCE instance,LPCSTR resource)
     {
         auto menu=previousLoadMenu(instance,resource);
@@ -561,6 +650,7 @@ namespace
             if(reinterpret_cast<uintptr_t>(resource)==107) if(auto sub=GetSubMenu(menu,0))
             {
                 AppendMenuA(sub,MF_STRING,kSaveAssembly,"Save Selection as &Assembly...");AppendMenuA(sub,MF_STRING,MagicEventWorkbench::Command,"Edit SMagicEvent...");
+                try {ObjectiveMenu(sub,ObjectiveOwner());}catch(const std::exception&){}
                 try
                 {
                     Editor::SelectedMeshBounds();
@@ -572,8 +662,25 @@ namespace
         return menu;
     }
 }
+bool AppendObjectiveMenu(HMENU menu,const Json& actor){return ObjectiveMenu(menu,actor);}
+void RunObjectiveCommand(UINT command,const Json& snapshot)
+{
+    if(command<kAddObjective || command>kAddFlagObjective)throw std::runtime_error("Invalid objective command.");
+    AddObjective(command,snapshot);
+}
 bool HandleCommand(UINT command)
 {
+    if(command>=kAddObjective && command<=kAddFlagObjective)
+    {
+        try
+        {
+            auto owner=ObjectiveOwner();if(owner.is_null())throw std::runtime_error("Select exactly one mission or objective.");
+            AddObjective(command,Editor::InspectActor(owner));
+        }
+        catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Add Objective / Trigger",MB_OK|MB_ICONERROR);}
+        return true;
+    }
+    if(command==40948){try{OpenDesign(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Map Design",MB_OK|MB_ICONERROR);}return true;}
     if(command>=kVertexSnapX && command<=kVertexSnapAll)
     {
         try{const auto axis=command-kVertexSnapX;Editor::SnapSelectedBrushVertices(axis==3?7u:1u<<axis);}
@@ -639,6 +746,8 @@ void Initialize()
     INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_LISTVIEW_CLASSES}; InitCommonControlsEx(&controls);
     previousLoadMenu=*reinterpret_cast<LoadMenuFn*>(0x11AF23F0);
     auto hook=&LoadMenuHook; MemoryWriter::WriteBytes(0x11AF23F0,&hook,sizeof(hook));
+    previousTrackMenu=*reinterpret_cast<TrackMenuFn*>(0x11af23c0);
+    auto track=&TrackMenuHook;MemoryWriter::WriteBytes(0x11af23c0,&track,sizeof(track));
     MemoryWriter::WriteJump(0x10e045e9,reinterpret_cast<void(*)()>(&VertexClickHook));
 }
 }
@@ -652,6 +761,13 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
     {
         Json q=Json::parse(request),result; std::string op=q.at("op");
         if(op=="actors") result=Editor::Actors(q.value("selected",false));
+        else if(op=="design.scene")result=Editor::DesignScene();
+        else if(op=="design.block")result=Editor::DesignBlockout(q.at("spec"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()},q.value("previous",Json{}));
+        else if(op=="design.align"){Editor::DesignAlign(q.at("scene"),q.at("axis"),q.at("mode"),q.value("spacing",0.0));result=true;}
+        else if(op=="design.layer"){Editor::DesignLayer(q.at("members"),q.at("hidden"),q.at("locked"));result=true;}
+        else if(op=="design.spawns")result=Editor::DesignSpawns();
+        else if(op=="design.clearances")result=Editor::DesignClearances();
+        else if(op=="design.play"){Editor::DesignPlay(q.at("start"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()},q.value("launch",false));result=true;}
         else if(op=="package.preview") {MapPackageDialog::Preview(GetActiveWindow(),q.at("map").get<std::string>());result=true;}
         else if(op=="authoring.export") result=Editor::ExportMapAuthoring();
         else if(op=="authoring.preview") result=Editor::PreviewMapAuthoring(q.at("document"));
@@ -675,6 +791,7 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="usages") result=Editor::FindUsages(q.at("asset"));
         else if(op=="replace") {Editor::ReplaceUsages(q.at("usages"),q.at("source"),q.at("replacement"));result=true;}
         else if(op=="connections") result=Editor::Connections(q.at("actor"));
+        else if(op=="objective.add") result=Editor::AddObjectiveActor(q.at("owner"),q.at("class"));
         else if(op=="surface.brushes") result=Editor::SelectedSurfaceBrushes();
         else if(op=="mesh.bounds") result=Editor::SelectedMeshBounds();
         else if(op=="builder.fit") {Editor::FitBuilderBrushToMeshes();result=true;}
