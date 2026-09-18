@@ -36,6 +36,7 @@ changed shadows, or reconstruct missing lights. Check the approximation in game.
 | **Selective Tag renaming** | Uncheck individual actor Tags or linked Event assignments before renaming a shared group. |
 | **Map packaging** | Create a playable-map ZIP with dependencies, map-selection images, and an installation report. |
 | **Working Views** | Save and restore viewport cameras, display settings, and visibility. |
+| **Brush Visibility** | Show/hide, isolate, or select zones/portals, volumes, additive/subtractive brushes, movers and other actors from one panel. |
 | **Actor Assemblies** | Save groups of actors and brushes, edit their contents, and reuse them across maps. |
 | **Find Usages** | Find where textures and meshes are used, then replace selected assignments. |
 | **Texture and mesh favorites** | Keep frequently used materials and meshes together across packages. |
@@ -72,6 +73,15 @@ Existing mission/objective links are preserved. Each action supports one-step
 Undo/Redo, including creation of both flag actors and their drop-zone link.
 
 ## Map Design
+
+Open **View > Brush Visibility...** for quick visibility controls across all
+viewports. Check a type to show it, uncheck it to hide it, use **Only** to isolate
+it, or **Select** to reveal and select all actors of that type. A mixed checkbox
+means only some are visible. **Show all** reveals all listed types; **Refresh**
+updates counts after editing. Visibility edits support Undo. The builder brush
+is left alone, built BSP geometry remains visible, and existing viewport show
+flags and hidden groups still apply. These controls change the actors currently
+in the map; they do not automatically hide newly created actors.
 
 For a new map, open **View > Map Design...**. Create and preview rooms, corridors,
 doorways, stairs, ramps and platforms, then place ordinary brushes in one Undo

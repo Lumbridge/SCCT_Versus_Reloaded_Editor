@@ -412,6 +412,70 @@ Json Actors(bool selectedOnly)
     return result;
 }
 Json SelectedIdentities() { return Actors(true); }
+namespace
+{
+    // Exclusive categories: specialized brushes must precede ordinary CSG.
+    int VisibilityCategory(Address actor, Address builder)
+    {
+        if(actor==builder || IsA(actor,"LevelInfo") || IsA(actor,"Camera"))return -1;
+        if(IsA(actor,"ZoneInfo"))return 0;
+        if(IsA(actor,"Volume"))return 1;
+        if(IsA(actor,"Mover"))return 4;
+        if(!IsA(actor,"Brush"))return 6;
+        if(Read<unsigned>(actor+0x344)&0x04000000u)return 0;
+        // Portals can also be flagged on individual brush polygons.
+        auto model=Read<Address>(actor+0x238);
+        auto polys=model?Read<Address>(model+0x50):0;
+        if(polys)for(auto poly:Array(polys+0x28,0x14c))
+            if(Read<unsigned>(poly+0x140)&0x04000000u)return 0;
+        const auto operation=Read<unsigned char>(actor+0x34c);
+        return operation==1?2:operation==2?3:5;
+    }
+    std::vector<std::pair<Address,int>> VisibilityActors()
+    {
+        auto level=Level();
+        auto builder=reinterpret_cast<Address>(MapRecovery::ResolveBuilderBrushActor(reinterpret_cast<void*>(level)));
+        std::vector<std::pair<Address,int>> result;
+        for(auto actor:LiveActors())
+        {
+            auto category=VisibilityCategory(actor,builder);
+            if(category>=0)result.emplace_back(actor,category);
+        }
+        return result;
+    }
+}
+Json BrushVisibility()
+{
+    Json rows=Json::array();
+    for(const char* name:{"Zones / portals","Volumes","Additive brushes","Subtractive brushes","Movers","Other brushes","Other actors"})
+        rows.push_back({{"name",name},{"total",0},{"visible",0}});
+    for(auto [actor,category]:VisibilityActors())
+    {
+        auto& row=rows[category];row["total"]=row["total"].get<int>()+1;
+        if(!(Read<unsigned>(actor+0x2f4)&0x10u))row["visible"]=row["visible"].get<int>()+1;
+    }
+    return rows;
+}
+void SetBrushVisibility(int category,const std::string& action)
+{
+    if(category<0 || category>=7 || (action!="show" && action!="hide" && action!="only" && action!="select" && action!="all"))
+        throw std::runtime_error("Invalid brush visibility action.");
+    const auto actors=VisibilityActors();
+    Json selection=Json::array();
+    Transaction transaction("Change brush visibility");
+    for(auto [actor,type]:actors)
+    {
+        if(type!=category && action!="only" && action!="all")continue;
+        auto flags=Read<unsigned>(actor+0x2f4);
+        const bool hidden=action=="hide" || (action=="only" && type!=category);
+        const auto next=hidden?(flags|0x10u)&~0x40u:flags&~0x10u;
+        if(next!=flags){Modify(actor);Write(actor+0x2f4,next);}
+        if(action=="select")selection.push_back(Identity(actor));
+    }
+    transaction.Commit();
+    if(action=="select") { Exec("POLY SELECT NONE");Select(selection); }
+    else { Call(Engine(),0xe4);Redraw(); }
+}
 Json SelectedSurfaceBrushes()
 {
     auto level=Level(),model=Read<Address>(level+0x13c);

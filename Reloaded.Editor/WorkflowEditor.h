@@ -12,6 +12,8 @@ namespace Workflow::Editor
     unsigned MapGeneration();
     Json Actors(bool selectedOnly = false);
     Json SelectedIdentities();
+    Json BrushVisibility();
+    void SetBrushVisibility(int category, const std::string& action);
     void Select(const Json& identities, bool focus = false);
     Json SelectedSurfaceBrushes();
     Json SelectedMeshBounds();

@@ -670,7 +670,7 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         je workflow_dispatch
         cmp dword ptr [esp+4], 40936 // Brush/surface edge snap commands
         jb workflow_legacy_range
-        cmp dword ptr [esp+4], 40952 // Through objective creation commands
+        cmp dword ptr [esp+4], 40953 // Through Brush Visibility
         jbe workflow_dispatch
     workflow_legacy_range:
         cmp dword ptr [esp+4], 40920
