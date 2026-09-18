@@ -324,6 +324,36 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             auto selection=call({{"op","actors"},{"selected",true}});
             auto brush=std::find_if(actors.begin(),actors.end(),[](const J& a){return a.at("class")=="Engine.Brush" && a.value("authorable",false);});
             require(brush!=actors.end(),"grid snap fixture brush available");
+            {
+                const auto view=call({{"op","view.capture"}});
+                const auto rows=call({{"op","brush.visibility"}});
+                require(rows.size()==7,"brush visibility has all categories");
+                const int category=rows[3]["total"].get<int>()?3:2;
+                require(rows[category]["total"].get<int>()>0,"CSG brushes classified");
+                call({{"op","brush.visibility.set"},{"category",category},{"action","select"}});
+                require(call({{"op","actors"},{"selected",true}}).size()==rows[category]["total"].get<size_t>(),"select type selects matching brushes");
+                call({{"op","brush.visibility.set"},{"category",category},{"action","hide"}});
+                require(call({{"op","brush.visibility"}})[category]["visible"]==0,"hide type hides brushes");
+                require(call({{"op","actors"},{"selected",true}}).empty(),"hiding brushes clears their selection");
+                Exec("TRANSACTION UNDO");
+                require(call({{"op","brush.visibility"}})[category]["visible"]==rows[category]["total"],"visibility Undo restores brushes");
+                call({{"op","brush.visibility.set"},{"category",category},{"action","only"}});
+                const auto isolated=call({{"op","brush.visibility"}});
+                for(int i=0;i<7;++i)require(isolated[i]["visible"]==(i==category?isolated[i]["total"]:J(0)),"only type isolates matching actors");
+                SendMessage(frameWindow,WM_COMMAND,40953,0);
+                HWND panel=WorkflowProbe::FindDialog("Brush Visibility");require(panel!=nullptr,"brush visibility panel opens");
+                WorkflowProbe::Screenshot(panel,directory/"brush_visibility.bmp");
+                WorkflowProbe::Click(panel,200);
+                const auto shown=call({{"op","brush.visibility"}});
+                for(auto& row:shown)require(row["visible"]==row["total"],"show all reveals every category");
+                SendMessage(GetDlgItem(panel,100+category*3),BM_CLICK,0,0);
+                require(call({{"op","brush.visibility"}})[category]["visible"]==0,"visibility checkbox hides a type");
+                SendMessage(GetDlgItem(panel,100+category*3),BM_CLICK,0,0);
+                require(call({{"op","brush.visibility"}})[category]["visible"]==rows[category]["total"],"visibility checkbox reveals a type");
+                DestroyWindow(panel);
+                SetActiveWindow(frameWindow);SetForegroundWindow(frameWindow);
+                call({{"op","view.restore"},{"view",view}});
+            }
             auto native=WorkflowProbe::MagicActor(*brush);
             float original[3];memcpy(original,native+0x80,12);
             const float displaced[3]={original[0]+1.25f,original[1]-2.25f,original[2]+3.25f};memcpy(native+0x80,displaced,12);

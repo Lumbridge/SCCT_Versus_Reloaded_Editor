@@ -7,6 +7,7 @@ namespace WorkflowTools
     constexpr UINT kConnections = 40920;
     constexpr UINT kAddObjective = 40949, kAddComputerObjective = 40950, kAddBombObjective = 40951, kAddFlagObjective = 40952;
     constexpr UINT kViews = 40921;
+    constexpr UINT kBrushVisibility = 40953;
     constexpr UINT kAssemblies = 40922;
     constexpr UINT kSaveAssembly = 40923;
     constexpr UINT kFindMaterial = 40924;

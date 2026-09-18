@@ -104,6 +104,7 @@ static void InjectReloadedMenuItems(HWND frame)
             AppendMenuA(view, MF_STRING, 40932, "SCamNetwork Manager...");
             AppendMenuA(view, MF_STRING, 40934, "Export Map to JSON...");
             AppendMenuA(view, MF_STRING, 40948, "Map Design...");
+            AppendMenuA(view, MF_STRING, WorkflowTools::kBrushVisibility, "Brush Visibility...");
             AppendMenuA(view, MF_STRING, 40935, "Import Map from JSON...");
             AppendMenuA(view, MF_STRING, WorkflowTools::kViews, "&Working Views...");
             AppendMenuA(view, MF_STRING, WorkflowTools::kAssemblies, "Actor &Assemblies...");

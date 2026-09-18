@@ -97,6 +97,72 @@ namespace
     {
         int count=GetWindowTextLengthA(control); std::string text(count+1,'\0'); GetWindowTextA(control,text.data(),count+1); text.resize(count); return text;
     }
+    HWND brushVisibilityWindow=nullptr;
+    void RefreshBrushVisibility(HWND window)
+    {
+        const auto rows=Editor::BrushVisibility();
+        for(int i=0;i<static_cast<int>(rows.size());++i)
+        {
+            const int visible=rows[i].at("visible"),total=rows[i].at("total");
+            const auto label=rows[i].at("name").get<std::string>()+" ("+std::to_string(visible)+"/"+std::to_string(total)+")";
+            SetWindowTextA(GetDlgItem(window,100+i*3),label.c_str());
+            SendDlgItemMessage(window,100+i*3,BM_SETCHECK,visible==0?BST_UNCHECKED:visible==total?BST_CHECKED:BST_INDETERMINATE,0);
+            for(int j=0;j<3;++j)EnableWindow(GetDlgItem(window,100+i*3+j),total!=0);
+        }
+    }
+    LRESULT CALLBACK BrushVisibilityProc(HWND window,UINT message,WPARAM w,LPARAM l)
+    {
+        try
+        {
+            if(message==WM_CREATE)
+            {
+                Control(window,"STATIC","Visible / total actors. Mixed check = partly hidden.",0,1,12,12,460,22);
+                for(int i=0;i<7;++i)
+                {
+                    Control(window,"BUTTON","",BS_3STATE,100+i*3,12,40+i*34,260,28);
+                    Control(window,"BUTTON","Only",BS_PUSHBUTTON,101+i*3,278,40+i*34,70,28);
+                    Control(window,"BUTTON","Select",BS_PUSHBUTTON,102+i*3,354,40+i*34,70,28);
+                }
+                Control(window,"BUTTON","Show all",BS_PUSHBUTTON,200,12,288,110,28);
+                Control(window,"BUTTON","Refresh",BS_PUSHBUTTON,201,132,288,110,28);
+                Control(window,"STATIC","All viewports. Select also reveals that type.\r\nBuilder brush is unchanged. Built BSP remains visible.\r\nViewport show flags and hidden groups still apply.",0,2,12,330,460,60);
+                RefreshBrushVisibility(window);return 0;
+            }
+            if(message==WM_ACTIVATE && LOWORD(w)!=WA_INACTIVE){RefreshBrushVisibility(window);return 0;}
+            if(message==WM_COMMAND)
+            {
+                const int id=LOWORD(w);
+                if(id>=100 && id<121)
+                {
+                    const int category=(id-100)/3,action=(id-100)%3;
+                    const bool checked=SendDlgItemMessage(window,100+category*3,BM_GETCHECK,0,0)==BST_CHECKED;
+                    Editor::SetBrushVisibility(category,action==1?"only":action==2?"select":checked?"hide":"show");
+                }
+                else if(id==200)Editor::SetBrushVisibility(0,"all");
+                RefreshBrushVisibility(window);return 0;
+            }
+            if(message==WM_DESTROY){brushVisibilityWindow=nullptr;return 0;}
+        }
+        catch(const std::exception& e)
+        {
+            if(message==WM_CREATE)return -1;
+            if(message==WM_ACTIVATE)return 0;
+            MessageBoxA(window,e.what(),"Brush Visibility",MB_OK|MB_ICONERROR);return 0;
+        }
+        return DefWindowProcA(window,message,w,l);
+    }
+    void OpenBrushVisibility()
+    {
+        if(IsWindow(brushVisibilityWindow)){ShowWindow(brushVisibilityWindow,SW_RESTORE);SetForegroundWindow(brushVisibilityWindow);return;}
+        Editor::BrushVisibility();
+        WNDCLASSA wc{};wc.lpfnWndProc=BrushVisibilityProc;wc.hInstance=GetModuleHandle(nullptr);wc.lpszClassName="ReloadedBrushVisibility";
+        wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1);RegisterClassA(&wc);
+        RECT rect{0,0,448,398};AdjustWindowRectEx(&rect,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU, FALSE,WS_EX_TOOLWINDOW);
+        brushVisibilityWindow=CreateWindowExA(WS_EX_TOOLWINDOW,wc.lpszClassName,"Brush Visibility",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU,
+            CW_USEDEFAULT,CW_USEDEFAULT,rect.right-rect.left,rect.bottom-rect.top,GetActiveWindow(),nullptr,wc.hInstance,nullptr);
+        if(!brushVisibilityWindow)throw std::runtime_error("Could not open Brush Visibility.");
+        ShowWindow(brushVisibilityWindow,SW_SHOW);
+    }
     struct InputField { std::string label,value; std::vector<std::string> choices; };
     struct Form { std::vector<InputField> fields; std::vector<HWND> controls; bool done=false,accepted=false; };
     LRESULT CALLBACK FormProc(HWND window,UINT message,WPARAM w,LPARAM l)
@@ -670,6 +736,11 @@ void RunObjectiveCommand(UINT command,const Json& snapshot)
 }
 bool HandleCommand(UINT command)
 {
+    if(command==kBrushVisibility)
+    {
+        try{OpenBrushVisibility();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Brush Visibility",MB_OK|MB_ICONERROR);}
+        return true;
+    }
     if(command>=kAddObjective && command<=kAddFlagObjective)
     {
         try
@@ -787,6 +858,8 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="magic.link") {Editor::LinkEventActor(q.at("event"),q.at("target"),q.value("trigger",false),q.value("group",0));result=true;}
         else if(op=="select") {Editor::Select(q.at("actors"),q.value("focus",false));result=true;}
         else if(op=="view.capture") result=Editor::CaptureView();
+        else if(op=="brush.visibility") result=Editor::BrushVisibility();
+        else if(op=="brush.visibility.set") {Editor::SetBrushVisibility(q.at("category"),q.at("action"));result=true;}
         else if(op=="view.restore") result=Editor::RestoreView(q.at("view"));
         else if(op=="usages") result=Editor::FindUsages(q.at("asset"));
         else if(op=="replace") {Editor::ReplaceUsages(q.at("usages"),q.at("source"),q.at("replacement"));result=true;}

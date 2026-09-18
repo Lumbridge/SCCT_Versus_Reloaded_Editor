@@ -31,6 +31,11 @@ All native tests use a separate temporary installation, never a working map.
 
 ## Brush edge grid snap
 
+The focused native `-BrushGridSnapOnly -GenerateFixture` run also checks Brush
+Visibility: category selection, hiding and deselection, Undo, isolation, opening
+the panel through the native menu dispatcher, Show all and checkbox toggles.
+It saves `brush_visibility.bmp` in the disposable test installation.
+
 `tools/test_workflow_tools.cmd` runs the standalone `BrushGridSnapTests.cpp`
 checks for nearest bounds, negative coordinates, ties, per-axis spacing, no-ops
 and invalid inputs. The native `-WorkflowTools -GenerateFixture` suite exercises
