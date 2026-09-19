@@ -57,7 +57,10 @@ volume) through `security.move` and by dragging the laser's body and its beam-en
 handle in the plan, the badge sitting outside a hovered wall and surviving the
 cursor moving onto it, the menu bar replacing most side buttons, and the
 right-click menu starting a corridor preview where the plan was clicked. A piece's brushes are also checked against its
-preview at a position off the editor grid. `map_design_preview.bmp`, `map_design_workspace.bmp`,
+preview at a position off the editor grid. Locks, groups, group moves and lifts go
+through `design.flags`, `design.group`, `design.translate` and `design.lift`, each
+checked to be one Undo step; the lift is inspected for its two keys and its
+stand-on state. `map_design_preview.bmp`, `map_design_workspace.bmp`,
 `design_workspace.json` and `design_clearances.json` are retained in the fixture.
 All native tests use a separate temporary installation, never a working map.
 

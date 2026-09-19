@@ -362,6 +362,33 @@ void FloorClimb(DesignState& s,const Vector& at,const std::string& kind)
     side[2]=s.depth+spacing/2;
     ElementCreate(s,kind,{bottom,top,side});
 }
+// A lift between a floor and the next: a shaft cut through the slab and an
+// SLift platform that rises when stood on and comes back after a pause.
+void FloorLiftAt(DesignState& s,const Vector& at,double base,double spacing)
+{
+    Json shaft={{"kind","Room"},{"construction","Carve"},{"width",208},{"length",208},{"height",spacing+24},{"thickness",16},{"steps",8},{"ceiling",true},{"portal",false},{"name","Lift shaft"}};
+    Vector position=at;
+    position[2]=base-16;
+    FloorPlace(s,Json::array({{{"spec",shaft},{"position",position},{"rotation",Rotation{}},{"previous",Json{}}}}));
+    Vector platform=at;
+    platform[2]=base-8;
+    const double moveTime=std::clamp(spacing/160.0,1.5,8.0);
+    try{Editor::CreateLift(platform,192,192,16,spacing,moveTime);}
+    catch(const std::exception& e)
+    {
+        Editor::Exec("TRANSACTION UNDO");
+        DesignRefresh(s);
+        throw std::runtime_error(std::string("The shaft was undone because the lift could not be created: ")+e.what());
+    }
+    DesignRefresh(s);
+    DesignStatus(s,"Lift placed: a 192 x 192 platform at Z "+Design::Round(base)+" rises "+Design::Round(spacing)+" units in "+Design::Round(moveTime,1)
+        +" s when stood on and returns after 3 s, in a shaft cut through the floor above. Two Undo steps (shaft, then lift). Edit MoveTime, StayOpenTime or InitialState in the Magic Event workbench.");
+}
+void FloorLift(DesignState& s,const Vector& at,bool up)
+{
+    const double spacing=FloorSpacingAt(s,at);
+    FloorLiftAt(s,at,up?s.depth:s.depth-spacing,spacing);
+}
 void FloorOpening(DesignState& s,const Vector& at)
 {
     const double spacing=FloorSpacingAt(s,at);

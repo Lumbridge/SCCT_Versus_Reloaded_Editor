@@ -133,6 +133,13 @@ namespace Workflow::Magic
         if(c.find("volume")!=std::string::npos)return "Volumes";
         return "Other";
     }
+    inline std::string BoxPolygons(double hx,double hy,double hz)
+    {
+        for(double h:{hx,hy,hz})if(!std::isfinite(h) || h<=0 || h>100000)throw std::runtime_error("Invalid volume extent.");
+        const int faces[6][4][3]={{{1,-1,-1},{1,1,-1},{1,1,1},{1,-1,1}},{{-1,-1,-1},{-1,-1,1},{-1,1,1},{-1,1,-1}},{{-1,1,-1},{-1,1,1},{1,1,1},{1,1,-1}},{{-1,-1,-1},{1,-1,-1},{1,-1,1},{-1,-1,1}},{{-1,-1,1},{1,-1,1},{1,1,1},{-1,1,1}},{{-1,-1,-1},{-1,1,-1},{1,1,-1},{1,-1,-1}}};
+        std::ostringstream out;out<<"Begin PolyList\r\n";
+        for(const auto& face:faces){out<<"Begin Polygon Flags=0\r\n";for(const auto& p:face)out<<"Vertex "<<p[0]*hx<<","<<p[1]*hy<<","<<p[2]*hz<<"\r\n";out<<"End Polygon\r\n";}out<<"End PolyList\r\n";return out.str();
+    }
     inline std::string BoxPolygons(double halfExtent=128)
     {
         if(!std::isfinite(halfExtent) || halfExtent<=0 || halfExtent>100000)throw std::runtime_error("Invalid volume extent.");

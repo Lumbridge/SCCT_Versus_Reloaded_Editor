@@ -365,26 +365,6 @@ Json SceneGroupMembers(DesignState& s,const std::string& name)
     for(auto& [known,members]:DesignLayers(s,DesignData(s)))if(Fold(known)==Fold(name))return members;
     return Json::array();
 }
-// After one member of a group moved by delta, the rest follow, brushes of the
-// moved piece excepted. Locked members stay.
-void SceneGroupFollow(DesignState& s,const Json& movedMembers,const Vector& delta)
-{
-    if(movedMembers.empty())return;
-    if(std::abs(delta[0])<1e-6 && std::abs(delta[1])<1e-6 && std::abs(delta[2])<1e-6)return;
-    const auto group=SceneGroupOf(s,movedMembers[0].at("path").get<std::string>());
-    if(group.empty())return;
-    Json others=Json::array();
-    for(auto& m:SceneGroupMembers(s,group))
-    {
-        bool moved=false;
-        for(auto& done:movedMembers)if(done.at("path")==m.at("path"))moved=true;
-        if(!moved)others.push_back(m);
-    }
-    if(others.empty())return;
-    Editor::DesignTranslate(others,delta);
-    DesignRefresh(s);
-    DesignStatus(s,"The group "+group+" followed: "+std::to_string(others.size())+" other actor(s) moved by "+Design::Round(delta[0])+", "+Design::Round(delta[1])+", "+Design::Round(delta[2])+" (a second Undo step).");
-}
 // --- The window.
 void SceneRenamePiece(DesignState& s,const SceneRow& row)
 {

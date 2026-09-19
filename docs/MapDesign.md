@@ -71,8 +71,12 @@ blind spots are planned rather than discovered.
 corridor or vent reaches, a doorway that cuts into nothing, two carved spaces
 that merge, vents a standing pawn walks through, and the traversal warnings —
 together with what a Versus map needs before it can be played: a PlayerStart per
-team, an SMission, an SObjective and a camera network. Double-click an issue to
-select its piece.
+team, an SMission, an SObjective and a camera network. It also checks the
+objective flow: a mission with no objectives, an objective no mission lists or
+that has no terminal, bomb target or trigger, a flag without a drop zone, spy
+starts within 512 units of an objective, the two teams' starts within 768 units
+of each other, and objectives more than 4096 units from any merc start.
+Double-click an issue to select its piece.
 
 The preview always describes what is in the map. If the piece being edited is
 deleted, moved or reshaped elsewhere, the preview is dropped with a note rather
@@ -112,7 +116,12 @@ staircase with a brush per step selects and edits as one. Dragging a rectangle
 from left to right selects what lies wholly inside it; from right to left, anything
 it touches. Whole pieces, their brushes, and the devices, lights and game actors
 inside are selected together; a single piece on its own opens for editing, and
-**Delete** removes whatever is selected.
+**Delete** removes whatever is selected. With several pieces selected, dragging
+inside any of them moves them all, and the rest of the selection is drawn
+dashed where it will land; arrow keys and grouped members follow the same way.
+
+**Tools > Keyboard and mouse** (or the **Keys...** button) lists every shortcut,
+and each control in the panel has a tooltip.
 
 ### Locking
 
@@ -138,8 +147,9 @@ piece for editing).
 Groups behave like folders in a layers panel: **New group from selection** (or
 Ctrl+G in the list) makes one, the right-click menu adds entries to a group,
 removes them, renames or ungroups it, and selects the whole group. Clicking any
-member of a group in the plan selects the whole group, and dragging one member
-moves the rest with it (locked members stay). Groups are kept in the workspace
+member of a group in the plan selects the whole group, and dragging or nudging
+one member moves the rest with it in the same Undo step (locked members stay; a
+motion sensor brings its volumes). Groups are kept in the workspace
 and in the map's native Group field, so they travel with the .sdc. The
 right-click menu also offers **Solo** (hide everything else), **Show all**,
 **Unlock all**, **Select every <type>**, renaming a piece, and **Delete**.
@@ -455,7 +465,11 @@ the next one and moves the plan there — the quick way to stack storeys. **Stai
 up / down from here** offers straight, L-shaped, U-shaped or spiral stairs and
 places them with a stairwell carved to exactly their footprint (32-unit treads,
 rise from the floor spacing). The **+** badge on a room's top or bottom in the
-front and side views offers the same shapes. **Ladder up** and
+front and side views offers the same shapes. **Lift up / down** places an SLift
+mover: a 192 x 192 platform in a shaft cut through the slab, rising by the floor
+spacing when a pawn stands on it and returning after three seconds (two Undo
+steps: the shaft, then the lift). MoveTime, StayOpenTime and InitialState can be
+changed in the Magic Event workbench. **Ladder up** and
 **Pipe up from here** cut a 96 x 96 shaft and place the gameplay element with its
 visual brush. **Opening through the floor above** cuts a 128 x 128 hole. Each is
 one Undo step (the climbs two).

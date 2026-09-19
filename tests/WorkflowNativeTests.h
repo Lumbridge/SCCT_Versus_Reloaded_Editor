@@ -546,37 +546,6 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 }
                 std::ofstream(directory/"security_classes.json")<<dump.dump(2);
             }
-            {
-                // Diagnostic: where do brushes land for fractional positions?
-                J report=J::array();
-                struct Variant { const char* kind; const char* construction; std::array<double,3> position; int yaw; };
-                for(const auto& variant:std::vector<Variant>{{"Vent","Carve",{1438.16,-443.79,-0.39},0},{"Vent","Carve",{1438.16,-443.79,-0.39},16384},
-                    {"Vent","Carve",{1438.16,-443.79,-0.39},32768},{"Corridor","Carve",{1438.16,-443.79,-0.39},16384},{"Room","Shell",{1438.16,-443.79,-0.39},0},
-                    {"Vent","Carve",{1438.16,-443.79,-0.39},8192}})
-                {
-                    const auto position=variant.position;
-                    J probe={{"kind",variant.kind},{"width",112},{"length",416},{"height",96},{"thickness",16},{"steps",8},{"ceiling",true},{"construction",variant.construction},{"name","Drift probe"}};
-                    auto placed=call({{"op","design.block"},{"spec",probe},{"position",position},{"rotation",{0,variant.yaw,0}}});
-                    J entry={{"asked",position},{"kind",variant.kind},{"yaw",variant.yaw},{"members",placed["members"]}};
-                    for(auto& item:call({{"op","design.scene"}}))
-                        for(auto& member:placed["members"])
-                            if(item["path"]==member["path"])
-                            {
-                                std::array<double,3> lo{1e9,1e9,1e9},hi{-1e9,-1e9,-1e9};
-                                if(entry.contains("lo")){lo=entry["lo"].get<std::array<double,3>>();hi=entry["hi"].get<std::array<double,3>>();}
-                                for(auto& edge:item["edges"])for(int end=0;end<2;++end)for(int axis=0;axis<3;++axis)
-                                {
-                                    const double v=edge[end][axis];if(v<lo[axis])lo[axis]=v;if(v>hi[axis])hi[axis]=v;
-                                }
-                                entry["actorPosition"]=item["position"];entry["lo"]=lo;entry["hi"]=hi;
-                                try{auto info=call({{"op","magic.inspect"},{"actor",member}});J v=J::object();for(const char* k:{"Location","PrePivot","MainScale","PostScale","Rotation"})if(info["values"].contains(k))v[k]=info["values"][k];entry["values"]=v;}
-                                catch(const std::exception& e){entry["inspectError"]=e.what();}
-                            }
-                    report.push_back(entry);
-                    Exec("TRANSACTION UNDO");
-                }
-                std::ofstream(directory/"placement_drift.json")<<report.dump(2);
-            }
             J spec={{"kind","Room"},{"width",512},{"length",768},{"height",256},{"thickness",16},{"steps",8},{"ceiling",true},{"name","Native design room"}};
             auto create=[&](J value,J previous=J{}){return call({{"op","design.block"},{"spec",value},{"position",{1024,2048,64}},{"rotation",{0,16384,0}},{"previous",previous}});};
             auto room=create(spec);require(room["members"].size()==7,"blockout creates subtractive space and six boundary brushes");
@@ -588,6 +557,37 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             for(auto& member:room["members"])require(std::any_of(undone.begin(),undone.end(),[&](const J& item){return item["path"]==member["path"];}),"resize undo restores original brush identities");
             Exec("TRANSACTION REDO");call({{"op","design.layer"},{"members",resized["members"]},{"hidden",true},{"locked",true}});
             auto hidden=call({{"op","design.scene"}});for(auto& member:resized["members"])for(auto& a:hidden)if(a["path"]==member["path"])require(a["hidden"]==true && a["locked"]==true,"native layer hides and locks actors");
+            {
+                // Locks, groups, group moves and lifts: each one Undo step, undone here.
+                auto flagsOf=[&](const J& member){for(auto& a:call({{"op","design.scene"}}))if(a["path"]==member["path"])return a;return J{};};
+                const J first=resized["members"][0];
+                call({{"op","design.flags"},{"members",resized["members"]},{"hidden",0},{"locked",-1}});
+                require(flagsOf(first)["hidden"]==false && flagsOf(first)["locked"]==true,"design.flags changes one flag and leaves the other");
+                Exec("TRANSACTION UNDO");
+                require(flagsOf(first)["hidden"]==true,"a flag change is one Undo step");
+                call({{"op","design.group"},{"members",resized["members"]},{"group","Lobby"},{"action","add"}});
+                require(flagsOf(first)["group"].get<std::string>().find("Lobby")!=std::string::npos,"design.group writes the map's own Group field");
+                Exec("TRANSACTION UNDO");
+                require(flagsOf(first)["group"].get<std::string>().find("Lobby")==std::string::npos,"a group change is one Undo step");
+                const auto at=flagsOf(first)["position"].get<std::array<double,3>>();
+                call({{"op","design.translate"},{"members",resized["members"]},{"delta",{64,0,0}}});
+                require(std::abs(flagsOf(first)["position"].get<std::array<double,3>>()[0]-at[0])<.01,"design.translate leaves locked actors where they are");
+                call({{"op","design.flags"},{"members",resized["members"]},{"hidden",-1},{"locked",0}});
+                call({{"op","design.translate"},{"members",resized["members"]},{"delta",{64,0,0}}});
+                require(std::abs(flagsOf(first)["position"].get<std::array<double,3>>()[0]-at[0]-64)<.01,"design.translate moves unlocked actors by the offset");
+                Exec("TRANSACTION UNDO");
+                require(std::abs(flagsOf(first)["position"].get<std::array<double,3>>()[0]-at[0])<.01,"a group move is one Undo step");
+                Exec("TRANSACTION UNDO");
+                require(flagsOf(first)["locked"]==true,"the unlock undoes too");
+                const auto beforeLift=call({{"op","design.scene"}}).size();
+                auto lift=call({{"op","design.lift"},{"position",{1024,3072,56}},{"rise",272}});
+                auto liftInfo=call({{"op","magic.inspect"},{"actor",lift}});
+                require(liftInfo["values"]["NumKeys"]=="2" && liftInfo["values"]["KeyPos"][1]["Z"].get<std::string>().rfind("272",0)==0,"design.lift makes a two-key mover rising by the floor spacing");
+                require(liftInfo["values"]["InitialState"]=="StandOpenTimed","the lift moves when stood on");
+                require(call({{"op","design.scene"}}).size()==beforeLift+1,"a lift is one actor");
+                Exec("TRANSACTION UNDO");
+                require(call({{"op","design.scene"}}).size()==beforeLift,"a lift is one Undo step");
+            }
             Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");require(call({{"op","design.scene"}}).size()==baseline.size(),"blockout undo returns to baseline");
             // Carve construction: one subtractive brush where the shell used seven.
             J carve=spec;carve["construction"]="Carve";carve["width"]=512;carve["name"]="Native carved room";
@@ -795,7 +795,12 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 SendMessage(GetDlgItem(design,719),WM_LBUTTONUP,0,MAKELPARAM(at.x,at.y));
                 KillTimer(nullptr,popup);
                 require(!WorkflowProbe::objectivePopupFound,"clicking the wall itself does not open the quick-add menu");
-                require(!call({{"op","actors"},{"selected",true}}).empty(),"clicking the wall selects the piece");
+                {
+                    // The panel's status line explains a click that selected nothing.
+                    char statusText[1024]{};GetWindowTextA(GetDlgItem(design,720),statusText,sizeof(statusText));
+                    const std::string why=std::string("clicking the wall selects the piece (status: ")+statusText+"; at "+std::to_string(at.x)+","+std::to_string(at.y)+"; view "+call({{"op","design.view"}}).dump()+")";
+                    require(!call({{"op","actors"},{"selected",true}}).empty(),why.c_str());
+                }
                 SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,0,MAKELPARAM(at.x,at.y));
                 WorkflowProbe::objectivePopupFound=false;WorkflowProbe::objectivePopupTicks=0;
                 popup=SetTimer(nullptr,0,50,WorkflowProbe::ChooseObjectivePopup);
@@ -932,6 +937,7 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 Exec("TRANSACTION UNDO");
                 require(!securityOf(mine).is_null(),"a delete is one Undo step");
                 {
+                    SendMessage(design,WM_COMMAND,702,0); // Refresh from editor: the test pumps no timer.
                     const auto view3=call({{"op","design.view"}});
                     const double zoom3=view3["zoom"],panX3=view3["panX"],panY3=view3["panY"];
                     const auto mineAt=securityOf(mine)["position"].get<std::array<double,3>>();
@@ -1037,7 +1043,15 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             SendMessage(design,WM_COMMAND,711,0);auto canvas=GetDlgItem(design,719);
             SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(100,100));SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(300,100));
             WorkflowProbe::Click(design,716);SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(200,220));SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(400,300));SendMessage(design,WM_COMMAND,717,0);
+            // The layer comes from an explicit selection: what the editor left
+            // selected after the undo steps above is not part of the contract.
+            call({{"op","select"},{"actors",placedRoom}});
             WorkflowProbe::Click(design,713,"Design layer");
+            {
+                char layerStatus[1024]{};GetWindowTextA(GetDlgItem(design,720),layerStatus,sizeof(layerStatus));
+                const std::string why=std::string("the layer dialog creates a layer from the selection (status: ")+layerStatus+"; selected "+std::to_string(call({{"op","actors"},{"selected",true}}).size())+")";
+                require(std::string(layerStatus).find("Layer membership")!=std::string::npos,why.c_str());
+            }
             // Generate a tiny reference image locally; no copyrighted reference
             // imagery or user's files are needed for this UI test.
             auto image=directory/"design_reference.bmp";BITMAPFILEHEADER bh{};BITMAPINFOHEADER bi{};bi.biSize=sizeof(bi);bi.biWidth=64;bi.biHeight=64;bi.biPlanes=1;bi.biBitCount=32;bh.bfType=0x4d42;bh.bfOffBits=sizeof(bh)+sizeof(bi);bh.bfSize=bh.bfOffBits+64*64*4;
@@ -1063,7 +1077,7 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(12,12));
             SendMessage(canvas,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(40,40));
             SendMessage(canvas,WM_LBUTTONUP,0,MAKELPARAM(40,40));
-            require(status().find("0 actor(s) inside the rectangle")!=std::string::npos,"an empty rectangle selects nothing");
+            require(status().find("Nothing wholly inside the rectangle")!=std::string::npos,"an empty rectangle selects nothing");
             require(call({{"op","actors"},{"selected",true}}).empty(),"box selection replaces the editor selection");
             // Two teams' routes, then their timing comparison.
             WorkflowProbe::routeTeamChoice=1;WorkflowProbe::Click(design,716,"Spy route");

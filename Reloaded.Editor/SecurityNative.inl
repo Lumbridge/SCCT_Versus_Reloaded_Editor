@@ -151,6 +151,7 @@ Json ObjectiveActors()
         item["name"]=name;
         if(kind=="Player start")item["team"]=StartTeam(actor);
         if(kind=="Mission")item["objectives"]=NameList(actor,"Objectives");
+        if(kind=="Objective")item["triggers"]=NameList(actor,"Triggers");
         result.push_back(item);
     }
     return result;
@@ -325,7 +326,8 @@ Json CreateMotionSensor(const Vector& low,const Vector& high,const Json& propert
 // Moves and turns a security actor in one Undo step. A motion sensor's volumes
 // travel with it, and extra properties (a laser's length) apply at the same time.
 std::vector<Address> SensorVolumes(Address actor);
-Json MoveSecurityActor(const Json& identity,const Pose& pose,const Json& properties)
+void FollowNow(const Json& members,const Vector& delta);
+Json MoveSecurityActor(const Json& identity,const Pose& pose,const Json& properties,const Json& followers)
 {
     Design::CheckVector(pose.position);
     auto actor=ResolveIdentity(identity);
@@ -348,6 +350,8 @@ Json MoveSecurityActor(const Json& identity,const Pose& pose,const Json& propert
         SetPosition(volume,at);
         Call(volume,0x44);
     }
+    // The rest of the device's group, in the same Undo step.
+    FollowNow(followers,delta);
     transaction.Commit();
     Redraw();
     return Identity(actor);

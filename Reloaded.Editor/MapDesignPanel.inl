@@ -11,7 +11,7 @@ enum DesignControl
     DName=740,DShape,DConstruction,DWidth,DLength,DHeight,DThickness,DSteps,DCeiling,DPortal,
     DPositionX,DPositionY,DPositionZ,DYaw,DInspectorTitle,DDiscard,
     // Building, checking and overlays.
-    DBuild=760,DCheck,DOverlays,DSecurity,DUnlit,DScene,DCheckList=780,DInspectorLabel=785,
+    DBuild=760,DCheck,DOverlays,DSecurity,DUnlit,DScene,DKeys,DCheckList=780,DInspectorLabel=785,
     // Right-click menu on the design view: what is under the cursor, then what
     // can start at that point.
     DCtxEditPiece=850,DCtxSelectPiece,DCtxDetachPiece,DCtxEditAnnotation,DCtxRemoveAnnotation,DCtxEditGuide,DCtxRemoveGuide,
@@ -31,6 +31,7 @@ enum DesignControl
     DCtxFloorUp=1130,DCtxFloorDown,DCtxFloorDupUp,DCtxFloorDupDown,DCtxStairsUp,DCtxStairsDown,DCtxLadderUp,DCtxPipeUp,DCtxOpening,
     // Stairs by shape: four up, four down, from the badge and from the Floors menu.
     DAddStairsUpFirst=1140,DAddStairsDownFirst=1144,DCtxStairsUpFirst=1150,DCtxStairsDownFirst=1154,
+    DAddLiftUp=1148,DAddLiftDown,DCtxLiftUp=1158,DCtxLiftDown,
     // Locking what is under the cursor or selected, and the Scene panel.
     DCtxLock=1160,DCtxUnlock,DCtxLockSelection,DCtxUnlockSelection,DCtxScene,
     // The contextual properties sheet: its fields, their labels and its buttons.
@@ -69,6 +70,9 @@ struct DesignDrag
     int axis=0,side=0;
     size_t index=0,point=0;
     bool moved=false;
+    // A move that began by pressing inside a selected piece: without motion it
+    // is an ordinary click on that piece.
+    bool fromSelection=false;
     // A security device being dragged or aimed: its live pose and beam length.
     Json device;
     Pose devicePose{};
@@ -153,6 +157,12 @@ struct DesignState
     std::string sceneFilter;
     int sceneGroupBy=0,sceneShow=0;
     bool sceneSyncing=false;
+    // Group members and other selected actors that move with the next edit,
+    // and by how much.
+    Json followers=Json::array();
+    Vector followDelta{};
+    // Tooltips for the panel's controls, and the keyboard legend window.
+    HWND tips{},keysWindow{};
 };
 HWND designWindow=nullptr;
 Json NormalizeDesign(Json data)
@@ -327,7 +337,9 @@ bool DesignSliderHit(DesignState& s,POINT at,int& index)
     const auto layout=DesignSliderLayoutFor(s,rect);
     if(layout.count==0)return false;
     const float bottom=layout.top+layout.step*layout.count;
-    if(at.x<layout.x-64 || at.x>layout.x+10 || at.y<layout.top-12 || at.y>bottom+12)return false;
+    // Only the track and its handle take clicks: a fitted map's rightmost wall
+    // sits 50 pixels from the edge, and the labels must not steal it.
+    if(at.x<layout.x-10 || at.x>layout.x+10 || at.y<layout.top-10 || at.y>bottom+10)return false;
     index=DesignSliderIndexAt(s,at.y);
     return true;
 }
@@ -404,7 +416,7 @@ bool SecurityHandleAt(DesignState& s,double x,double y,Json& device,bool& aim);
 void SceneRefreshList(DesignState& s);
 void SceneOpen(DesignState& s);
 void DesignDeleteSelection(DesignState& s);
-void SceneGroupFollow(DesignState& s,const Json& movedMembers,const Vector& delta);
+void DesignKeys(DesignState& s);
 std::string SceneGroupOf(DesignState& s,const std::string& path);
 Json SceneGroupMembers(DesignState& s,const std::string& name);
 // Whether an actor is locked, by its path in the scene.
@@ -433,6 +445,7 @@ void LightUnlitPaint(DesignState& s,Gdiplus::Graphics& g);
 void ObjectivePaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void(const std::string&,Gdiplus::PointF)>& label);
 Json ObjectiveAt(DesignState& s,double x,double y);
 bool ObjectiveAimHandleAt(DesignState& s,double x,double y,Json& start);
+std::string ObjectiveLabel(const Json& actor);
 void ElementClick(DesignState& s,const Vector& at);
 void ElementCancel(DesignState& s);
 void ElementPaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void(const std::string&,Gdiplus::PointF)>& label);
@@ -488,8 +501,11 @@ void DesignFit(DesignState& s)
                 for(auto& v:f)add(TransformPoint(v,s.frame));
     RECT r{};GetClientRect(s.canvas,&r);
     const int a=DesignHorizontal(s),b=DesignVertical(s);
-    s.zoom=std::clamp(std::min((r.right-100)/std::max(hi[a]-lo[a],256.0),(r.bottom-100)/std::max(hi[b]-lo[b],256.0)),.002,8.0);
-    s.panX=r.right/2.0-(hi[a]+lo[a])/2*s.zoom;
+    // The floor slider keeps a strip down the right edge, so a fitted map never
+    // puts a wall under it.
+    const double reserve=DesignLevels(s).empty()?0:48;
+    s.zoom=std::clamp(std::min((r.right-100-reserve)/std::max(hi[a]-lo[a],256.0),(r.bottom-100)/std::max(hi[b]-lo[b],256.0)),.002,8.0);
+    s.panX=(r.right-reserve)/2.0-(hi[a]+lo[a])/2*s.zoom;
     s.panY=r.bottom/2.0+(hi[b]+lo[b])/2*s.zoom;
     InvalidateRect(s.canvas,nullptr,FALSE);
 }
@@ -766,6 +782,25 @@ void DesignPaint(DesignState& s,HDC dc)
         {
             auto p=DesignScreen(s,handle.world);
             g.FillRectangle(&handleInk,p.X-4,p.Y-4,8.f,8.f);
+        }
+        // While a placed piece is dragged, the rest of the selection shows
+        // where it will land.
+        if(s.drag.kind==DesignDrag::Kind::Move && s.drag.moved && !s.previous.is_null())
+        {
+            Vector delta{};
+            for(int axis=0;axis<3;++axis)delta[axis]=s.frame.position[axis]-s.drag.frame.position[axis];
+            Pen ghost(Color(170,0,145,105),1);
+            ghost.SetDashStyle(DashStyleDash);
+            for(const auto& actor:s.scene)
+            {
+                if(!actor.value("selected",false) || actor.at("locked").get<bool>() || !DesignShows(s,actor))continue;
+                bool own=false;
+                for(auto& member:s.previous.at("members"))if(member.at("path")==actor.at("path"))own=true;
+                if(own)continue;
+                auto shifted=[&](const Vector& v){Vector w=v;for(int axis=0;axis<3;++axis)w[axis]+=delta[axis];return w;};
+                for(auto& edge:actor.at("edges"))line(ghost,shifted(edge[0].get<Vector>()),shifted(edge[1].get<Vector>()));
+                if(actor.at("edges").empty()){const auto p=DesignScreen(s,shifted(actor.at("position").get<Vector>()));g.DrawEllipse(&ghost,p.X-4,p.Y-4,8.f,8.f);}
+            }
         }
         // A new preview carries a tick to place it and a cross to discard it,
         // just outside its top-right corner.
@@ -1119,12 +1154,90 @@ void DesignVerifyActive(DesignState& s)
     }
     catch(const std::exception&) { /* Unreadable geometry is left to the next refresh. */ }
 }
+// What moves along with some actors: the rest of their group, and every other
+// selected actor, unlocked and not among the actors themselves. So a box
+// selection of several pieces drags as one.
+Json DesignGroupOthers(DesignState& s,const Json& moved)
+{
+    Json others=Json::array();
+    if(!moved.is_array() || moved.empty())return others;
+    auto own=[&](const std::string& path){for(auto& done:moved)if(done.at("path")==path)return true;return false;};
+    auto add=[&](const Json& identity)
+    {
+        const auto path=identity.at("path").get<std::string>();
+        if(own(path) || DesignLockedPath(s,path))return;
+        for(auto& o:others)if(o.at("path")==path)return;
+        others.push_back(Json{{"path",path},{"class",identity.at("class")}});
+    };
+    if(const auto group=SceneGroupOf(s,moved[0].at("path").get<std::string>());!group.empty())
+        for(auto& m:SceneGroupMembers(s,group))add(m);
+    for(const auto& actor:s.scene)if(actor.value("selected",false) && DesignShows(s,actor))add(actor);
+    return others;
+}
+// A selected piece whose footprint contains a point of the view: dragging
+// inside it moves it, and the rest of the selection with it.
+Json DesignSelectedPieceContaining(DesignState& s,const Vector& world)
+{
+    const auto& data=DesignData(s);
+    const int a=DesignHorizontal(s),b=DesignVertical(s);
+    // The editor's selection as it is now: the panel's copy may predate a
+    // change made elsewhere.
+    Json selection;
+    try{selection=Editor::SelectedIdentities();}catch(const std::exception&){return Json{};}
+    if(!selection.is_array() || selection.empty())return Json{};
+    auto selectedNow=[&](const std::string& path){for(auto& id:selection)if(id.at("path")==path)return true;return false;};
+    for(auto it=data.at("pieces").rbegin();it!=data.at("pieces").rend();++it)
+    {
+        size_t live=0,selected=0;
+        for(auto& member:it->at("members"))
+            for(auto& actor:s.scene)
+                if(actor.at("path")==member.at("path"))
+                {
+                    ++live;
+                    if(selectedNow(member.at("path").get<std::string>()) && !actor.at("locked").get<bool>())++selected;
+                }
+        if(live==0 || selected<live)continue;
+        try
+        {
+            const auto bounds=DesignBoundsOf(it->at("spec"),{it->at("position").get<Vector>(),it->at("rotation").get<Rotation>()});
+            if(world[a]>=bounds.lo[a] && world[a]<=bounds.hi[a] && world[b]>=bounds.lo[b] && world[b]<=bounds.hi[b])return *it;
+        }
+        catch(const std::exception&) { /* Not a piece the view can place. */ }
+    }
+    return Json{};
+}
+// What moves when the edited piece moves: its brushes and, for a pure move,
+// the doorways cut into it.
+std::vector<size_t> DesignAttachedDoorways(DesignState& s,const Json& piece);
+Json DesignMovedMembers(DesignState& s)
+{
+    Json moved=Json::array();
+    if(s.previous.is_null())return moved;
+    for(auto& m:s.previous.at("members"))moved.push_back(m);
+    const bool moveOnly=s.pending==s.previous.at("spec") && s.frame.rotation==s.previous.at("rotation").get<Rotation>();
+    if(moveOnly)
+    {
+        const auto& pieces=DesignData(s).at("pieces");
+        for(size_t index:DesignAttachedDoorways(s,s.previous))
+            if(index<pieces.size())for(auto& m:pieces[index].at("members"))moved.push_back(m);
+    }
+    return moved;
+}
+// Plans the group to follow the edited piece by delta; the next apply moves
+// them in its own Undo step.
+void DesignPlanFollow(DesignState& s,const Vector& delta)
+{
+    s.followers=DesignGroupOthers(s,DesignMovedMembers(s));
+    s.followDelta=delta;
+}
 void DesignApply(DesignState& s)
 {
     if(s.pending.is_null())throw std::runtime_error("Create or edit a preview first.");
     Json data=DesignData(s);
     const bool editing=!s.previous.is_null();
-    auto piece=Editor::DesignBlockout(s.pending,s.frame,s.previous);
+    const Json followers=s.followers;
+    s.followers=Json::array();
+    auto piece=Editor::DesignBlockout(s.pending,s.frame,s.previous,followers,s.followDelta);
     if(editing)for(auto& layer:data["layers"])
     {
         bool included=false;
@@ -1192,7 +1305,9 @@ void DesignApplyMove(DesignState& s,const std::vector<size_t>& attached)
         for(int axis=0;axis<3;++axis)position[axis]+=delta[axis];
         items.push_back({{"spec",doorway.at("spec")},{"position",position},{"rotation",doorway.at("rotation")},{"previous",doorway}});
     }
-    auto pieces=Editor::DesignBlockoutBatch(items);
+    const Json followers=s.followers;
+    s.followers=Json::array();
+    auto pieces=Editor::DesignBlockoutBatch(items,followers,s.followDelta);
     for(auto& piece:pieces)data["pieces"].push_back(piece);
     try{DesignSave(s,data,false);}catch(...){Editor::Exec("TRANSACTION UNDO");throw;}
     DesignRefresh(s);
@@ -1552,6 +1667,7 @@ void DesignCommand(DesignState& s,int id)
     if(id==DCheck){DesignCheck(s);return;}
     if(id==DSecurity){SecurityOpen(s);return;}
     if(id==DScene){SceneOpen(s);return;}
+    if(id==DKeys){DesignKeys(s);return;}
     if(id==DBlock){DesignNewBlockout(s);return;}
     if(id==DEdit){DesignEditSelected(s);return;}
     if(id==DDiscard){DesignDeactivate(s);DesignStatus(s,"Preview discarded. The map is unchanged.");return;}
@@ -1985,6 +2101,7 @@ void DesignPick(DesignState& s,double x,double y,bool add)
     else if(!add)identities=Json::array();
     Editor::Select(identities,false);
     DesignRefresh(s);
+    if(selected.is_null() && !add)DesignStatus(s,"Nothing to select here. Click a brush edge, a light, a device or a game actor; drag to box-select.");
     // Clicking a generated brush picks up its whole piece for editing.
     auto piece=DesignSelectedPiece(s);
     if(s.pending.is_null() || !s.previous.is_null())
@@ -2388,6 +2505,54 @@ void DesignCheck(DesignState& s)
     if(!mission)s.issues.push_back({{"severity","error"},{"text","No SMission actor: the map has no game mode to play."},{"piece",-1},{"index",0}});
     if(!objective)s.issues.push_back({{"severity","warning"},{"text","No SObjective actor: there is nothing for the spies to do."},{"piece",-1},{"index",0}});
     if(!cameras)s.issues.push_back({{"severity","warning"},{"text","No SCamNetwork: mercs have no cameras to watch through."},{"piece",-1},{"index",0}});
+    // Objective flow: every mission needs objectives, every objective a mission
+    // and something to do, every flag a drop zone, and starts kept apart.
+    {
+        auto note=[&](const char* severity,const std::string& text){s.issues.push_back({{"severity",severity},{"text",text},{"piece",-1},{"index",0}});};
+        auto label=[&](const Json& actor){return ObjectiveLabel(actor);};
+        auto refers=[&](const Json& list,const std::string& path){for(auto& ref:list)if(ref.is_string() && ref.get<std::string>().find(path)!=std::string::npos)return true;return false;};
+        size_t flags=0,dropZones=0;
+        for(const auto& actor:s.objectives)
+        {
+            const auto kind=actor.value("kind",std::string());
+            if(kind=="Flag")++flags;
+            if(kind=="Drop zone")++dropZones;
+            if(kind=="Mission" && actor.value("objectives",Json::array()).empty())note("error",label(actor)+" lists no objectives: nothing ends the round.");
+            if(kind=="Objective")
+            {
+                bool listed=false;
+                for(const auto& other:s.objectives)if(other.value("kind",std::string())=="Mission" && refers(other.value("objectives",Json::array()),actor.at("path").get<std::string>()))listed=true;
+                if(!listed)note("warning",label(actor)+" is not in any mission's Objectives list, so it never counts.");
+                if(actor.value("triggers",Json::array()).empty())note("warning",label(actor)+" has no terminal, bomb target or trigger: the spies cannot complete it.");
+            }
+        }
+        if(flags>0 && dropZones==0)note("warning","A flag without a drop zone: the spies have nowhere to bring it.");
+        if(dropZones>0 && flags==0)note("warning","A drop zone without a flag.");
+        std::vector<Json> spyStarts,mercStarts,targets;
+        for(const auto& actor:s.objectives)
+        {
+            const auto kind=actor.value("kind",std::string());
+            if(kind=="Player start")(actor.value("team",std::string("0"))=="0"?spyStarts:mercStarts).push_back(actor); // Team 0 spies, 1 mercs.
+            else if(kind=="Computer terminal" || kind=="Bomb target" || kind=="Objective trigger" || kind=="Flag")targets.push_back(actor);
+        }
+        auto distance=[](const Json& a,const Json& b){return Design::Distance(a.at("position").get<Vector>(),b.at("position").get<Vector>());};
+        for(const auto& start:spyStarts)
+            for(const auto& target:targets)
+                if(distance(start,target)<512)note("warning",label(start)+" is within "+Design::Round(distance(start,target))+" units of "+label(target)+": the objective is reachable before the mercs can respond.");
+        for(const auto& spy:spyStarts)
+            for(const auto& merc:mercStarts)
+                if(distance(spy,merc)<768)note("warning",label(spy)+" and "+label(merc)+" are only "+Design::Round(distance(spy,merc))+" units apart: the teams meet immediately.");
+        if(!mercStarts.empty() && !targets.empty())
+        {
+            // Every objective should be closer to some merc start than 4096 units, or the mercs cannot defend it.
+            for(const auto& target:targets)
+            {
+                double nearest=1e18;
+                for(const auto& merc:mercStarts)nearest=std::min(nearest,distance(merc,target));
+                if(nearest>4096)note("warning",label(target)+" is "+Design::Round(nearest)+" units from the nearest merc start: hard to defend.");
+            }
+        }
+    }
     for(const auto& issue:Security::Issues(s.securityActors))
         s.issues.push_back({{"severity",issue.severity},{"text",issue.text},{"piece",-1},{"index",0}});
     for(const auto& text:LightIssues(s))
@@ -2420,6 +2585,7 @@ void DesignCheck(DesignState& s)
 // The quick-add menu raised from the badge on a hovered wall.
 // From a side-on view: a room stacked on the hovered one, or stairs into it.
 void FloorStairsAt(DesignState& s,const Vector& at,double base,double spacing,const std::string& kind);
+void FloorLiftAt(DesignState& s,const Vector& at,double base,double spacing);
 const char* const kStairKinds[]={"Stairs","Stairs L","Stairs U","Spiral"};
 const char* const kStairLabels[]={"Straight","L-shaped","U-shaped (switchback)","Spiral"};
 void DesignQuickAddVertical(DesignState& s,int choice)
@@ -2429,7 +2595,12 @@ void DesignQuickAddVertical(DesignState& s,int choice)
     const Pose hostPose{s.hoverPiece.at("position").get<Vector>(),s.hoverPiece.at("rotation").get<Rotation>()};
     const double spacing=host.at("height").get<double>()+host.value("thickness",16.0);
     const bool stairsUp=choice>=DAddStairsUpFirst && choice<DAddStairsUpFirst+4,stairsDown=choice>=DAddStairsDownFirst && choice<DAddStairsDownFirst+4;
-    const bool up=choice==DAddRoomAbove || stairsUp;
+    const bool up=choice==DAddRoomAbove || stairsUp || choice==DAddLiftUp;
+    if(choice==DAddLiftUp || choice==DAddLiftDown)
+    {
+        FloorLiftAt(s,hostPose.position,up?hostPose.position[2]:hostPose.position[2]-spacing,spacing);
+        return;
+    }
     if(stairsUp || stairsDown)
     {
         const int shape=choice-(stairsUp?DAddStairsUpFirst:DAddStairsDownFirst);
@@ -2484,6 +2655,7 @@ void DesignQuickAddMenu(DesignState& s,POINT at)
         HMENU shapes=CreatePopupMenu();
         for(int i=0;i<4;++i)AppendMenuA(shapes,MF_STRING,(up?DAddStairsUpFirst:DAddStairsDownFirst)+i,kStairLabels[i]);
         AppendMenuA(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(shapes),up?(stacked?"Stairs up into the room above":"Stairs up into a room above"):(stacked?"Stairs down into the room below":"Stairs down into a room below"));
+        AppendMenuA(menu,MF_STRING,up?DAddLiftUp:DAddLiftDown,up?"Lift up into the room above":"Lift down into the room below");
     }
     else
     {
@@ -2497,7 +2669,7 @@ void DesignQuickAddMenu(DesignState& s,POINT at)
     const auto choice=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_NONOTIFY|TPM_LEFTALIGN,screen.x,screen.y,0,s.canvas,nullptr);
     DestroyMenu(menu);
     if(!choice)return;
-    if(choice==DAddRoomAbove || choice==DAddRoomBelow || (choice>=DAddStairsUpFirst && choice<DAddStairsDownFirst+4))
+    if(choice==DAddRoomAbove || choice==DAddRoomBelow || choice==DAddLiftUp || choice==DAddLiftDown || (choice>=DAddStairsUpFirst && choice<DAddStairsDownFirst+4))
     {
         DesignQuickAddVertical(s,choice);
         return;
@@ -2632,6 +2804,19 @@ void DesignBeginDrag(DesignState& s,POINT p,const Vector& world)
         if(DesignInsidePreview(s,world))
         {
             s.drag.kind=DesignDrag::Kind::Move;
+            return;
+        }
+    }
+    else if(const Json piece=DesignSelectedPieceContaining(s,world);!piece.is_null())
+    {
+        // Several selected pieces: dragging inside one moves them all.
+        DesignActivate(s,piece);
+        if(!s.pending.is_null())
+        {
+            s.drag.spec=s.pending;
+            s.drag.frame=s.frame;
+            s.drag.kind=DesignDrag::Kind::Move;
+            s.drag.fromSelection=true;
             return;
         }
     }
@@ -2838,30 +3023,28 @@ void DesignEndDrag(DesignState& s,bool add)
         }
         Json properties=Json::object();
         if(drag.device.value("kind",std::string())=="Laser")properties["LaserLength"]=std::to_string(static_cast<int>(drag.deviceLength));
-        Editor::MoveSecurityActor(drag.device,drag.devicePose,properties);
+        const Json followers=drag.kind==DesignDrag::Kind::Device?DesignGroupOthers(s,Json::array({drag.device})):Json::array();
+        Editor::MoveSecurityActor(drag.device,drag.devicePose,properties,followers);
         DesignRefresh(s);
         DesignStatus(s,drag.kind==DesignDrag::Kind::Device
             ? "Moved "+SecurityName(drag.device)+" to "+Design::Round(drag.devicePose.position[0])+", "+Design::Round(drag.devicePose.position[1])+", "+Design::Round(drag.devicePose.position[2])+". One Undo step."
             : "Aimed "+SecurityName(drag.device)+": yaw "+Design::Round(drag.devicePose.rotation[1]*360.0/65536)+" degrees, pitch "
               +Design::Round((drag.devicePose.rotation[0]>32768?drag.devicePose.rotation[0]-65536:drag.devicePose.rotation[0])*360.0/65536)+" degrees"
               +(drag.device.value("kind",std::string())=="Laser"?", "+Design::Round(drag.deviceLength)+" units long.":".")+" One Undo step.");
-        if(drag.kind==DesignDrag::Kind::Device)
-        {
-            try
-            {
-                Vector delta{};
-                const auto before=drag.device.at("position").get<Vector>();
-                for(int axis=0;axis<3;++axis)delta[axis]=drag.devicePose.position[axis]-before[axis];
-                SceneGroupFollow(s,Json::array({drag.device}),delta);
-            }
-            catch(const std::exception& e){DesignStatus(s,std::string("The group did not follow: ")+e.what());}
-        }
+        if(!followers.empty())DesignStatus(s,"Moved "+SecurityName(drag.device)+" and "+std::to_string(followers.size())+" other selected or grouped actor(s), in one Undo step.");
         return;
     }
     if(drag.kind==DesignDrag::Kind::Select)
     {
         if(drag.moved)DesignBoxSelect(s,add);
         else DesignPick(s,drag.from.x,drag.from.y,add);
+        return;
+    }
+    if(drag.kind==DesignDrag::Kind::Move && drag.fromSelection && !drag.moved)
+    {
+        // Pressed inside a selected piece and released: an ordinary click.
+        DesignDeactivate(s);
+        DesignPick(s,drag.from.x,drag.from.y,add);
         return;
     }
     if(!drag.moved || s.pending.is_null())return;
@@ -2874,6 +3057,13 @@ void DesignEndDrag(DesignState& s,bool add)
     if(!s.previous.is_null())
     {
         const Vector wanted=s.frame.position;
+        if(drag.kind==DesignDrag::Kind::Move)
+        {
+            Vector delta{};
+            for(int axis=0;axis<3;++axis)delta[axis]=s.frame.position[axis]-drag.frame.position[axis];
+            DesignPlanFollow(s,delta);
+        }
+        const size_t following=s.followers.size();
         try{DesignApplyEdit(s,summary);}
         catch(const std::exception&)
         {
@@ -2893,23 +3083,7 @@ void DesignEndDrag(DesignState& s,bool add)
                 +Design::Round(placed[0],2)+", "+Design::Round(placed[1],2)+", "+Design::Round(placed[2],2)+" and the piece followed them.");
         }
         catch(const std::exception&) { /* Diagnostics only. */ }
-        // The rest of the piece's group follows it; doorways that moved with
-        // the piece already went along.
-        if(drag.kind==DesignDrag::Kind::Move && !s.previous.is_null())
-        {
-            try
-            {
-                Json moved=s.previous.at("members");
-                const auto& pieces=DesignData(s).at("pieces");
-                for(size_t index:DesignAttachedDoorways(s,s.previous))
-                    if(index<pieces.size())for(auto& m:pieces[index].at("members"))moved.push_back(m);
-                Vector delta{};
-                const auto placed=s.previous.at("position").get<Vector>();
-                for(int axis=0;axis<3;++axis)delta[axis]=placed[axis]-drag.frame.position[axis];
-                SceneGroupFollow(s,moved,delta);
-            }
-            catch(const std::exception& e){DesignStatus(s,std::string("The group did not follow: ")+e.what());}
-        }
+        if(following>0 && !s.pending.is_null())DesignStatus(s,summary+" "+std::to_string(following)+" other selected or grouped actor(s) moved with it, in the same Undo step.");
     }
     else DesignWarn(s,summary+" Place / Apply creates the brushes.");
 }
@@ -3020,6 +3194,85 @@ void DesignDeleteSelection(DesignState& s)
     if(pieces.size()!=before)DesignSave(s,data,false);
     InvalidateRect(s.canvas,nullptr,FALSE);
     DesignStatus(s,"Deleted "+std::to_string(selected.size())+" selected actor(s). Undo brings them back; rebuild geometry if brushes went.");
+}
+// A tooltip for a control, through the panel's one tooltip window.
+void DesignTip(DesignState& s,HWND control,const char* text)
+{
+    if(!control)return;
+    if(!s.tips)
+    {
+        INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_WIN95_CLASSES};
+        InitCommonControlsEx(&controls);
+        s.tips=CreateWindowExA(WS_EX_TOPMOST,TOOLTIPS_CLASSA,nullptr,WS_POPUP|TTS_ALWAYSTIP|TTS_NOPREFIX,CW_USEDEFAULT,CW_USEDEFAULT,CW_USEDEFAULT,CW_USEDEFAULT,s.window,nullptr,GetModuleHandle(nullptr),nullptr);
+        if(!s.tips)return;
+        SendMessage(s.tips,TTM_SETMAXTIPWIDTH,0,380);
+        SendMessage(s.tips,TTM_SETDELAYTIME,TTDT_AUTOPOP,20000);
+    }
+    TOOLINFOA info{};
+    info.cbSize=sizeof(info);
+    info.uFlags=TTF_IDISHWND|TTF_SUBCLASS;
+    info.hwnd=s.window;
+    info.uId=reinterpret_cast<UINT_PTR>(control);
+    info.lpszText=const_cast<char*>(text);
+    SendMessageA(s.tips,TTM_ADDTOOLA,0,reinterpret_cast<LPARAM>(&info));
+}
+const char* const kDesignKeyLegend=
+    "DESIGN VIEW\r\n"
+    "Wheel: zoom.   Middle drag: pan.   Right-click: actions at that point.\r\n"
+    "Click: select. A piece's brush selects the whole piece; a group member selects the group.\r\n"
+    "Drag on empty space: box select. Left to right takes what is wholly inside, right to left what it touches.\r\n"
+    "Shift or Ctrl + click: add to the selection.\r\n"
+    "Drag a piece: move it (and the rest of the selection). Drag a square: resize.\r\n"
+    "Arrow keys: nudge the edited piece by the grid. Ctrl + arrows: one unit.\r\n"
+    "Enter: place a new preview.   Esc: discard it, or cancel what is being placed.\r\n"
+    "Delete: delete the selection.   B: build geometry.\r\n"
+    "Ctrl+Z / Ctrl+Y: undo / redo.   Ctrl+L / Ctrl+Shift+L: lock / unlock the selection.\r\n"
+    "Page Up / Page Down: one storey up / down.   Home: every storey.\r\n"
+    "Slider on the right: pick a storey.   + badge on a wall: add a neighbour there.\r\n"
+    "\r\n"
+    "SCENE PANEL\r\n"
+    "Ctrl+A: select all rows.   Delete: delete.   Ctrl+G: new group from the rows.\r\n"
+    "Ctrl+L / Ctrl+Shift+L: lock / unlock.   Ctrl+H / Ctrl+Shift+H: hide / show.\r\n"
+    "Tick: show.   Click LOCKED: toggle a lock.   Click a header: fold it.   Double-click: show in the plan.\r\n"
+    "\r\n"
+    "EDITOR VIEWPORTS\r\n"
+    "Ctrl + wheel over a viewport: change the grid the plan snaps to.\r\n";
+LRESULT CALLBACK DesignKeysProc(HWND window,UINT message,WPARAM w,LPARAM l)
+{
+    auto s=reinterpret_cast<DesignState*>(GetWindowLongPtr(window,GWLP_USERDATA));
+    if(message==WM_NCCREATE)
+    {
+        s=static_cast<DesignState*>(reinterpret_cast<CREATESTRUCT*>(l)->lpCreateParams);
+        SetWindowLongPtr(window,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(s));
+    }
+    if(!s)return DefWindowProcA(window,message,w,l);
+    if(message==WM_CREATE)
+    {
+        auto text=CreateWindowExA(0,"EDIT",kDesignKeyLegend,WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,8,8,600,400,window,reinterpret_cast<HMENU>(1),GetModuleHandle(nullptr),nullptr);
+        SendMessage(text,WM_SETFONT,reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)),TRUE);
+        return 0;
+    }
+    if(message==WM_SIZE){MoveWindow(GetDlgItem(window,1),8,8,std::max(1,LOWORD(l)-16),std::max(1,HIWORD(l)-16),TRUE);return 0;}
+    if(message==WM_CLOSE){DestroyWindow(window);return 0;}
+    if(message==WM_NCDESTROY){s->keysWindow=nullptr;SetWindowLongPtr(window,GWLP_USERDATA,0);}
+    return DefWindowProcA(window,message,w,l);
+}
+void DesignKeys(DesignState& s)
+{
+    if(!s.keysWindow)
+    {
+        WNDCLASSA wc{};
+        wc.hInstance=GetModuleHandle(nullptr);
+        wc.hCursor=LoadCursor(nullptr,IDC_ARROW);
+        wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1);
+        wc.lpfnWndProc=DesignKeysProc;
+        wc.lpszClassName="ReloadedDesignKeys";
+        RegisterClassA(&wc);
+        s.keysWindow=CreateWindowExA(WS_EX_TOOLWINDOW,wc.lpszClassName,"Keyboard and mouse",WS_OVERLAPPEDWINDOW|WS_VISIBLE,CW_USEDEFAULT,CW_USEDEFAULT,640,440,s.window,nullptr,wc.hInstance,&s);
+        if(!s.keysWindow)throw std::runtime_error("Cannot open the key legend.");
+    }
+    ShowWindow(s.keysWindow,SW_SHOWNORMAL);
+    SetForegroundWindow(s.keysWindow);
 }
 // Locks or unlocks the editor's selection. Locked actors are skipped by
 // clicks, box selection and drags in the plan, and the editor refuses to
@@ -3243,6 +3496,8 @@ void DesignContextMenu(DesignState& s,POINT at)
     AppendMenuA(floors,MF_STRING,DCtxLadderUp,"Ladder up from here");
     AppendMenuA(floors,MF_STRING,DCtxPipeUp,"Pipe up from here");
     AppendMenuA(floors,MF_STRING,DCtxOpening,"Opening through the floor above");
+    AppendMenuA(floors,MF_STRING,DCtxLiftUp,"Lift up to the floor above");
+    AppendMenuA(floors,MF_STRING,DCtxLiftDown,"Lift down to the floor below");
     AppendMenuA(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(floors),"Floors");
     separator();
     HMENU lightsMenu=CreatePopupMenu();
@@ -3298,6 +3553,7 @@ void DesignContextMenu(DesignState& s,POINT at)
     if(choice>=DCtxStairsDownFirst && choice<DCtxStairsDownFirst+4){FloorStairs(s,world,false,kStairKinds[choice-DCtxStairsDownFirst]);return;}
     if(choice==DCtxLadderUp || choice==DCtxPipeUp){FloorClimb(s,world,choice==DCtxLadderUp?"Ladder":"Pipe");return;}
     if(choice==DCtxOpening){FloorOpening(s,world);return;}
+    if(choice==DCtxLiftUp || choice==DCtxLiftDown){FloorLift(s,world,choice==DCtxLiftUp);return;}
     if(choice>=DCtxElementFirst && choice<=DCtxElementLast && static_cast<size_t>(choice-DCtxElementFirst)<elementKinds.size())
     {
         ElementBegin(s,elementKinds[choice-DCtxElementFirst].name,&world);
@@ -3512,6 +3768,9 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
         if(message==WM_RBUTTONDOWN)
         {
             if(GetCapture()==window)ReleaseCapture();
+            // The menu describes what is there now, even if the timer has not
+            // caught up with an edit made elsewhere.
+            if(s->drag.kind==DesignDrag::Kind::None && (s->epoch!=mapEpoch || s->revision!=Editor::Revision()))DesignRefresh(*s);
             if(!s->mode.empty() || s->drag.kind!=DesignDrag::Kind::None)
             {
                 // Right-click ends whatever is being placed or dragged.
@@ -3560,7 +3819,13 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 DesignInspectorRefresh(*s);
                 InvalidateRect(window,nullptr,FALSE);
                 const auto nudged="Nudged to "+Design::Round(s->frame.position[0])+", "+Design::Round(s->frame.position[1])+", "+Design::Round(s->frame.position[2])+". Ctrl nudges by one unit.";
-                if(!s->previous.is_null())DesignApplyEdit(*s,nudged);
+                if(!s->previous.is_null())
+                {
+                    Vector delta{};
+                    delta[axis]=step*direction;
+                    DesignPlanFollow(*s,delta);
+                    DesignApplyEdit(*s,nudged);
+                }
                 else DesignWarn(*s,nudged);
                 return 0;
             }
@@ -3638,7 +3903,9 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
         if(message==WM_LBUTTONDOWN)
         {
             Sync();
-            if(s->epoch!=mapEpoch){DesignRefresh(*s);return 0;}
+            // A click after the map or its revision changed elsewhere first
+            // catches the panel up, then still counts as a click.
+            if(s->epoch!=mapEpoch || s->revision!=Editor::Revision())DesignRefresh(*s);
             DesignUpdateGrid(*s);
             POINT at{GET_X_LPARAM(l),GET_Y_LPARAM(l)};
             auto p=DesignSnap(*s,DesignWorld(*s,at.x,at.y));
@@ -3805,7 +4072,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             submenu("&Annotate",{{DGuides,"Player reference..."},{DMeasure,"Measure two points"},{0,nullptr},
                 {DRoute,"Route / objective..."},{DFinish,"Finish route / marker"},{DCompare,"Compare routes..."},{0,nullptr},{DClear,"Remove annotation..."}});
             submenu("&Tools",{{DPlay,"Playtest from here..."},{DSecurity,"Security..."},{DCheck,"Check design..."},{0,nullptr},
-                {DRefresh,"Refresh from editor"},{DFit,"Fit map / preview"},{DDepth,"Depth..."},{DFloor,"Floors..."},{DUnlit,"Show unlit areas"},{0,nullptr},{DUndo,"Undo"},{DRedo,"Redo"}});
+                {DRefresh,"Refresh from editor"},{DFit,"Fit map / preview"},{DDepth,"Depth..."},{DFloor,"Floors..."},{DUnlit,"Show unlit areas"},{0,nullptr},{DUndo,"Undo\tCtrl+Z"},{DRedo,"Redo\tCtrl+Y"},{0,nullptr},{DKeys,"Keyboard and mouse..."}});
             SetMenu(window,bar);
             const std::pair<int,const char*> buttons[]={
                 {DBlock,"New blockout..."},{DPlace,"Place / Apply preview"},
@@ -3838,6 +4105,26 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             Control(window,"BUTTON","Ceiling (shell)",BS_AUTOCHECKBOX,DCeiling,12,checks,140,24);
             Control(window,"BUTTON","Zone portal (doorway)",BS_AUTOCHECKBOX,DPortal,160,checks,170,24);
             Control(window,"BUTTON","Discard preview",0,DDiscard,12,checks+28,190,26);
+            Control(window,"BUTTON","Keys...",0,DKeys,208,checks+28,90,26);
+            const std::pair<int,const char*> tips[]={
+                {DPlane,"Which way the plan looks: top (a floor plan) or front / side (an elevation). Page Up / Page Down step between storeys."},
+                {DDepth,"Where clicks land on the axis the view cannot show: the floor height in the top view, the depth in an elevation."},
+                {DSnap,"Snap clicks and drags to the editor's grid. Ctrl + wheel over a viewport changes the grid."},
+                {DFloor,"Show only a range of heights. The slider on the right of the plan picks a storey without typing."},
+                {DOverlays,"Draw lights, devices, game actors, guides and annotations over the plan."},
+                {DBlock,"Start a new room, corridor, vent, doorway or stairs as a preview. Right-click the plan to start one where you point."},
+                {DPlace,"Create the brushes of a new preview (Enter), or apply the edits to a placed piece."},
+                {DBuild,"Rebuild BSP geometry so collision and lighting match the brushes (B)."},
+                {DCheck,"List what stops the map from playing: clearance, missing starts, mission and objective flow, wiring, lighting."},
+                {DUndo,"Undo the last map or workspace change (Ctrl+Z)."},{DRedo,"Redo (Ctrl+Y)."},
+                {DName,"The piece's name in the Scene panel and the library."},{DShape,"Room, corridor, vent, crawlway, doorway, or a stair shape."},
+                {DConstruction,"Carve cuts the piece out of solid space; Shell builds walls around it."},
+                {DWidth,"Local X size in units. A player is 96 wide."},{DLength,"Local Y size in units."},{DHeight,"Local Z size in units. A player stands 180 tall, crouches to 125, crawls under 105."},
+                {DThickness,"Wall and floor thickness for shells and stair treads."},{DSteps,"Number of steps for stairs."},
+                {DPositionX,"World X of the piece's base corner."},{DPositionY,"World Y of the piece's base corner."},{DPositionZ,"World Z of the floor. The slider on the plan sets the storey."},
+                {DYaw,"Turn in degrees about Z."},{DCeiling,"Shell rooms get a ceiling slab."},{DPortal,"Doorways become zone portals, which split the map for visibility and sound."},
+                {DDiscard,"Drop the preview or stop editing the piece (Esc)."},{DKeys,"Every keyboard and mouse shortcut of the plan and the Scene panel."}};
+            for(const auto& [id,text]:tips)DesignTip(*s,GetDlgItem(window,id),text);
             s->canvas=CreateWindowExA(WS_EX_CLIENTEDGE,"ReloadedMapDesignCanvas","",WS_CHILD|WS_VISIBLE,412,12,700,620,window,
                                       reinterpret_cast<HMENU>(DCanvas),GetModuleHandle(nullptr),nullptr);
             SetWindowLongPtr(s->canvas,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(s));
@@ -3936,8 +4223,10 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
     }
     catch(const std::exception& e)
     {
+        // Reported in the status line, never in a modal box: a box stops the
+        // panel (and the native test suite) until someone dismisses it.
         DesignStatus(*s,e.what());
-        if(message==WM_COMMAND)MessageBoxA(window,e.what(),"Map Design",MB_OK|MB_ICONINFORMATION);
+        if(message==WM_COMMAND)MessageBeep(MB_ICONINFORMATION);
     }
     return DefWindowProcA(window,message,w,l);
 }
@@ -3951,7 +4240,8 @@ Json DesignView()
             {"depth",s->depth},{"snap",s->snap},{"status",Text(s->status)},
             {"stale",DesignGeometryStale(*s)},{"issues",s->issues.size()},
             {"badge",s->hoverPiece.is_null()?Json{}:Json{{"x",s->hoverAt.x},{"y",s->hoverAt.y},{"wall",s->hoverWall}}},
-            {"followed",s->followed}};
+            {"followed",s->followed},{"epoch",s->epoch},{"mapEpoch",mapEpoch},{"revision",s->revision},{"editorRevision",Editor::Revision()},
+            {"mode",s->mode},{"drag",static_cast<int>(s->drag.kind)},{"floorFilter",s->floorFilter},{"pending",!s->pending.is_null()}};
 }
 void OpenDesign(HWND owner)
 {

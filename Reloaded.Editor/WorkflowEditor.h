@@ -54,13 +54,16 @@ namespace Workflow::Editor
     unsigned long GeometryBuilds();
     Json DesignScene();
     Vector DesignGrid();
-    Json DesignBlockout(const Json& spec,const Pose& frame,const Json& previous = Json{});
-    Json DesignBlockoutBatch(const Json& items);
+    // Followers move by delta inside the same transaction: a group keeping up
+    // with one of its members.
+    Json DesignBlockout(const Json& spec,const Pose& frame,const Json& previous = Json{},const Json& followers = Json{},const Vector& delta = {});
+    Json DesignBlockoutBatch(const Json& items,const Json& followers = Json{},const Vector& delta = {});
     void DesignAlign(const Json& scene,int axis,const std::string& mode,double spacing);
     void DesignLayer(const Json& members,bool hidden,bool locked,const std::string& group = "",const std::string& groupAction = "none");
     void DesignSetFlags(const Json& members,int hidden,int locked);
     void DesignGroupMembers(const Json& members,const std::string& group,const std::string& action);
     void DesignTranslate(const Json& members,const Vector& delta);
+    Json CreateLift(const Vector& position,double width,double length,double thickness,double rise,double moveTime);
     Json DesignSpawns();
     Json DesignClearances();
     void DesignPlay(const Json& start,const Pose& pose,bool launch = true);
@@ -74,7 +77,7 @@ namespace Workflow::Editor
     Json SetActorProperties(const Json& identity,const Json& properties);
     Json CreateSecurityActor(const std::string& type,const Pose& pose,const Json& properties);
     Json CreateMotionSensor(const Vector& low,const Vector& high,const Json& properties);
-    Json MoveSecurityActor(const Json& identity,const Pose& pose,const Json& properties);
+    Json MoveSecurityActor(const Json& identity,const Pose& pose,const Json& properties,const Json& followers = Json{});
     void LinkDetectorToAlarm(const Json& detector,const Json& alarm);
     void UnwireDetector(const Json& detector);
     void DeleteSecurityActor(const Json& identity);

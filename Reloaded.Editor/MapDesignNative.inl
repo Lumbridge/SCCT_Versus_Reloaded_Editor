@@ -157,13 +157,32 @@ namespace
         return {{"map",AuthoringMapKey()},{"spec",spec},{"position",frame.position},{"rotation",frame.rotation},{"members",members},{"fingerprint",DesignFingerprint(members)}};
     }
 }
-Json DesignBlockout(const Json& spec,const Pose& frame,const Json& previous)
+std::vector<Address> SensorVolumes(Address actor);
+// Moves actors by an offset inside the caller's transaction: a group following
+// one of its members. Locked actors stay; a motion sensor's volumes come along.
+void FollowNow(const Json& members,const Vector& delta)
+{
+    if(!members.is_array() || members.empty())return;
+    if(std::abs(delta[0])<1e-9 && std::abs(delta[1])<1e-9 && std::abs(delta[2])<1e-9)return;
+    std::vector<Address> actors;
+    auto add=[&](Address a){if(std::find(actors.begin(),actors.end(),a)==actors.end())actors.push_back(a);};
+    for(auto& id:members)
+    {
+        auto a=ResolveIdentity(id);
+        if(!a || (Property(a,"bLockLocation") && DesignBool(a,"bLockLocation")))continue;
+        add(a);
+        for(auto volume:SensorVolumes(a))add(volume);
+    }
+    for(auto a:actors){Modify(a);auto p=Position(a);for(int i=0;i<3;++i)p[i]+=delta[i];SetPosition(a,p);Call(a,0x44);}
+}
+Json DesignBlockout(const Json& spec,const Pose& frame,const Json& previous,const Json& followers,const Vector& delta)
 {
     auto selection=SelectedIdentities();Json piece;
     try
     {
         Transaction transaction("Create or resize blockout");
         piece=PlaceBlockout(spec,frame,previous);
+        FollowNow(followers,delta);
         transaction.Commit();
     }
     catch(...){Select(selection);throw;}
@@ -171,7 +190,7 @@ Json DesignBlockout(const Json& spec,const Pose& frame,const Json& previous)
     return piece;
 }
 // Several pieces in one Undo step: a moved room takes its doorways with it.
-Json DesignBlockoutBatch(const Json& items)
+Json DesignBlockoutBatch(const Json& items,const Json& followers,const Vector& delta)
 {
     if(!items.is_array() || items.empty() || items.size()>64)throw std::runtime_error("Move between one and 64 pieces at a time.");
     auto selection=SelectedIdentities();Json pieces=Json::array();
@@ -180,6 +199,7 @@ Json DesignBlockoutBatch(const Json& items)
         Transaction transaction("Move blockout pieces");
         for(auto& item:items)
             pieces.push_back(PlaceBlockout(item.at("spec"),{item.at("position").get<Vector>(),item.at("rotation").get<Rotation>()},item.value("previous",Json{})));
+        FollowNow(followers,delta);
         transaction.Commit();
     }
     catch(...){Select(selection);throw;}
@@ -270,12 +290,49 @@ void DesignGroupMembers(const Json& members,const std::string& group,const std::
 // members. Locked actors stay.
 void DesignTranslate(const Json& members,const Vector& delta)
 {
-    std::vector<Address> actors;
-    for(auto& id:members){auto a=ResolveIdentity(id);if(a && !(Property(a,"bLockLocation") && DesignBool(a,"bLockLocation")))actors.push_back(a);}
-    if(actors.empty())return;
+    if(!members.is_array() || members.empty())return;
+    // No empty Undo step when everything asked for is locked or gone.
+    bool movable=false;
+    for(auto& id:members){auto a=ResolveIdentity(id);if(a && !(Property(a,"bLockLocation") && DesignBool(a,"bLockLocation")))movable=true;}
+    if(!movable)return;
     Transaction transaction("Move group");
-    for(auto a:actors){Modify(a);auto p=Position(a);for(int i=0;i<3;++i)p[i]+=delta[i];SetPosition(a,p);Call(a,0x44);}
+    FollowNow(members,delta);
     transaction.Commit();Redraw();
+}
+// A lift: an SLift mover whose platform brush rises by `rise` when a pawn
+// stands on it and comes back after a pause. One Undo step; the new actor is
+// selected. The platform is centred on `position`.
+Json CreateLift(const Vector& position,double width,double length,double thickness,double rise,double moveTime)
+{
+    Design::CheckVector(position);
+    if(width<32 || width>2048 || length<32 || length>2048 || thickness<4 || thickness>256)throw std::runtime_error("Lift platforms are 32 to 2048 units wide and long and 4 to 256 thick.");
+    if(!std::isfinite(rise) || std::abs(rise)<8 || std::abs(rise)>8192)throw std::runtime_error("A lift rises between 8 and 8192 units.");
+    if(!std::isfinite(moveTime) || moveTime<.1 || moveTime>60)throw std::runtime_error("Lift travel takes 0.1 to 60 seconds.");
+    if(!pasteHookReady || insertionText)throw std::runtime_error("Native actor insertion is unavailable or busy.");
+    std::string name="Design_Lift";
+    for(int suffix=2;Find(LevelPath()+"."+name);++suffix)name="Design_Lift_"+std::to_string(suffix);
+    std::ostringstream numbers;numbers<<std::fixed<<std::setprecision(6);
+    numbers<<"MoveTime="<<moveTime<<"\r\nStayOpenTime=3.000000\r\nNumKeys=2\r\nKeyPos(1)=(X=0.000000,Y=0.000000,Z="<<rise<<")\r\n";
+    const std::string text="Begin Map\r\nBegin Actor Class=SBase.SLift Name="+name+"\r\nLocation="+VectorText(position)+"\r\nInitialState=StandOpenTimed\r\n"+numbers.str()
+        +"Begin Brush Name="+name+"Model\r\n"+Magic::BoxPolygons(width/2,length/2,thickness/2)+"End Brush\r\nBrush=Model'"+LevelPath()+"."+name+"Model'\r\nEnd Actor\r\nEnd Map\r\n";
+    struct Scope{~Scope(){insertionText=nullptr;}} scope;
+    auto selection=SelectedIdentities();
+    Address actor=0;
+    try
+    {
+        Transaction transaction("Create lift");
+        insertionText=text.c_str();Select(Json::array());Call(Engine(),0x26c,reinterpret_cast<void*>(Level()),0);
+        insertionText=nullptr;
+        actor=Find(LevelPath()+"."+name,true);
+        if(!actor || SelectedIdentities().size()!=1)throw std::runtime_error("Lift creation failed.");
+        Modify(actor);
+        try{Write(Field(actor,"PrePivot"),std::array<float,3>{0,0,0});}catch(const std::exception&){}
+        SetPosition(actor,position);Call(actor,0x44);
+        transaction.Commit();
+    }
+    catch(...){Select(selection);throw;}
+    Redraw();
+    return Identity(actor);
 }
 std::string StartTeam(Address actor);
 Json DesignSpawns()
