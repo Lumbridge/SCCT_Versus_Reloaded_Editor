@@ -10,13 +10,45 @@ namespace
         auto p=Property(actor,name);if(!p || !IsA(p,"BoolProperty"))throw std::runtime_error(std::string("Unavailable editor flag: ")+name);
         auto slot=actor+Read<int>(p+0x3c),mask=Read<unsigned>(p+0x64);auto flags=Read<unsigned>(slot);Write(slot,value?flags|mask:flags&~mask);
     }
+    // Verified FName::FName(const char*, EFindName), NAME_Add=1, as used by
+    // Tag renaming. Layer names reach the native Group field this way because
+    // a group list separates its names with commas.
+    int DesignName(const std::string& value)
+    {
+        int name=0;
+        reinterpret_cast<void*(__thiscall*)(void*,const char*,int)>(0x10fb9610)(&name,value.c_str(),1);
+        if(Fold(Name(name))!=Fold(value))throw std::runtime_error("The editor could not create the name: "+value);
+        return name;
+    }
+    void DesignSetGroup(Address actor,const std::string& groups)
+    {
+        auto p=Property(actor,"Group");
+        if(!p || !IsA(p,"NameProperty"))throw std::runtime_error("This editor's actors do not expose the native Group field.");
+        Write(actor+Read<int>(p+0x3c),DesignName(groups));
+    }
+    // A fingerprint is the brushes' own text less what the editor changes on
+    // its own: hidden/locked flags, and Location/PrePivot, which it rounds and
+    // rebalances after placement. Moves are followed elsewhere.
+    Json NormalizeFingerprint(Json fingerprint)
+    {
+        if(fingerprint.is_object() && fingerprint.contains("actors"))
+            for(auto& a:fingerprint["actors"])
+                if(a.is_object() && a.contains("text"))
+                    for(const char* key:{"bHiddenEd","bLockLocation","Location","PrePivot","OldLocation"})a["text"]=RemoveProperty(a.at("text").get<std::string>(),key);
+        return fingerprint;
+    }
     Json DesignFingerprint(const Json& members)
     {
         for(auto& id:members)if(!ResolveIdentity(id))throw std::runtime_error("A blockout brush is missing. Undo/redo or restore it before editing this piece.");
-        auto result=CaptureAssembly(members,{});
-        for(auto& a:result["actors"])for(const char* flag:{"bHiddenEd","bLockLocation"})a["text"]=RemoveProperty(a.at("text"),flag);
-        return result;
+        return NormalizeFingerprint(CaptureAssembly(members,{}));
     }
+}
+Vector DesignGrid()
+{
+    auto grid=Read<std::array<float,3>>(Engine()+0x200);
+    Vector result{grid[0],grid[1],grid[2]};
+    for(auto& spacing:result)if(!std::isfinite(spacing) || spacing<0 || spacing>65536)spacing=0;
+    return result;
 }
 Json DesignScene()
 {
@@ -26,6 +58,31 @@ Json DesignScene()
         auto actor=live[i];if(IsA(actor,"Camera"))continue;
         auto item=Identity(actor);item["level"]=LevelIdentity();item["generation"]=MapGeneration();item["position"]=Position(actor);item["selected"]=(Read<unsigned>(actor+0x2f4)&0x40)!=0;
         item["hidden"]=(Read<unsigned>(actor+0x2f4)&0x10)!=0;item["locked"]=DesignBool(actor,"bLockLocation");item["edges"]=Json::array();
+        item["group"]=Property(actor,"Group")?NameField(actor,"Group"):std::string("None");
+        // Carved space, solid space and portals read differently in a plan.
+        item["csg"]=IsA(actor,"Brush")?Read<unsigned char>(actor+0x34c):0;
+        item["portal"]=IsA(actor,"Brush") && (Read<unsigned>(actor+0x344)&0x04000000u)!=0;
+        item["volume"]=IsA(actor,"Volume") || IsA(actor,"ZoneInfo");
+        item["mover"]=IsA(actor,"Mover");
+        item["rotation"]=RotationOf(actor);
+        // Lights and cameras are drawn as reach and view on the plan.
+        if(IsA(actor,"Light"))
+        {
+            auto radius=Property(actor,"LightRadius"),brightness=Property(actor,"LightBrightness");
+            auto number=[&](Address p)->double
+            {
+                if(IsA(p,"FloatProperty"))return Read<float>(actor+Read<int>(p+0x3c));
+                return Read<unsigned char>(actor+Read<int>(p+0x3c));
+            };
+            if(radius && brightness)
+                item["light"]={{"radius",number(radius)*25.0},{"brightness",static_cast<int>(std::clamp(number(brightness),0.0,255.0))}};
+        }
+        if(IsA(actor,"SBase.SCamNetwork"))
+        {
+            auto fov=Property(actor,"FOV");
+            if(!fov)fov=Property(actor,"CamFOV");
+            item["camera"]={{"fov",fov && IsA(fov,"FloatProperty")?static_cast<double>(Read<float>(actor+Read<int>(fov+0x3c))):60.0}};
+        }
         if(IsA(actor,"Brush"))
         {
             auto model=Read<Address>(actor+0x238),polys=model?Read<Address>(model+0x50):0;
@@ -35,6 +92,8 @@ Json DesignScene()
                 for(auto poly:Array(polys+0x28,0x14c))
                 {
                     auto count=Read<unsigned short>(poly+0x148);if(count<3 || count>16)continue;
+                    // Portals can also be flagged on individual polygons.
+                    if(Read<unsigned>(poly+0x140)&0x04000000u)item["portal"]=true;
                     std::vector<Vector> vertices;
                     for(int j=0;j<count;++j)
                     {
@@ -50,37 +109,84 @@ Json DesignScene()
     }
     return result;
 }
-Json DesignBlockout(const Json& spec,const Pose& frame,const Json& previous)
+namespace
 {
-    Design::CheckVector(frame.position);auto definition=Design::Definition(spec);
-    auto prepared=PreparePlacement(definition,frame,"Design_"+Id().substr(0,12)+"_",LevelPath(),{});
-    if(!pasteHookReady || insertionText)throw std::runtime_error("Native brush insertion is unavailable or busy.");
-    if(!previous.is_null())
+    // One piece replaced or created inside an open transaction. The rotation
+    // goes into the brush shape and the actor stays unrotated, so the geometry
+    // build agrees with the wireframes and the design views. New pieces take
+    // the texture browser's current material, like a native builder-brush
+    // addition would.
+    Json PlaceBlockout(const Json& spec,const Pose& frame,const Json& previous)
     {
-        if(previous.at("map")!=AuthoringMapKey() || DesignFingerprint(previous.at("members"))!=previous.at("fingerprint"))
-            throw std::runtime_error("This piece was edited outside the toolkit. Detach it for manual editing or undo those edits first.");
-        for(auto& id:previous.at("members"))if(DesignBool(ResolveIdentity(id),"bLockLocation"))throw std::runtime_error("Unlock this blockout layer first.");
-    }
-    auto selection=SelectedIdentities();Json members=Json::array(),fingerprint;
-    const auto text=prepared.at("t3d").get<std::string>();
-    struct Scope{~Scope(){insertionText=nullptr;}} scope;
-    try
-    {
-        Transaction transaction("Create or resize blockout");
+        std::string material;
+        try{material=CurrentAsset(false);}catch(const std::exception&){}
+        if(material.find_first_of("\"\r\n ")!=std::string::npos)material.clear();
+        Design::CheckVector(frame.position);auto definition=Design::Definition(spec,frame.rotation,material);
+        auto prepared=PreparePlacement(definition,{frame.position,{}},"Design_"+Id().substr(0,12)+"_",LevelPath(),{});
+        if(!pasteHookReady || insertionText)throw std::runtime_error("Native brush insertion is unavailable or busy.");
+        if(!previous.is_null())
+        {
+            if(previous.at("map")!=AuthoringMapKey() || DesignFingerprint(previous.at("members"))!=NormalizeFingerprint(previous.at("fingerprint")))
+                throw std::runtime_error("This piece was edited outside the toolkit. Detach it for manual editing or undo those edits first.");
+            for(auto& id:previous.at("members"))if(DesignBool(ResolveIdentity(id),"bLockLocation"))throw std::runtime_error("Unlock this blockout layer first.");
+        }
+        // Regenerated brushes keep the group the old ones were in.
+        std::string group;
+        if(!previous.is_null())
+            for(auto& id:previous.at("members"))
+                if(auto a=ResolveIdentity(id);a && Property(a,"Group")){group=NameField(a,"Group");break;}
+        Json members=Json::array();
+        const auto text=prepared.at("t3d").get<std::string>();
+        struct Scope{~Scope(){insertionText=nullptr;}} scope;
         if(!previous.is_null()) {Select(previous.at("members"));if(!Exec("ACTOR DELETE"))throw std::runtime_error("Could not replace the old blockout brushes.");}
         insertionText=text.c_str();Select(Json::array());Call(Engine(),0x26c,reinterpret_cast<void*>(Level()),0);
         for(auto& item:prepared.at("actors"))
         {
             auto a=Find(LevelPath()+"."+item.at("name").get<std::string>(),true);if(!a)throw std::runtime_error("Blockout creation failed.");
-            Modify(a);SetPosition(a,item.at("position").get<Vector>());Write(Field(a,"Rotation"),item.at("rotation").get<Rotation>());Call(a,0x44);members.push_back(Identity(a));
+            Modify(a);
+            // A pasted brush can inherit a stray pivot from the editor, which
+            // shifts its polygons by that much in the world. The piece's own
+            // frame is the pivot, so it starts from zero; the editor may then
+            // round Location and park the remainder here, which keeps the
+            // world position exact.
+            try{Write(Field(a,"PrePivot"),std::array<float,3>{0,0,0});}catch(const std::exception&){}
+            SetPosition(a,item.at("position").get<Vector>());Write(Field(a,"Rotation"),item.at("rotation").get<Rotation>());Call(a,0x44);members.push_back(Identity(a));
+            if(!group.empty() && Fold(group)!="none" && Property(a,"Group"))DesignSetGroup(a,group);
         }
         if(SelectedIdentities().size()!=members.size())throw std::runtime_error("Unexpected number of blockout brushes.");
-        fingerprint=DesignFingerprint(members);
+        return {{"map",AuthoringMapKey()},{"spec",spec},{"position",frame.position},{"rotation",frame.rotation},{"members",members},{"fingerprint",DesignFingerprint(members)}};
+    }
+}
+Json DesignBlockout(const Json& spec,const Pose& frame,const Json& previous)
+{
+    auto selection=SelectedIdentities();Json piece;
+    try
+    {
+        Transaction transaction("Create or resize blockout");
+        piece=PlaceBlockout(spec,frame,previous);
         transaction.Commit();
     }
     catch(...){Select(selection);throw;}
+    Select(piece.at("members"));Redraw();
+    return piece;
+}
+// Several pieces in one Undo step: a moved room takes its doorways with it.
+Json DesignBlockoutBatch(const Json& items)
+{
+    if(!items.is_array() || items.empty() || items.size()>64)throw std::runtime_error("Move between one and 64 pieces at a time.");
+    auto selection=SelectedIdentities();Json pieces=Json::array();
+    try
+    {
+        Transaction transaction("Move blockout pieces");
+        for(auto& item:items)
+            pieces.push_back(PlaceBlockout(item.at("spec"),{item.at("position").get<Vector>(),item.at("rotation").get<Rotation>()},item.value("previous",Json{})));
+        transaction.Commit();
+    }
+    catch(...){Select(selection);throw;}
+    Json members=Json::array();
+    for(auto& piece:pieces)for(auto& member:piece.at("members"))members.push_back(member);
     Select(members);Redraw();
-    return {{"map",AuthoringMapKey()},{"spec",spec},{"position",frame.position},{"rotation",frame.rotation},{"members",members},{"fingerprint",fingerprint}};
+    return pieces;
 }
 void DesignAlign(const Json& scene,int axis,const std::string& mode,double spacing)
 {
@@ -95,7 +201,7 @@ void DesignAlign(const Json& scene,int axis,const std::string& mode,double spaci
     auto after=Design::Align(positions,axis,mode,spacing);Transaction transaction("Align or distribute actors");
     for(size_t i=0;i<actors.size();++i){Modify(actors[i]);SetPosition(actors[i],after[i]);Call(actors[i],0x44);}transaction.Commit();Redraw();
 }
-void DesignLayer(const Json& members,bool hidden,bool locked)
+void DesignLayer(const Json& members,bool hidden,bool locked,const std::string& group,const std::string& groupAction)
 {
     std::vector<Address> actors;auto live=LiveActors();
     for(auto& id:members)
@@ -104,16 +210,80 @@ void DesignLayer(const Json& members,bool hidden,bool locked)
         if(a==live[0] || a==live[1] || IsA(a,"Camera"))throw std::runtime_error("Layers cannot contain editor infrastructure.");
         if(!Property(a,"bLockLocation"))throw std::runtime_error("Actor does not expose location locking.");actors.push_back(a);
     }
-    Transaction transaction("Change design layer visibility and lock");
-    for(auto a:actors){Modify(a);DesignSetBool(a,"bLockLocation",locked);auto flags=Read<unsigned>(a+0x2f4);Write(a+0x2f4,(flags&~0x10u)|(hidden?0x10u:0));if(hidden||locked)Write(a+0x2f4,Read<unsigned>(a+0x2f4)&~0x40u);}
+    if(groupAction!="none" && groupAction!="add" && groupAction!="remove")throw std::runtime_error("Invalid layer group action.");
+    // Membership is written into the map's own Group field, so the layer
+    // survives sharing the .sdc without the workspace file.
+    // An editor build without the Group field still gets workspace layers.
+    std::vector<std::string> groups;
+    if(groupAction!="none")for(auto a:actors)
+    {
+        if(!Property(a,"Group")){groups.push_back({});continue;}
+        auto current=NameField(a,"Group");
+        groups.push_back(groupAction=="add"?Design::AddGroup(current,group):Design::RemoveGroup(current,group));
+    }
+    Transaction transaction("Change design layer membership, visibility and lock");
+    for(size_t i=0;i<actors.size();++i)
+    {
+        auto a=actors[i];Modify(a);
+        if(groupAction!="none" && !groups[i].empty())DesignSetGroup(a,groups[i]);
+        DesignSetBool(a,"bLockLocation",locked);auto flags=Read<unsigned>(a+0x2f4);Write(a+0x2f4,(flags&~0x10u)|(hidden?0x10u:0));if(hidden||locked)Write(a+0x2f4,Read<unsigned>(a+0x2f4)&~0x40u);
+    }
     transaction.Commit();Redraw();
 }
+// Hides/shows and locks/unlocks actors; -1 leaves a flag as it is. Hidden or
+// locked actors leave the selection so nothing moves them by accident.
+void DesignSetFlags(const Json& members,int hidden,int locked)
+{
+    std::vector<Address> actors;auto live=LiveActors();
+    for(auto& id:members){auto a=ResolveIdentity(id);if(!a || a==live[0] || a==live[1] || IsA(a,"Camera"))continue;actors.push_back(a);}
+    if(actors.empty())return;
+    Transaction transaction(locked>0?"Lock actors":locked==0?"Unlock actors":hidden>0?"Hide actors":"Show actors");
+    for(auto a:actors)
+    {
+        Modify(a);
+        if(locked>=0 && Property(a,"bLockLocation"))DesignSetBool(a,"bLockLocation",locked!=0);
+        if(hidden>=0){auto flags=Read<unsigned>(a+0x2f4);Write(a+0x2f4,(flags&~0x10u)|(hidden?0x10u:0));}
+        if(hidden>0 || locked>0)Write(a+0x2f4,Read<unsigned>(a+0x2f4)&~0x40u);
+    }
+    transaction.Commit();Redraw();
+}
+// Adds actors to, or removes them from, a named group in the map's own Group
+// field, so the group travels with the .sdc.
+void DesignGroupMembers(const Json& members,const std::string& group,const std::string& action)
+{
+    if(action!="add" && action!="remove")throw std::runtime_error("Invalid group action.");
+    if(action=="add" && !Design::ValidGroupName(group))throw std::runtime_error("Use 1-62 letters, digits or underscores for a group that travels with the map.");
+    std::vector<std::pair<Address,std::string>> changes;
+    for(auto& id:members)
+    {
+        auto a=ResolveIdentity(id);if(!a || !Property(a,"Group"))continue;
+        auto current=NameField(a,"Group");
+        auto next=action=="add"?Design::AddGroup(current,group):Design::RemoveGroup(current,group);
+        if(next!=current)changes.push_back({a,next});
+    }
+    if(changes.empty())return;
+    Transaction transaction(action=="add"?"Add actors to group":"Remove actors from group");
+    for(auto& [a,next]:changes){Modify(a);DesignSetGroup(a,next);}
+    transaction.Commit();Redraw();
+}
+// Moves actors by an offset in one Undo step: a group following one of its
+// members. Locked actors stay.
+void DesignTranslate(const Json& members,const Vector& delta)
+{
+    std::vector<Address> actors;
+    for(auto& id:members){auto a=ResolveIdentity(id);if(a && !(Property(a,"bLockLocation") && DesignBool(a,"bLockLocation")))actors.push_back(a);}
+    if(actors.empty())return;
+    Transaction transaction("Move group");
+    for(auto a:actors){Modify(a);auto p=Position(a);for(int i=0;i<3;++i)p[i]+=delta[i];SetPosition(a,p);Call(a,0x44);}
+    transaction.Commit();Redraw();
+}
+std::string StartTeam(Address actor);
 Json DesignSpawns()
 {
     Json result=Json::array();for(auto a:LiveActors())if(IsA(a,"PlayerStart"))
     {
-        auto item=Identity(a);item["position"]=Position(a);item["rotation"]=RotationOf(a);auto p=Property(a,"TeamNumber");
-        item["team"]=p?MagicValue(p,a+Read<int>(p+0x3c)):Json("0");result.push_back(item);
+        auto item=Identity(a);item["position"]=Position(a);item["rotation"]=RotationOf(a);
+        item["team"]=StartTeam(a);result.push_back(item);
     }
     return result;
 }
@@ -131,15 +301,111 @@ Json DesignClearances()
             auto text=output.text;auto end=text.find_last_not_of(" \r\n\t");if(end==std::string::npos)throw std::runtime_error("Empty class default.");text.resize(end+1);
             return Design::Number(text,1,10000);
         };
+        auto optional=[&](const char* property)->Json
+        {
+            try{return value(property);}catch(const std::exception&){return Json{};}
+        };
+        auto team=folded.find("spy")!=std::string::npos?"Spy":"Merc";
         try
         {
             double radius=value("CollisionRadius"),height=value("CollisionHeight");
-            profiles.push_back({{"name",type+" standing"},{"width",radius*2},{"height",height*2}});
-            try{profiles.push_back({{"name",type+" crouching"},{"width",value("CrouchRadius")*2},{"height",value("CrouchHeight")*2}});}catch(const std::exception&){}
+            // Movement limits are reported when a class exposes them; the
+            // workspace keeps editable values either way.
+            Json speed=optional("GroundSpeed"),step=optional("MaxStepHeight");
+            Json standing={{"name",type+" standing"},{"width",radius*2},{"height",height*2},{"team",team}};
+            if(!speed.is_null())standing["speed"]=speed;
+            if(!step.is_null())standing["stepHeight"]=step;
+            profiles.push_back(standing);
+            try
+            {
+                Json crouching={{"name",type+" crouching"},{"width",value("CrouchRadius")*2},{"height",value("CrouchHeight")*2},{"team",team}};
+                if(!speed.is_null())crouching["speed"]=speed;
+                profiles.push_back(crouching);
+            }
+            catch(const std::exception&){}
         }
         catch(const std::exception&) { /* No guessed collision presets. */ }
     }
     return profiles;
+}
+// A map without a start for the chosen team gets one for the playtest only.
+// The creation is a single transaction that is undone as soon as Play Level
+// returns, so the saved map keeps exactly the spawns the author placed.
+// TeamNumber is not reachable through reflection on this editor's PlayerStart,
+// though the pasted text sets it and the exporter writes it. When reflection
+// does find it, it is written directly as well.
+void WriteTeamNumber(Address actor,const std::string& team)
+{
+    if(team.empty())return;
+    auto p=Property(actor,"TeamNumber");
+    if(!p)return;
+    const int value=std::stoi(team);
+    const auto at=actor+Read<int>(p+0x3c);
+    if(IsA(p,"ByteProperty"))Write(at,static_cast<unsigned char>(value));
+    else Write(at,value);
+}
+// The team of a start: from reflection when it exposes TeamNumber, otherwise
+// from the actor's own exported text, where the engine writes it.
+std::string StartTeam(Address actor)
+{
+    if(auto p=Property(actor,"TeamNumber"))
+    {
+        auto value=MagicValue(p,actor+Read<int>(p+0x3c));
+        return value.is_string()?value.get<std::string>():value.dump();
+    }
+    try
+    {
+        auto captured=CaptureAssembly(Json::array({Identity(actor)}),{});
+        for(const auto& entry:captured.at("actors"))
+        {
+            const auto text=entry.value("text",std::string());
+            std::smatch match;
+            if(std::regex_search(text,match,std::regex("(?:^|\\n)\\s*TeamNumber=([0-9]+)")))return match[1].str();
+        }
+    }
+    catch(const std::exception&) { /* Fall back to the default team. */ }
+    return "0";
+}
+Json DesignTemporaryStart(const std::string& type,const std::string& team,const Pose& pose)
+{
+    Design::CheckVector(pose.position);
+    if(!std::regex_match(type,std::regex("[A-Za-z_][A-Za-z0-9_]{0,62}\\.[A-Za-z_][A-Za-z0-9_]{0,62}")))throw std::runtime_error("Choose a PlayerStart class.");
+    if(!team.empty() && !std::regex_match(team,std::regex("[A-Za-z0-9_]{1,63}")))throw std::runtime_error("Invalid team value.");
+    if(!pasteHookReady || insertionText)throw std::runtime_error("Native actor insertion is unavailable or busy.");
+    std::string name="DesignPlaytestStart";
+    for(int suffix=2;Find(LevelPath()+"."+name);++suffix)name="DesignPlaytestStart_"+std::to_string(suffix);
+    auto text="Begin Map\r\nBegin Actor Class="+type+" Name="+name+"\r\nLocation="+VectorText(pose.position)+"\r\nRotation="+RotationText(pose.rotation)+"\r\n"
+        +(team.empty()?"":"TeamNumber="+team+"\r\n")+"End Actor\r\nEnd Map\r\n";
+    auto before=SelectedIdentities();
+    struct Scope{Scope(const char* value){if(insertionText)throw std::runtime_error("Actor insertion is busy.");insertionText=value;}~Scope(){insertionText=nullptr;}} scope(text.c_str());
+    Json identity;
+    try
+    {
+        Transaction transaction("Temporary playtest start");
+        Select(Json::array());Call(Engine(),0x26c,reinterpret_cast<void*>(Level()),0);
+        auto actor=Find(LevelPath()+"."+name,true);
+        if(!actor || SelectedIdentities().size()!=1)throw std::runtime_error("Could not create a temporary team spawn.");
+        if(!IsA(actor,"PlayerStart"))throw std::runtime_error("That class is not a PlayerStart.");
+        Modify(actor);SetPosition(actor,pose.position);Write(Field(actor,"Rotation"),pose.rotation);WriteTeamNumber(actor,team);Call(actor,0x44);
+        identity=Identity(actor);
+        transaction.Commit();
+    }
+    catch(...){Select(before);throw;}
+    Select(before);
+    // Return the spawn entry itself, so playtesting can use it like any other.
+    for(auto& spawn:DesignSpawns())if(spawn.at("path")==identity.at("path"))return spawn;
+    throw std::runtime_error("The temporary team spawn did not register as a player start.");
+}
+void DesignRemoveTemporaryStart(const Json& identity)
+{
+    if(!ResolveIdentity(identity))return;
+    Exec("TRANSACTION UNDO");
+    if(!ResolveIdentity(identity))return;
+    // Undo could not reach the creation; delete the actor directly instead.
+    auto previous=SelectedIdentities();
+    Select(Json::array({identity}));
+    if(!Exec("ACTOR DELETE"))throw std::runtime_error("Remove the temporary playtest spawn manually: "+identity.at("path").get<std::string>());
+    Select(previous);
 }
 void DesignPlay(const Json& start,const Pose& pose,bool launch)
 {

@@ -166,6 +166,32 @@ int main(int argc, char **argv)
         Check(MapPackage::Inspect(root, map).files.size() == 4, "both texture representations included");
         Save(root / "Packages/Sounds/Mesh.uax", Package({}));
         Check(!MapPackage::Inspect(root, map).errors.empty(), "ambiguous package name rejected");
+        {
+            // A Map Design workspace and its reference images travel with the map.
+            auto designRoot = root / "design";
+            auto designMap = designRoot / "Packages/Maps/Blockout.sdc";
+            Save(designMap, Compressed(Package({"Engine"})));
+            fs::create_directories(designRoot / "System");
+            auto text = [](const std::string &value) { return Bytes(value.begin(), value.end()); };
+            Save(designRoot / "System/ReloadedEditor/Workspaces/Blockout.json",
+                 text(R"({"version":1,"map":"Blockout","design":{"references":[{"file":"plan.png","plane":0},)"
+                      R"({"file":"gone.png","plane":1},{"file":"../escape.png","plane":0}]}})"));
+            Save(designRoot / "System/ReloadedEditor/References/plan.png", text("image"));
+            Save(designRoot / "System/ReloadedEditor/References/escape.png", text("escape"));
+            auto workspacePlan = MapPackage::Inspect(designRoot, designMap);
+            Check(workspacePlan.errors.empty() && workspacePlan.files.size() == 3,
+                  "workspace and its existing reference image are packaged, missing and unsafe names skipped");
+            Check(workspacePlan.files[1].destination == "System/ReloadedEditor/Workspaces/Blockout.json" &&
+                      workspacePlan.files[2].destination == "System/ReloadedEditor/References/plan.png",
+                  "workspace files keep the game's folder layout");
+            MapPackage::Write(workspacePlan, designRoot / "design.zip");
+            Check(fs::exists(designRoot / "design.zip"), "workspace package written");
+            // An unreadable workspace never blocks packaging.
+            Save(designRoot / "System/ReloadedEditor/Workspaces/Blockout.json", text("{not json"));
+            auto broken = MapPackage::Inspect(designRoot, designMap);
+            Check(broken.errors.empty() && broken.files.size() == 2,
+                  "an unreadable workspace ships without its images and never fails the package");
+        }
         auto invalid = root / "invalid.usx";
         auto bytes = Package({"Mesh"});
         bytes.resize(bytes.size() - 1);

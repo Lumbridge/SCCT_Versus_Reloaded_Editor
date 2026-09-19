@@ -198,6 +198,7 @@ namespace
     volatile LONG g_initialized = 0;
     volatile LONG g_buildActive = 0;
     volatile LONG g_buildSerial = 0;
+    volatile LONG g_geometryBuilds = 0;
     volatile LONG g_stage = static_cast<LONG>(BuildStage::None);
     volatile LONG g_adHocStage = 0;
     volatile LONG g_crashCaptured = 0;
@@ -1167,6 +1168,8 @@ namespace
         RecordEvent(EventType::StageEnd, reinterpret_cast<uintptr_t>(g_levelModel),
                     0, 0, 0, static_cast<LONG>(current), 0);
         FlushFileBuffers(g_journal);
+        if (current != BuildStage::Lighting)
+            InterlockedIncrement(&g_geometryBuilds);
         InterlockedExchange(&g_buildActive, 0);
         InterlockedExchange(&g_stage, static_cast<LONG>(BuildStage::None));
         InterlockedExchange(&g_adHocStage, 0);
@@ -1987,4 +1990,9 @@ bool BspDiagnostics::LogException(EXCEPTION_POINTERS* exceptionInfo)
 
     WriteStateReport("BspCrash", exceptionInfo);
     return true;
+}
+
+unsigned long BspDiagnostics::BuildCount()
+{
+    return static_cast<unsigned long>(InterlockedCompareExchange(&g_geometryBuilds, 0, 0));
 }

@@ -186,6 +186,15 @@ void PlayLevel()
     // Native menu resource: &Play Level (Ctrl+P), command 0x9c4f.
     SendMessage(window,WM_COMMAND,40015,0);
 }
+// Native menu resource: Build > Rebuild Geometry Only, command 40160.
+void BuildGeometry()
+{
+    Engine();auto frame=Read<Address>(0x1165df84);auto window=frame?reinterpret_cast<HWND>(Read<Address>(frame+4)):nullptr;
+    window=window?GetAncestor(window,GA_ROOT):nullptr;
+    if(!window || !IsWindow(window))throw std::runtime_error("The main editor window is unavailable.");
+    SendMessage(window,WM_COMMAND,40160,0);
+}
+unsigned long GeometryBuilds() { return BspDiagnostics::BuildCount(); }
 Json EventAssets(const std::string& type,bool classes)
 {
     Engine();Json out=Json::array();

@@ -1,4 +1,5 @@
 #include "MapPackage.h"
+#include "Include/nlohmann/json.hpp"
 #include "RecoveredAssetPackage.h"
 #include <algorithm>
 #include <array>
@@ -165,6 +166,40 @@ bool Runtime(const std::string &name)
     static const std::set<std::string> names = {"core", "engine", "sbase", "sgameplayobjects", "softbody"};
     return names.count(Fold(name)) != 0;
 }
+// Reference image names inside a Map Design workspace file. A workspace that
+// cannot be read simply contributes no images; it is never a packaging error.
+std::vector<std::string> WorkspaceReferences(const fs::path &workspace)
+{
+    std::vector<std::string> files;
+    try
+    {
+        std::ifstream input(workspace, std::ios::binary);
+        if (!input)
+            return files;
+        auto document = nlohmann::json::parse(input, nullptr, false);
+        if (!document.is_object() || !document.contains("design"))
+            return files;
+        const auto &design = document.at("design");
+        if (!design.is_object() || !design.contains("references") || !design.at("references").is_array())
+            return files;
+        for (const auto &reference : design.at("references"))
+        {
+            if (!reference.is_object() || !reference.contains("file") || !reference.at("file").is_string())
+                continue;
+            auto file = reference.at("file").get<std::string>();
+            if (file.empty() || file.size() > 255 || file.find_first_of("\\/:\r\n") != std::string::npos ||
+                file.find("..") != std::string::npos)
+                continue;
+            if (std::find(files.begin(), files.end(), file) == files.end())
+                files.push_back(file);
+        }
+    }
+    catch (const std::exception &)
+    {
+        files.clear();
+    }
+    return files;
+}
 void Check(const Entry &entry)
 {
     Require(fs::is_regular_file(entry.source) && fs::file_size(entry.source) == entry.size &&
@@ -306,9 +341,31 @@ Plan Inspect(const std::filesystem::path &gameRoot, const std::filesystem::path 
         for (const auto &path : image->second)
             if (Fold(path.extension().string()) == ".utx" || Fold(path.extension().string()) == ".utc")
                 add(path, "Map-selection image");
+    // The Map Design workspace keeps reference images, annotations, layers and
+    // parametric blockout history with the map. It is optional: a recipient
+    // without it still opens an ordinary map.
+    auto editor = root / "System" / "ReloadedEditor";
+    auto workspace = editor / "Workspaces" / (map.stem().string() + ".json");
+    std::set<size_t> workspaceFiles;
+    if (fs::is_regular_file(workspace))
+    {
+        add(workspace, "Map Design workspace");
+        workspaceFiles.insert(visited.at(Fold(workspace.string())));
+        for (const auto &file : WorkspaceReferences(workspace))
+        {
+            auto reference = editor / "References" / file;
+            if (!fs::is_regular_file(reference))
+                continue;
+            add(reference, "Map Design reference image");
+            workspaceFiles.insert(visited.at(Fold(reference.string())));
+        }
+    }
     for (size_t i = 0; i < plan.files.size(); ++i)
     {
         const auto file = plan.files[i];
+        // Workspace files and reference images carry no package imports.
+        if (workspaceFiles.count(i))
+            continue;
         try
         {
             for (const auto &name : Imports(file.source))

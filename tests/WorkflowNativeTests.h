@@ -8,7 +8,7 @@ namespace WorkflowProbe {
 UINT objectivePopupChoice=0;bool objectivePopupFound=false;int objectivePopupTicks=0;
 void CALLBACK ChooseObjectivePopup(HWND,UINT,UINT_PTR,DWORD)
 {
-    if(++objectivePopupTicks>20){EndMenu();return;}
+    if(++objectivePopupTicks>60){EndMenu();return;}
     if(objectivePopupFound)return;
     EnumThreadWindows(GetCurrentThreadId(),[](HWND window,LPARAM)->BOOL {
         char cls[64]{};GetClassNameA(window,cls,sizeof(cls));if(strcmp(cls,"#32768"))return TRUE;
@@ -118,6 +118,8 @@ nlohmann::json MagicSchema()
     return result;
 }
 std::string formName;
+// Map Design combo choices for its route and workspace dialogs.
+int routeTeamChoice=0,workspaceChoice=0;
 bool cancelTagPreview=false;
 std::string excludeTagEntity;
 std::filesystem::path previewScreenshot;
@@ -127,9 +129,11 @@ std::wstring jsonDialogPath;
 bool jsonDialogCancel=false;
 bool authoringPreviewCancel=false,authoringPreviewSeen=false;
 int jsonDialogTicks=0;
+// Ticks are counted from the moment each file dialog appears, so an earlier
+// form in the same command does not use up the count.
+HWND jsonDialogWindow=nullptr;
 void CALLBACK AnswerJsonDialog(HWND,UINT,UINT_PTR,DWORD)
 {
-    ++jsonDialogTicks;
     EnumThreadWindows(GetCurrentThreadId(),[](HWND w,LPARAM)->BOOL {
         wchar_t title[256]{};GetWindowTextW(w,title,256);
         if(!wcscmp(title,L"Map JSON")){PostMessage(w,WM_COMMAND,GetDlgItem(w,IDOK)?IDOK:IDCANCEL,0);return TRUE;}
@@ -138,7 +142,9 @@ void CALLBACK AnswerJsonDialog(HWND,UINT,UINT_PTR,DWORD)
             authoringPreviewSeen=true;if(!previewScreenshot.empty())Screenshot(w,previewScreenshot);
             PostMessage(w,WM_COMMAND,authoringPreviewCancel?IDCANCEL:IDOK,0);return TRUE;
         }
-        if(wcscmp(title,L"Choose Reference Image") && wcscmp(title,L"Export Map to JSON") && wcscmp(title,L"Import Map from JSON") && wcscmp(title,L"Export SMagicEvent as JSON") && wcscmp(title,L"Import JSON into the open SMagicEvent"))return TRUE;
+        if(wcscmp(title,L"Choose Reference Image") && wcscmp(title,L"Export Map Design Workspace") && wcscmp(title,L"Import Map Design Workspace") && wcscmp(title,L"Export Map to JSON") && wcscmp(title,L"Import Map from JSON") && wcscmp(title,L"Export SMagicEvent as JSON") && wcscmp(title,L"Import JSON into the open SMagicEvent"))return TRUE;
+        if(w!=jsonDialogWindow){jsonDialogWindow=w;jsonDialogTicks=0;}
+        ++jsonDialogTicks;
         if(jsonDialogCancel || jsonDialogTicks>40){PostMessage(w,WM_COMMAND,IDCANCEL,0);return TRUE;}
         if(jsonDialogTicks!=2 || !IsWindowEnabled(w))return TRUE;
         SendMessageW(w,CDM_SETCONTROLTEXT,edt1,reinterpret_cast<LPARAM>(jsonDialogPath.c_str()));
@@ -147,7 +153,11 @@ void CALLBACK AnswerJsonDialog(HWND,UINT,UINT_PTR,DWORD)
             if(!wcscmp(cls,L"Edit") && (GetDlgCtrlID(child)==1001 || GetDlgCtrlID(child)==edt1 || GetDlgCtrlID(GetParent(child))==cmb13 || GetDlgCtrlID(GetParent(GetParent(child)))==cmb13))SetWindowTextW(child,jsonDialogPath.c_str());
             return TRUE;
         },0);
-        PostMessage(w,WM_COMMAND,IDOK,0);return TRUE;
+        PostMessage(w,WM_COMMAND,IDOK,0);
+        // Start counting again for the next dialog, even if Windows reuses
+        // this handle; a dialog that stays open is simply answered again.
+        jsonDialogWindow=nullptr;jsonDialogTicks=0;
+        return TRUE;
     },0);
 }
 HWND FindDialog(const char* title)
@@ -166,12 +176,27 @@ void CALLBACK Answer(HWND,UINT,UINT_PTR,DWORD)
         {
             char title[256]{};GetWindowTextA(w,title,256);
             if(strstr(title,"Save New") || strstr(title,"Save Selection") || strstr(title,"Rename"))SetWindowTextA(GetDlgItem(w,1000),formName.c_str());
+            // Map Design route teams and workspace import/export use combo choices.
+            if(strstr(title,"Plan Routes")){SetWindowTextA(GetDlgItem(w,1000),formName.c_str());SendMessage(GetDlgItem(w,1002),CB_SETCURSEL,routeTeamChoice,0);}
+            if(strstr(title,"Map Design Workspace"))SendMessage(GetDlgItem(w,1000),CB_SETCURSEL,workspaceChoice,0);
+            if(strstr(title,"Compare Route Timings"))
+            {
+                // The two most recent routes are this fixture's spy and merc routes.
+                auto count=static_cast<int>(SendMessage(GetDlgItem(w,1000),CB_GETCOUNT,0,0));
+                SendMessage(GetDlgItem(w,1000),CB_SETCURSEL,count-2,0);
+                SendMessage(GetDlgItem(w,1001),CB_SETCURSEL,count-1,0);
+            }
             if(strstr(title,"Edit Assembly Contents"))SendMessage(GetDlgItem(w,1000),CB_SETCURSEL,1,0);
             SendMessage(w,WM_COMMAND,IDOK,0);
         }
         if(!strcmp(cls,"#32770") && GetDlgItem(w,IDOK))
         {
             char title[256]{};GetWindowTextA(w,title,256);
+            // File dialogs belong to AnswerJsonDialog. Pressing OK here as well
+            // re-enters a dialog that is still handling the previous press.
+            for(const char* owned:{"Choose Reference Image","Export Map Design Workspace","Import Map Design Workspace",
+                                   "Export Map to JSON","Import Map from JSON","Export SMagicEvent as JSON"})
+                if(!strcmp(title,owned))return TRUE;
             if(!strcmp(title,"Select saved playable map (save/build your edits first)"))
             {
                 packagePreviewChecked=true;
@@ -497,6 +522,61 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             using DesignFilename=void(__thiscall*)(void*,const char*);
             reinterpret_cast<DesignFilename>(0x10e05e1c)(*reinterpret_cast<void**>(0x1165e80c),destination);
             std::ofstream(directory/"design_clearances.json")<<call({{"op","design.clearances"}}).dump(2);
+            {
+                // Diagnostic: the security-related actor classes this build
+                // loads, with their reflected properties, for the security
+                // tools in Map Design.
+                J dump=J::object();
+                for(auto& cls:call({{"op","magic.classes"}}))
+                {
+                    const auto name=cls["class"].get<std::string>();
+                    bool security=false;
+                    for(const char* key:{"Laser","Mine","Cam","Detector","Sensor","Alarm","Lift","Door","Sticky","Trigger","Switch","Light","Objective","Mission","Turret","Grenade",
+                                         "GE","Ladder","Pipe","Zip","Fence","HandOver","PlayerStart","Rappel","Flag","Hoist","Rope","PawnAttaque","PAWNDEFENSE","Engine.Brush","Engine.Volume","LevelInfo","ZoneInfo","Engine.Mover","StaticMeshActor"})
+                        if(name.find(key)!=std::string::npos)security=true;
+                    if(!security)continue;
+                    try
+                    {
+                        auto created=call({{"op","magic.create"},{"class",name},{"geometry",cls["brush"].get<bool>()?"box":"point"}});
+                        auto info=call({{"op","magic.inspect"},{"actor",created}});
+                        dump[name]={{"brush",cls["brush"]},{"schema",info["schema"]},{"values",info["values"]}};
+                        Exec("TRANSACTION UNDO");
+                    }
+                    catch(const std::exception& e){dump[name]={{"error",e.what()}};}
+                }
+                std::ofstream(directory/"security_classes.json")<<dump.dump(2);
+            }
+            {
+                // Diagnostic: where do brushes land for fractional positions?
+                J report=J::array();
+                struct Variant { const char* kind; const char* construction; std::array<double,3> position; int yaw; };
+                for(const auto& variant:std::vector<Variant>{{"Vent","Carve",{1438.16,-443.79,-0.39},0},{"Vent","Carve",{1438.16,-443.79,-0.39},16384},
+                    {"Vent","Carve",{1438.16,-443.79,-0.39},32768},{"Corridor","Carve",{1438.16,-443.79,-0.39},16384},{"Room","Shell",{1438.16,-443.79,-0.39},0},
+                    {"Vent","Carve",{1438.16,-443.79,-0.39},8192}})
+                {
+                    const auto position=variant.position;
+                    J probe={{"kind",variant.kind},{"width",112},{"length",416},{"height",96},{"thickness",16},{"steps",8},{"ceiling",true},{"construction",variant.construction},{"name","Drift probe"}};
+                    auto placed=call({{"op","design.block"},{"spec",probe},{"position",position},{"rotation",{0,variant.yaw,0}}});
+                    J entry={{"asked",position},{"kind",variant.kind},{"yaw",variant.yaw},{"members",placed["members"]}};
+                    for(auto& item:call({{"op","design.scene"}}))
+                        for(auto& member:placed["members"])
+                            if(item["path"]==member["path"])
+                            {
+                                std::array<double,3> lo{1e9,1e9,1e9},hi{-1e9,-1e9,-1e9};
+                                if(entry.contains("lo")){lo=entry["lo"].get<std::array<double,3>>();hi=entry["hi"].get<std::array<double,3>>();}
+                                for(auto& edge:item["edges"])for(int end=0;end<2;++end)for(int axis=0;axis<3;++axis)
+                                {
+                                    const double v=edge[end][axis];if(v<lo[axis])lo[axis]=v;if(v>hi[axis])hi[axis]=v;
+                                }
+                                entry["actorPosition"]=item["position"];entry["lo"]=lo;entry["hi"]=hi;
+                                try{auto info=call({{"op","magic.inspect"},{"actor",member}});J v=J::object();for(const char* k:{"Location","PrePivot","MainScale","PostScale","Rotation"})if(info["values"].contains(k))v[k]=info["values"][k];entry["values"]=v;}
+                                catch(const std::exception& e){entry["inspectError"]=e.what();}
+                            }
+                    report.push_back(entry);
+                    Exec("TRANSACTION UNDO");
+                }
+                std::ofstream(directory/"placement_drift.json")<<report.dump(2);
+            }
             J spec={{"kind","Room"},{"width",512},{"length",768},{"height",256},{"thickness",16},{"steps",8},{"ceiling",true},{"name","Native design room"}};
             auto create=[&](J value,J previous=J{}){return call({{"op","design.block"},{"spec",value},{"position",{1024,2048,64}},{"rotation",{0,16384,0}},{"previous",previous}});};
             auto room=create(spec);require(room["members"].size()==7,"blockout creates subtractive space and six boundary brushes");
@@ -509,7 +589,80 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             Exec("TRANSACTION REDO");call({{"op","design.layer"},{"members",resized["members"]},{"hidden",true},{"locked",true}});
             auto hidden=call({{"op","design.scene"}});for(auto& member:resized["members"])for(auto& a:hidden)if(a["path"]==member["path"])require(a["hidden"]==true && a["locked"]==true,"native layer hides and locks actors");
             Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");require(call({{"op","design.scene"}}).size()==baseline.size(),"blockout undo returns to baseline");
-            spec["kind"]="Stairs";auto stairs=create(spec);require(stairs["members"].size()==8,"native stair brush generation");Exec("TRANSACTION UNDO");
+            // Carve construction: one subtractive brush where the shell used seven.
+            J carve=spec;carve["construction"]="Carve";carve["width"]=512;carve["name"]="Native carved room";
+            auto carved=create(carve);
+            require(carved["members"].size()==1,"carve construction places a single subtractive brush");
+            auto carvedScene=call({{"op","design.scene"}});
+            require(carvedScene.size()==baseline.size()+1,"carved room adds one native actor");
+            for(auto& a:carvedScene)if(a["path"]==carved["members"][0]["path"])require(a["edges"].size()==24,"carved room exports real brush geometry");
+            // The brushes a piece generates must sit exactly where its preview
+            // says, including at positions that are not on the editor grid.
+            {
+                J sync={{"kind","Room"},{"construction","Carve"},{"width",500},{"length",300},{"height",200},
+                        {"thickness",16},{"steps",8},{"ceiling",true},{"name","Sync"}};
+                const double x=1000.5,y=2000.25,z=64;
+                auto piece=call({{"op","design.block"},{"spec",sync},{"position",{x,y,z}},{"rotation",{0,0,0}},{"previous",J{}}});
+                auto extent=[&](const J& members,int axis)
+                {
+                    auto scene=call({{"op","design.scene"}});
+                    double low=1e9,high=-1e9;
+                    for(auto& member:members)
+                        for(auto& actor:scene)
+                            if(actor["path"]==member["path"])
+                                for(auto& edge:actor["edges"])
+                                    for(int end=0;end<2;++end)
+                                    {
+                                        // windows.h defines min/max macros in this probe.
+                                        const double value=edge[end][axis].get<double>();
+                                        if(value<low)low=value;
+                                        if(value>high)high=value;
+                                    }
+                    return std::pair<double,double>{low,high};
+                };
+                auto [low,high]=extent(piece["members"],0);
+                auto report="a piece's brushes match its preview (expected "+std::to_string(x-250)+" to "+std::to_string(x+250)
+                    +", got "+std::to_string(low)+" to "+std::to_string(high)+")";
+                require(std::abs(low-(x-250))<.01 && std::abs(high-(x+250))<.01,report.c_str());
+                Exec("TRANSACTION UNDO");
+                // A quarter-turned piece: its rotation lives in the brush shape,
+                // not on the actor, because the geometry build ignores actor
+                // Rotation and would otherwise build it sideways.
+                auto turned=call({{"op","design.block"},{"spec",sync},{"position",{x,y,z}},{"rotation",{0,16384,0}},{"previous",J{}}});
+                auto [turnedLow,turnedHigh]=extent(turned["members"],0);
+                auto turnedReport="a quarter-turned piece is shaped in its polygons (expected "+std::to_string(x-150)+" to "+std::to_string(x+150)
+                    +", got "+std::to_string(turnedLow)+" to "+std::to_string(turnedHigh)+")";
+                require(std::abs(turnedLow-(x-150))<.01 && std::abs(turnedHigh-(x+150))<.01,turnedReport.c_str());
+                for(auto& actor:call({{"op","design.scene"}}))
+                    if(actor["path"]==turned["members"][0]["path"])
+                        require(actor["rotation"]==J::array({0,0,0}),"a placed piece's brush actor carries no rotation for the build to ignore");
+                Exec("TRANSACTION UNDO");
+            }
+            // A doorway can carry a zone portal sheet, which the editor counts
+            // as a zone/portal brush.
+            auto portalsBefore=call({{"op","brush.visibility"}})[0]["total"].get<int>();
+            J doorway={{"kind","Doorway"},{"construction","Carve"},{"width",96},{"length",16},{"height",128},{"thickness",16},{"steps",8},{"portal",true},{"name","Native doorway"}};
+            auto door=create(doorway);
+            require(door["members"].size()==2,"portal doorway places its opening and a portal sheet");
+            require(call({{"op","brush.visibility"}})[0]["total"].get<int>()==portalsBefore+1,"doorway portal sheet registers as a zone portal brush");
+            Exec("TRANSACTION UNDO");
+            require(call({{"op","brush.visibility"}})[0]["total"].get<int>()==portalsBefore,"portal doorway undoes as one transaction");
+            // Layers reach the map's own Group field.
+            call({{"op","design.layer"},{"members",carved["members"]},{"hidden",false},{"locked",false},{"group","Native_layer"},{"groupAction","add"}});
+            auto grouped=call({{"op","design.scene"}});
+            for(auto& member:carved["members"])
+                for(auto& a:grouped)
+                    if(a["path"]==member["path"])require(a["group"].get<std::string>().find("Native_layer")!=std::string::npos,"layer membership is written into the native Group field");
+            call({{"op","design.layer"},{"members",carved["members"]},{"hidden",false},{"locked",false},{"group","Native_layer"},{"groupAction","remove"}});
+            auto ungrouped=call({{"op","design.scene"}});
+            for(auto& member:carved["members"])
+                for(auto& a:ungrouped)
+                    if(a["path"]==member["path"])require(a["group"]=="None","removing a layer clears its native group");
+            Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");
+            require(call({{"op","design.scene"}}).size()==baseline.size(),"carved room, doorway and layer changes undo back to baseline");
+            auto grid=call({{"op","design.grid"}});
+            require(grid.size()==3 && grid[0].get<double>()>=0 && grid[0].get<double>()<=65536,"design views read the editor's grid spacing");
+            spec["kind"]="Stairs";auto stairs=create(spec);require(stairs["members"].size()==9,"native stair brush generation: steps and their glide ramp");Exec("TRANSACTION UNDO");
             spec["kind"]="Ramp";auto ramp=create(spec);auto rampScene=call({{"op","design.scene"}});J selected=J::array();for(auto& a:rampScene)if(a["path"]==ramp["members"][0]["path"])selected.push_back(a);
             require(selected.size()==1 && selected[0]["edges"].size()==18,"ramp imports five outward polygon faces");
             call({{"op","design.align"},{"scene",selected},{"axis",0},{"mode","Align"}});Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");
@@ -527,10 +680,359 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             KillTimer(nullptr,playTimer);*minimizeSlot=originalMinimize;*launchSlot=originalLaunch;DWORD ignored;VirtualProtect(launchSlot,sizeof(void*),protection,&ignored);
             require(WorkflowProbe::designLaunchSeen && WorkflowProbe::designLaunchPose,"native Play Level reaches launch with the temporary team spawn pose");
             require(call({{"op","design.spawns"}})==starts,"native Play Level returns with original editor spawns restored");
+            // A team without a start gets a temporary one for the playtest only.
+            auto temporary=call({{"op","design.tempstart"},{"class","Engine.PlayerStart"},{"team","1"},{"position",{600,700,800}},{"rotation",{0,16384,0}}});
+            require(call({{"op","design.spawns"}}).size()==starts.size()+1,"temporary playtest start is created");
+            call({{"op","design.play"},{"start",temporary},{"position",{300,400,500}},{"rotation",{0,16384,0}},{"launch",false}});
+            call({{"op","design.removestart"},{"start",temporary}});
+            require(call({{"op","design.spawns"}})==starts,"temporary playtest start is removed again, leaving the author's spawns");
             SendMessage(frameWindow,WM_COMMAND,40948,0);auto design=WorkflowProbe::FindDialog("Map Design");require(design!=nullptr,"Map Design menu opens native workspace");
+            // Viewport cameras come and go as the editor works; count map actors.
+            auto actorCount=[&]{size_t n=0;for(auto& a:call({{"op","actors"}}))if(a["class"].get<std::string>().find("Camera")==std::string::npos)++n;return n;};
             WorkflowProbe::Click(design,706); // New blockout, then verify a preview has no native actors.
-            auto previewCount=call({{"op","actors"}}).size();WorkflowProbe::Screenshot(design,directory/"map_design_preview.bmp");
-            SendMessage(design,WM_COMMAND,708,0);require(call({{"op","actors"}}).size()==previewCount+7,"design preview applies through its actual Place button");
+            auto previewCount=actorCount();WorkflowProbe::Screenshot(design,directory/"map_design_preview.bmp");
+            // The preview arrives through the inspector, with no dialog.
+            auto field=[&](int id){char text[256]{};GetDlgItemTextA(design,id,text,sizeof(text));return std::string(text);};
+            require(field(754).find("New preview")!=std::string::npos,"a new blockout opens in the inspector rather than a dialog");
+            require(field(743)=="1024" && field(740)=="Blockout","inspector fields describe the live preview");
+            SendMessage(design,WM_COMMAND,708,0);require(actorCount()==previewCount+1,"design preview applies through its actual Place button as one carved brush");
+            require(field(754).find("Selected piece")!=std::string::npos,"placing hands the new piece straight back to the inspector");
+            auto placedRoom=call({{"op","actors"},{"selected",true}});
+            require(!placedRoom.empty(),"placing keeps the new piece selected for further editing");
+            // The placed room stays selected: put a doorway in its wall.
+            auto beforeDoorway=actorCount();
+            WorkflowProbe::Click(design,724);
+            WorkflowProbe::Click(design,708);
+            require(actorCount()==beforeDoorway+2,"doorway in the selected room places its opening and zone portal");
+            // Direct editing: select the room again, edit it through the
+            // inspector and nudge it, each change replacing its brushes.
+            {
+                auto piecesOf=[&]{std::ifstream in(directory/"ReloadedEditor"/"library.json");J library;in>>library;return library["maps"][call({{"op","map"}})["key"].get<std::string>()]["design"]["pieces"];};
+                call({{"op","select"},{"actors",placedRoom}});
+                WorkflowProbe::Click(design,707);
+                require(field(754).find("Selected piece")!=std::string::npos && field(743)=="1024","editing a placed piece loads it into the inspector without a dialog");
+                auto before=actorCount();
+                SetDlgItemTextA(design,743,"768");
+                SendMessage(design,WM_COMMAND,MAKEWPARAM(743,EN_KILLFOCUS),reinterpret_cast<LPARAM>(GetDlgItem(design,743)));
+                require(actorCount()==before,"an inspector edit replaces the piece's brushes instead of adding more");
+                require(piecesOf().back()["spec"]["width"]==768,"an inspector edit reaches the placed piece");
+                auto position=piecesOf().back()["position"][0].get<double>();
+                auto grid=call({{"op","design.grid"}})[0].get<double>();
+                SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_RIGHT,0);
+                require(std::abs(piecesOf().back()["position"][0].get<double>()-(position+grid))<.001,"an arrow key nudges the piece by one grid step");
+                SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
+                require(field(754).find("No preview")!=std::string::npos,"Escape ends the edit and clears the inspector");
+                // A moved room takes the doorway in its wall with it, in one step.
+                {
+                    auto room=piecesOf();
+                    size_t roomIndex=0,doorIndex=0;
+                    for(size_t i=0;i<room.size();++i){if(room[i]["spec"]["kind"]=="Room")roomIndex=i;if(room[i]["spec"]["kind"]=="Doorway")doorIndex=i;}
+                    call({{"op","select"},{"actors",room[roomIndex]["members"]}});
+                    WorkflowProbe::Click(design,707);
+                    const auto doorBefore=room[doorIndex]["position"][1].get<double>();
+                    SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_UP,0);
+                    auto moved=piecesOf();
+                    bool doorFollowed=false;
+                    for(auto& p:moved)if(p["spec"]["kind"]=="Doorway" && std::abs(p["position"][1].get<double>()-doorBefore-grid)<.001)doorFollowed=true;
+                    require(doorFollowed,"a doorway in the wall moves with its room");
+                    Exec("TRANSACTION UNDO");
+                    SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
+                }
+                // The panel's own Undo and Redo drive the editor's history. A
+                // piece edit replaces its brushes, so compare the geometry
+                // rather than how many actors there are.
+                auto geometry=[&]{J list=J::array();for(auto& actor:call({{"op","design.scene"}}))list.push_back({{"path",actor["path"]},{"position",actor["position"]}});return list;};
+                const auto edited=geometry();
+                WorkflowProbe::Click(design,728);
+                require(geometry()!=edited,"the panel's Undo reaches the editor's history");
+                WorkflowProbe::Click(design,729);
+                require(geometry()==edited,"the panel's Redo puts it back");
+                Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");
+            }
+            {
+                // Quick add: hover the wall of a placed piece and pick from the
+                // badge menu. The view mapping tells the test where that wall is.
+                // The panel refreshes on its timer; this test pumps no messages,
+                // so refresh explicitly after the undo above.
+                SendMessage(design,WM_COMMAND,702,0);
+                SendMessage(design,WM_COMMAND,701,0); // Fit map / preview.
+                auto view=call({{"op","design.view"}});
+                require(view["open"]==true,"the design view reports its mapping");
+                call({{"op","select"},{"actors",placedRoom}});
+                WorkflowProbe::Click(design,707);
+                auto library=[&]{std::ifstream in(directory/"ReloadedEditor"/"library.json");J document;in>>document;return document["maps"][call({{"op","map"}})["key"].get<std::string>()]["design"];};
+                // The piece being edited is the one whose brushes are selected,
+                // not necessarily the newest entry in the library.
+                J piece;
+                const J libraryPieces=library()["pieces"]; // Iterating a temporary's member dangles.
+                for(auto& candidate:libraryPieces)
+                    for(auto& member:candidate["members"])
+                        for(auto& actor:placedRoom)
+                            if(member["path"]==actor["path"])piece=candidate;
+                require(!piece.is_null(),"the edited room is found in the library");
+                const double zoom=view["zoom"],panX=view["panX"],panY=view["panY"];
+                const double width=piece["spec"]["width"].get<double>();
+                // The middle of the piece's +X wall, in canvas coordinates.
+                const double wallX=piece["position"][0].get<double>()+width/2,wallY=piece["position"][1].get<double>();
+                POINT at{static_cast<LONG>(panX+wallX*zoom),static_cast<LONG>(panY-wallY*zoom)};
+                SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,0,MAKELPARAM(at.x,at.y));
+                // The badge sits outside the wall, so the wall itself stays
+                // clickable: a click there selects the piece, not the menu.
+                const auto badge=call({{"op","design.view"}})["badge"];
+                require(!badge.is_null() && badge["wall"]=="+X","hovering a wall reports its quick-add badge");
+                require(badge["x"].get<int>()>at.x+15 && std::abs(badge["y"].get<int>()-at.y)<3,"the badge sits outside the hovered wall rather than under the cursor");
+                // Moving the cursor from the wall onto the badge keeps it showing.
+                SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,0,MAKELPARAM(badge["x"].get<int>(),badge["y"].get<int>()));
+                require(call({{"op","design.view"}})["badge"]==badge,"the badge stays while the cursor moves onto it");
+                SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,0,MAKELPARAM(at.x,at.y));
+                auto before=actorCount();
+                SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
+                call({{"op","select"},{"actors",J::array()}});
+                WorkflowProbe::objectivePopupChoice=731; // Corridor from this wall.
+                WorkflowProbe::objectivePopupFound=false;WorkflowProbe::objectivePopupTicks=0;
+                auto popup=SetTimer(nullptr,0,50,WorkflowProbe::ChooseObjectivePopup);
+                SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(at.x,at.y));
+                SendMessage(GetDlgItem(design,719),WM_LBUTTONUP,0,MAKELPARAM(at.x,at.y));
+                KillTimer(nullptr,popup);
+                require(!WorkflowProbe::objectivePopupFound,"clicking the wall itself does not open the quick-add menu");
+                require(!call({{"op","actors"},{"selected",true}}).empty(),"clicking the wall selects the piece");
+                SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,0,MAKELPARAM(at.x,at.y));
+                WorkflowProbe::objectivePopupFound=false;WorkflowProbe::objectivePopupTicks=0;
+                popup=SetTimer(nullptr,0,50,WorkflowProbe::ChooseObjectivePopup);
+                SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(badge["x"].get<int>(),badge["y"].get<int>()));
+                KillTimer(nullptr,popup);
+                require(WorkflowProbe::objectivePopupFound,"the quick-add badge opens its menu on the hovered wall");
+                WorkflowProbe::Click(design,708);
+                require(actorCount()==before+1,"the quick-add corridor is placed from the menu");
+                auto added=library()["pieces"].back();
+                require(added["spec"]["kind"]=="Corridor","the menu choice decides the shape");
+                const double expected=piece["position"][0].get<double>()+width/2+piece["spec"]["thickness"].get<double>()+added["spec"]["length"].get<double>()/2;
+                require(std::abs(added["position"][0].get<double>()-expected)<1,"the new corridor meets the outside of that wall");
+                // The plan knows its built BSP is out of date, and B rebuilds it.
+                require(view["open"]==true && call({{"op","design.view"}})["stale"]==true,"the design view reports brushes changed since the last geometry build");
+                const auto builds=call({{"op","design.builds"}}).get<unsigned long>();
+                SendMessage(GetDlgItem(design,719),WM_KEYDOWN,'B',0);
+                require(call({{"op","design.builds"}}).get<unsigned long>()>builds,"B in the design view runs a geometry build");
+                require(call({{"op","design.view"}})["stale"]==false,"a completed build makes the plan current again");
+                // The design check lists real problems and finds none once they are fixed.
+                WorkflowProbe::Click(design,761);
+                auto check=WorkflowProbe::FindDialog("Design Check");
+                require(check!=nullptr,"the design check opens its own window");
+                auto rows=static_cast<int>(SendMessage(GetDlgItem(check,780),LB_GETCOUNT,0,0));
+                char firstRow[512]{};SendMessageA(GetDlgItem(check,780),LB_GETTEXT,0,reinterpret_cast<LPARAM>(firstRow));
+                require(rows>=1 && call({{"op","design.view"}})["issues"].get<size_t>()==static_cast<size_t>(rows),"the design check lists each issue once");
+                DestroyWindow(check);
+                Exec("TRANSACTION UNDO");
+                SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
+            }
+            {
+                // Security devices: the ops create and wire them; the Security
+                // window places them from clicks in the plan.
+                auto securityOf=[&](const J& identity){for(auto& a:call({{"op","security.actors"}}))if(a["path"]==identity["path"])return a;return J{};};
+                auto alarm=call({{"op","security.create"},{"class","SBase.SAlarm"},{"position",{1500,2600,128}},{"properties",{{"AlarmName","\"Native alarm\""}}}});
+                auto laser=call({{"op","security.create"},{"class","SBase.SLaserTrigger"},{"position",{1200,2600,110}},{"rotation",{0,16384,0}},{"properties",{{"LaserLength","640"}}}});
+                require(securityOf(alarm)["kind"]=="Alarm" && securityOf(laser)["kind"]=="Laser","security.create makes actors the inventory recognises");
+                require(securityOf(laser)["length"].get<double>()==640,"the laser keeps its LaserLength");
+                require(securityOf(alarm)["tag"].get<std::string>()!="None" && !securityOf(alarm)["tag"].get<std::string>().empty(),"a new alarm gets a Tag straight away");
+                call({{"op","security.link"},{"detector",laser},{"alarm",alarm}});
+                require(securityOf(laser)["event"]==securityOf(alarm)["tag"],"linking sets the detector Event to the alarm Tag");
+                auto sensor=call({{"op","security.sensor"},{"low",{800,2200,64}},{"high",{1100,2500,160}}});
+                require(securityOf(sensor["sensor"])["kind"]=="Motion sensor" && securityOf(sensor["sensor"])["volumes"].size()==1,"a motion sensor arrives with its own volume");
+                call({{"op","security.outputs"},{"alarm",alarm},{"targets",J::array({laser})}});
+                require(securityOf(alarm)["events"].size()==1 && securityOf(alarm)["events"][0]==securityOf(laser)["tag"],"alarm outputs name the targets' Tags");
+                // The Security window: an alarm from one click, then a laser
+                // from two clicks, wired to that alarm automatically.
+                WorkflowProbe::Click(design,763);
+                auto security=WorkflowProbe::FindDialog("Security");
+                require(security!=nullptr,"the Security button opens its window");
+                require(SendMessage(GetDlgItem(security,800),LB_GETCOUNT,0,0)>=3,"the wiring list shows the alarm, its laser and its output");
+                auto before=actorCount();
+                WorkflowProbe::Click(security,807);
+                SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(120,140));
+                require(actorCount()==before+1,"one click places an alarm");
+                require(SendMessage(GetDlgItem(security,801),CB_GETCURSEL,0,0)>=1,"the new alarm is chosen for new detectors");
+                WorkflowProbe::Click(security,802);
+                SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(200,200));
+                require(actorCount()==before+1,"the first laser click only marks the start");
+                SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(300,200));
+                require(actorCount()==before+2,"the second click places the laser");
+                J placedLaser,placedAlarm;
+                for(auto& a:call({{"op","security.actors"}})){if(a["kind"]=="Laser" && a["path"]!=laser["path"])placedLaser=a;if(a["kind"]=="Alarm" && a["path"]!=alarm["path"])placedAlarm=a;}
+                require(!placedLaser.is_null() && !placedAlarm.is_null(),"the placed laser and alarm are in the inventory");
+                require(placedLaser["event"]==placedAlarm["tag"],"a laser placed in the plan is wired to the chosen alarm");
+                const double zoom=call({{"op","design.view"}})["zoom"];
+                require(std::abs(placedLaser["length"].get<double>()-100/zoom)<=33,"the laser length spans the two clicks (to the snap grid)");
+                require(placedLaser["rotation"][1].get<int>()==0,"a beam drawn towards +X points east");
+                WorkflowProbe::Click(security,804);
+                SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(150,300));
+                SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(350,400));
+                require(actorCount()==before+4,"two corner clicks place a motion sensor and its volume");
+                SendMessage(GetDlgItem(design,719),WM_RBUTTONDOWN,0,MAKELPARAM(10,10));
+                require(SendMessage(GetDlgItem(security,800),LB_GETCOUNT,0,0)>=7,"the wiring list follows the placed devices");
+                // Devices move and turn: through the op, then by dragging in the plan.
+                call({{"op","security.move"},{"actor",laser},{"position",{1300,2700,110}},{"rotation",{0,32768,0}},{"properties",{{"LaserLength","512"}}}});
+                auto moved=securityOf(laser);
+                require(moved["position"][0].get<double>()==1300 && moved["rotation"][1].get<int>()==32768 && moved["length"].get<double>()==512,"security.move sets position, direction and length in one step");
+                Exec("TRANSACTION UNDO");
+                require(securityOf(laser)["position"][0].get<double>()==1200 && securityOf(laser)["length"].get<double>()==640,"a device move is one Undo step");
+                const auto sensorBefore=securityOf(sensor["sensor"])["position"].get<std::array<double,3>>();
+                call({{"op","security.move"},{"actor",sensor["sensor"]},{"position",{sensorBefore[0]+96,sensorBefore[1],sensorBefore[2]}}});
+                J volumeActor;for(auto& a:call({{"op","actors"}}))if(a["path"]==securityOf(sensor["sensor"])["volumes"][0])volumeActor=a;
+                require(!volumeActor.is_null(),"the sensor's volume is still referenced after a move");
+                Exec("TRANSACTION UNDO");
+                {
+                    const auto view2=call({{"op","design.view"}});
+                    const double zoom2=view2["zoom"],panX2=view2["panX"],panY2=view2["panY"];
+                    const auto laserAt=placedLaser["position"].get<std::array<double,3>>();
+                    POINT body{static_cast<LONG>(panX2+laserAt[0]*zoom2),static_cast<LONG>(panY2-laserAt[1]*zoom2)};
+                    SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(body.x,body.y));
+                    SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(body.x,body.y+60));
+                    SendMessage(GetDlgItem(design,719),WM_LBUTTONUP,0,MAKELPARAM(body.x,body.y+60));
+                    J draggedLaser;for(auto& a:call({{"op","security.actors"}}))if(a["path"]==placedLaser["path"])draggedLaser=a;
+                    require(draggedLaser["position"][1].get<double>()<laserAt[1]-30,"dragging a laser in the plan moves it");
+                    require(draggedLaser["position"][0].get<double>()==laserAt[0],"a drag keeps the other axis");
+                    // The aim handle at the beam end turns and stretches the beam.
+                    const auto newAt=draggedLaser["position"].get<std::array<double,3>>();
+                    const double length=draggedLaser["length"];
+                    POINT tip{static_cast<LONG>(panX2+(newAt[0]+length)*zoom2),static_cast<LONG>(panY2-newAt[1]*zoom2)};
+                    SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(tip.x,tip.y));
+                    SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(body.x,tip.y+120));
+                    SendMessage(GetDlgItem(design,719),WM_LBUTTONUP,0,MAKELPARAM(body.x,tip.y+120));
+                    for(auto& a:call({{"op","security.actors"}}))if(a["path"]==placedLaser["path"])draggedLaser=a;
+                    require(std::abs(draggedLaser["rotation"][1].get<int>()-49152)<1500,"dragging the beam end aims the laser south");
+                    require(std::abs(draggedLaser["length"].get<double>()-120/zoom2)<=48,"dragging the beam end sets the laser length");
+                    // In the front view the same handle sets the pitch.
+                    call({{"op","security.move"},{"actor",placedLaser},{"position",newAt},{"rotation",{0,0,0}},{"properties",{{"LaserLength","256"}}}});
+                    SendMessage(design,WM_COMMAND,702,0); // Refresh from editor: the test pumps no timer.
+                    SendDlgItemMessage(design,700,CB_SETCURSEL,1,0);
+                    SendMessage(design,WM_COMMAND,MAKEWPARAM(700,CBN_SELCHANGE),reinterpret_cast<LPARAM>(GetDlgItem(design,700)));
+                    const auto front=call({{"op","design.view"}});
+                    require(front["plane"]==1,"the plane combo switches the design view to the front");
+                    const double fz=front["zoom"],fx=front["panX"],fy=front["panY"];
+                    POINT ftip{static_cast<LONG>(fx+(newAt[0]+256)*fz),static_cast<LONG>(fy-newAt[2]*fz)};
+                    SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(ftip.x,ftip.y));
+                    SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(ftip.x,ftip.y-static_cast<LONG>(256*fz)));
+                    SendMessage(GetDlgItem(design,719),WM_LBUTTONUP,0,MAKELPARAM(ftip.x,ftip.y-static_cast<LONG>(256*fz)));
+                    for(auto& a:call({{"op","security.actors"}}))if(a["path"]==placedLaser["path"])draggedLaser=a;
+                    require(std::abs(draggedLaser["rotation"][0].get<int>()-8192)<900 && draggedLaser["rotation"][1].get<int>()==0,"dragging the beam end in the front view pitches the laser up");
+                    require(std::abs(draggedLaser["length"].get<double>()-362)<48,"a pitched beam keeps its full length");
+                    SendDlgItemMessage(design,700,CB_SETCURSEL,0,0);
+                    SendMessage(design,WM_COMMAND,MAKEWPARAM(700,CBN_SELCHANGE),reinterpret_cast<LPARAM>(GetDlgItem(design,700)));
+                    require(call({{"op","design.view"}})["plane"]==0,"the design view returns to the top");
+                }
+                // Unwiring and deleting through the ops, then from the right-click menu.
+                call({{"op","security.unlink"},{"detector",placedLaser}});
+                require(securityOf(placedLaser)["event"]=="None","security.unlink clears the detector's Event");
+                Exec("TRANSACTION UNDO");
+                require(securityOf(placedLaser)["event"]==placedAlarm["tag"],"unwiring is one Undo step");
+                auto mine=call({{"op","security.create"},{"class","SBase.SMineProx"},{"position",{1400,2400,64}}});
+                const auto beforeDelete=actorCount();
+                call({{"op","security.delete"},{"actor",mine}});
+                require(securityOf(mine).is_null() && actorCount()==beforeDelete-1,"security.delete removes the device");
+                Exec("TRANSACTION UNDO");
+                require(!securityOf(mine).is_null(),"a delete is one Undo step");
+                {
+                    const auto view3=call({{"op","design.view"}});
+                    const double zoom3=view3["zoom"],panX3=view3["panX"],panY3=view3["panY"];
+                    const auto mineAt=securityOf(mine)["position"].get<std::array<double,3>>();
+                    POINT at3{static_cast<LONG>(panX3+mineAt[0]*zoom3),static_cast<LONG>(panY3-mineAt[1]*zoom3)};
+                    SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,0,MAKELPARAM(at3.x,at3.y));
+                    WorkflowProbe::objectivePopupChoice=865; // Delete this device.
+                    WorkflowProbe::objectivePopupFound=false;WorkflowProbe::objectivePopupTicks=0;
+                    auto popup3=SetTimer(nullptr,0,50,WorkflowProbe::ChooseObjectivePopup);
+                    SendMessage(GetDlgItem(design,719),WM_RBUTTONDOWN,0,MAKELPARAM(at3.x,at3.y));
+                    KillTimer(nullptr,popup3);
+                    require(WorkflowProbe::objectivePopupFound,"right-clicking a device offers to delete it");
+                    require(securityOf(mine).is_null(),"the menu deletes the device");
+                    // Right-clicking an alarm makes it the one new detectors wire to.
+                    const auto alarmAt=securityOf(alarm)["position"].get<std::array<double,3>>();
+                    POINT at4{static_cast<LONG>(panX3+alarmAt[0]*zoom3),static_cast<LONG>(panY3-alarmAt[1]*zoom3)};
+                    SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,0,MAKELPARAM(at4.x,at4.y));
+                    WorkflowProbe::objectivePopupChoice=868; // Use this alarm for new detectors.
+                    WorkflowProbe::objectivePopupFound=false;WorkflowProbe::objectivePopupTicks=0;
+                    popup3=SetTimer(nullptr,0,50,WorkflowProbe::ChooseObjectivePopup);
+                    SendMessage(GetDlgItem(design,719),WM_RBUTTONDOWN,0,MAKELPARAM(at4.x,at4.y));
+                    KillTimer(nullptr,popup3);
+                    require(WorkflowProbe::objectivePopupFound,"right-clicking an alarm offers wiring choices");
+                    require(SendMessage(GetDlgItem(security,801),CB_GETCURSEL,0,0)==1,"the first alarm in the map is now chosen for new detectors");
+                }
+                DestroyWindow(security);
+            }
+            {
+                // Brushes moved in the editor keep their piece: the library
+                // follows them, so the outline appears on the brushes.
+                SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
+                auto library=[&]{std::ifstream in(directory/"ReloadedEditor"/"library.json");J document;in>>document;return document["maps"][call({{"op","map"}})["key"].get<std::string>()]["design"];};
+                J followed;
+                {
+                    const J libraryPieces=library()["pieces"];
+                    for(auto& candidate:libraryPieces)
+                        for(auto& member:candidate["members"])
+                            for(auto& actor:placedRoom)
+                                if(member["path"]==actor["path"])followed=candidate;
+                }
+                require(!followed.is_null(),"the placed room is still in the library");
+                const auto was=followed["position"].get<std::array<double,3>>();
+                // Move each brush as the editor would, outside the toolkit.
+                size_t movedMembers=0;
+                for(auto& member:followed["members"])
+                    for(auto& item:call({{"op","design.scene"}}))
+                        if(item["path"]==member["path"])
+                        {
+                            auto position=item["position"].get<std::array<double,3>>();
+                            position[0]+=128;
+                            call({{"op","security.move"},{"actor",member},{"position",position},{"rotation",item["rotation"]}});
+                            ++movedMembers;
+                        }
+                require(movedMembers==followed["members"].size(),"every brush of the room was moved");
+                SendMessage(design,WM_COMMAND,702,0); // Refresh from editor.
+                J after;
+                {
+                    const J libraryPieces=library()["pieces"];
+                    for(auto& candidate:libraryPieces)if(candidate["members"]==followed["members"])after=candidate;
+                }
+                require(!after.is_null() && std::abs(after["position"][0].get<double>()-(was[0]+128))<0.1 && after["position"][1]==was[1],"a piece moved in the editor follows its brushes in the library");
+                call({{"op","select"},{"actors",placedRoom}});
+                WorkflowProbe::Click(design,707);
+                require(std::abs(std::stod(field(750))-(was[0]+128))<0.1,"editing that piece shows the outline on the moved brushes");
+                SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
+                for(size_t i=0;i<movedMembers;++i)Exec("TRANSACTION UNDO");
+                SendMessage(design,WM_COMMAND,702,0);
+                {
+                    const J libraryPieces=library()["pieces"];
+                    for(auto& candidate:libraryPieces)if(candidate["members"]==followed["members"])after=candidate;
+                }
+                require(std::abs(after["position"][0].get<double>()-was[0])<0.1,"undoing the editor move brings the piece back too");
+            }
+            {
+                // Right-click on the plan offers actions at that point.
+                SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
+                require(GetMenu(design)!=nullptr && GetMenuItemCount(GetMenu(design))==4,"the design window has a menu bar in place of most side buttons");
+                require(GetDlgItem(design,703)==nullptr && GetDlgItem(design,706)!=nullptr,"rarely used actions left the side panel for the menus");
+                WorkflowProbe::objectivePopupChoice=859; // New corridor here.
+                WorkflowProbe::objectivePopupFound=false;WorkflowProbe::objectivePopupTicks=0;
+                auto popup=SetTimer(nullptr,0,50,WorkflowProbe::ChooseObjectivePopup);
+                SendMessage(GetDlgItem(design,719),WM_RBUTTONDOWN,0,MAKELPARAM(80,560));
+                KillTimer(nullptr,popup);
+                require(WorkflowProbe::objectivePopupFound,"right-click in the design view opens its context menu");
+                require(field(754).find("New preview")!=std::string::npos && field(741)=="Corridor","the context menu starts a corridor preview at that point");
+                const auto view=call({{"op","design.view"}});
+                const double expectedX=(80-view["panX"].get<double>())/view["zoom"].get<double>();
+                require(std::abs(std::stod(field(750))-expectedX)<=64,"the preview sits where the plan was right-clicked (to the snap grid)");
+                SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
+                require(field(754).find("New preview")==std::string::npos,"Escape discards the preview from the menu");
+            }
+            // A workspace edit that nothing native followed is what Undo takes back.
+            WorkflowProbe::Click(design,710);
+            {
+                auto guides=[&]{std::ifstream in(directory/"ReloadedEditor"/"library.json");J document;in>>document;return document["maps"][call({{"op","map"}})["key"].get<std::string>()]["design"]["guides"].size();};
+                const auto added=guides();
+                require(added>=1,"the player reference dialog adds a reference");
+                WorkflowProbe::Click(design,728);
+                require(guides()==added-1,"Undo takes back a workspace change made after the last map change");
+                WorkflowProbe::Click(design,729);
+                require(guides()==added,"Redo restores the workspace change");
+            }
             WorkflowProbe::Click(design,710); // Configurable player clearance guide.
             SendMessage(design,WM_COMMAND,711,0);auto canvas=GetDlgItem(design,719);
             SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(100,100));SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(300,100));
@@ -545,14 +1047,56 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             SendMessage(design,WM_COMMAND,704,0);SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(100,100));
             formTimer=SetTimer(nullptr,0,50,WorkflowProbe::Answer);SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(300,100));KillTimer(nullptr,formTimer);
             WorkflowProbe::Screenshot(design,directory/"map_design_workspace.bmp");
+            // Grid snapping, floor filter and movement limits report through the
+            // status line of the real panel.
+            auto status=[&]{char text[1024]{};GetWindowTextA(GetDlgItem(design,720),text,sizeof(text));return std::string(text);};
+            SendMessage(GetDlgItem(design,722),BM_CLICK,0,0);
+            require(status().find("Snapping off")!=std::string::npos,"the snap checkbox turns grid snapping off");
+            SendMessage(GetDlgItem(design,722),BM_CLICK,0,0);
+            require(status().find("snap to the editor's grid")!=std::string::npos,"grid snapping can be turned back on");
+            WorkflowProbe::Click(design,723);
+            require(status().find("Showing actors")!=std::string::npos,"the floor filter limits the view to one height range");
+            WorkflowProbe::Click(design,725);
+            require(status().find("Movement limits saved")!=std::string::npos,"movement limits are saved for this map");
+            // Dragging empty space box-selects; a rectangle over nothing clears
+            // the selection rather than picking the nearest actor.
+            SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(12,12));
+            SendMessage(canvas,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(40,40));
+            SendMessage(canvas,WM_LBUTTONUP,0,MAKELPARAM(40,40));
+            require(status().find("0 actor(s) inside the rectangle")!=std::string::npos,"an empty rectangle selects nothing");
+            require(call({{"op","actors"},{"selected",true}}).empty(),"box selection replaces the editor selection");
+            // Two teams' routes, then their timing comparison.
+            WorkflowProbe::routeTeamChoice=1;WorkflowProbe::Click(design,716,"Spy route");
+            SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(120,140));SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(420,340));WorkflowProbe::Click(design,717);
+            WorkflowProbe::routeTeamChoice=2;WorkflowProbe::Click(design,716,"Merc route");
+            SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(140,160));SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(300,260));WorkflowProbe::Click(design,717);
+            WorkflowProbe::routeTeamChoice=0;
+            WorkflowProbe::Click(design,726);
+            require(status().find("(spy)")!=std::string::npos && status().find("(merc)")!=std::string::npos && status().find("arrives")!=std::string::npos,"route comparison reports both teams' timings and who arrives first");
+            // Portable workspace files, as used by map packaging.
+            auto workspaceFile=directory/"design_workspace.json";
+            WorkflowProbe::jsonDialogPath=workspaceFile.wstring();WorkflowProbe::jsonDialogCancel=false;WorkflowProbe::jsonDialogTicks=0;WorkflowProbe::workspaceChoice=0;
+            {auto file=SetTimer(nullptr,0,50,WorkflowProbe::AnswerJsonDialog);auto form=SetTimer(nullptr,0,60,WorkflowProbe::Answer);SendMessage(design,WM_COMMAND,727,0);KillTimer(nullptr,file);KillTimer(nullptr,form);}
+            {
+                std::ifstream input(workspaceFile);J workspace;input>>workspace;
+                require(workspace["version"]==1 && workspace["design"]["references"].size()==1 && workspace["design"]["annotations"].size()==4,"exported workspace carries this map's references and annotations");
+            }
+            require(std::filesystem::exists(directory/"ReloadedEditor"/"Workspaces"/(std::filesystem::path(destination).stem().string()+".json")),"a workspace copy is kept for map packaging");
+            WorkflowProbe::workspaceChoice=1;WorkflowProbe::jsonDialogTicks=0;
+            {auto file=SetTimer(nullptr,0,50,WorkflowProbe::AnswerJsonDialog);auto form=SetTimer(nullptr,0,60,WorkflowProbe::Answer);SendMessage(design,WM_COMMAND,727,0);KillTimer(nullptr,file);KillTimer(nullptr,form);}
+            require(status().find("Workspace imported")!=std::string::npos,"a workspace file imports back into the map");
             auto key=call({{"op","map"}})["key"].get<std::string>();std::ifstream libraryInput(directory/"ReloadedEditor"/"library.json");J designLibrary;libraryInput>>designLibrary;
             auto savedDesign=designLibrary["maps"][key]["design"];
-            require(savedDesign["annotations"].size()==2 && savedDesign["layers"].size()==1 && savedDesign["guides"].size()==1 && savedDesign.contains("reference"),"design reference, measurement, route, guide and layer persist from actual dialogs");
+            require(savedDesign["annotations"].size()==4 && savedDesign["layers"].size()==1 && savedDesign["guides"].size()==2 && savedDesign["references"].size()==1 && savedDesign.contains("movement"),"design references, measurements, routes, guides, layers and movement limits persist from actual dialogs");
             DestroyWindow(design);Exec("TRANSACTION UNDO");
             Record("workflow_check","Map Design native blockout, layers, spawn restoration and UI passed");
         }
         {
-            auto originalSelection=call({{"op","actors"},{"selected",true}});
+            // A brush from the map, whatever the design tests left selected,
+            // so the mixed-selection check below always mixes a brush with the mesh.
+            J originalSelection=J::array();
+            for(auto& a:call({{"op","actors"}}))if(a["class"]=="Engine.Brush" && a.value("authorable",false)){originalSelection.push_back(a);break;}
+            require(!originalSelection.empty(),"the fixture has a brush for the mixed-selection check");
             require(Exec("OBJ LOAD FILE=\"..\\Packages\\StaticMeshes\\TestMapStaticM.usx\"")!=0,"load mesh fixture package");
             auto assets=call({{"op","magic.assets"},{"type","StaticMesh"}});require(!assets.empty(),"mesh fixture asset available");
             auto mesh=call({{"op","magic.create"},{"class","Engine.StaticMeshActor"}});

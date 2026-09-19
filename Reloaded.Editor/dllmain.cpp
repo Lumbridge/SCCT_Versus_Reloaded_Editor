@@ -84,9 +84,25 @@ LONG WINAPI CustomUnhandledExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
+// A first-chance handler runs on whatever stack the fault left behind. When the
+// fault is the stack running out, the diagnostics must not try to use it.
+static bool StackHeadroom(EXCEPTION_POINTERS* exceptionInfo, size_t needed)
+{
+    if (exceptionInfo && exceptionInfo->ExceptionRecord
+        && exceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_STACK_OVERFLOW)
+        return false;
+    ULONG_PTR low = 0, high = 0;
+    GetCurrentThreadStackLimits(&low, &high);
+    char probe = 0;
+    return reinterpret_cast<ULONG_PTR>(&probe) > low
+        && reinterpret_cast<ULONG_PTR>(&probe) - low > needed;
+}
+
 LONG CALLBACK RecoveryActorTickExceptionHandler(
     EXCEPTION_POINTERS* exceptionInfo)
 {
+    if (!StackHeadroom(exceptionInfo, 48 * 1024))
+        return EXCEPTION_CONTINUE_SEARCH;
     BspDiagnostics::LogException(exceptionInfo);
     MapRecovery::LogActorTickException(exceptionInfo);
     MapRecovery::LogViewportException(exceptionInfo);

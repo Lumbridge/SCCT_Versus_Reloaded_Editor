@@ -26,6 +26,14 @@
     <ClInclude Include="MagicEventWorkbench.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CameraNetworkPanel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CameraNetworkModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="SecurityModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="SecurityNative.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="SecurityPanel.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="LightingPanel.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="PropertiesPanel.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="ScenePanel.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="ObjectivePanel.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="ElementPanel.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CameraNetworkNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapAuthoringModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapAuthoringNative.inl"><Filter>Header Files</Filter></ClInclude>

@@ -7,7 +7,9 @@
 #include "MapAuthoringModel.h"
 #include "CameraNetworkModel.h"
 #include "MapDesignModel.h"
+#include "SecurityModel.h"
 #include "MapRecovery.h"
+#include "BspDiagnostics.h"
 #include "MemoryWriter.h"
 #include <algorithm>
 #include <cmath>
@@ -1069,4 +1071,5 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 }
 #include "CameraNetworkNative.inl"
 #include "MapDesignNative.inl"
+#include "SecurityNative.inl"
 }

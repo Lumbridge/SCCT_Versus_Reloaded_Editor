@@ -16,18 +16,54 @@ save, normal reopen and rebuild in a disposable installation.
 ## Map Design
 
 `tools/test_workflow_tools.cmd` includes `MapDesignModelTests.cpp`: outward polygon
-winding and volume, room/corridor construction, stair rise, ramp geometry, invalid
-dimensions, image calibration, 3D measurement, stable distribution, and repeated
-brush/object/event reference remapping.
+winding and volume, carve and shell room/corridor construction, zone portal sheets
+and their brush flags, stair rise, ramp geometry, invalid dimensions, grid
+snapping, bounds, snapping a dragged face or box onto neighbouring geometry,
+projected convex outlines, vent and crawlway shapes with crouch clearance,
+attaching a new piece to a wall, route journeys with climbs and crouched sections,
+both teams' route times, a material on every generated polygon, the design check's unreached rooms, orphan doorways and merging carves, preview resizing against a fixed opposite face, traversal warnings for
+steps/slopes/clearance, doorway placement in a room wall including rotated rooms
+and rejected offsets, route lengths and spy/merc timings, floor ranges, native
+group name handling, portable workspace export/import, image calibration, 3D
+measurement, stable distribution, and repeated brush/object/event reference
+remapping. `SecurityModelTests.cpp` covers the security device catalogue, Unreal
+yaw from two points, laser length and direction from two clicks, beam ends,
+sensor boxes, tag allocation, and the wiring report with its unwired detectors,
+unfed alarms, dangling events and empty sensors.
 
 The native `-GenerateFixture -WorkflowTools` run creates and resizes real brushes,
-checks Undo/Redo identities, imports ramps/stairs, toggles native layer flags,
-and verifies temporary spawn restoration. The Play Level test intercepts its
-launcher in the disposable process, checking the temporary pose at launch without
-starting a game. UI checks use the actual blockout, reference, calibration,
-measurement, clearance, layer and route dialogs. `map_design_preview.bmp`,
-`map_design_workspace.bmp` and `design_clearances.json` are retained in the fixture.
+checks Undo/Redo identities, imports ramps/stairs, places a carved room and a
+portal doorway and confirms the sheet counts as a zone portal, writes and clears
+layer membership in the native `Group` field, reads the editor's grid spacing,
+toggles native layer flags, and verifies temporary spawn restoration, including a
+temporary team start that is created and removed again. The Play Level test
+intercepts its launcher in the disposable process, checking the temporary pose at
+launch without starting a game. UI checks use the actual blockout, doorway,
+reference, calibration, measurement, player-reference, movement-limit, floor-filter, snap,
+layer, route, route-comparison and workspace dialogs, box-select by dragging in the
+design view, and the direct editing loop: a new blockout opening in the inspector
+instead of a dialog, a placed piece loaded back into it, an inspector edit
+replacing that piece's brushes rather than adding more, an arrow key nudging it by
+one grid step, Escape ending the edit, the panel's Undo and Redo reaching the
+editor's history, and the quick-add badge on a hovered wall placing a corridor
+against it through its menu, the stale-geometry flag clearing when B runs a
+geometry build, the design check window listing its issues, and the security
+tools: creating an alarm, a laser and a motion sensor with its volume through the
+ops, linking the laser's Event to the alarm's Tag and the alarm's outputs to a
+target Tag, then the Security window placing an alarm with one click and a laser
+and a motion sensor with two clicks each, the laser wired to that alarm with its
+length and direction from the clicks, then moving a laser and a sensor (with its
+volume) through `security.move` and by dragging the laser's body and its beam-end
+handle in the plan, the badge sitting outside a hovered wall and surviving the
+cursor moving onto it, the menu bar replacing most side buttons, and the
+right-click menu starting a corridor preview where the plan was clicked. A piece's brushes are also checked against its
+preview at a position off the editor grid. `map_design_preview.bmp`, `map_design_workspace.bmp`,
+`design_workspace.json` and `design_clearances.json` are retained in the fixture.
 All native tests use a separate temporary installation, never a working map.
+
+`tools/test_map_package.cmd` also covers packaging a map's Map Design workspace and
+the reference images it names, skipping missing or unsafe image names, and
+tolerating an unreadable workspace file.
 
 ## Brush edge grid snap
 

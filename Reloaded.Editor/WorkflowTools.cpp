@@ -11,6 +11,7 @@
 #include "MapRecovery.h"
 #include "MemoryWriter.h"
 #include "MapDesignModel.h"
+#include "SecurityModel.h"
 #include <commdlg.h>
 #include <windowsx.h>
 #include <objidl.h>
@@ -58,20 +59,22 @@ namespace
         const char* types[]={"SBase.SObjective","SBase.SComputerObjectiveTrigger","SBase.SBombTargetObjectiveTrigger","SBase.SFlag"};
         Editor::AddObjectiveActor(snapshot,types[command-kAddObjective]);
     }
-    Json document; uintptr_t level=0; std::string mapKey; bool loaded=false; unsigned mapEpoch=0,nativeMapGeneration=0;
+    // documentRevision lets panels cache their slice of the library instead of
+    // copying the whole document on every repaint.
+    Json document; uintptr_t level=0; std::string mapKey; bool loaded=false; unsigned mapEpoch=0,nativeMapGeneration=0,documentRevision=0;
     std::filesystem::path LibraryPath() { return Editor::Directory()/"library.json"; }
     Json EmptyMap() { return {{"views",Json::array()},{"instances",Json::array()}}; }
     void Save(Json next)
     {
         Json disk=next;
         disk["maps"].erase(""); // Untitled views stay in memory until first save.
-        WriteDocument(LibraryPath(),disk); document=std::move(next);
+        WriteDocument(LibraryPath(),disk); document=std::move(next); ++documentRevision;
     }
     bool Sync()
     {
         if(!loaded)
         {
-            document=ReadDocument(LibraryPath(),{{"version",1},{"assemblies",Json::array()},{"maps",Json::object()}});
+            document=ReadDocument(LibraryPath(),{{"version",1},{"assemblies",Json::array()},{"maps",Json::object()}}); ++documentRevision;
             if(!document.at("assemblies").is_array() || !document.at("maps").is_object()) throw std::runtime_error("Invalid workflow library; restore a valid copy before editing it.");
             loaded=true;
         }
@@ -85,7 +88,7 @@ namespace
         }
         else if(key.empty()) next["maps"][""]=EmptyMap();
         if(!next["maps"].contains(key)) next["maps"][key]=EmptyMap();
-        if(current==level && !key.empty()) Save(next); else document=std::move(next);
+        if(current==level && !key.empty()) Save(next); else { document=std::move(next); ++documentRevision; }
         level=current; mapKey=key; nativeMapGeneration=generation; ++mapEpoch; return true;
     }
     HWND Control(HWND parent,const char* type,const std::string& title,DWORD style,int id,int x,int y,int w,int h)
@@ -835,7 +838,27 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="design.scene")result=Editor::DesignScene();
         else if(op=="design.block")result=Editor::DesignBlockout(q.at("spec"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()},q.value("previous",Json{}));
         else if(op=="design.align"){Editor::DesignAlign(q.at("scene"),q.at("axis"),q.at("mode"),q.value("spacing",0.0));result=true;}
-        else if(op=="design.layer"){Editor::DesignLayer(q.at("members"),q.at("hidden"),q.at("locked"));result=true;}
+        else if(op=="design.layer"){Editor::DesignLayer(q.at("members"),q.at("hidden"),q.at("locked"),q.value("group",std::string()),q.value("groupAction",std::string("none")));result=true;}
+        else if(op=="design.grid")result=Editor::DesignGrid();
+        else if(op=="design.view")result=WorkflowTools::DesignView();
+        else if(op=="design.builds")result=Editor::GeometryBuilds();
+        else if(op=="design.blockbatch")result=Editor::DesignBlockoutBatch(q.at("items"));
+        else if(op=="security.actors")result=Editor::SecurityActors();
+        else if(op=="light.list")result=Editor::Lights();
+        else if(op=="objective.actors")result=Editor::ObjectiveActors();
+        else if(op=="start.create")result=Editor::CreatePlayerStart(q.value("class",std::string("Engine.PlayerStart")),q.value("team",std::string("0")),{q.at("position").get<Vector>(),q.value("rotation",Rotation{})});
+        else if(op=="alarm.locks")result=Editor::AddAlarmLocks(q.at("alarm"),q.at("targets"));
+        else if(op=="light.set")result=Editor::SetActorProperties(q.at("actor"),q.value("properties",Json::object()));
+        else if(op=="security.create")result=Editor::CreateSecurityActor(q.at("class"),{q.at("position").get<Vector>(),q.value("rotation",Rotation{})},q.value("properties",Json::object()));
+        else if(op=="security.sensor")result=Editor::CreateMotionSensor(q.at("low").get<Vector>(),q.at("high").get<Vector>(),q.value("properties",Json::object()));
+        else if(op=="security.link"){Editor::LinkDetectorToAlarm(q.at("detector"),q.at("alarm"));result=true;}
+        else if(op=="security.outputs"){Editor::AddAlarmOutputs(q.at("alarm"),q.at("targets"));result=true;}
+        else if(op=="security.unlink"){Editor::UnwireDetector(q.at("detector"));result=true;}
+        else if(op=="security.delete"){Editor::DeleteSecurityActor(q.at("actor"));result=true;}
+        else if(op=="security.move")result=Editor::MoveSecurityActor(q.at("actor"),{q.at("position").get<Vector>(),q.value("rotation",Rotation{})},q.value("properties",Json::object()));
+        else if(op=="design.build"){Editor::BuildGeometry();result=true;}
+        else if(op=="design.tempstart")result=Editor::DesignTemporaryStart(q.at("class"),q.value("team",std::string()),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()});
+        else if(op=="design.removestart"){Editor::DesignRemoveTemporaryStart(q.at("start"));result=true;}
         else if(op=="design.spawns")result=Editor::DesignSpawns();
         else if(op=="design.clearances")result=Editor::DesignClearances();
         else if(op=="design.play"){Editor::DesignPlay(q.at("start"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()},q.value("launch",false));result=true;}

@@ -171,6 +171,14 @@
     <ClInclude Include="MapAuthoringModel.h" />
     <ClInclude Include="MapAuthoringNative.inl" />
     <ClInclude Include="MapDesignModel.h" />
+    <ClInclude Include="SecurityModel.h" />
+    <ClInclude Include="SecurityNative.inl" />
+    <ClInclude Include="SecurityPanel.inl" />
+    <ClInclude Include="LightingPanel.inl" />
+    <ClInclude Include="PropertiesPanel.inl" />
+    <ClInclude Include="ScenePanel.inl" />
+    <ClInclude Include="ObjectivePanel.inl" />
+    <ClInclude Include="ElementPanel.inl" />
     <ClInclude Include="MapDesignNative.inl" />
     <ClInclude Include="MapDesignPanel.inl" />
     <ClInclude Include="MagicEventModel.h" />
