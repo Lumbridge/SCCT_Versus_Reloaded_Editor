@@ -422,6 +422,66 @@ Json CreateLift(const Vector& position,double width,double length,double thickne
     Redraw();
     return Identity(actor);
 }
+// Brush actors' own PolyFlags, which decide semi-solid and invisible for the
+// BSP build; a missing actor reads as null.
+Json DesignPolyFlags(const Json& members)
+{
+    Json result=Json::array();
+    for(auto& id:members)
+    {
+        auto a=ResolveIdentity(id);
+        if(!a){result.push_back(nullptr);continue;}
+        try{result.push_back(Read<unsigned>(Field(a,"PolyFlags")));}
+        catch(const std::exception&){result.push_back(nullptr);}
+    }
+    return result;
+}
+// Sets brush actors' PolyFlags in one Undo step; null leaves one alone.
+size_t DesignSetPolyFlags(const Json& members,const Json& flags)
+{
+    if(!members.is_array() || !flags.is_array() || members.size()!=flags.size())throw std::runtime_error("One flags value per brush.");
+    std::vector<std::pair<Address,unsigned>> changes;
+    for(size_t i=0;i<members.size();++i)
+    {
+        if(flags[i].is_null())continue;
+        auto a=ResolveIdentity(members[i]);
+        if(!a)continue;
+        try{if(Read<unsigned>(Field(a,"PolyFlags"))!=flags[i].get<unsigned>())changes.push_back({a,flags[i].get<unsigned>()});}
+        catch(const std::exception&){}
+    }
+    if(changes.empty())return 0;
+    Transaction transaction("Repair brush flags");
+    for(auto& [a,value]:changes){Modify(a);Write(Field(a,"PolyFlags"),value);Call(a,0x44);}
+    transaction.Commit();Redraw();
+    return changes.size();
+}
+// Moves brushes to the end of the level's actor list, so the CSG build adds
+// them after every carve, including one placed later over them. One Undo step;
+// nothing happens when they are already last in this order.
+size_t DesignSendToLast(const Json& members)
+{
+    std::vector<Address> actors;
+    for(auto& id:members)if(auto a=ResolveIdentity(id))actors.push_back(a);
+    if(actors.empty())return 0;
+    auto level=Level();
+    auto data=Read<Address>(level+0x2c);const int count=Read<int>(level+0x30);
+    if(!data || count<static_cast<int>(actors.size()))return 0;
+    bool ordered=true;
+    for(size_t i=0;i<actors.size();++i)if(Read<Address>(data+(count-actors.size()+i)*4)!=actors[i])ordered=false;
+    if(ordered)return 0;
+    Transaction transaction("Send brushes to last");
+    Modify(level);
+    for(auto actor:actors)
+    {
+        int index=-1;
+        for(int i=0;i<count;++i)if(Read<Address>(data+i*4)==actor){index=i;break;}
+        if(index<0)continue;
+        for(int i=index;i+1<count;++i)Write(data+i*4,Read<Address>(data+(i+1)*4));
+        Write(data+(count-1)*4,actor);
+    }
+    transaction.Commit();Redraw();
+    return actors.size();
+}
 std::string StartTeam(Address actor);
 Json DesignSpawns()
 {

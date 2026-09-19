@@ -16,6 +16,7 @@ namespace Workflow::Editor
     void SetBrushVisibility(int category, const std::string& action);
     void Select(const Json& identities, bool focus = false);
     Json SelectedSurfaceBrushes();
+    Json BspSurfaceOwners();
     Json SelectedMeshBounds();
     void FitBuilderBrushToMeshes();
     Json BrushSnapBounds(bool surfaces = false);
@@ -64,6 +65,9 @@ namespace Workflow::Editor
     void DesignGroupMembers(const Json& members,const std::string& group,const std::string& action);
     void DesignTranslate(const Json& members,const Vector& delta);
     Json CreateLift(const Vector& position,double width,double length,double thickness,double rise,double moveTime);
+    Json DesignPolyFlags(const Json& members);
+    size_t DesignSetPolyFlags(const Json& members,const Json& flags);
+    size_t DesignSendToLast(const Json& members);
     Json DesignSpawns();
     Json DesignClearances();
     void DesignPlay(const Json& start,const Pose& pose,bool launch = true);

@@ -202,6 +202,10 @@ preview without touching the map.
   face. Length is its depth. It can carry a zone portal.
 - **Stairs:** 1–128 solid steps rising along local +Y; height is the total rise.
   Every flight, spirals included, also gets an invisible, semi-solid ramp laid
+  over the steps (a build first repairs the brush flags of any stair placed
+  by an older version, whose ramp would otherwise swallow its steps, and sends
+  every stair, ramp and platform to the end of the brush order, so a room carved
+  over them later no longer hollows them out of the build), laid
   over the steps' front edges, so pawns glide up rather than bump from tread to
   tread. Resizing any stair recounts its treads: about 32 units of run each and
   no more than 24 of rise, so a longer or taller flight gains steps and a shorter

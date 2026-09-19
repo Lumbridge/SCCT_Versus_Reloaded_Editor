@@ -1202,6 +1202,64 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 char builtStatus[1024]{};GetWindowTextA(GetDlgItem(design,720),builtStatus,sizeof(builtStatus));
                 const std::string builtWhy=std::string("a spiral is still editable after a geometry build (status: ")+builtStatus+"; yaw "+field(753)+")";
                 require(field(753)=="180" && std::string(builtStatus).find("not changed")==std::string::npos,builtWhy.c_str());
+                {
+                    // A stair placed before its ramp flags reached the actor is
+                    // repaired before the next build: knock the flags off and ask.
+                    J spiralMembers;
+                    {
+                        std::ifstream in(directory/"ReloadedEditor"/"library.json");J document;in>>document;
+                        for(auto& candidate:document["maps"][call({{"op","map"}})["key"].get<std::string>()]["design"]["pieces"])
+                            if(candidate["spec"]["kind"]=="Spiral")
+                            {
+                                size_t live=0;const auto sceneNow=call({{"op","design.scene"}});
+                                for(auto& member:candidate["members"])for(auto& actor:sceneNow)if(actor["path"]==member["path"]){++live;break;}
+                                if(live==candidate["members"].size())spiralMembers=candidate["members"];
+                            }
+                    }
+                    require(!spiralMembers.is_null(),"the spiral is a whole piece in the library");
+                    if(!spiralMembers.is_null())
+                    {
+                        J zeros=J::array();for(size_t i=0;i<spiralMembers.size();++i)zeros.push_back(0);
+                        call({{"op","design.polyflags"},{"members",spiralMembers},{"flags",zeros}});
+                        const auto repaired=call({{"op","design.repairflags"}}).get<size_t>();
+                        const auto after=call({{"op","design.polyflags"},{"members",spiralMembers}});
+                        size_t ramps=0;for(auto& f:after)if(!f.is_null() && f.get<unsigned>()==33)++ramps;
+                        const std::string repairWhy="repairing piece flags restores every glide ramp ("+std::to_string(repaired)+" repaired, "+std::to_string(ramps)+" ramps of "+std::to_string(spiralMembers.size())+" brushes)";
+                        require(repaired>0 && ramps>0 && ramps==repaired,repairWhy.c_str());
+                    }
+                    // What the BSP build keeps: every step of a spiral and of a
+                    // straight stair must still own faces, or it is invisible in game.
+                    J straight={{"kind","Stairs"},{"construction","Carve"},{"width",128},{"length",512},{"height",256},{"thickness",16},{"steps",16},{"ceiling",false},{"portal",false},{"name","Built stairs"}};
+                    auto builtStairs=call({{"op","design.block"},{"spec",straight},{"position",{4096,4096,0}},{"rotation",{0,0,0}}});
+                    // A room carved over the stairs later in the actor order hollows them out of the build.
+                    J hollow={{"kind","Room"},{"construction","Carve"},{"width",512},{"length",768},{"height",512},{"thickness",16},{"steps",8},{"ceiling",true},{"portal",false},{"name","Carved after"}};
+                    call({{"op","design.block"},{"spec",hollow},{"position",{4096,4096,0}},{"rotation",{0,0,0}}});
+                    call({{"op","design.build"}});
+                    auto stepsWithFaces=[&]
+                    {
+                        const auto owners=call({{"op","design.bspowners"}});
+                        size_t with=0;
+                        for(size_t i=0;i+1<builtStairs["members"].size();++i)if(owners.value(builtStairs["members"][i]["path"].get<std::string>(),0)>0)++with;
+                        return with;
+                    };
+                    const size_t before=stepsWithFaces();
+                    const auto moved=call({{"op","design.sendtolast"},{"members",builtStairs["members"]}}).get<size_t>();
+                    call({{"op","design.build"}});
+                    const size_t after=stepsWithFaces();
+                    const std::string orderWhy="stairs sent to last in the actor order keep every step's faces ("+std::to_string(before)+" steps had faces before, "+std::to_string(after)+" of "+std::to_string(builtStairs["members"].size()-1)+" after, "+std::to_string(moved)+" moved)";
+                    require(moved>0 && after==builtStairs["members"].size()-1,orderWhy.c_str());
+                    const auto owners=call({{"op","design.bspowners"}});
+                    auto facesOf=[&](const J& member){return owners.value(member["path"].get<std::string>(),0);};
+                    if(!spiralMembers.is_null())
+                    {
+                        // Wedges come first, then the post, then the glide prisms.
+                        const size_t wedges=(spiralMembers.size()+1)/3;
+                        size_t spiralSteps=0,spiralMissing=0;
+                        for(size_t i=0;i<wedges;++i){if(facesOf(spiralMembers[i])>0)++spiralSteps;else ++spiralMissing;}
+                        const std::string spiralWhy="a spiral's wedges keep their faces after a build ("+std::to_string(spiralSteps)+" with faces, "+std::to_string(spiralMissing)+" without, post faces "+std::to_string(facesOf(spiralMembers[wedges]))+")";
+                        require(spiralMissing==0,spiralWhy.c_str());
+                    }
+                }
                 SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
                 SendMessage(design,WM_COMMAND,702,0);
             }

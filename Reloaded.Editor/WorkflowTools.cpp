@@ -841,6 +841,10 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="design.layer"){Editor::DesignLayer(q.at("members"),q.at("hidden"),q.at("locked"),q.value("group",std::string()),q.value("groupAction",std::string("none")));result=true;}
         else if(op=="design.grid")result=Editor::DesignGrid();
         else if(op=="design.view")result=WorkflowTools::DesignView();
+        else if(op=="design.polyflags")result=q.contains("flags")?Json(Editor::DesignSetPolyFlags(q.at("members"),q.at("flags"))):Editor::DesignPolyFlags(q.at("members"));
+        else if(op=="design.repairflags")result=WorkflowTools::DesignRepairFlags();
+        else if(op=="design.bspowners")result=Editor::BspSurfaceOwners();
+        else if(op=="design.sendtolast")result=Editor::DesignSendToLast(q.at("members"));
         else if(op=="design.builds")result=Editor::GeometryBuilds();
         else if(op=="design.blockbatch")result=Editor::DesignBlockoutBatch(q.at("items"));
         else if(op=="design.flags"){Editor::DesignSetFlags(q.at("members"),q.value("hidden",-1),q.value("locked",-1));result=true;}

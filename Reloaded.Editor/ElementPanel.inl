@@ -281,6 +281,7 @@ Json FloorPlace(DesignState& s,const Json& items)
     for(const auto& piece:placed)data["pieces"].push_back(piece);
     DesignSave(s,data,false);
     DesignRefresh(s);
+    try{DesignOrderPiecesLast(s);}catch(const std::exception&){}
     return placed;
 }
 void FloorDuplicate(DesignState& s,const Vector& at,bool up)

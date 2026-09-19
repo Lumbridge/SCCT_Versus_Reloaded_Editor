@@ -478,6 +478,23 @@ void SetBrushVisibility(int category,const std::string& action)
     if(action=="select") { Exec("POLY SELECT NONE");Select(selection); }
     else { Call(Engine(),0xe4);Redraw(); }
 }
+// Built BSP surfaces per owning brush, by path: which brushes the last
+// geometry build actually kept faces from. Tests use it to see a shape survive.
+Json BspSurfaceOwners()
+{
+    auto level=Level(),model=Read<Address>(level+0x13c);
+    auto live=LiveActors();std::set<Address> actors(live.begin(),live.end());
+    std::map<std::string,size_t> counts;
+    for(auto surface:Array(model+0x94,0x2c))
+    {
+        auto poly=Read<Address>(surface+0x20),actor=poly?Read<Address>(poly+0x14c):0;
+        if(!actor || !actors.count(actor))continue;
+        ++counts[Path(actor)];
+    }
+    Json result=Json::object();
+    for(const auto& [path,count]:counts)result[path]=count;
+    return result;
+}
 Json SelectedSurfaceBrushes()
 {
     auto level=Level(),model=Read<Address>(level+0x13c);

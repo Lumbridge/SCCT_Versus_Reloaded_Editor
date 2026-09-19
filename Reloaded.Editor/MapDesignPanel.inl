@@ -454,6 +454,8 @@ void DesignRelayout(DesignState& s)
 void DesignDeleteSelection(DesignState& s);
 void DesignKeys(DesignState& s);
 void DesignCommand(DesignState& s,int id);
+size_t DesignRepairPieceFlags(DesignState& s);
+size_t DesignOrderPiecesLast(DesignState& s);
 std::string SceneGroupOf(DesignState& s,const std::string& path);
 Json SceneGroupMembers(DesignState& s,const std::string& name);
 // Whether an actor is locked, by its path in the scene.
@@ -1356,6 +1358,7 @@ void DesignApply(DesignState& s)
     data["pieces"].push_back(piece);
     try{DesignSave(s,data,false);}catch(...){Editor::Exec("TRANSACTION UNDO");throw;}
     DesignRefresh(s);
+    try{DesignOrderPiecesLast(s);}catch(const std::exception&){}
     // Stay on the piece so it can be adjusted again straight away, as the
     // library has it after the refresh.
     for(const auto& stored:DesignData(s).at("pieces"))if(stored.at("members")==piece.at("members"))piece=stored;
@@ -1743,11 +1746,16 @@ void DesignCommand(DesignState& s,int id)
     }
     if(id==DBuild)
     {
+        // Pieces placed before glide ramps were flagged correctly are put
+        // right first, so the build does not swallow their steps.
+        size_t repaired=0;
+        try{repaired=DesignRepairPieceFlags(s);}catch(const std::exception&){}
+        try{DesignOrderPiecesLast(s);}catch(const std::exception&){}
         Editor::BuildGeometry();
         s.builds=Editor::GeometryBuilds();
         s.builtRevision=Editor::Revision();
         DesignRefresh(s);
-        DesignStatus(s,"Geometry rebuilt. Lighting is not rebuilt here; use Build > Rebuild Lighting when the layout settles.");
+        DesignStatus(s,std::string("Geometry rebuilt. ")+(repaired?std::to_string(repaired)+" stair brush(es) had their flags repaired first. ":"")+"Lighting is not rebuilt here; use Build > Rebuild Lighting when the layout settles.");
         return;
     }
     if(id==DUnlit)
@@ -3306,6 +3314,59 @@ void DesignKeys(DesignState& s)
     ShowWindow(s.keysWindow,SW_SHOWNORMAL);
     SetForegroundWindow(s.keysWindow);
 }
+// Stairs, ramps and platforms are added shapes: a room carved over them later
+// in the actor order would hollow them out of the build, so after any
+// placement they are sent to the end of the order. Returns how many moved.
+size_t DesignOrderPiecesLast(DesignState& s)
+{
+    Json members=Json::array();
+    for(const auto& piece:DesignData(s).at("pieces"))
+    {
+        const auto kind=piece.at("spec").value("kind",std::string());
+        if(!Design::StairKind(kind) && kind!="Ramp" && kind!="Platform")continue;
+        for(auto& member:piece.at("members"))
+            for(auto& actor:s.scene)
+                if(actor.at("path")==member.at("path")){members.push_back(member);break;}
+    }
+    if(members.empty())return 0;
+    const auto moved=Editor::DesignSendToLast(members);
+    if(moved)DesignRefresh(s);
+    return moved;
+}
+// Every live piece's brushes get the polygon flags its shape asks for (a
+// stair's glide ramp invisible and semi-solid, everything else plain), so a
+// piece placed before those flags reached the brush actor stops swallowing
+// its own steps in the BSP build. Returns how many brushes changed.
+size_t DesignRepairPieceFlags(DesignState& s)
+{
+    size_t repaired=0;
+    for(const auto& piece:DesignData(s).at("pieces"))
+    {
+        try
+        {
+            const auto& members=piece.at("members");
+            size_t live=0;
+            for(auto& member:members)for(auto& actor:s.scene)if(actor.at("path")==member.at("path")){++live;break;}
+            if(live!=members.size() || live==0)continue;
+            const auto solids=Design::Geometry(piece.at("spec"));
+            if(solids.size()!=members.size())continue;
+            const auto actual=Editor::DesignPolyFlags(members);
+            Json wanted=Json::array();
+            bool differs=false;
+            for(size_t i=0;i<solids.size();++i)
+            {
+                // Portal sheets keep whatever the editor gave them.
+                if(solids[i].flags==Design::kPortalPolyFlags){wanted.push_back(nullptr);continue;}
+                wanted.push_back(solids[i].flags);
+                if(!actual[i].is_null() && actual[i].get<unsigned>()!=solids[i].flags)differs=true;
+            }
+            if(differs)repaired+=Editor::DesignSetPolyFlags(members,wanted);
+        }
+        catch(const std::exception&) { /* A piece the model cannot rebuild is left alone. */ }
+    }
+    if(repaired)DesignRefresh(s);
+    return repaired;
+}
 // Locks or unlocks the editor's selection. Locked actors are skipped by
 // clicks, box selection and drags in the plan, and the editor refuses to
 // move them.
@@ -4324,6 +4385,13 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
         if(message==WM_COMMAND)MessageBeep(MB_ICONINFORMATION);
     }
     return DefWindowProcA(window,message,w,l);
+}
+// Repairs piece brush flags through the open design window; tests use it.
+Json DesignRepairFlags()
+{
+    auto s=designWindow?reinterpret_cast<DesignState*>(GetWindowLongPtr(designWindow,GWLP_USERDATA)):nullptr;
+    if(!s)throw std::runtime_error("The design window is not open.");
+    return DesignRepairPieceFlags(*s);
 }
 // The design view's current mapping between the map and the canvas. Tests use
 // it to point at a wall; nothing in the editor depends on it.
