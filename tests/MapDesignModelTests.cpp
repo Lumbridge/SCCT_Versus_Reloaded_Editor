@@ -31,7 +31,23 @@ int main()
     auto lStairs=Design::Geometry(turning);Check(lStairs.size()==11,"an L stair has two flights, a landing and two glide ramps");for(auto& step:lStairs)Check(Volume(step)>0,"inverted L step");
     turning["kind"]="Stairs U";auto uStairs=Design::Geometry(turning);Check(uStairs.size()==11,"a U stair has two flights, a landing and two glide ramps");for(auto& step:uStairs)Check(Volume(step)>0,"inverted U step");
     Json spiral={{"kind","Spiral"},{"width",256},{"length",256},{"height",256},{"thickness",16},{"steps",12}};
-    auto spiralSteps=Design::Geometry(spiral);Check(spiralSteps.size()==13,"a spiral has its steps and a post");for(auto& step:spiralSteps)Check(Volume(step)>0,"inverted spiral wedge");
+    auto spiralSteps=Design::Geometry(spiral);Check(spiralSteps.size()==35,"a spiral has its steps, a post and two glide prisms per step but the last");for(auto& step:spiralSteps)Check(Volume(step)>0,"inverted spiral wedge or prism");
+    Check(spiralSteps.back().flags==Design::kGlideFlags,"the spiral's glide prisms are invisible and semi-solid");
+    {
+        // Resizing stairs recounts their treads; a spiral stays round.
+        Json flight={{"kind","Stairs"},{"width",128},{"length",256},{"height",128},{"thickness",16},{"steps",8}};
+        Pose p{};Design::Resize(flight,p,1,1,256);
+        Check(flight["length"]==512 && flight["steps"]==16,"a longer flight gains treads");
+        Design::Resize(flight,p,2,1,384);
+        Check(flight["height"]==512 && flight["steps"]==22,"a taller flight gains treads so no rise exceeds 24 units");
+        Json lShaped={{"kind","Stairs L"},{"width",128},{"length",256},{"height",128},{"thickness",16},{"steps",8}};
+        Design::Resize(lShaped,p,1,1,128);
+        Check(lShaped["steps"]==16,"a turning stair counts both flights from its run");
+        Json round=spiral;Design::Resize(round,p,0,1,64);
+        Check(round["width"]==320 && round["length"]==320,"a spiral resized on one axis stays round");
+        Design::Resize(round,p,2,1,256);
+        Check(round["steps"]==22,"a taller spiral gains steps");
+    }
     Reject([]{Design::Geometry(Json{{"kind","Stairs L"},{"width",128},{"length",130},{"height",256},{"thickness",16},{"steps",8}});});
     Reject([]{Design::Geometry(Json{{"kind","Spiral"},{"width",32},{"length",32},{"height",256},{"thickness",16},{"steps",12}});});
     Check(stairs.back().faces[0][2][2]==64,"stairs do not reach total rise");

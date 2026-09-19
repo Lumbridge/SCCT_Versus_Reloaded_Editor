@@ -36,7 +36,46 @@ inline Solid Hexa(const std::array<Vector,8>& c,bool subtract=false)
     for(auto& face:corners){Face f;for(auto i:face)f.push_back(c[i]);s.faces.push_back(f);}
     return s;
 }
+// A convex solid from its faces, each wound so its normal points away from the
+// solid's centre, as the engine expects.
+inline Solid Convex(std::vector<Face> faces,unsigned flags=0)
+{
+    Vector centre{};size_t count=0;
+    for(auto& f:faces)for(auto& v:f){CheckVector(v);for(int i=0;i<3;++i)centre[i]+=v[i];++count;}
+    if(count==0)throw std::runtime_error("A solid needs faces.");
+    for(int i=0;i<3;++i)centre[i]/=static_cast<double>(count);
+    for(auto& f:faces)
+    {
+        if(f.size()<3)throw std::runtime_error("A face needs three points.");
+        const auto& a=f[0];const auto& b=f[1];const auto& c=f[2];
+        const Vector u{b[0]-a[0],b[1]-a[1],b[2]-a[2]},v{c[0]-a[0],c[1]-a[1],c[2]-a[2]};
+        const Vector normal{u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0]};
+        const Vector out{a[0]-centre[0],a[1]-centre[1],a[2]-centre[2]};
+        if(normal[0]*out[0]+normal[1]*out[1]+normal[2]*out[2]<0)std::reverse(f.begin(),f.end());
+    }
+    Solid s;s.faces=std::move(faces);s.flags=flags;return s;
+}
+// A triangular prism from a sloped top triangle down to the floor.
+inline Solid Prism(const Vector& a,const Vector& b,const Vector& c,unsigned flags)
+{
+    const Vector ba{a[0],a[1],0},bb{b[0],b[1],0},bc{c[0],c[1],0};
+    return Convex({{a,b,c},{ba,bb,bc},{a,ba,bb,b},{b,bb,bc,c},{c,bc,ba,a}},flags);
+}
 inline bool StairKind(const std::string& kind) { return kind=="Stairs" || kind=="Stairs L" || kind=="Stairs U" || kind=="Spiral"; }
+// Treads follow a resize: about 32 units of run each and no more than 24 of
+// rise, so a longer or taller flight gains steps and a shorter one loses them.
+inline void RecountSteps(Json& spec)
+{
+    const auto kind=spec.at("kind").get<std::string>();
+    const double w=spec.at("width"),l=spec.at("length"),h=spec.at("height");
+    int steps=spec.value("steps",8);
+    if(kind=="Stairs")steps=std::max(1,static_cast<int>(std::lround(l/32)));
+    else if(kind=="Stairs L" || kind=="Stairs U")steps=2*std::max(1,static_cast<int>(std::lround((l-w)/32)));
+    else if(kind=="Spiral")steps=std::max(8,static_cast<int>(std::ceil(h/24)));
+    else return;
+    steps=std::max(steps,static_cast<int>(std::ceil(h/24)));
+    spec["steps"]=std::clamp(steps,kind=="Spiral"?3:(kind=="Stairs"?1:2),128);
+}
 // Pawns bump over steps; an invisible semi-solid ramp laid on the steps' front
 // edges (one rise above the treads at the back) lets them glide. Its flags are
 // the engine's PF_Invisible and PF_SemiSolid.
@@ -169,6 +208,15 @@ inline std::vector<Solid> Geometry(const Json& spec)
             out.push_back(Hexa(c));
         }
         box({-r,-r,0},{r,r,h});
+        // The glide ramp climbs from each tread's front edge to the next one's,
+        // as two sloped prisms per step so every face stays planar.
+        for(int i=0;i+1<steps;++i)
+        {
+            const double a0=2*pi*i/steps,a1=2*pi*(i+1)/steps,z0=rise*(i+1),z1=rise*(i+2);
+            const Vector p1{r*std::cos(a0),r*std::sin(a0),z0},p2{R*std::cos(a0),R*std::sin(a0),z0},p3{R*std::cos(a1),R*std::sin(a1),z1},p4{r*std::cos(a1),r*std::sin(a1),z1};
+            out.push_back(Prism(p1,p2,p3,kGlideFlags));
+            out.push_back(Prism(p1,p3,p4,kGlideFlags));
+        }
     }
     else if(kind=="Ramp")
     {
@@ -273,6 +321,10 @@ inline void Resize(Json& spec,Pose& frame,int axis,int side,double delta)
     const double wanted=std::clamp(old+delta*(axis==2?1:side),1.0,65536.0);
     const double applied=(wanted-old)*(axis==2?1:side);
     spec[field]=wanted;
+    const auto kind=spec.value("kind",std::string());
+    // A spiral is round: its width and length are one diameter.
+    if(kind=="Spiral" && axis!=2){spec["width"]=wanted;spec["length"]=wanted;}
+    if(StairKind(kind))RecountSteps(spec);
     if(axis==2)return;
     Vector local{};local[axis]=applied/2;
     frame.position=TransformPoint(local,frame);

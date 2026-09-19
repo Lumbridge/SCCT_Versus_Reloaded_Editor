@@ -2975,7 +2975,8 @@ void DesignEndDrag(DesignState& s,bool add)
     DesignInspectorRefresh(s);
     const auto summary=drag.kind==DesignDrag::Kind::Move
         ? "Moved to "+Design::Round(s.frame.position[0])+", "+Design::Round(s.frame.position[1])+", "+Design::Round(s.frame.position[2])+"."
-        : "Resized to "+Design::Round(s.pending.at("width"))+" x "+Design::Round(s.pending.at("length"))+" x "+Design::Round(s.pending.at("height"))+" units.";
+        : "Resized to "+Design::Round(s.pending.at("width"))+" x "+Design::Round(s.pending.at("length"))+" x "+Design::Round(s.pending.at("height"))+" units"
+          +(Design::StairKind(s.pending.value("kind",std::string()))?", "+std::to_string(s.pending.value("steps",0))+" steps.":".");
     // A placed piece follows the drag straight away, one Undo step per drag.
     // If the brushes cannot follow, the outline goes back to them.
     if(!s.previous.is_null())

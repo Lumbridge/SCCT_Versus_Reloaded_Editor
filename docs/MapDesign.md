@@ -189,8 +189,12 @@ preview without touching the map.
 - **Doorway:** a subtractive opening through a wall, starting at the interior
   face. Length is its depth. It can carry a zone portal.
 - **Stairs:** 1–128 solid steps rising along local +Y; height is the total rise.
-  Every flight also gets an invisible, semi-solid ramp laid over the steps'
-  front edges, so pawns glide up rather than bump from tread to tread.
+  Every flight, spirals included, also gets an invisible, semi-solid ramp laid
+  over the steps' front edges, so pawns glide up rather than bump from tread to
+  tread. Resizing any stair recounts its treads: about 32 units of run each and
+  no more than 24 of rise, so a longer or taller flight gains steps and a shorter
+  one loses them (type a count in the panel to override). A spiral is round:
+  dragging either side handle changes its diameter.
 - **Stairs L:** two flights with a landing, turning right; width is one flight,
   length the footprint of the first flight (at least 8 more than the width).
 - **Stairs U:** two flights side by side with a half landing, coming back the

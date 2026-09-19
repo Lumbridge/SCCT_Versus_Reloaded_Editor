@@ -313,7 +313,9 @@ Json CreateLift(const Vector& position,double width,double length,double thickne
     for(int suffix=2;Find(LevelPath()+"."+name);++suffix)name="Design_Lift_"+std::to_string(suffix);
     std::ostringstream numbers;numbers<<std::fixed<<std::setprecision(6);
     numbers<<"MoveTime="<<moveTime<<"\r\nStayOpenTime=3.000000\r\nNumKeys=2\r\nKeyPos(1)=(X=0.000000,Y=0.000000,Z="<<rise<<")\r\n";
-    const std::string text="Begin Map\r\nBegin Actor Class=SBase.SLift Name="+name+"\r\nLocation="+VectorText(position)+"\r\nInitialState=StandOpenTimed\r\n"+numbers.str()
+    // DrawType and Physics are stated because the class default draws the
+    // actor as a sprite, which shows in game.
+    const std::string text="Begin Map\r\nBegin Actor Class=SBase.SLift Name="+name+"\r\nLocation="+VectorText(position)+"\r\nDrawType=DT_Brush\r\nPhysics=PHYS_MovingBrush\r\nInitialState=StandOpenTimed\r\n"+numbers.str()
         +"Begin Brush Name="+name+"Model\r\n"+Magic::BoxPolygons(width/2,length/2,thickness/2)+"End Brush\r\nBrush=Model'"+LevelPath()+"."+name+"Model'\r\nEnd Actor\r\nEnd Map\r\n";
     struct Scope{~Scope(){insertionText=nullptr;}} scope;
     auto selection=SelectedIdentities();
