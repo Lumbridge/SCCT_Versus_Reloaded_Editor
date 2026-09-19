@@ -712,7 +712,15 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             require(call({{"op","design.scene"}}).size()==baseline.size(),"carved room, doorway and layer changes undo back to baseline");
             auto grid=call({{"op","design.grid"}});
             require(grid.size()==3 && grid[0].get<double>()>=0 && grid[0].get<double>()<=65536,"design views read the editor's grid spacing");
-            spec["kind"]="Stairs";auto stairs=create(spec);require(stairs["members"].size()==9,"native stair brush generation: steps and their glide ramp");Exec("TRANSACTION UNDO");
+            spec["kind"]="Stairs";auto stairs=create(spec);require(stairs["members"].size()==9,"native stair brush generation: steps and their glide ramp");
+            {
+                // The ramp must be a semi-solid brush in the actor's own flags, or the BSP build swallows the steps.
+                auto ramp=call({{"op","magic.inspect"},{"actor",stairs["members"].back()}});
+                auto step=call({{"op","magic.inspect"},{"actor",stairs["members"][0]}});
+                const std::string flagsWhy="the glide ramp brush is flagged invisible and semi-solid (ramp PolyFlags "+ramp["values"].value("PolyFlags",std::string("?"))+", step "+step["values"].value("PolyFlags",std::string("?"))+")";
+                require(ramp["values"].value("PolyFlags",std::string())=="33" && step["values"].value("PolyFlags",std::string())=="0",flagsWhy.c_str());
+            }
+            Exec("TRANSACTION UNDO");
             spec["kind"]="Ramp";auto ramp=create(spec);auto rampScene=call({{"op","design.scene"}});J selected=J::array();for(auto& a:rampScene)if(a["path"]==ramp["members"][0]["path"])selected.push_back(a);
             require(selected.size()==1 && selected[0]["edges"].size()==18,"ramp imports five outward polygon faces");
             call({{"op","design.align"},{"scene",selected},{"axis",0},{"mode","Align"}});Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");

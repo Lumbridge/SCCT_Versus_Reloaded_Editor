@@ -224,6 +224,18 @@ namespace
             // round Location and park the remainder here, which keeps the
             // world position exact.
             try{Write(Field(a,"PrePivot"),std::array<float,3>{0,0,0});}catch(const std::exception&){}
+            // The brush actor's own PolyFlags decide whether the BSP builder
+            // treats it as semi-solid (a glide ramp) rather than cutting the
+            // steps beneath it away; the pasted text's line does not take, so
+            // the value is written here.
+            {
+                const auto& source=definition.at("actors")[members.size()].at("text").get<std::string>();
+                if(const auto flagsAt=source.find("PolyFlags=");flagsAt!=std::string::npos)
+                {
+                    const unsigned flags=static_cast<unsigned>(std::strtoul(source.c_str()+flagsAt+10,nullptr,10));
+                    try{Write(Field(a,"PolyFlags"),flags);}catch(const std::exception&){}
+                }
+            }
             SetPosition(a,item.at("position").get<Vector>());Write(Field(a,"Rotation"),item.at("rotation").get<Rotation>());Call(a,0x44);members.push_back(Identity(a));
             if(!group.empty() && Fold(group)!="none" && Property(a,"Group"))DesignSetGroup(a,group);
         }
