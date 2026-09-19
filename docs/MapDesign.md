@@ -210,7 +210,11 @@ preview without touching the map.
   tread. Resizing any stair recounts its treads: about 32 units of run each and
   no more than 24 of rise, so a longer or taller flight gains steps and a shorter
   one loses them (type a count in the panel to override). A spiral is round:
-  dragging either side handle changes its diameter.
+  dragging either side handle changes its diameter. Its treads are one slab
+  thick round a post, one full turn over the height, so the turn above leaves
+  headroom and the entrance at the bottom stays open; placed from the Floors
+  menu it is 384 across (144 units of tread) in a shaft with 24 units of
+  clearance round it.
 - **Stairs L:** two flights with a landing, turning right; width is one flight,
   length the footprint of the first flight (at least 8 more than the width).
 - **Stairs U:** two flights side by side with a half landing, coming back the

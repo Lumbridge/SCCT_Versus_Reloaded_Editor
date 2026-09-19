@@ -330,8 +330,10 @@ void FloorStairsAt(DesignState& s,const Vector& at,double base,double spacing,co
     }
     else
     {
-        stairs["width"]=256;stairs["length"]=256;stairs["steps"]=std::max(steps,12);
-        shaftWidth=256;shaftLength=256;
+        // 384 across leaves 144 units of tread between post and wall; the
+        // shaft has 24 units of clearance round the spiral.
+        stairs["width"]=384;stairs["length"]=384;stairs["steps"]=std::max(steps,12);
+        shaftWidth=384+48;shaftLength=384+48;
     }
     Json shaft={{"kind","Room"},{"construction","Carve"},{"width",shaftWidth},{"length",shaftLength},{"height",spacing+8},{"thickness",16},{"steps",8},{"ceiling",true},{"portal",false},{"name","Stairwell"}};
     Vector position=at;

@@ -55,10 +55,12 @@ inline Solid Convex(std::vector<Face> faces,unsigned flags=0)
     }
     Solid s;s.faces=std::move(faces);s.flags=flags;return s;
 }
-// A triangular prism from a sloped top triangle down to the floor.
-inline Solid Prism(const Vector& a,const Vector& b,const Vector& c,unsigned flags)
+// A triangular prism from a sloped top triangle down to the floor, or, with a
+// thickness, a sloped slab that thick under the same triangle.
+inline Solid Prism(const Vector& a,const Vector& b,const Vector& c,unsigned flags,double thickness=0)
 {
-    const Vector ba{a[0],a[1],0},bb{b[0],b[1],0},bc{c[0],c[1],0};
+    auto under=[&](const Vector& p){return Vector{p[0],p[1],thickness>0?std::max(0.0,p[2]-thickness):0.0};};
+    const Vector ba=under(a),bb=under(b),bc=under(c);
     return Convex({{a,b,c},{ba,bb,bc},{a,ba,bb,b},{b,bb,bc,c},{c,bc,ba,a}},flags);
 }
 inline bool StairKind(const std::string& kind) { return kind=="Stairs" || kind=="Stairs L" || kind=="Stairs U" || kind=="Spiral"; }
@@ -191,18 +193,19 @@ inline std::vector<Solid> Geometry(const Json& spec)
     }
     else if(kind=="Spiral")
     {
-        // Wedge steps round a post, one full turn over the height. Width is the
-        // outer diameter.
+        // Wedge treads round a post, one full turn over the height. Width is
+        // the outer diameter. Each tread is one slab thick, not a column to the
+        // floor, so the turn above leaves headroom and the entrance stays open.
         int steps=spec.value("steps",12);if(steps<3 || steps>128)throw std::runtime_error("Use 3 to 128 steps for a spiral.");
         const double pi=3.14159265358979323846,R=w/2,r=std::max(12.0,w/8),rise=h/steps;
         if(R<=r+8)throw std::runtime_error("A spiral needs a width of at least 64 units.");
         for(int i=0;i<steps;++i)
         {
-            const double a0=2*pi*i/steps,a1=2*pi*(i+1)/steps,top=rise*(i+1);
+            const double a0=2*pi*i/steps,a1=2*pi*(i+1)/steps,top=rise*(i+1),bottom=std::max(0.0,top-std::max(t,rise));
             std::array<Vector,8> c;
             for(int k=0;k<8;++k)
             {
-                const double rad=(k&1)?R:r,ang=(k&2)?a1:a0,z=(k&4)?top:0;
+                const double rad=(k&1)?R:r,ang=(k&2)?a1:a0,z=(k&4)?top:bottom;
                 c[k]={rad*std::cos(ang),rad*std::sin(ang),z};
             }
             out.push_back(Hexa(c));
@@ -214,8 +217,8 @@ inline std::vector<Solid> Geometry(const Json& spec)
         {
             const double a0=2*pi*i/steps,a1=2*pi*(i+1)/steps,z0=rise*(i+1),z1=rise*(i+2);
             const Vector p1{r*std::cos(a0),r*std::sin(a0),z0},p2{R*std::cos(a0),R*std::sin(a0),z0},p3{R*std::cos(a1),R*std::sin(a1),z1},p4{r*std::cos(a1),r*std::sin(a1),z1};
-            out.push_back(Prism(p1,p2,p3,kGlideFlags));
-            out.push_back(Prism(p1,p3,p4,kGlideFlags));
+            out.push_back(Prism(p1,p2,p3,kGlideFlags,std::max(t,rise)));
+            out.push_back(Prism(p1,p3,p4,kGlideFlags,std::max(t,rise)));
         }
     }
     else if(kind=="Ramp")
