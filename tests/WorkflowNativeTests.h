@@ -1079,8 +1079,8 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             // New group; the name dialog's default name is accepted.
             call({{"op","select"},{"actors",placedRoom}});
             SendMessage(design,WM_COMMAND,765,0); // Scene panel.
-            HWND scene=FindWindowA("ReloadedScene",nullptr);
-            require(scene!=nullptr,"the Scene panel opens from the design window");
+            HWND scene=FindWindowExA(design,nullptr,"ReloadedScene",nullptr);
+            require(scene!=nullptr,"the Scene panel docks inside the design window");
             if(scene)
             {
                 auto sceneList=GetDlgItem(scene,1200);

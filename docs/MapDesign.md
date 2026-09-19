@@ -139,7 +139,9 @@ a small padlock, and the editor itself refuses to move them (the native
 
 ### The Scene panel
 
-**Workspace > Scene panel** (also on the plan's right-click menu) lists every
+**Workspace > Scene panel** (also on the plan's right-click menu) docks a panel
+down the right side of the design window; the same entry or its **Hide** button
+puts it away. It lists every
 piece, brush, light, security device and game actor in the map, the way a layers
 panel does. Each row has a tick for visibility and a **LOCKED** cell to toggle a
 lock; a filter box narrows the list by name, type or group; **Show** limits it to

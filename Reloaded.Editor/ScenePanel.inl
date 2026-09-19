@@ -4,7 +4,7 @@
 // move together. Included inside MapDesignPanel.inl before the canvas procedure.
 enum SceneControl
 {
-    DScnList=1200,DScnFilter,DScnGroupBy,DScnShow,DScnRefresh,DScnHint,DScnNewGroup,DScnSolo,DScnShowAll,DScnUnlockAll,DScnLabel,DScnLabel2,DScnLabel3,
+    DScnList=1200,DScnFilter,DScnGroupBy,DScnShow,DScnRefresh,DScnHint,DScnNewGroup,DScnSolo,DScnShowAll,DScnUnlockAll,DScnLabel,DScnLabel2,DScnLabel3,DScnHide,
     DScnCtxSelect=1220,DScnCtxFrame,DScnCtxEdit,DScnCtxHide,DScnCtxShow,DScnCtxLock,DScnCtxUnlock,DScnCtxSolo,DScnCtxShowAll,DScnCtxUnlockAll,
     DScnCtxRename,DScnCtxDelete,DScnCtxNewGroup,DScnCtxRemoveGroup,DScnCtxSelectType,DScnCtxSelectGroup,DScnCtxRenameGroup,DScnCtxDeleteGroup,
     DScnCtxCollapseAll,DScnCtxExpandAll,DScnCtxAddGroupFirst=1260,DScnCtxAddGroupLast=1299
@@ -369,7 +369,7 @@ Json SceneGroupMembers(DesignState& s,const std::string& name)
 void SceneRenamePiece(DesignState& s,const SceneRow& row)
 {
     std::string name=row.name;
-    if(!GetName(s.sceneWindow,"Rename Piece",name))return;
+    if(!GetName(s.window,"Rename Piece",name))return;
     Json data=DesignData(s);
     for(auto& piece:data["pieces"])if(piece.at("members")==row.data.at("members"))piece["spec"]["name"]=name;
     DesignSave(s,data);
@@ -440,7 +440,7 @@ void SceneAction(DesignState& s,int choice,const std::vector<int>& rows)
     else if(choice==DScnCtxNewGroup)
     {
         std::string name="Group";
-        if(!GetName(s.sceneWindow,"Name Group",name))return;
+        if(!GetName(s.window,"Name Group",name))return;
         SceneGroupCreate(s,name,members);
     }
     else if(choice>=DScnCtxAddGroupFirst && choice<=DScnCtxAddGroupLast)
@@ -454,7 +454,7 @@ void SceneAction(DesignState& s,int choice,const std::vector<int>& rows)
     else if(choice==DScnCtxRenameGroup && !group.empty())
     {
         std::string name=group;
-        if(!GetName(s.sceneWindow,"Rename Group",name))return;
+        if(!GetName(s.window,"Rename Group",name))return;
         SceneGroupRename(s,group,name);
     }
     else if(choice==DScnCtxDeleteGroup && !group.empty())SceneGroupDelete(s,group);
@@ -552,38 +552,38 @@ LRESULT CALLBACK SceneProc(HWND window,UINT message,WPARAM w,LPARAM l)
     {
         if(message==WM_CREATE)
         {
-            Control(window,"STATIC","Filter",0,DScnLabel,12,16,40,20);
-            Control(window,"EDIT","",ES_AUTOHSCROLL,DScnFilter,52,12,180,24);
-            Control(window,"STATIC","Group by",0,DScnLabel2,244,16,60,20);
-            Control(window,"COMBOBOX","",CBS_DROPDOWNLIST,DScnGroupBy,304,12,90,200);
+            Control(window,"STATIC","Filter",0,DScnLabel,6,10,40,20);
+            Control(window,"EDIT","",ES_AUTOHSCROLL,DScnFilter,48,6,306,24);
+            Control(window,"STATIC","Group by",0,DScnLabel2,6,40,56,20);
+            Control(window,"COMBOBOX","",CBS_DROPDOWNLIST,DScnGroupBy,62,36,100,200);
             for(const char* name:kSceneGroupNames)SendMessageA(GetDlgItem(window,DScnGroupBy),CB_ADDSTRING,0,reinterpret_cast<LPARAM>(name));
             SendMessage(GetDlgItem(window,DScnGroupBy),CB_SETCURSEL,s->sceneGroupBy,0);
-            Control(window,"STATIC","Show",0,DScnLabel3,406,16,40,20);
-            Control(window,"COMBOBOX","",CBS_DROPDOWNLIST|WS_VSCROLL,DScnShow,446,12,150,260);
+            Control(window,"STATIC","Show",0,DScnLabel3,170,40,36,20);
+            Control(window,"COMBOBOX","",CBS_DROPDOWNLIST|WS_VSCROLL,DScnShow,206,36,148,260);
             for(const char* name:kSceneShowNames)SendMessageA(GetDlgItem(window,DScnShow),CB_ADDSTRING,0,reinterpret_cast<LPARAM>(name));
             SendMessage(GetDlgItem(window,DScnShow),CB_SETCURSEL,s->sceneShow,0);
-            Control(window,"BUTTON","Refresh",0,DScnRefresh,608,12,80,24);
-            Control(window,"BUTTON","New group from selection...",0,DScnNewGroup,12,44,190,26);
-            Control(window,"BUTTON","Solo selection",0,DScnSolo,208,44,120,26);
-            Control(window,"BUTTON","Show all",0,DScnShowAll,334,44,90,26);
-            Control(window,"BUTTON","Unlock all",0,DScnUnlockAll,430,44,90,26);
-            auto list=Control(window,"SysListView32","",LVS_REPORT|LVS_SHOWSELALWAYS|WS_BORDER,DScnList,12,78,676,380);
+            Control(window,"BUTTON","New group...",0,DScnNewGroup,6,66,96,26);
+            Control(window,"BUTTON","Solo",0,DScnSolo,106,66,56,26);
+            Control(window,"BUTTON","Show all",0,DScnShowAll,166,66,64,26);
+            Control(window,"BUTTON","Unlock all",0,DScnUnlockAll,234,66,70,26);
+            Control(window,"BUTTON","Hide",0,DScnHide,308,66,46,26);
+            auto list=Control(window,"SysListView32","",LVS_REPORT|LVS_SHOWSELALWAYS|WS_BORDER,DScnList,6,98,348,380);
             SendMessage(list,LVM_SETEXTENDEDLISTVIEWSTYLE,0,LVS_EX_CHECKBOXES|LVS_EX_FULLROWSELECT);
-            const std::pair<const char*,int> columns[]={{"Name",290},{"Type",120},{"Group",110},{"Z",60},{"Lock",70}};
+            const std::pair<const char*,int> columns[]={{"Name",160},{"Type",84},{"Group",64},{"Z",44},{"Lock",50}};
             for(int i=0;i<5;++i)
             {
                 LVCOLUMNA column{};column.mask=LVCF_TEXT|LVCF_WIDTH;column.pszText=const_cast<char*>(columns[i].first);column.cx=columns[i].second;
                 SendMessageA(list,LVM_INSERTCOLUMNA,i,reinterpret_cast<LPARAM>(&column));
             }
-            Control(window,"STATIC","",0,DScnHint,12,464,676,40);
+            Control(window,"STATIC","",0,DScnHint,6,484,348,40);
             s->sceneKeys.clear();
             SceneRefreshList(*s);
             return 0;
         }
         if(message==WM_SIZE)
         {
-            MoveWindow(GetDlgItem(window,DScnList),12,78,std::max(1,LOWORD(l)-24),std::max(1,HIWORD(l)-134),TRUE);
-            MoveWindow(GetDlgItem(window,DScnHint),12,HIWORD(l)-48,std::max(1,LOWORD(l)-24),40,TRUE);
+            MoveWindow(GetDlgItem(window,DScnList),6,98,std::max(1,LOWORD(l)-12),std::max(1,HIWORD(l)-98-48),TRUE);
+            MoveWindow(GetDlgItem(window,DScnHint),6,HIWORD(l)-44,std::max(1,LOWORD(l)-12),40,TRUE);
             return 0;
         }
         if(message==WM_COMMAND)
@@ -595,6 +595,7 @@ LRESULT CALLBACK SceneProc(HWND window,UINT message,WPARAM w,LPARAM l)
             if(notification!=BN_CLICKED && notification!=0)return 0;
             auto list=GetDlgItem(window,DScnList);
             if(id==DScnRefresh){DesignRefresh(*s);DesignStatus(*s,"Scene list refreshed.");}
+            else if(id==DScnHide){DestroyWindow(window);return 0;}
             else if(id==DScnNewGroup)SceneAction(*s,DScnCtxNewGroup,SceneSelectedRows(list));
             else if(id==DScnSolo)
             {
@@ -695,28 +696,38 @@ LRESULT CALLBACK SceneProc(HWND window,UINT message,WPARAM w,LPARAM l)
             return 0;
         }
         if(message==WM_CLOSE){DestroyWindow(window);return 0;}
-        if(message==WM_NCDESTROY){s->sceneWindow=nullptr;s->sceneKeys.clear();SetWindowLongPtr(window,GWLP_USERDATA,0);return DefWindowProcA(window,message,w,l);}
+        if(message==WM_NCDESTROY)
+        {
+            s->sceneWindow=nullptr;s->sceneKeys.clear();SetWindowLongPtr(window,GWLP_USERDATA,0);
+            DesignRelayout(*s); // The canvas takes the dock's strip back.
+            return DefWindowProcA(window,message,w,l);
+        }
     }
     catch(const std::exception& e){DesignStatus(*s,e.what());SetWindowTextA(GetDlgItem(window,DScnHint),e.what());}
     return DefWindowProcA(window,message,w,l);
 }
 void SceneOpen(DesignState& s)
 {
-    DesignRefresh(s);
-    if(!s.sceneWindow)
+    if(s.sceneWindow)
     {
-        WNDCLASSA wc{};
-        wc.hInstance=GetModuleHandle(nullptr);
-        wc.hCursor=LoadCursor(nullptr,IDC_ARROW);
-        wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1);
-        wc.lpfnWndProc=SceneProc;
-        wc.lpszClassName="ReloadedScene";
-        RegisterClassA(&wc);
-        s.sceneWindow=CreateWindowExA(WS_EX_TOOLWINDOW|WS_EX_CONTROLPARENT,wc.lpszClassName,"Scene",WS_OVERLAPPEDWINDOW|WS_VISIBLE,
-                                      CW_USEDEFAULT,CW_USEDEFAULT,716,560,s.window,nullptr,wc.hInstance,&s);
-        if(!s.sceneWindow)throw std::runtime_error("Cannot open the scene panel.");
+        // The menu entry toggles the dock.
+        DestroyWindow(s.sceneWindow);
+        DesignStatus(s,"Scene panel hidden. Workspace > Scene panel shows it again.");
+        return;
     }
+    DesignRefresh(s);
+    WNDCLASSA wc{};
+    wc.hInstance=GetModuleHandle(nullptr);
+    wc.hCursor=LoadCursor(nullptr,IDC_ARROW);
+    wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1);
+    wc.lpfnWndProc=SceneProc;
+    wc.lpszClassName="ReloadedScene";
+    RegisterClassA(&wc);
+    RECT client{};GetClientRect(s.window,&client);
+    s.sceneWindow=CreateWindowExA(WS_EX_CONTROLPARENT,wc.lpszClassName,"Scene",WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS|WS_BORDER,
+                                  std::max(0L,client.right-12-kSceneDockWidth),12,kSceneDockWidth,std::max(1L,client.bottom-92),s.window,nullptr,wc.hInstance,&s);
+    if(!s.sceneWindow)throw std::runtime_error("Cannot open the scene panel.");
+    DesignRelayout(s);
     SceneRefreshList(s);
-    ShowWindow(s.sceneWindow,SW_SHOWNORMAL);
-    SetForegroundWindow(s.sceneWindow);
+    SetFocus(GetDlgItem(s.sceneWindow,DScnList));
 }

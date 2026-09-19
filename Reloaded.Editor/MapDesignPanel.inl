@@ -439,6 +439,14 @@ void SecurityPaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void(
 bool SecurityHandleAt(DesignState& s,double x,double y,Json& device,bool& aim);
 void SceneRefreshList(DesignState& s);
 void SceneOpen(DesignState& s);
+// The Scene panel docks down the right side of the design window, this wide.
+constexpr int kSceneDockWidth=360;
+void DesignRelayout(DesignState& s)
+{
+    if(!s.window)return;
+    RECT client{};GetClientRect(s.window,&client);
+    SendMessage(s.window,WM_SIZE,0,MAKELPARAM(client.right,client.bottom));
+}
 void DesignDeleteSelection(DesignState& s);
 void DesignKeys(DesignState& s);
 void DesignCommand(DesignState& s,int id);
@@ -4090,7 +4098,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 AppendMenuA(bar,MF_POPUP,reinterpret_cast<UINT_PTR>(popup),title);
             };
             submenu("&Workspace",{{DReference,"Reference image..."},{DCalibrate,"Calibrate image"},{DRemoveReference,"Remove reference..."},{0,nullptr},
-                {DScene,"Scene panel: groups, visibility, locks..."},{DMovement,"Movement limits..."},{0,nullptr},{DWorkspace,"Export / import workspace..."}});
+                {DScene,"Scene panel (docked on the right)"},{DMovement,"Movement limits..."},{0,nullptr},{DWorkspace,"Export / import workspace..."}});
             submenu("&Blockout",{{DBlock,"New blockout..."},{DEdit,"Edit selected piece"},{DPlace,"Place / Apply preview"},{DDiscard,"Discard preview"},{0,nullptr},
                 {DDoorway,"Doorway in room..."},{DDetach,"Detach selected piece"},{0,nullptr},{DAlign,"Align / distribute..."},{DRepeat,"Repeat selection..."},{0,nullptr},
                 {DBuild,"Build geometry\tB"}});
@@ -4164,11 +4172,14 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
         if(message==WM_SIZE)
         {
             const int width=LOWORD(l),height=HIWORD(l);
-            MoveWindow(s->canvas,412,12,std::max(1,width-424),std::max(1,height-92),TRUE);
+            // The Scene panel, when shown, takes a strip down the right side.
+            const int dock=s->sceneWindow?kSceneDockWidth+12:0;
+            MoveWindow(s->canvas,412,12,std::max(1,width-424-dock),std::max(1,height-92),TRUE);
+            if(s->sceneWindow)MoveWindow(s->sceneWindow,std::max(0,width-12-kSceneDockWidth),12,kSceneDockWidth,std::max(1,height-92),TRUE);
             MoveWindow(s->status,12,height-72,width-24,66,TRUE);
             return 0;
         }
-        if(message==WM_GETMINMAXINFO){reinterpret_cast<MINMAXINFO*>(l)->ptMinTrackSize={1150,640};return 0;}
+        if(message==WM_GETMINMAXINFO){reinterpret_cast<MINMAXINFO*>(l)->ptMinTrackSize={s->sceneWindow?1520:1150,640};return 0;}
         if(message==WM_COMMAND)
         {
             const int id=LOWORD(w),notification=HIWORD(w);
