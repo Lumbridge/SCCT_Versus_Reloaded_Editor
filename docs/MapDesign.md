@@ -117,7 +117,11 @@ staircase with a brush per step selects and edits as one. Dragging a rectangle
 from left to right selects what lies wholly inside it; from right to left, anything
 it touches. Whole pieces, their brushes, and the devices, lights and game actors
 inside are selected together; a single piece on its own opens for editing, and
-**Delete** removes whatever is selected. With several pieces selected, dragging
+Every piece, stairs and spirals included, turns about its base: drag the round
+handle beyond its +Y edge (15 degree steps, Ctrl for free rotation), press **R**
+or **Shift+R** for a quarter turn either way, use the right-click menu's **Turn**
+entries, or type a yaw in the panel. A placed piece's brushes are replaced in one
+Undo step. **Delete** removes whatever is selected. With several pieces selected, dragging
 inside any of them moves them all, and the rest of the selection is drawn
 dashed where it will land; arrow keys and grouped members follow the same way.
 

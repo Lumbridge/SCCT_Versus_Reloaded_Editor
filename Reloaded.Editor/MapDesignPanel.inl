@@ -33,7 +33,7 @@ enum DesignControl
     DAddStairsUpFirst=1140,DAddStairsDownFirst=1144,DCtxStairsUpFirst=1150,DCtxStairsDownFirst=1154,
     DAddLiftUp=1148,DAddLiftDown,DCtxLiftUp=1158,DCtxLiftDown,
     // Locking what is under the cursor or selected, and the Scene panel.
-    DCtxLock=1160,DCtxUnlock,DCtxLockSelection,DCtxUnlockSelection,DCtxScene,DCtxSliderAll=1170,
+    DCtxLock=1160,DCtxUnlock,DCtxLockSelection,DCtxUnlockSelection,DCtxScene,DCtxSliderAll=1170,DCtxTurnCW,DCtxTurnCCW,
     // The contextual properties sheet: its fields, their labels and its buttons.
     DSheetField=1000,DSheetLabel=1040,DSheetButton=1100
 };
@@ -61,7 +61,7 @@ struct SceneRow
 };
 struct DesignDrag
 {
-    enum class Kind { None,Move,Resize,Select,Guide,RoutePoint,Device,DeviceAim,LightRadius,Floor };
+    enum class Kind { None,Move,Resize,Select,Guide,RoutePoint,Device,DeviceAim,LightRadius,Floor,Rotate };
     Kind kind=Kind::None;
     Vector start{};
     POINT from{},to{};
@@ -73,6 +73,8 @@ struct DesignDrag
     // A move that began by pressing inside a selected piece: without motion it
     // is an ordinary click on that piece.
     bool fromSelection=false;
+    // Where the rotate handle was grabbed, as an angle about the piece's base.
+    double angle=0;
     // A security device being dragged or aimed: its live pose and beam length.
     Json device;
     Pose devicePose{};
@@ -608,7 +610,27 @@ std::vector<DesignHandle> DesignHandles(DesignState& s)
     add(0,1,{w/2,0,h/2});add(0,-1,{-w/2,0,h/2});
     add(1,1,{0,l/2,h/2});add(1,-1,{0,-l/2,h/2});
     add(2,1,{0,0,h});
+    // The rotate handle sits a little beyond the +Y edge in the top view and
+    // turns the piece about its base; axis 3 marks it.
+    if(b==1 && s.zoom>0)handles.push_back({3,0,TransformPoint({0,l/2+36/s.zoom,0},s.frame)});
     return handles;
+}
+// Turns the edited piece by whole degrees about its base, applying to a placed
+// piece straight away.
+bool DesignApplyEdit(DesignState& s,const std::string& summary);
+void DesignInspectorRefresh(DesignState& s);
+void DesignTurn(DesignState& s,double degrees)
+{
+    if(s.pending.is_null())throw std::runtime_error("Click a piece first, then press R to turn it.");
+    const double current=s.frame.rotation[1]*360.0/65536;
+    double next=std::fmod(current+degrees,360.0);
+    if(next<0)next+=360;
+    s.frame.rotation[1]=static_cast<int>(std::lround(next*65536/360))%65536;
+    DesignInspectorRefresh(s);
+    InvalidateRect(s.canvas,nullptr,FALSE);
+    const auto turned="Turned to "+Design::Round(next)+" degrees. R turns 90 degrees, Shift+R the other way; drag the round handle to turn freely.";
+    if(!s.previous.is_null())DesignApplyEdit(s,turned);
+    else DesignWarn(s,turned);
 }
 // True when a point in the view lies inside the preview's footprint.
 bool DesignInsidePreview(DesignState& s,const Vector& world)
@@ -804,6 +826,16 @@ void DesignPaint(DesignState& s,HDC dc)
         for(auto& handle:DesignHandles(s))
         {
             auto p=DesignScreen(s,handle.world);
+            if(handle.axis==3)
+            {
+                // The rotate handle: a ring on a short stalk from the +Y edge.
+                const auto edge=DesignScreen(s,TransformPoint({0,s.pending.at("length").get<double>()/2,0},s.frame));
+                g.DrawLine(&pen,edge,p);
+                Pen ring(Color(255,255,255,255),2);
+                g.DrawEllipse(&ring,p.X-7,p.Y-7,14.f,14.f);
+                g.FillEllipse(&handleInk,p.X-6,p.Y-6,12.f,12.f);
+                continue;
+            }
             g.FillRectangle(&handleInk,p.X-4,p.Y-4,8.f,8.f);
         }
         // While a placed piece is dragged, the rest of the selection shows
@@ -2720,6 +2752,12 @@ void DesignBeginDrag(DesignState& s,POINT p,const Vector& world)
         for(auto& handle:DesignHandles(s))
             if(DesignPointDistance(DesignScreen(s,handle.world),p.x,p.y)<=8)
             {
+                if(handle.axis==3)
+                {
+                    s.drag.kind=DesignDrag::Kind::Rotate;
+                    s.drag.angle=std::atan2(world[1]-s.frame.position[1],world[0]-s.frame.position[0]);
+                    return;
+                }
                 s.drag.kind=DesignDrag::Kind::Resize;
                 s.drag.axis=handle.axis;
                 s.drag.side=handle.side;
@@ -2865,6 +2903,19 @@ void DesignUpdateDrag(DesignState& s,POINT p)
         InvalidateRect(s.canvas,nullptr,FALSE);
         return;
     }
+    if(s.drag.kind==DesignDrag::Kind::Rotate)
+    {
+        const double pivotX=s.drag.frame.position[0],pivotY=s.drag.frame.position[1];
+        const double now=std::atan2(world[1]-pivotY,world[0]-pivotX);
+        double degrees=s.drag.frame.rotation[1]*360.0/65536+(now-s.drag.angle)*180/3.14159265358979323846;
+        if(!(GetKeyState(VK_CONTROL)&0x8000))degrees=std::round(degrees/15)*15;
+        degrees=std::fmod(degrees,360.0);
+        if(degrees<0)degrees+=360;
+        s.frame=s.drag.frame;
+        s.frame.rotation[1]=static_cast<int>(std::lround(degrees*65536/360))%65536;
+        InvalidateRect(s.canvas,nullptr,FALSE);
+        return;
+    }
     if(s.drag.kind==DesignDrag::Kind::Move)
     {
         auto position=s.drag.frame.position;
@@ -2975,6 +3026,8 @@ void DesignEndDrag(DesignState& s,bool add)
     DesignInspectorRefresh(s);
     const auto summary=drag.kind==DesignDrag::Kind::Move
         ? "Moved to "+Design::Round(s.frame.position[0])+", "+Design::Round(s.frame.position[1])+", "+Design::Round(s.frame.position[2])+"."
+        : drag.kind==DesignDrag::Kind::Rotate
+        ? "Turned to "+Design::Round(s.frame.rotation[1]*360.0/65536)+" degrees (15 degree steps; hold Ctrl to turn freely)."
         : "Resized to "+Design::Round(s.pending.at("width"))+" x "+Design::Round(s.pending.at("length"))+" x "+Design::Round(s.pending.at("height"))+" units"
           +(Design::StairKind(s.pending.value("kind",std::string()))?", "+std::to_string(s.pending.value("steps",0))+" steps.":".");
     // A placed piece follows the drag straight away, one Undo step per drag.
@@ -3151,7 +3204,8 @@ const char* const kDesignKeyLegend=
     "Click: select. A piece's brush selects the whole piece; a group member selects the group.\r\n"
     "Drag on empty space: box select. Left to right takes what is wholly inside, right to left what it touches.\r\n"
     "Shift or Ctrl + click: add to the selection.\r\n"
-    "Drag a piece: move it (and the rest of the selection). Drag a square: resize.\r\n"
+    "Drag a piece: move it (and the rest of the selection). Drag a square: resize. Drag the round handle: turn (15 degree steps; Ctrl: free).\r\n"
+    "R / Shift+R: turn the edited piece 90 degrees either way.\r\n"
     "Arrow keys: nudge the edited piece by the grid. Ctrl + arrows: one unit.\r\n"
     "Enter: place a new preview.   Esc: discard it, or cancel what is being placed.\r\n"
     "Delete: delete the selection.   B: build geometry.\r\n"
@@ -3342,6 +3396,10 @@ void DesignContextMenu(DesignState& s,POINT at)
     {
         const auto name=piece.at("spec").value("name",std::string("piece"));
         item(DCtxEditPiece,"Edit "+name);
+        HMENU turn=CreatePopupMenu();
+        AppendMenuA(turn,MF_STRING,DCtxTurnCW,"90 degrees\tR");
+        AppendMenuA(turn,MF_STRING,DCtxTurnCCW,"-90 degrees\tShift+R");
+        AppendMenuA(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(turn),("Turn "+name).c_str());
         item(DCtxSelectPiece,"Select the brushes of "+name);
         item(DCtxDetachPiece,"Detach "+name+" (keep its brushes)");
         item(DCtxDeletePiece,"Delete "+name+" and its brushes");
@@ -3360,15 +3418,18 @@ void DesignContextMenu(DesignState& s,POINT at)
             locked=true;
             for(auto& member:piece.at("members"))if(!DesignLockedPath(s,member.at("path").get<std::string>()))locked=false;
         }
-        if(!what.empty())item(locked?DCtxUnlock:DCtxLock,(locked?"Unlock ":"Lock ")+what);
         size_t selected=0;
         for(const auto& actor:s.scene)if(actor.value("selected",false))++selected;
+        HMENU locks=CreatePopupMenu();
+        if(!what.empty())AppendMenuA(locks,MF_STRING,locked?DCtxUnlock:DCtxLock,((locked?"Unlock ":"Lock ")+what).c_str());
         if(selected>0)
         {
-            item(DCtxLockSelection,"Lock the "+std::to_string(selected)+" selected actor(s)\tCtrl+L");
-            item(DCtxUnlockSelection,"Unlock the "+std::to_string(selected)+" selected actor(s)\tCtrl+Shift+L");
+            AppendMenuA(locks,MF_STRING,DCtxLockSelection,("Lock the "+std::to_string(selected)+" selected actor(s)\tCtrl+L").c_str());
+            AppendMenuA(locks,MF_STRING,DCtxUnlockSelection,("Unlock the "+std::to_string(selected)+" selected actor(s)\tCtrl+Shift+L").c_str());
         }
-        item(DCtxScene,"Scene panel: groups, visibility, locks...");
+        if(!what.empty() || selected>0)AppendMenuA(locks,MF_SEPARATOR,0,nullptr);
+        AppendMenuA(locks,MF_STRING,DCtxScene,"Scene panel: groups, visibility, locks...");
+        AppendMenuA(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(locks),what.empty()?"Lock, unlock, groups":("Lock, unlock, groups ("+what+")").c_str());
         separator();
     }
     if(!s.pending.is_null())
@@ -3612,6 +3673,17 @@ void DesignContextMenu(DesignState& s,POINT at)
     }
     if(choice==DCtxLockSelection || choice==DCtxUnlockSelection){DesignLockSelection(s,choice==DCtxLockSelection);return;}
     if(choice==DCtxScene){SceneOpen(s);return;}
+    if(choice==DCtxTurnCW || choice==DCtxTurnCCW)
+    {
+        if(s.previous.is_null() || s.previous.at("members")!=piece.at("members"))
+        {
+            Editor::Select(piece.at("members"),false);
+            DesignRefresh(s);
+            DesignActivate(s,piece);
+        }
+        DesignTurn(s,choice==DCtxTurnCW?90:-90);
+        return;
+    }
     if(choice==DCtxDeletePiece){DesignDeletePiece(s,piece);return;}
     if(choice==DCtxEditPiece || choice==DCtxSelectPiece)
     {
@@ -3740,12 +3812,13 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             ScreenToClient(window,&at);
             LPCTSTR cursor=IDC_ARROW;
             if(s->drag.kind==DesignDrag::Kind::Move)cursor=IDC_SIZEALL;
+            else if(s->drag.kind==DesignDrag::Kind::Rotate)cursor=IDC_HAND;
             else if(s->drag.kind==DesignDrag::Kind::Resize)cursor=s->drag.axis==DesignVertical(*s)?IDC_SIZENS:IDC_SIZEWE;
             else if(!s->pending.is_null() && s->mode.empty())
             {
                 for(auto& handle:DesignHandles(*s))
                     if(DesignPointDistance(DesignScreen(*s,handle.world),at.x,at.y)<=8)
-                        cursor=handle.axis==DesignVertical(*s)?IDC_SIZENS:IDC_SIZEWE;
+                        cursor=handle.axis==3?IDC_HAND:handle.axis==DesignVertical(*s)?IDC_SIZENS:IDC_SIZEWE;
                 if(cursor==IDC_ARROW && DesignInsidePreview(*s,DesignWorld(*s,at.x,at.y)))cursor=IDC_SIZEALL;
             }
             SetCursor(LoadCursor(nullptr,cursor));
@@ -3795,6 +3868,11 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             if(w=='L' && (GetKeyState(VK_CONTROL)&0x8000))
             {
                 DesignLockSelection(*s,!(GetKeyState(VK_SHIFT)&0x8000));
+                return 0;
+            }
+            if(w=='R' && !(GetKeyState(VK_CONTROL)&0x8000))
+            {
+                DesignTurn(*s,(GetKeyState(VK_SHIFT)&0x8000)?-90:90);
                 return 0;
             }
             if(w==VK_DELETE)
@@ -4068,7 +4146,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 {DWidth,"Local X size in units. A player is 96 wide."},{DLength,"Local Y size in units."},{DHeight,"Local Z size in units. A player stands 180 tall, crouches to 125, crawls under 105."},
                 {DThickness,"Wall and floor thickness for shells and stair treads."},{DSteps,"Number of steps for stairs."},
                 {DPositionX,"World X of the piece's base corner."},{DPositionY,"World Y of the piece's base corner."},{DPositionZ,"World Z of the floor. The slider on the plan sets the storey."},
-                {DYaw,"Turn in degrees about Z."},{DCeiling,"Shell rooms get a ceiling slab."},{DPortal,"Doorways become zone portals, which split the map for visibility and sound."},
+                {DYaw,"Turn in degrees about Z. R turns 90 degrees, Shift+R the other way; the round handle beyond the piece's +Y edge turns it by dragging."},{DCeiling,"Shell rooms get a ceiling slab."},{DPortal,"Doorways become zone portals, which split the map for visibility and sound."},
                 {DDiscard,"Drop the preview or stop editing the piece (Esc)."},{DKeys,"Every keyboard and mouse shortcut of the plan and the Scene panel."}};
             for(const auto& [id,text]:tips)DesignTip(*s,GetDlgItem(window,id),text);
             s->canvas=CreateWindowExA(WS_EX_CLIENTEDGE,"ReloadedMapDesignCanvas","",WS_CHILD|WS_VISIBLE,412,12,700,620,window,

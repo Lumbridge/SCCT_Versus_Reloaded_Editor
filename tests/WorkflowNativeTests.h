@@ -615,8 +615,17 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 require(placedSpiral["members"].size()==35,"a spiral places its wedges, post and glide prisms");
                 auto movedSpiral=call({{"op","design.block"},{"spec",spiral},{"position",{2304,2048,0}},{"rotation",{0,0,0}},{"previous",placedSpiral}});
                 require(movedSpiral["members"].size()==35 && std::abs(movedSpiral["position"][0].get<double>()-2304)<.01,"a spiral moves to where it was dragged");
-                Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");
-                require(call({{"op","design.scene"}}).size()==carvedScene.size(),"spiral placement and move undo cleanly");
+                // The move, the build and the placement, in that order.
+                std::string trail="sizes: carved "+std::to_string(carvedScene.size());
+                for(int step=0;step<5;++step)
+                {
+                    const auto size=call({{"op","design.scene"}}).size();
+                    trail+=" -> "+std::to_string(size);
+                    if(size==carvedScene.size())break;
+                    Exec("TRANSACTION UNDO");
+                }
+                const std::string undoWhy="spiral placement and move undo cleanly ("+trail+")";
+                require(call({{"op","design.scene"}}).size()==carvedScene.size(),undoWhy.c_str());
             }
             for(auto& a:carvedScene)if(a["path"]==carved["members"][0]["path"])require(a["edges"].size()==24,"carved room exports real brush geometry");
             // The brushes a piece generates must sit exactly where its preview
@@ -1153,8 +1162,21 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 char dragStatus[1024]{};GetWindowTextA(GetDlgItem(design,720),dragStatus,sizeof(dragStatus));
                 const std::string dragWhy=std::string("dragging a spiral in the plan moves it (status: ")+dragStatus+"; base X "+field(750)+" from "+std::to_string(x0)+")";
                 require(std::stod(field(750))>x0+128 && std::string(dragStatus).find("not changed")==std::string::npos,dragWhy.c_str());
+                // R turns the edited piece a quarter turn, replacing its brushes.
+                SendMessage(GetDlgItem(design,719),WM_KEYDOWN,'R',0);
+                char turnStatus[1024]{};GetWindowTextA(GetDlgItem(design,720),turnStatus,sizeof(turnStatus));
+                const std::string turnWhy=std::string("R turns the edited piece 90 degrees (status: ")+turnStatus+"; yaw "+field(753)+")";
+                require(field(753)=="90" && std::string(turnStatus).find("not changed")==std::string::npos,turnWhy.c_str());
+                // A geometry build recomputes polygon normals and texture axes (and
+                // resets the editor's undo history): the piece must still be
+                // recognised as the toolkit's own afterwards.
+                call({{"op","design.build"}});
+                SendMessage(design,WM_COMMAND,702,0);
+                SendMessage(GetDlgItem(design,719),WM_KEYDOWN,'R',0);
+                char builtStatus[1024]{};GetWindowTextA(GetDlgItem(design,720),builtStatus,sizeof(builtStatus));
+                const std::string builtWhy=std::string("a spiral is still editable after a geometry build (status: ")+builtStatus+"; yaw "+field(753)+")";
+                require(field(753)=="180" && std::string(builtStatus).find("not changed")==std::string::npos,builtWhy.c_str());
                 SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
-                Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");
                 SendMessage(design,WM_COMMAND,702,0);
             }
             auto key=call({{"op","map"}})["key"].get<std::string>();std::ifstream libraryInput(directory/"ReloadedEditor"/"library.json");J designLibrary;libraryInput>>designLibrary;

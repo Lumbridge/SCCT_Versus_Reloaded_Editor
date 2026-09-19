@@ -26,15 +26,61 @@ namespace
         if(!p || !IsA(p,"NameProperty"))throw std::runtime_error("This editor's actors do not expose the native Group field.");
         Write(actor+Read<int>(p+0x3c),DesignName(groups));
     }
-    // A fingerprint is the brushes' own text less what the editor changes on
-    // its own: hidden/locked flags, and Location/PrePivot, which it rounds and
-    // rebalances after placement. Moves are followed elsewhere.
+    // A fingerprint is what the toolkit decided about a brush: its properties
+    // less what the editor changes on its own (hidden/locked flags, Location
+    // and PrePivot, which it rounds and rebalances, the Group), and the set of
+    // its polygon vertices to a tenth of a unit. Polygon normals, texture axes
+    // and polygon order are left out: a geometry build recomputes them, and
+    // for a brush with fractional vertices (a spiral's wedges) the digits move.
+    std::string NormalizeBrushText(const std::string& text)
+    {
+        std::istringstream in(text);
+        std::string line,properties;
+        std::set<std::string> vertices;
+        bool polygons=false,listed=false;
+        while(std::getline(in,line))
+        {
+            while(!line.empty() && (line.back()=='\r' || line.back()==' '))line.pop_back();
+            const auto start=line.find_first_not_of(" \t");
+            const std::string trimmed=start==std::string::npos?std::string():line.substr(start);
+            if(trimmed.rfind("Begin PolyList",0)==0){polygons=true;continue;}
+            if(trimmed.rfind("End PolyList",0)==0){polygons=false;continue;}
+            // Already-normalized text lists its vertices after this marker, so
+            // normalizing twice gives the same result.
+            if(trimmed=="Vertices"){listed=true;continue;}
+            if(listed){if(!trimmed.empty())vertices.insert(trimmed);continue;}
+            if(polygons)
+            {
+                if(trimmed.rfind("Vertex",0)!=0)continue;
+                std::string numbers=trimmed.substr(6),rounded;
+                std::istringstream parts(numbers);
+                std::string part;
+                while(std::getline(parts,part,','))
+                {
+                    try
+                    {
+                        const double value=std::stod(part);
+                        char buffer[32];
+                        snprintf(buffer,sizeof(buffer),"%.1f",std::abs(value)<.05?0.0:value);
+                        rounded+=std::string(rounded.empty()?"":",")+buffer;
+                    }
+                    catch(const std::exception&){rounded+=std::string(rounded.empty()?"":",")+part;}
+                }
+                vertices.insert(rounded);
+                continue;
+            }
+            properties+=line+"\r\n";
+        }
+        for(const char* key:{"bHiddenEd","bHiddenEdGroup","bLockLocation","Location","PrePivot","OldLocation","Group"})properties=RemoveProperty(properties,key);
+        std::string result=properties+"Vertices\r\n";
+        for(const auto& v:vertices)result+=v+"\r\n";
+        return result;
+    }
     Json NormalizeFingerprint(Json fingerprint)
     {
         if(fingerprint.is_object() && fingerprint.contains("actors"))
             for(auto& a:fingerprint["actors"])
-                if(a.is_object() && a.contains("text"))
-                    for(const char* key:{"bHiddenEd","bHiddenEdGroup","bLockLocation","Location","PrePivot","OldLocation","Group"})a["text"]=RemoveProperty(a.at("text").get<std::string>(),key);
+                if(a.is_object() && a.contains("text"))a["text"]=NormalizeBrushText(a.at("text").get<std::string>());
         return fingerprint;
     }
     Json DesignFingerprint(const Json& members)
