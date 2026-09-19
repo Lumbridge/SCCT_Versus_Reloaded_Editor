@@ -157,7 +157,7 @@ struct DesignState
     std::vector<std::string> sceneKeys;
     std::set<std::string> sceneCollapsed;
     std::string sceneFilter;
-    int sceneGroupBy=0,sceneShow=0;
+    int sceneGroupBy=1,sceneShow=0; // Grouped by type until changed.
     bool sceneSyncing=false;
     // Group members and other selected actors that move with the next edit,
     // and by how much.
@@ -165,6 +165,10 @@ struct DesignState
     Vector followDelta{};
     // Tooltips for the panel's controls, and the keyboard legend window.
     HWND tips{},keysWindow{};
+    // Where the "brushes changed" banner and the Top / Front / Side buttons
+    // were painted, so clicks on them can be told apart.
+    RECT banner{};
+    RECT viewButtons[3]{};
 };
 HWND designWindow=nullptr;
 Json NormalizeDesign(Json data)
@@ -646,8 +650,21 @@ bool DesignInsidePreview(DesignState& s,const Vector& world)
     if(s.pending.is_null())return false;
     auto local=TransformPoint(world,s.frame,true);
     const double w=s.pending.at("width"),l=s.pending.at("length"),h=s.pending.at("height");
-    return std::abs(local[0])<=w/2 && std::abs(local[1])<=l/2
-        && (DesignVertical(s)!=2 || (local[2]>=-h*.1 && local[2]<=h*1.1));
+    // Only the axes the view shows count: in an elevation the hidden depth
+    // is wherever the view happens to be set, not where the piece is.
+    const int a=DesignHorizontal(s),b=DesignVertical(s);
+    if(b==2)
+    {
+        // An elevation: only the shown horizontal axis and the height count,
+        // against the piece's world bounds so a turned piece still works.
+        try
+        {
+            const auto bounds=DesignBoundsOf(s.pending,s.frame);
+            return world[a]>=bounds.lo[a]-1 && world[a]<=bounds.hi[a]+1 && world[2]>=bounds.lo[2]-h*.1 && world[2]<=bounds.hi[2]+h*.1;
+        }
+        catch(const std::exception&){return false;}
+    }
+    return std::abs(local[0])<=w/2 && std::abs(local[1])<=l/2;
 }
 double DesignPointDistance(const Gdiplus::PointF& p,double x,double y)
 {
@@ -1036,7 +1053,7 @@ void DesignPaint(DesignState& s,HDC dc)
     if(DesignGeometryStale(s))
     {
         // The banner is sized to its text, whatever the font metrics.
-        const std::wstring text=L"Brushes changed since the last geometry build. Press B to rebuild.";
+        const std::wstring text=L"Brushes changed since the last geometry build. Click here or press B to rebuild.";
         RectF measured;
         g.MeasureString(text.c_str(),-1,&font,PointF(0,0),&measured);
         const float width=measured.Width+16,height=std::max(22.f,measured.Height+6);
@@ -1044,6 +1061,30 @@ void DesignPaint(DesignState& s,HDC dc)
         g.FillRectangle(&warn,static_cast<float>(rect.right-width-10),8.f,width,height);
         SolidBrush white(Color(255,255,255,255));
         g.DrawString(text.c_str(),-1,&font,PointF(static_cast<float>(rect.right-width-2),8+(height-measured.Height)/2),&white);
+        s.banner={static_cast<LONG>(rect.right-width-10),8,static_cast<LONG>(rect.right-10),static_cast<LONG>(8+height)};
+    }
+    else s.banner=RECT{};
+    // Top / Front / Side under the caption: one click switches the view.
+    {
+        const char* names[3]={"Top","Front","Side"};
+        float x=10;
+        StringFormat centre;
+        centre.SetAlignment(StringAlignmentCenter);
+        centre.SetLineAlignment(StringAlignmentCenter);
+        Pen edge(Color(200,60,80,100),1);
+        for(int i=0;i<3;++i)
+        {
+            const float w=i==1?48:40;
+            const RectF box(x,28,w,18);
+            SolidBrush fill(s.plane==i?Color(230,0,120,200):Color(170,255,255,255));
+            SolidBrush text(s.plane==i?Color(255,255,255,255):Color(255,20,30,40));
+            g.FillRectangle(&fill,box);
+            g.DrawRectangle(&edge,box);
+            const std::wstring wide(names[i],names[i]+strlen(names[i]));
+            g.DrawString(wide.c_str(),-1,&font,box,&centre,&text);
+            s.viewButtons[i]={static_cast<LONG>(x),28,static_cast<LONG>(x+w),46};
+            x+=w+4;
+        }
     }
     Graphics target(dc);
     target.DrawImage(&buffer,0,0);
@@ -3819,7 +3860,8 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             GetCursorPos(&at);
             ScreenToClient(window,&at);
             LPCTSTR cursor=IDC_ARROW;
-            if(s->drag.kind==DesignDrag::Kind::Move)cursor=IDC_SIZEALL;
+            if((DesignGeometryStale(*s) && PtInRect(&s->banner,at)) || PtInRect(&s->viewButtons[0],at) || PtInRect(&s->viewButtons[1],at) || PtInRect(&s->viewButtons[2],at))cursor=IDC_HAND;
+            else if(s->drag.kind==DesignDrag::Kind::Move)cursor=IDC_SIZEALL;
             else if(s->drag.kind==DesignDrag::Kind::Rotate)cursor=IDC_HAND;
             else if(s->drag.kind==DesignDrag::Kind::Resize)cursor=s->drag.axis==DesignVertical(*s)?IDC_SIZENS:IDC_SIZEWE;
             else if(!s->pending.is_null() && s->mode.empty())
@@ -4003,6 +4045,15 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 InvalidateRect(window,nullptr,FALSE);
                 return 0;
             }
+            // The "brushes changed" banner rebuilds; the view buttons switch views.
+            if(DesignGeometryStale(*s) && PtInRect(&s->banner,at)){DesignCommand(*s,DBuild);return 0;}
+            for(int i=0;i<3;++i)
+                if(PtInRect(&s->viewButtons[i],at))
+                {
+                    SendMessage(GetDlgItem(s->window,DPlane),CB_SETCURSEL,i,0);
+                    DesignCommand(*s,DPlane);
+                    return 0;
+                }
             // The floor slider along the right edge.
             if(int index=0;DesignSliderHit(*s,at,index))
             {
@@ -4162,6 +4213,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             SetWindowLongPtr(s->canvas,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(s));
             s->status=Control(window,"STATIC","",0,DStatus,12,600,900,64);
             DesignRefresh(*s);
+            try{SceneOpen(*s);}catch(const std::exception&){ /* The plan works without the dock. */ }
             DesignFit(*s);
             DesignInspectorRefresh(*s);
             DesignDepthShow(*s);

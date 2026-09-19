@@ -1078,9 +1078,9 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             // Groups are made in the Scene panel: open it, choose every row,
             // New group; the name dialog's default name is accepted.
             call({{"op","select"},{"actors",placedRoom}});
-            SendMessage(design,WM_COMMAND,765,0); // Scene panel.
             HWND scene=FindWindowExA(design,nullptr,"ReloadedScene",nullptr);
-            require(scene!=nullptr,"the Scene panel docks inside the design window");
+            require(scene!=nullptr,"the Scene panel is docked inside the design window from the start");
+            if(!scene){SendMessage(design,WM_COMMAND,765,0);scene=FindWindowExA(design,nullptr,"ReloadedScene",nullptr);}
             if(scene)
             {
                 auto sceneList=GetDlgItem(scene,1200);

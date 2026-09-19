@@ -174,7 +174,7 @@ void SceneRefreshList(DesignState& s)
         SceneSetText(list,i,3,row.header?"":Design::Round(row.z));
         SceneSetText(list,i,4,row.locked?"LOCKED":"");
         ListView_SetCheckState(list,i,!row.hidden);
-        ListView_SetItemState(list,i,row.selected?LVIS_SELECTED:0,LVIS_SELECTED);
+        ListView_SetItemState(list,i,row.selected && !row.header?LVIS_SELECTED:0,LVIS_SELECTED);
     }
     s.sceneKeys=keys;
     SendMessage(list,WM_SETREDRAW,TRUE,0);

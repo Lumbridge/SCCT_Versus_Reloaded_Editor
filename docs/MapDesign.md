@@ -117,6 +117,11 @@ staircase with a brush per step selects and edits as one. Dragging a rectangle
 from left to right selects what lies wholly inside it; from right to left, anything
 it touches. Whole pieces, their brushes, and the devices, lights and game actors
 inside are selected together; a single piece on its own opens for editing, and
+The **Top / Front / Side** buttons under the view caption switch the view with a
+click, and the **brushes changed** banner at the top right rebuilds geometry when
+clicked. Pieces move and resize in the elevations too: dragging inside a piece
+counts wherever the view's depth is set.
+
 Every piece, stairs and spirals included, turns about its base: drag the round
 handle beyond its +Y edge (15 degree steps, Ctrl for free rotation), press **R**
 or **Shift+R** for a quarter turn either way, use the right-click menu's **Turn**
@@ -139,9 +144,10 @@ a small padlock, and the editor itself refuses to move them (the native
 
 ### The Scene panel
 
-**Workspace > Scene panel** (also on the plan's right-click menu) docks a panel
-down the right side of the design window; the same entry or its **Hide** button
-puts it away. It lists every
+The **Scene panel** is docked down the right side of the design window from
+the start, grouped by type; **Workspace > Scene panel** (also on the plan's
+right-click menu) or its **Hide** button puts it away and brings it back. It
+lists every
 piece, brush, light, security device and game actor in the map, the way a layers
 panel does. Each row has a tick for visibility and a **LOCKED** cell to toggle a
 lock; a filter box narrows the list by name, type or group; **Show** limits it to
