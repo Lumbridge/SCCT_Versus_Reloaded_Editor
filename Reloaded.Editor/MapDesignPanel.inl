@@ -11,7 +11,7 @@ enum DesignControl
     DName=740,DShape,DConstruction,DWidth,DLength,DHeight,DThickness,DSteps,DCeiling,DPortal,
     DPositionX,DPositionY,DPositionZ,DYaw,DInspectorTitle,DDiscard,
     // Building, checking and overlays.
-    DBuild=760,DCheck,DOverlays,DSecurity,DUnlit,DScene,DKeys,DCheckList=780,DInspectorLabel=785,
+    DBuild=760,DCheck,DOverlays,DSecurity,DUnlit,DScene,DKeys,DDepthLabel,DCheckList=780,DInspectorLabel=785,
     // Right-click menu on the design view: what is under the cursor, then what
     // can start at that point.
     DCtxEditPiece=850,DCtxSelectPiece,DCtxDetachPiece,DCtxEditAnnotation,DCtxRemoveAnnotation,DCtxEditGuide,DCtxRemoveGuide,
@@ -33,7 +33,7 @@ enum DesignControl
     DAddStairsUpFirst=1140,DAddStairsDownFirst=1144,DCtxStairsUpFirst=1150,DCtxStairsDownFirst=1154,
     DAddLiftUp=1148,DAddLiftDown,DCtxLiftUp=1158,DCtxLiftDown,
     // Locking what is under the cursor or selected, and the Scene panel.
-    DCtxLock=1160,DCtxUnlock,DCtxLockSelection,DCtxUnlockSelection,DCtxScene,
+    DCtxLock=1160,DCtxUnlock,DCtxLockSelection,DCtxUnlockSelection,DCtxScene,DCtxSliderAll=1170,
     // The contextual properties sheet: its fields, their labels and its buttons.
     DSheetField=1000,DSheetLabel=1040,DSheetButton=1100
 };
@@ -233,6 +233,27 @@ Gdiplus::Bitmap* DesignImage(DesignState& s,const std::string& file)
 }
 int DesignHorizontal(const DesignState& s){return s.plane==2?1:0;}
 int DesignVertical(const DesignState& s){return s.plane==0?1:2;}
+// The depth field beside the view combo: the height clicks land on in the top
+// view, the depth in an elevation. Typed values apply on Enter or focus loss;
+// the field is rewritten only when its text would change.
+void DesignDepthShow(DesignState& s)
+{
+    if(!s.window)return;
+    const int axis=3-DesignHorizontal(s)-DesignVertical(s);
+    const char* label=axis==2?"Z":axis==1?"Y":"X";
+    if(Text(GetDlgItem(s.window,DDepthLabel))!=label)SetWindowTextA(GetDlgItem(s.window,DDepthLabel),label);
+    auto field=GetDlgItem(s.window,DDepth);
+    const auto text=Design::Round(s.depth);
+    if(GetFocus()!=field && Text(field)!=text)SetWindowTextA(field,text.c_str());
+}
+void DesignDepthRead(DesignState& s)
+{
+    const double value=Design::Number(Text(GetDlgItem(s.window,DDepth)));
+    if(std::abs(value-s.depth)<1e-9)return;
+    s.depth=value;
+    InvalidateRect(s.canvas,nullptr,FALSE);
+    DesignStatus(s,std::string(s.plane==0?"Clicks and new pieces now land at Z ":"Clicks now land at depth ")+Design::Round(value)+".");
+}
 Vector DesignWorld(DesignState& s,double x,double y)
 {
     Vector v{};
@@ -375,6 +396,7 @@ void DesignSetLevel(DesignState& s,int index)
     if(s.floorFilter && std::abs(s.floorLow-low)<1e-9 && std::abs(s.floorHigh-high)<1e-9)return;
     s.floorFilter=true;s.floorLow=low;s.floorHigh=high;
     if(s.plane==0)s.depth=level.base;
+    DesignDepthShow(s);
     s.hoverPiece=Json{};
     InvalidateRect(s.canvas,nullptr,FALSE);
     DesignStatus(s,"Showing the floor at Z "+Design::Round(level.base)+" ("+std::to_string(index)+" of "+std::to_string(count)+" from the top)"
@@ -417,6 +439,7 @@ void SceneRefreshList(DesignState& s);
 void SceneOpen(DesignState& s);
 void DesignDeleteSelection(DesignState& s);
 void DesignKeys(DesignState& s);
+void DesignCommand(DesignState& s,int id);
 std::string SceneGroupOf(DesignState& s,const std::string& path);
 Json SceneGroupMembers(DesignState& s,const std::string& name);
 // Whether an actor is locked, by its path in the scene.
@@ -938,6 +961,7 @@ void DesignPaint(DesignState& s,HDC dc)
         g.DrawRectangle(&pen,static_cast<float>(std::min(s.drag.from.x,s.drag.to.x)),static_cast<float>(std::min(s.drag.from.y,s.drag.to.y)),
                         static_cast<float>(std::abs(s.drag.to.x-s.drag.from.x)),static_cast<float>(std::abs(s.drag.to.y-s.drag.from.y)));
     }
+    DesignDepthShow(s);
     // The floor slider: "All" at the top, then each storey from the highest
     // down, with the handle on the one being shown.
     if(const auto layout=DesignSliderLayoutFor(s,rect);layout.count>0)
@@ -1586,7 +1610,7 @@ void DesignCommand(DesignState& s,int id)
     if(id==DPlane)
     {
         s.plane=static_cast<int>(SendMessage(GetDlgItem(s.window,DPlane),CB_GETCURSEL,0,0));
-        s.points=Json::array();s.mode.clear();DesignRefresh(s);DesignFit(s);return;
+        s.points=Json::array();s.mode.clear();DesignRefresh(s);DesignFit(s);DesignDepthShow(s);return;
     }
     if(id==DFit){DesignFit(s);return;}
     if(id==DSnap)
@@ -1604,15 +1628,11 @@ void DesignCommand(DesignState& s,int id)
         if(high<=low)throw std::runtime_error("Enter a height range with the upper value above the lower one.");
         s.floorLow=low;s.floorHigh=high;s.floorFilter=f[2].value=="On";
         DesignFit(s);
-        DesignStatus(s,s.floorFilter?"Showing actors, brush edges, guides and annotations between those heights.":"Floor filter off.");
+        DesignStatus(s,s.floorFilter?"Showing actors, brush edges, guides and annotations between those heights. The slider on the right steps between storeys; right-click it for this dialog.":"Floor filter off.");
         return;
     }
-    if(id==DDepth)
-    {
-        std::vector<InputField> f={{s.plane==0?"Floor Z":s.plane==1?"Depth Y":"Depth X",std::to_string(s.depth),{}}};
-        if(Ask(s.window,"Annotation Plane Depth",f))s.depth=Design::Number(f[0].value);
-        return;
-    }
+    if(id==DDepth){DesignDepthRead(s);return;}
+    if(id==DCtxSliderAll){DesignSetLevel(s,0);return;}
     if(id==DUndo || id==DRedo)
     {
         // Workspace edits first, when nothing in the map changed after them.
@@ -1806,102 +1826,6 @@ void DesignCommand(DesignState& s,int id)
         if(!Ask(s.window,"Align Origins / Distribute Selection",f))return;
         Editor::DesignAlign(selected,f[1].value=="X"?0:f[1].value=="Y"?1:2,f[0].value,Design::Number(f[2].value));
         DesignRefresh(s);
-        return;
-    }
-    if(id==DLayer)
-    {
-        auto layers=DesignLayers(s,data);
-        Json nativeMembers;
-        bool nativeHidden=false,nativeLocked=false;
-        std::string group,groupAction="none";
-        std::vector<std::string> choices={"New layer from selection"};
-        for(auto& [name,members]:layers)choices.push_back(name);
-        std::vector<InputField> f={{"Layer","",choices},
-            {"Action","Select",{"Select","Hide","Show","Lock movement","Unlock movement","Add selection","Remove selection","Delete layer"}}};
-        if(!Ask(s.window,"Named Map Layers",f))return;
-        const auto index=std::find(choices.begin(),choices.end(),f[0].value)-choices.begin();
-        if(index==0)
-        {
-            auto members=Editor::SelectedIdentities();
-            if(members.empty())throw std::runtime_error("Select actors or brushes first.");
-            std::string name="Layer";
-            if(!GetName(s.window,"Name Layer",name))return;
-            if(!Design::ValidGroupName(name))throw std::runtime_error("Use 1-62 letters, digits or underscores so the layer can travel with the map.");
-            if(std::find(choices.begin(),choices.end(),name)!=choices.end())throw std::runtime_error("That layer name is already used.");
-            // Exclusive membership makes visibility and lock changes predictable.
-            for(auto& layer:data["layers"])
-                for(auto& m:members)
-                    for(auto& old:layer["members"])
-                        if(m.at("path")==old.at("path"))throw std::runtime_error("Remove selected actors from their existing layer first.");
-            data["layers"].push_back({{"name",name},{"members",members},{"hidden",false},{"locked",false}});
-            nativeMembers=members;group=name;groupAction="add";
-        }
-        else
-        {
-            const auto name=layers[index-1].first;
-            auto stored=std::find_if(data["layers"].begin(),data["layers"].end(),[&](const Json& layer){return layer.at("name")==name;});
-            if(stored==data["layers"].end())
-            {
-                // A layer that arrived with the map through its Group field.
-                data["layers"].push_back({{"name",name},{"members",layers[index-1].second},{"hidden",false},{"locked",false}});
-                stored=data["layers"].end()-1;
-            }
-            auto& layer=*stored;
-            const auto action=f[1].value;
-            group=name;
-            if(action=="Select")Editor::Select(layer.at("members"),true);
-            else if(action=="Delete layer")
-            {
-                nativeMembers=layer.at("members");groupAction="remove";
-                data["layers"].erase(stored-data["layers"].begin());
-            }
-            else if(action=="Add selection" || action=="Remove selection")
-            {
-                auto selection=Editor::SelectedIdentities();
-                Json touched=Json::array();
-                for(auto& member:selection)
-                {
-                    auto& members=layer["members"];
-                    auto found=std::find_if(members.begin(),members.end(),[&](const Json& m){return m.at("path")==member.at("path");});
-                    if(action=="Remove selection")
-                    {
-                        if(found!=members.end()){touched.push_back(*found);members.erase(found);}
-                    }
-                    else if(found==members.end())
-                    {
-                        for(auto& other:data["layers"])
-                            for(auto& m:other["members"])
-                                if(m.at("path")==member.at("path"))throw std::runtime_error("An actor already belongs to another layer.");
-                        members.push_back(member);
-                        touched.push_back(member);
-                    }
-                }
-                groupAction=action=="Add selection"?"add":"remove";
-                if(action=="Add selection")
-                {
-                    nativeMembers=layer.at("members");
-                    nativeHidden=layer.at("hidden");
-                    nativeLocked=layer.at("locked");
-                }
-                else nativeMembers=touched;
-            }
-            else
-            {
-                if(action=="Hide" || action=="Show")layer["hidden"]=action=="Hide";
-                else layer["locked"]=action=="Lock movement";
-                nativeMembers=layer.at("members");
-                nativeHidden=layer.at("hidden");
-                nativeLocked=layer.at("locked");
-            }
-        }
-        if(!nativeMembers.is_null() && !nativeMembers.empty())
-        {
-            if(!Design::ValidGroupName(group))groupAction="none";
-            Editor::DesignLayer(nativeMembers,nativeHidden,nativeLocked,group,groupAction);
-        }
-        try{DesignSave(s,data);}catch(...){if(!nativeMembers.is_null() && !nativeMembers.empty())Editor::Exec("TRANSACTION UNDO");throw;}
-        DesignRefresh(s);
-        DesignStatus(s,"Layer membership is written into the map's native Group field, so it travels with the .sdc. Movement locks use bLockLocation; hiding affects editor visibility only.");
         return;
     }
     if(id==DRepeat)
@@ -3287,6 +3211,19 @@ void DesignLockSelection(DesignState& s,bool lock)
     DesignRefresh(s);
     DesignStatus(s,(lock?"Locked ":"Unlocked ")+std::to_string(selected.size())+" actor(s)."+(lock?" They cannot be clicked, box-selected or dragged in the plan until unlocked (Ctrl+Shift+L, the right-click menu, or the Scene panel).":""));
 }
+// Right-click on the floor slider: every storey, or a typed height range.
+void DesignSliderMenu(DesignState& s,POINT at)
+{
+    HMENU menu=CreatePopupMenu();
+    if(!menu)throw std::runtime_error("Could not open the menu.");
+    AppendMenuA(menu,MF_STRING|(s.floorFilter?0:MF_GRAYED),DCtxSliderAll,"Show every storey\tHome");
+    AppendMenuA(menu,MF_STRING,DFloor,"Custom height range...");
+    POINT screen=at;
+    ClientToScreen(s.canvas,&screen);
+    const auto choice=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_NONOTIFY|TPM_LEFTALIGN,screen.x,screen.y,0,s.canvas,nullptr);
+    DestroyMenu(menu);
+    if(choice)DesignCommand(s,choice);
+}
 void DesignContextMenu(DesignState& s,POINT at)
 {
     const auto world=DesignSnap(s,DesignWorld(s,at.x,at.y));
@@ -3783,6 +3720,11 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             Sync();
             if(s->epoch!=mapEpoch){DesignRefresh(*s);return 0;}
             DesignUpdateGrid(*s);
+            if(int index=0;DesignSliderHit(*s,{GET_X_LPARAM(l),GET_Y_LPARAM(l)},index))
+            {
+                DesignSliderMenu(*s,{GET_X_LPARAM(l),GET_Y_LPARAM(l)});
+                return 0;
+            }
             DesignContextMenu(*s,{GET_X_LPARAM(l),GET_Y_LPARAM(l)});
             return 0;
         }
@@ -4019,7 +3961,7 @@ LRESULT CALLBACK DesignFieldProc(HWND window,UINT message,WPARAM w,LPARAM l,UINT
     auto s=reinterpret_cast<DesignState*>(reference);
     if(s && message==WM_KEYDOWN && w==VK_RETURN)
     {
-        try{if(id>=DSheetField)SheetApply(*s);else DesignInspectorRead(*s);}
+        try{if(id==DDepth)DesignDepthRead(*s);else if(id>=DSheetField)SheetApply(*s);else DesignInspectorRead(*s);}
         catch(const std::exception& e){DesignStatus(*s,e.what());if(id<DSheetField)DesignInspectorRefresh(*s);}
         return 0;
     }
@@ -4045,11 +3987,11 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 SendMessageA(GetDlgItem(window,DPlane),CB_ADDSTRING,0,reinterpret_cast<LPARAM>(plane));
             SendMessage(GetDlgItem(window,DPlane),CB_SETCURSEL,0,0);
             MoveWindow(GetDlgItem(window,DPlane),12,12,110,150,TRUE);
-            Control(window,"BUTTON","Depth...",0,DDepth,126,12,54,25);
-            Control(window,"BUTTON","Snap to grid",BS_AUTOCHECKBOX,DSnap,184,12,96,25);
+            Control(window,"STATIC","Z",0,DDepthLabel,128,17,14,20);
+            SetWindowSubclass(Control(window,"EDIT","0",ES_AUTOHSCROLL,DDepth,142,13,40,24),DesignFieldProc,DDepth,reinterpret_cast<DWORD_PTR>(s));
+            Control(window,"BUTTON","Snap to grid",BS_AUTOCHECKBOX,DSnap,188,12,96,25);
             SendDlgItemMessage(window,DSnap,BM_SETCHECK,BST_CHECKED,0);
-            Control(window,"BUTTON","Floors...",0,DFloor,284,12,58,25);
-            Control(window,"BUTTON","Overlays",BS_AUTOCHECKBOX,DOverlays,346,12,62,25);
+            Control(window,"BUTTON","Overlays",BS_AUTOCHECKBOX,DOverlays,290,12,70,25);
             SendDlgItemMessage(window,DOverlays,BM_SETCHECK,BST_CHECKED,0);
             s->builds=Editor::GeometryBuilds();
             s->builtRevision=Editor::Revision();
@@ -4065,14 +4007,14 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 AppendMenuA(bar,MF_POPUP,reinterpret_cast<UINT_PTR>(popup),title);
             };
             submenu("&Workspace",{{DReference,"Reference image..."},{DCalibrate,"Calibrate image"},{DRemoveReference,"Remove reference..."},{0,nullptr},
-                {DScene,"Scene panel: groups, visibility, locks..."},{DLayer,"Layers..."},{DMovement,"Movement limits..."},{0,nullptr},{DWorkspace,"Export / import workspace..."}});
+                {DScene,"Scene panel: groups, visibility, locks..."},{DMovement,"Movement limits..."},{0,nullptr},{DWorkspace,"Export / import workspace..."}});
             submenu("&Blockout",{{DBlock,"New blockout..."},{DEdit,"Edit selected piece"},{DPlace,"Place / Apply preview"},{DDiscard,"Discard preview"},{0,nullptr},
                 {DDoorway,"Doorway in room..."},{DDetach,"Detach selected piece"},{0,nullptr},{DAlign,"Align / distribute..."},{DRepeat,"Repeat selection..."},{0,nullptr},
                 {DBuild,"Build geometry\tB"}});
             submenu("&Annotate",{{DGuides,"Player reference..."},{DMeasure,"Measure two points"},{0,nullptr},
                 {DRoute,"Route / objective..."},{DFinish,"Finish route / marker"},{DCompare,"Compare routes..."},{0,nullptr},{DClear,"Remove annotation..."}});
             submenu("&Tools",{{DPlay,"Playtest from here..."},{DSecurity,"Security..."},{DCheck,"Check design..."},{0,nullptr},
-                {DRefresh,"Refresh from editor"},{DFit,"Fit map / preview"},{DDepth,"Depth..."},{DFloor,"Floors..."},{DUnlit,"Show unlit areas"},{0,nullptr},{DUndo,"Undo\tCtrl+Z"},{DRedo,"Redo\tCtrl+Y"},{0,nullptr},{DKeys,"Keyboard and mouse..."}});
+                {DRefresh,"Refresh from editor"},{DFit,"Fit map / preview"},{DUnlit,"Show unlit areas"},{0,nullptr},{DUndo,"Undo\tCtrl+Z"},{DRedo,"Redo\tCtrl+Y"},{0,nullptr},{DKeys,"Keyboard and mouse..."}});
             SetMenu(window,bar);
             const std::pair<int,const char*> buttons[]={
                 {DBlock,"New blockout..."},{DPlace,"Place / Apply preview"},
@@ -4108,9 +4050,8 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             Control(window,"BUTTON","Keys...",0,DKeys,208,checks+28,90,26);
             const std::pair<int,const char*> tips[]={
                 {DPlane,"Which way the plan looks: top (a floor plan) or front / side (an elevation). Page Up / Page Down step between storeys."},
-                {DDepth,"Where clicks land on the axis the view cannot show: the floor height in the top view, the depth in an elevation."},
+                {DDepth,"Where clicks land on the axis the view cannot show: the floor height in the top view, the depth in an elevation. Enter applies; the storey slider sets it too."},
                 {DSnap,"Snap clicks and drags to the editor's grid. Ctrl + wheel over a viewport changes the grid."},
-                {DFloor,"Show only a range of heights. The slider on the right of the plan picks a storey without typing."},
                 {DOverlays,"Draw lights, devices, game actors, guides and annotations over the plan."},
                 {DBlock,"Start a new room, corridor, vent, doorway or stairs as a preview. Right-click the plan to start one where you point."},
                 {DPlace,"Create the brushes of a new preview (Enter), or apply the edits to a placed piece."},
@@ -4132,6 +4073,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             DesignRefresh(*s);
             DesignFit(*s);
             DesignInspectorRefresh(*s);
+            DesignDepthShow(*s);
             DesignStatus(*s,"Wheel: zoom. Middle drag: pan. Click a piece to edit it, drag to move, drag a square to resize; arrow keys nudge by the grid. Drag empty space to box-select (right to left selects what it touches); Shift or Ctrl adds. The slider on the right shows one storey; Page Up / Page Down step between them. Right-click for actions at that point.");
             SetTimer(window,1,700,nullptr);
             return 0;
@@ -4148,6 +4090,13 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
         {
             const int id=LOWORD(w),notification=HIWORD(w);
             if(id==DPlane && notification!=CBN_SELCHANGE)return 0;
+            if(id==DDepth)
+            {
+                if(notification!=EN_KILLFOCUS)return 0;
+                try{DesignDepthRead(*s);}
+                catch(const std::exception& e){DesignStatus(*s,e.what());DesignDepthShow(*s);}
+                return 0;
+            }
             // Inspector fields apply themselves; a rejected value is reported
             // in the status line and the field is put back as it was.
             if(id>=DName && id<=DYaw)

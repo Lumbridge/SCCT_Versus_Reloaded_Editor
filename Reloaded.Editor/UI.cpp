@@ -75,6 +75,18 @@ static int MenuPosByCommand(HMENU menu, UINT cmd)
     return -1;
 }
 
+static int MenuPosByText(HMENU menu, const char* text)
+{
+    const int count = GetMenuItemCount(menu);
+    for (int i = 0; i < count; ++i)
+    {
+        char label[128] = {};
+        GetMenuStringA(menu, i, label, sizeof(label), MF_BYPOSITION);
+        if (!strcmp(label, text)) return i;
+    }
+    return -1;
+}
+
 // Top-level submenu of the bar that directly contains 'cmd'.
 static HMENU SubMenuWithCommand(HMENU bar, UINT cmd)
 {
@@ -96,19 +108,26 @@ static void InjectReloadedMenuItems(HWND frame)
     HMENU view = SubMenuWithCommand(bar, 40065); // "Advanced Options" lives in View
     if (view)
     {
-        if (MenuPosByCommand(view, WorkflowTools::kViews) < 0)
+        // One "Reloaded Tools" submenu, grouped by what the tools are for,
+        // instead of eleven entries loose in View. Command ids are unchanged.
+        if (MenuPosByText(view, "Reloaded &Tools") < 0)
         {
+            HMENU tools = CreatePopupMenu();
+            AppendMenuA(tools, MF_STRING, 40948, "&Map Design...");
+            AppendMenuA(tools, MF_STRING, WorkflowTools::kBrushVisibility, "&Brush Visibility...");
+            AppendMenuA(tools, MF_SEPARATOR, 0, nullptr);
+            AppendMenuA(tools, MF_STRING, WorkflowTools::kConnections, "Gameplay &Connections...");
+            AppendMenuA(tools, MF_STRING, 40927, "SMagicEvent &Workbench...");
+            AppendMenuA(tools, MF_STRING, 40932, "SCamNetwork Ma&nager...");
+            AppendMenuA(tools, MF_SEPARATOR, 0, nullptr);
+            AppendMenuA(tools, MF_STRING, WorkflowTools::kViews, "Working &Views...");
+            AppendMenuA(tools, MF_STRING, WorkflowTools::kAssemblies, "Actor &Assemblies...");
+            AppendMenuA(tools, MF_STRING, WorkflowTools::kSaveAssembly, "&Save Selection as Assembly...");
+            AppendMenuA(tools, MF_SEPARATOR, 0, nullptr);
+            AppendMenuA(tools, MF_STRING, 40934, "&Export Map to JSON...");
+            AppendMenuA(tools, MF_STRING, 40935, "&Import Map from JSON...");
             AppendMenuA(view, MF_SEPARATOR, 0, nullptr);
-            AppendMenuA(view, MF_STRING, WorkflowTools::kConnections, "Gameplay &Connections...");
-            AppendMenuA(view, MF_STRING, 40927, "SMagicEvent Workbench...");
-            AppendMenuA(view, MF_STRING, 40932, "SCamNetwork Manager...");
-            AppendMenuA(view, MF_STRING, 40934, "Export Map to JSON...");
-            AppendMenuA(view, MF_STRING, 40948, "Map Design...");
-            AppendMenuA(view, MF_STRING, WorkflowTools::kBrushVisibility, "Brush Visibility...");
-            AppendMenuA(view, MF_STRING, 40935, "Import Map from JSON...");
-            AppendMenuA(view, MF_STRING, WorkflowTools::kViews, "&Working Views...");
-            AppendMenuA(view, MF_STRING, WorkflowTools::kAssemblies, "Actor &Assemblies...");
-            AppendMenuA(view, MF_STRING, WorkflowTools::kSaveAssembly, "Save Selection as Assembly...");
+            AppendMenuA(view, MF_POPUP, reinterpret_cast<UINT_PTR>(tools), "Reloaded &Tools");
         }
         int pos = MenuPosByCommand(view, 19004); // after "Show Actor Class Browser"
         if (pos >= 0 && MenuPosByCommand(view, 40067) < 0)

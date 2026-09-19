@@ -1,6 +1,6 @@
 # Map Design
 
-Open **View > Map Design...** while a source map is open. The workspace has its
+Open **View > Reloaded Tools > Map Design...** while a source map is open. The workspace has its
 own top (XY), front (XZ) and side (YZ) design views, showing native brush wireframes
 and actor origins. Wheel zooms; middle-drag pans. **Refresh from editor** updates
 selection and geometry. Native transactions refresh automatically. These views
@@ -102,10 +102,11 @@ geometry is dark, and zone portals, volumes and movers have their own tints
 against a background that stands for the engine's solid space. A top view
 therefore reads as a floor plan rather than a wireframe tangle.
 
-**Floors...** limits every design view to a height range, keeping one storey of a
-multi-level map readable. It applies to brush edges, actor origins, clearance
-guides, annotations and reference images placed on other floors. The **floor
-slider** down the right edge of the canvas does the same without typing: it has
+The **floor slider** down the right edge of the canvas limits every design view to
+one storey, keeping a multi-level map readable. It applies to brush edges, actor
+origins, clearance guides, annotations and reference images placed on other
+floors. Right-click the slider for **Custom height range...**, which takes any
+two heights. The slider has
 a detent for each storey the map's rooms, corridors and vents stand on (highest
 at the top) and **All** above them. Drag it, click a detent, or press **Page Up /
 Page Down** to step between storeys and **Home** to show them all. In the top
@@ -267,30 +268,24 @@ openings in game. References never become gameplay actors.
 
 ## 5. Measurement and alignment
 
-**Measure two points** saves a distance annotation in Unreal units. **Depth...**
-sets the hidden-axis coordinate for new points (floor Z in the top view).
+**Measure two points** saves a distance annotation in Unreal units. The **Z**
+field beside the view combo (Y or X in an elevation) is the hidden-axis
+coordinate new points and pieces land on; type a value and press Enter, or let
+the storey slider set it.
 **Align / distribute...** works on native selected actor/brush origins along X,
 Y or Z. Align uses the first actor in native selection order; distribute sorts
 by that axis and applies exact spacing from the lowest position. Other axes are
 preserved. Both use one Undo step and reject locked actors or stale positions.
 
-## 6. Layers
+## 6. Groups
 
-**Layers...** creates named layers from selection, selects their members, adds or
-removes selection, hides/shows them, and locks/unlocks movement using the native
-`bLockLocation` flag. Membership is exclusive to avoid conflicting layer states.
-Missing/deleted actors are skipped. Resizing a blockout retains its logical layer
-membership, including historical identities needed by Undo.
-
-Layer membership is written into each actor's native `Group` field, in the same
-undoable transaction as the visibility and lock change, so it travels inside the
-`.sdc`. Opening a map made elsewhere lists its existing groups as layers. Layer
-names therefore use 1–62 letters, digits or underscores, which is what a group
-name allows.
-
-These are editor visibility and movement locks, not a prohibition on deleting
-actors or editing their properties. Visibility/lock changes are native undoable
-operations.
+Groups live in the **Scene panel** (Workspace menu or the plan's right-click
+menu), which replaced the old Layers dialog: make a group from the selected rows,
+add to or remove from one, rename or ungroup it, and hide, show, lock or unlock
+it as a whole. Membership is exclusive. It is written into each actor's native
+`Group` field in the same undoable transaction, so it travels inside the `.sdc`,
+and the workspace keeps the same list so a resized piece keeps its group along
+with the historical identities Undo needs.
 
 ## 7. Modular assemblies and repeated placement
 
@@ -336,7 +331,7 @@ Times come from the speeds in **Movement limits...**. A climb or a drop — a
 vertical step higher than the step-up height — is timed at the climb speed rather
 than at a run, and a route marked **Crouched** (for vents) takes the crouch
 penalty. Tag a route **Spy** or **Merc** to say whose route it is; it still shows
-both times. Use the top view's **Depth...** to place points on different floors,
+both times. Use the top view's **Z** field or the storey slider to place points on different floors,
 or the front/side views for vertical planning. **Drag a route point** to adjust
 it, and **double-click one** to rename the route, change its team or crouch flag,
 or remove it. **Remove annotation...** also removes whole annotations.

@@ -265,7 +265,20 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             J result=J::parse(buffer.data());if(!ok || !result.at("ok").get<bool>()) throw std::runtime_error(result.value("error","Request failed"));
             return result.at("result");
         };
-        auto require=[&](bool ok,const char* text){if(!ok)throw std::runtime_error(text);Record("workflow_check",text);};
+        // A failed check is recorded and the run goes on, so one run reports
+        // every regression; the section then fails at its end. Only an
+        // exception (a request that errors, missing data) still stops it.
+        int failures=0;std::string firstFailure;
+        auto require=[&](bool ok,const char* text)
+        {
+            if(!ok){++failures;if(firstFailure.empty())firstFailure=text;Record("workflow_fail",text);return;}
+            Record("workflow_check",text);
+        };
+        auto finish=[&](const char* pass)
+        {
+            if(failures>0)throw std::runtime_error(std::to_string(failures)+" check(s) failed; first: "+firstFailure);
+            Record("PASS",pass);
+        };
         auto checkSurfaceBrushSelection=[&](size_t minimumBrushes)
         {
             auto read=[](uintptr_t p){return *reinterpret_cast<uintptr_t*>(p);};
@@ -341,7 +354,7 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             auto count=call({{"op","actors"}}).size();auto entry=updated.at("assemblies").at(0);
             auto placed=call({{"op","assembly.place"},{"definition",entry},{"position",{0,512,0}},{"rotation",{0,0,0}},{"bindings",J::object()}});
             require(placed.at("members").size()==entry.at("actors").size() && call({{"op","actors"}}).size()==count+entry.at("actors").size(),"updated assembly persists for future placements after restart");
-            DestroyWindow(window);Record("PASS","Workflow views and updated assemblies survive a full editor restart.");return;
+            DestroyWindow(window);finish("Workflow views and updated assemblies survive a full editor restart.");return;
         }
         J actors=call({{"op","actors"}});require(actors.size()>=3,"fixture actors available");
         checkSurfaceBrushSelection(1);
@@ -438,7 +451,7 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             data=*reinterpret_cast<unsigned char**>(polys+0x28);memcpy(data,original.data(),original.size());
             std::copy(savedHeader.begin(),savedHeader.end(),selectionHeader);*reinterpret_cast<int*>(editor+0x1ac)=mode;memcpy(editor+0x200,grid,12);
         }
-        if(snapOnly){Record("PASS","native brush and selected-vertex grid snap commands and transactions");return;}
+        if(snapOnly){finish("native brush and selected-vertex grid snap commands and transactions");return;}
         {
             auto inspect=[&](const J& actor){return call({{"op","magic.inspect"},{"actor",actor}});};
             auto ref=[](const J& actor){auto type=actor.at("class").get<std::string>();return type.substr(type.find_last_of('.')+1)+"'"+actor.at("path").get<std::string>()+"'";};
@@ -1043,14 +1056,23 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             SendMessage(design,WM_COMMAND,711,0);auto canvas=GetDlgItem(design,719);
             SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(100,100));SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(300,100));
             WorkflowProbe::Click(design,716);SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(200,220));SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(400,300));SendMessage(design,WM_COMMAND,717,0);
-            // The layer comes from an explicit selection: what the editor left
-            // selected after the undo steps above is not part of the contract.
+            // Groups are made in the Scene panel: open it, choose every row,
+            // New group; the name dialog's default name is accepted.
             call({{"op","select"},{"actors",placedRoom}});
-            WorkflowProbe::Click(design,713,"Design layer");
+            SendMessage(design,WM_COMMAND,765,0); // Scene panel.
+            HWND scene=FindWindowA("ReloadedScene",nullptr);
+            require(scene!=nullptr,"the Scene panel opens from the design window");
+            if(scene)
             {
-                char layerStatus[1024]{};GetWindowTextA(GetDlgItem(design,720),layerStatus,sizeof(layerStatus));
-                const std::string why=std::string("the layer dialog creates a layer from the selection (status: ")+layerStatus+"; selected "+std::to_string(call({{"op","actors"},{"selected",true}}).size())+")";
-                require(std::string(layerStatus).find("Layer membership")!=std::string::npos,why.c_str());
+                auto sceneList=GetDlgItem(scene,1200);
+                LVITEMA everyRow{};everyRow.stateMask=LVIS_SELECTED;everyRow.state=LVIS_SELECTED;
+                SendMessageA(sceneList,LVM_SETITEMSTATE,static_cast<WPARAM>(-1),reinterpret_cast<LPARAM>(&everyRow));
+                KillTimer(scene,2);
+                WorkflowProbe::Click(scene,1206); // New group from selection.
+                char sceneStatus[1024]{};GetWindowTextA(GetDlgItem(design,720),sceneStatus,sizeof(sceneStatus));
+                const std::string why=std::string("the Scene panel groups the chosen rows (status: ")+sceneStatus+")";
+                require(std::string(sceneStatus).find("Grouped")!=std::string::npos,why.c_str());
+                SendMessage(scene,WM_CLOSE,0,0);
             }
             // Generate a tiny reference image locally; no copyrighted reference
             // imagery or user's files are needed for this UI test.
@@ -1617,7 +1639,7 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
         SendMessage(frameWindow,WM_COMMAND,40928,0);KillTimer(nullptr,packageTimer);
         require(WorkflowProbe::packagePreviewChecked,"File menu packaging command opens its map chooser");
         std::ofstream(directory/"workflow_result.json")<<J({{"view",view},{"instance",instance}}).dump(2);
-        Record("PASS","Native workflow replacement, connections, views, assembly insertion and in-place updates, undo/redo, rebuild and save/reopen verified.");
+        finish("Native workflow replacement, connections, views, assembly insertion and in-place updates, undo/redo, rebuild and save/reopen verified.");
     }
     catch(const std::exception& e){Record("FAIL",e.what());}
 }

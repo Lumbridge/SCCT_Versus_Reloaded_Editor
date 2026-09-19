@@ -181,12 +181,27 @@ $editorProcessId = [int]($launchedId | Select-Object -Last 1)
 $report = Join-Path $testSystem 'native_recovery_report.txt'
 $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
 $workflowRestarted = $false
+# Report lines are streamed as the probe writes them, so progress and every
+# failed check show while the editor is still running.
+$streamed = 0
 try {
     while ([DateTime]::UtcNow -lt $deadline) {
         if (Test-Path -LiteralPath $report) {
-            $result = Get-Content -LiteralPath $report -Raw
+            $lines = @(Get-Content -LiteralPath $report)
+            if ($lines.Count -gt $streamed) {
+                for ($i = $streamed; $i -lt $lines.Count; $i++) {
+                    $line = $lines[$i]
+                    if ($line -match '^workflow_fail ') { Write-Output ('  !! FAILED CHECK: ' + $line.Substring(14)) }
+                    elseif ($line -match '^workflow_check ') { Write-Output ('  ok ' + $line.Substring(15)) }
+                    elseif ($line -match '^workflow ') { }
+                    else { Write-Output $line }
+                }
+                $streamed = $lines.Count
+            }
+            $result = ($lines -join "`n")
             if ($result -match '(?m)^(PASS|FAIL) ') {
-                Write-Output $result
+                $failed = @($lines | Where-Object { $_ -match '^workflow_fail ' })
+                if ($failed.Count) { Write-Output ('' + $failed.Count + ' check(s) failed:'); $failed | ForEach-Object { Write-Output ('  ' + $_.Substring(14)) } }
                 if ($result -match '(?m)^FAIL ') { throw 'Native map recovery test failed.' }
                 if ($WorkflowTools -and !$BrushGridSnapOnly -and !$workflowRestarted) {
                     $owned = Get-Process -Id $editorProcessId -ErrorAction Stop
@@ -194,6 +209,7 @@ try {
                     Stop-Process -Id $editorProcessId -Force
                     $owned.WaitForExit(10000) | Out-Null
                     Move-Item -LiteralPath $report -Destination (Join-Path $testSystem 'workflow_first_process_report.txt')
+                    $streamed = 0
                     $workflowConfig = Join-Path $testSystem 'native_recovery_test.ini'
                     $workflowText = (Get-Content -LiteralPath $workflowConfig -Raw).Replace('generate_fixture=1','generate_fixture=0')
                     Set-Content -LiteralPath $workflowConfig -Value ($workflowText + "`r`nworkflow_restart=1`r`n") -Encoding ascii
