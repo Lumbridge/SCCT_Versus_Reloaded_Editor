@@ -291,6 +291,61 @@ int main()
     // Rewritten references keep the engine's quoted object path form.
     Check(linkedText.find("Owner=Actor'\"Map.Batch_Copy1_A\"'")!=std::string::npos,"repeated object reference escapes its copy");
     Reject([&]{Design::Repeat(def,129,{0,0,0},0);});
+    {
+        // Mirroring: an unhanded piece's reflection is the same shape at the mirrored pose, whichever way it was turned.
+        auto rounded=[](Vector v){for(auto& x:v)x=std::round(x*1000)/1000;return v;};
+        auto vertices=[&](const Json& shape,const Pose& pose){std::vector<Vector> out;for(auto& solid:Design::Geometry(shape))for(auto& f:solid.faces)for(auto& v:f)out.push_back(rounded(TransformPoint(v,pose)));std::sort(out.begin(),out.end());return out;};
+        Json flight={{"kind","Stairs"},{"width",128},{"length",512},{"height",256},{"thickness",16},{"steps",16},{"construction","Carve"}};
+        const Pose pose{{300,-200,64},{0,12345,0}};
+        for(int axis:{0,1})
+        {
+            const double at=axis==0?100:-50;
+            auto expected=vertices(flight,pose);
+            for(auto& v:expected)v[axis]=std::round((2*at-v[axis])*1000)/1000;
+            std::sort(expected.begin(),expected.end());
+            Check(vertices(flight,Design::MirrorPose(pose,axis,at))==expected,"a mirrored flight is the reflection of the original");
+        }
+        size_t handed=0;
+        Json pieces=Json::array({{{"spec",flight},{"position",pose.position},{"rotation",pose.rotation}},{{"spec",spiral},{"position",Vector{0,0,0}},{"rotation",Rotation{}}}});
+        auto mirrored=Design::MirrorItems(pieces,0,100,handed);
+        Check(mirrored.size()==2 && handed==1 && mirrored[0]["position"][0]==-100,"mirrored items reflect positions and count handed shapes");
+        Reject([&]{Design::MirrorPose(pose,2,0);});
+        // Clipboard: copies keep their offsets round the centre of their bases and paste round a point.
+        auto clip=Design::ClipPieces(pieces);
+        Check(clip["anchor"][0]==150 && clip["anchor"][1]==-100 && clip["anchor"][2]==0,"clip anchor is the centre of the bases at the lowest floor");
+        auto pasted=Design::PasteItems(clip,{1000,1000,512});
+        Check(pasted[0]["position"][0]==1150 && pasted[0]["position"][1]==900 && pasted[0]["position"][2]==576 && pasted[1]["position"][2]==512,"pasted pieces keep their offsets");
+        Reject([&]{Design::ClipPieces(Json::array());});
+    }
+    {
+        // Sightlines: two carved rooms joined by a doorway see each other through it, not through the wall beside it.
+        Json sightRoom={{"kind","Room"},{"width",512},{"length",512},{"height",256},{"thickness",16},{"construction","Carve"}};
+        Json sightDoor={{"kind","Doorway"},{"width",96},{"length",16},{"height",128},{"thickness",16},{"construction","Carve"}};
+        Json pieces=Json::array({
+            {{"spec",sightRoom},{"position",Vector{0,0,0}},{"rotation",Rotation{}}},
+            {{"spec",sightRoom},{"position",Vector{528,0,0}},{"rotation",Rotation{}}},
+            {{"spec",sightDoor},{"position",Vector{264,0,0}},{"rotation",Rotation{0,16384,0}}}});
+        auto solids=Design::CarvedSolids(pieces);
+        Check(solids.size()==3,"every carved piece contributes its open space");
+        Check(Design::InsideCarved(solids,{0,0,64}) && Design::InsideCarved(solids,{264,0,64}) && !Design::InsideCarved(solids,{264,200,64}),"points in a room, in a turned doorway and in a wall are told apart");
+        auto through=Design::Sightline(solids,{-200,0,64},{700,0,64});
+        Check(through.runs.empty() && through.blocked==0 && std::abs(through.length-900)<.01,"a line through the doorway is clear");
+        auto wall=Design::Sightline(solids,{-200,200,64},{700,200,64});
+        Check(wall.runs.size()==1 && wall.blocked>=8 && wall.blocked<=40,"a line through the wall is blocked for about the wall's thickness");
+        Reject([&]{Design::Sightline(solids,{0,0,0},{1,0,0},0);});
+    }
+    {
+        // Presets and names.
+        Json stair={{"kind","Stairs"},{"width",128},{"length",256},{"height",128},{"thickness",16},{"steps",8}};
+        Design::ApplyPreset(stair,Design::Presets("Stairs")[0]);
+        Check(stair["length"]==544 && stair["height"]==272 && stair["steps"]==17,"a stair preset sets its size and recounts treads");
+        Json duct={{"kind","Vent"},{"width",96},{"length",512},{"height",125},{"thickness",16}};
+        Design::ApplyPreset(duct,Design::Presets("Vent")[2]);
+        Check(duct["length"]==1024 && duct["height"]==125,"a vent preset keeps the crouch height");
+        Check(Design::Presets("Nothing").empty(),"unknown shapes have no presets");
+        Json named=Json::array({{{"spec",{{"name","Room 3"}}}},{{"spec",{{"name","Room"}}}},{{"spec",{{"name","Room 12 (above)"}}}},{{"spec",{{"name","Corridor 4"}}}}});
+        Check(Design::NextName(named,"Room")=="Room 13" && Design::NextName(named,"Vent")=="Vent 1","names count up from the highest of their kind");
+    }
     std::cout<<"Map Design model tests passed\n";
   }
   catch(const std::exception& e)

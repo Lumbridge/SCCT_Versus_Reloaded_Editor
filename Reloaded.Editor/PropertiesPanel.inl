@@ -12,7 +12,8 @@ void SheetDestroyControls(DesignState& s)
 void SheetPieceControls(DesignState& s,bool show)
 {
     for(int id=DName;id<=DDiscard;++id)if(auto control=GetDlgItem(s.window,id))ShowWindow(control,show?SW_SHOW:SW_HIDE);
-    for(int id=DInspectorLabel;id<DInspectorLabel+12;++id)if(auto control=GetDlgItem(s.window,id))ShowWindow(control,show?SW_SHOW:SW_HIDE);
+    if(auto presets=GetDlgItem(s.window,DPreset))ShowWindow(presets,show?SW_SHOW:SW_HIDE);
+    for(int id=DInspectorLabel;id<DInspectorLabel+13;++id)if(auto control=GetDlgItem(s.window,id))ShowWindow(control,show?SW_SHOW:SW_HIDE);
 }
 // Shows a message where the properties would be.
 void SheetHint(DesignState& s,const std::string& hint)

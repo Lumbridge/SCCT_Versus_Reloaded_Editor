@@ -1,6 +1,7 @@
 #pragma once
 #include "WorkflowModel.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
@@ -791,5 +792,192 @@ inline Json ImportWorkspace(const Json& file,const std::string& mapKey)
     // Imported pieces describe this map's copies of the same brushes.
     for(auto& piece:design["pieces"])piece["map"]=mapKey;
     return design;
+}
+// --- Mirroring, clipboard, sightlines, presets and names --------------------
+// Shapes that turn one way. Their mirror image cannot be built from the same
+// spec, so a mirrored copy keeps its turn and the caller says so.
+inline bool Handed(const std::string& kind) { return kind=="Stairs L" || kind=="Stairs U" || kind=="Spiral"; }
+// The pose of a piece reflected through the plane axis=at. Every unhanded
+// shape is symmetric about its own local X, so its reflection is the same
+// shape at the reflected base turned by -yaw (across X) or by a half turn
+// less its yaw (across Y).
+inline Pose MirrorPose(const Pose& pose,int axis,double at)
+{
+    if(axis!=0 && axis!=1)throw std::runtime_error("Mirror across X or Y.");
+    if(!std::isfinite(at) || std::abs(at)>1000000)throw std::runtime_error("The mirror line must be a coordinate within the map.");
+    Pose result=pose;
+    result.position[axis]=2*at-pose.position[axis];
+    CheckVector(result.position);
+    const int yaw=axis==0?-pose.rotation[1]:32768-pose.rotation[1];
+    result.rotation[1]=((yaw%65536)+65536)%65536;
+    return result;
+}
+// Pieces copied relative to the centre of their bases, so they paste round a
+// point; the lowest base becomes the pasted floor.
+inline Json ClipPieces(const Json& pieces)
+{
+    if(pieces.empty())throw std::runtime_error("Select one or more placed pieces to copy.");
+    Vector lo{},hi{};
+    for(size_t i=0;i<pieces.size();++i)
+    {
+        const auto position=pieces[i].at("position").get<Vector>();
+        CheckVector(position);
+        for(int axis=0;axis<3;++axis)
+        {
+            lo[axis]=i?std::min(lo[axis],position[axis]):position[axis];
+            hi[axis]=i?std::max(hi[axis],position[axis]):position[axis];
+        }
+    }
+    const Vector anchor{(lo[0]+hi[0])/2,(lo[1]+hi[1])/2,lo[2]};
+    Json items=Json::array();
+    for(const auto& piece:pieces)
+    {
+        const auto position=piece.at("position").get<Vector>();
+        items.push_back({{"spec",piece.at("spec")},{"rotation",piece.at("rotation")},
+                         {"offset",Vector{position[0]-anchor[0],position[1]-anchor[1],position[2]-anchor[2]}}});
+    }
+    return {{"items",items},{"anchor",anchor}};
+}
+// The copies placed round a point, as blockout batch items.
+inline Json PasteItems(const Json& clip,const Vector& at)
+{
+    CheckVector(at);
+    Json items=Json::array();
+    for(const auto& item:clip.at("items"))
+    {
+        const auto offset=item.at("offset").get<Vector>();
+        const Vector position{at[0]+offset[0],at[1]+offset[1],at[2]+offset[2]};
+        CheckVector(position);
+        items.push_back({{"spec",item.at("spec")},{"position",position},{"rotation",item.at("rotation")},{"previous",Json{}}});
+    }
+    return items;
+}
+// Mirrored copies of pieces through the plane axis=at. Handed pieces keep
+// their turn; how many is reported so the caller can say so.
+inline Json MirrorItems(const Json& pieces,int axis,double at,size_t& handed)
+{
+    handed=0;
+    Json items=Json::array();
+    for(const auto& piece:pieces)
+    {
+        const Pose pose{piece.at("position").get<Vector>(),piece.at("rotation").get<Rotation>()};
+        const auto mirrored=MirrorPose(pose,axis,at);
+        if(Handed(piece.at("spec").at("kind").get<std::string>()))++handed;
+        items.push_back({{"spec",piece.at("spec")},{"position",mirrored.position},{"rotation",mirrored.rotation},{"previous",Json{}}});
+    }
+    return items;
+}
+// The carved pieces as world-space convex solids, for point tests: the open
+// space a room, corridor, vent, crawlway or doorway leaves in the map.
+struct WorldSolid { std::vector<Face> faces; };
+inline std::vector<WorldSolid> CarvedSolids(const Json& pieces)
+{
+    std::vector<WorldSolid> out;
+    for(const auto& piece:pieces)
+    {
+        Json spec=piece.at("spec");
+        const auto kind=spec.at("kind").get<std::string>();
+        if(kind!="Room" && kind!="Corridor" && kind!="Vent" && kind!="Crawlway" && kind!="Doorway")continue;
+        spec["construction"]="Carve"; // A shell's open space is its interior.
+        const Pose pose{piece.at("position").get<Vector>(),piece.at("rotation").get<Rotation>()};
+        for(const auto& solid:Geometry(spec))
+        {
+            if(!solid.subtract)continue;
+            WorldSolid world;
+            for(const auto& face:solid.faces)
+            {
+                Face transformed;
+                for(const auto& v:face)transformed.push_back(TransformPoint(v,pose));
+                world.faces.push_back(transformed);
+            }
+            out.push_back(world);
+        }
+    }
+    return out;
+}
+// Whether a point is on or inside a convex solid with outward-wound faces.
+inline bool InsideConvex(const std::vector<Face>& faces,const Vector& p,double tolerance=.5)
+{
+    for(const auto& face:faces)
+    {
+        if(face.size()<3)continue;
+        const Vector& a=face[0];
+        const Vector u{face[1][0]-a[0],face[1][1]-a[1],face[1][2]-a[2]},v{face[2][0]-a[0],face[2][1]-a[1],face[2][2]-a[2]};
+        const Vector n{u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0]};
+        const double length=std::sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
+        if(length<1e-9)continue;
+        if(((p[0]-a[0])*n[0]+(p[1]-a[1])*n[1]+(p[2]-a[2])*n[2])/length>tolerance)return false;
+    }
+    return true;
+}
+inline bool InsideCarved(const std::vector<WorldSolid>& solids,const Vector& p)
+{
+    for(const auto& solid:solids)if(InsideConvex(solid.faces,p))return true;
+    return false;
+}
+// A straight line between two points sampled through the carved space: the
+// stretches that leave it run through solid, so they block sight.
+struct Sight { double length=0,clear=0,blocked=0; std::vector<std::pair<Vector,Vector>> runs; };
+inline Sight Sightline(const std::vector<WorldSolid>& solids,const Vector& a,const Vector& b,double step=8)
+{
+    CheckVector(a);CheckVector(b);
+    if(!std::isfinite(step) || step<=0)throw std::runtime_error("Sample the sightline at a positive step.");
+    Sight sight;
+    sight.length=Distance(a,b);
+    if(sight.length<1e-9)return sight;
+    const int samples=std::max(2,static_cast<int>(std::ceil(sight.length/step))+1);
+    bool inRun=false;
+    Vector runStart{};
+    for(int i=0;i<samples;++i)
+    {
+        const double t=static_cast<double>(i)/(samples-1);
+        const Vector p{a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t};
+        const bool inside=InsideCarved(solids,p);
+        if(!inside && !inRun){inRun=true;runStart=p;}
+        else if(inside && inRun){inRun=false;sight.runs.push_back({runStart,p});}
+    }
+    if(inRun)sight.runs.push_back({runStart,b});
+    for(const auto& run:sight.runs)sight.blocked+=Distance(run.first,run.second);
+    sight.clear=std::max(0.0,sight.length-sight.blocked);
+    return sight;
+}
+// Sizes that come up all the time, per shape. A zero keeps that dimension.
+struct Preset { const char* name; double width,length,height; };
+inline std::vector<Preset> Presets(const std::string& kind)
+{
+    if(kind=="Room")return {{"Closet 256 x 256 x 192",256,256,192},{"Small room 512 x 512 x 256",512,512,256},{"Medium room 768 x 768 x 256",768,768,256},
+        {"Large room 1024 x 1024 x 320",1024,1024,320},{"Hall 1536 x 1024 x 384",1536,1024,384},{"Warehouse 2048 x 1536 x 512",2048,1536,512},{"Atrium 1024 x 1024 x 768",1024,1024,768}};
+    if(kind=="Corridor")return {{"Narrow 128 x 512",128,512,256},{"Standard 192 x 768",192,768,256},{"Wide 256 x 1024",256,1024,256},{"Long 192 x 1536",192,1536,256}};
+    if(kind=="Vent" || kind=="Crawlway")return {{"Short 96 x 256",96,256,0},{"Medium 96 x 512",96,512,0},{"Long 96 x 1024",96,1024,0},{"Wide 128 x 512",128,512,0}};
+    if(kind=="Doorway")return {{"Single door 96 x 128",96,0,128},{"Double door 192 x 128",192,0,128},{"Arch 256 x 192",256,0,192},{"Garage 384 x 224",384,0,224},{"Gap 64 x 128",64,0,128}};
+    if(kind=="Stairs")return {{"One storey 128 x 544 x 272",128,544,272},{"Half storey 128 x 288 x 136",128,288,136},{"Wide flight 256 x 544 x 272",256,544,272},{"Short 128 x 128 x 64",128,128,64}};
+    if(kind=="Stairs L" || kind=="Stairs U")return {{"One storey 128 x 416 x 272",128,416,272},{"Half storey 128 x 288 x 136",128,288,136}};
+    if(kind=="Spiral")return {{"One storey 384 across",384,384,272},{"Tight 256 across",256,256,272},{"Two storeys 384 across",384,384,544}};
+    if(kind=="Ramp")return {{"Gentle 128 x 512 x 128",128,512,128},{"Steep 128 x 256 x 128",128,256,128},{"Loading ramp 256 x 384 x 96",256,384,96}};
+    if(kind=="Platform")return {{"Crate 64 x 64 x 64",64,64,64},{"Table 128 x 64 x 40",128,64,40},{"Ledge 256 x 64 x 128",256,64,128},{"Catwalk 128 x 1024 x 16",128,1024,16},{"Mezzanine 512 x 512 x 16",512,512,16}};
+    return {};
+}
+inline void ApplyPreset(Json& spec,const Preset& preset)
+{
+    if(preset.width>0)spec["width"]=preset.width;
+    if(preset.length>0)spec["length"]=preset.length;
+    if(preset.height>0)spec["height"]=preset.height;
+    RecountSteps(spec);
+    Geometry(spec);
+}
+// The next free "Kind N" name, so placed pieces read apart in the Scene panel.
+inline std::string NextName(const Json& pieces,const std::string& kind)
+{
+    int highest=0;
+    for(const auto& piece:pieces)
+    {
+        const auto name=piece.at("spec").value("name",std::string());
+        if(name.size()<=kind.size()+1 || name.compare(0,kind.size()+1,kind+" ")!=0)continue;
+        int n=0;
+        size_t i=kind.size()+1;
+        while(i<name.size() && std::isdigit(static_cast<unsigned char>(name[i])) && n<100000)n=n*10+(name[i++]-'0');
+        highest=std::max(highest,n);
+    }
+    return kind+" "+std::to_string(highest+1);
 }
 }

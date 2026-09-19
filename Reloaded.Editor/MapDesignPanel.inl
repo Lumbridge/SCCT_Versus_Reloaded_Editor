@@ -5,6 +5,9 @@ enum DesignControl
     DPlane=700,DFit,DRefresh,DReference,DCalibrate,DRemoveReference,DBlock,DEdit,DPlace,DDetach,
     DGuides,DMeasure,DAlign,DLayer,DRepeat,DPlay,DRoute,DFinish,DClear,DCanvas,DStatus,DDepth,
     DSnap,DFloor,DDoorway,DMovement,DCompare,DWorkspace,DUndo,DRedo,
+    // Clipboard, mirroring, selection, sightlines, presets and the readout.
+    DCopy=800,DPaste,DDuplicate,DSelectAll,DMirrorX,DMirrorY,DSightline,DPreset,DReadout,DStarter,DFitSelection,
+    DCtxCopyPiece=815,DCtxDuplicatePiece,DCtxPasteHere,DCtxMirrorXHere,DCtxMirrorYHere,DCtxSightlineHere,DCtxStarterHere,
     // Quick-add menu entries, raised from the hovered wall.
     DAddDoorway=730,DAddCorridor,DAddVent,DAddRoom,DAddRoomAbove,DAddRoomBelow,DAddStairsUp,DAddStairsDown,
     // Inspector: live fields for the preview or the selected piece.
@@ -169,6 +172,17 @@ struct DesignState
     // were painted, so clicks on them can be told apart.
     RECT banner{};
     RECT viewButtons[3]{};
+    // Pieces copied for pasting, the world point under the cursor, and the
+    // readout under the plan that shows it.
+    Json clipboard;
+    Vector cursorWorld{};
+    bool cursorSet=false;
+    HWND readout{};
+    std::string readoutText;
+    // The carved space of the placed pieces, for sightlines, cached per map
+    // and workspace revision.
+    std::vector<Design::WorldSolid> carved;
+    unsigned carvedRevision=~0u,carvedData=~0u;
 };
 HWND designWindow=nullptr;
 Json NormalizeDesign(Json data)
@@ -680,6 +694,7 @@ double DesignSegmentDistance(const Gdiplus::PointF& a,const Gdiplus::PointF& b,d
     t=std::clamp(t,0.0,1.0);
     return std::hypot(a.X+t*dx-x,a.Y+t*dy-y);
 }
+Design::Sight DesignSightOf(DesignState& s,const Json& annotation);
 void DesignPaint(DesignState& s,HDC dc)
 {
     using namespace Gdiplus;
@@ -978,6 +993,23 @@ void DesignPaint(DesignState& s,HDC dc)
                                {"crouched",s.annotationCrouched},{"points",s.points}});
     for(auto& annotation:annotations)
     {
+        if(annotation.at("kind")=="Sightline" && annotation.at("points").size()==2)
+        {
+            // Green where the line runs through carved space, red where a
+            // wall blocks it.
+            const auto a=annotation.at("points")[0].get<Vector>(),b=annotation.at("points")[1].get<Vector>();
+            if(!DesignOnFloor(s,a[2],a[2]) && !DesignOnFloor(s,b[2],b[2]))continue;
+            const auto sight=DesignSightOf(s,annotation);
+            Pen clear(Color(220,40,160,80),3),blocked(Color(235,210,50,40),4);
+            line(clear,a,b);
+            for(const auto& run:sight.runs)line(blocked,run.first,run.second);
+            Pen ring(Color(220,40,160,80),2);
+            const auto eye=DesignScreen(s,a);
+            g.DrawEllipse(&ring,eye.X-5,eye.Y-5,10.f,10.f);
+            label(sight.runs.empty()?"Sightline: clear, "+Design::Round(sight.length)+" units"
+                                    :"Sightline: blocked, "+Design::Round(sight.blocked)+" of "+Design::Round(sight.length)+" units in solid",DesignScreen(s,b));
+            continue;
+        }
         Pen pen(annotation.at("kind")=="Measure"?Color(160,70,160):Color(35,145,70),2);
         const auto& points=annotation.at("points");
         bool visible=false;
@@ -1052,6 +1084,18 @@ void DesignPaint(DesignState& s,HDC dc)
     caption+=s.snap?"  grid "+Design::Round(s.grid[DesignHorizontal(s)]):"  no snapping";
     if(s.floorFilter)caption+="  floor "+Design::Round(s.floorLow)+" to "+Design::Round(s.floorHigh);
     label(caption,{10,8});
+    {
+        // A scale bar: a round number of units spanning 80 to 160 pixels.
+        double units=64;
+        while(units*s.zoom<80)units*=2;
+        while(units*s.zoom>160 && units>1)units/=2;
+        const float length=static_cast<float>(units*s.zoom),x=10,y=static_cast<float>(rect.bottom-18);
+        Pen bar(Color(230,30,45,60),2);
+        g.DrawLine(&bar,x,y,x+length,y);
+        g.DrawLine(&bar,x,y-4,x,y+4);
+        g.DrawLine(&bar,x+length,y-4,x+length,y+4);
+        label(Design::Round(units)+" units",{x+length+6,y-9});
+    }
     if(DesignGeometryStale(s))
     {
         // The banner is sized to its text, whatever the font metrics.
@@ -1344,6 +1388,14 @@ void DesignApply(DesignState& s)
     const bool editing=!s.previous.is_null();
     const Json followers=s.followers;
     s.followers=Json::array();
+    if(!editing)
+    {
+        // A piece placed under its shape's plain name is numbered, so the
+        // Scene panel tells one room from the next.
+        const auto kind=s.pending.at("kind").get<std::string>();
+        const auto name=s.pending.value("name",std::string());
+        if(name.empty() || name=="Blockout" || name==kind)s.pending["name"]=Design::NextName(data.at("pieces"),kind);
+    }
     auto piece=Editor::DesignBlockout(s.pending,s.frame,s.previous,followers,s.followDelta);
     if(editing)for(auto& layer:data["layers"])
     {
@@ -1508,6 +1560,18 @@ void DesignInspectorRefresh(DesignState& s)
     SetWindowTextA(GetDlgItem(s.window,DInspectorTitle),
         editing?"Selected piece (changes replace its brushes)":active?"New preview (Place / Apply to create)":"No preview: use New blockout..., or click a piece, light, device, reference or route point.");
     for(int id=DName;id<=DDiscard;++id)if(auto control=GetDlgItem(s.window,id))EnableWindow(control,active);
+    if(auto presets=GetDlgItem(s.window,DPreset))
+    {
+        // The shape's common sizes; the first entry keeps the current size.
+        EnableWindow(presets,active);
+        SendMessage(presets,CB_RESETCONTENT,0,0);
+        if(active)
+        {
+            SendMessageA(presets,CB_ADDSTRING,0,reinterpret_cast<LPARAM>("(size presets)"));
+            for(const auto& preset:Design::Presets(s.pending.at("kind")))SendMessageA(presets,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(preset.name));
+            SendMessage(presets,CB_SETCURSEL,0,0);
+        }
+    }
     if(!active)
     {
         for(int id:{DName,DWidth,DLength,DHeight,DThickness,DSteps,DPositionX,DPositionY,DPositionZ,DYaw})
@@ -1681,6 +1745,158 @@ std::vector<std::pair<std::string,Json>> DesignLayers(DesignState& s,const Json&
     for(auto& [name,members]:native)layers.push_back({name,members});
     return layers;
 }
+// --- Clipboard, mirroring, selection and presets ----------------------------
+Json FloorPlace(DesignState& s,const Json& items);
+// The placed pieces the editor's selection belongs to, each once; the piece
+// being edited counts when nothing else is selected.
+Json DesignSelectedPieces(DesignState& s)
+{
+    Json pieces=Json::array();
+    std::set<std::string> seen;
+    for(const auto& actor:s.scene)
+    {
+        if(!actor.value("selected",false))continue;
+        const Json piece=DesignPieceOf(s,actor);
+        if(piece.is_null() || piece.at("members").empty())continue;
+        if(seen.insert(piece.at("members")[0].at("path").get<std::string>()).second)pieces.push_back(piece);
+    }
+    if(pieces.empty() && !s.previous.is_null())pieces.push_back(s.previous);
+    return pieces;
+}
+// Selects the pieces just placed, so a paste or mirror can be moved straight
+// away; a single piece opens for editing.
+void DesignSelectPlaced(DesignState& s,const Json& placed)
+{
+    DesignRefresh(s);
+    std::set<std::string> paths;
+    for(const auto& piece:placed)for(const auto& member:piece.at("members"))paths.insert(member.at("path").get<std::string>());
+    Json identities=Json::array();
+    for(const auto& actor:s.scene)if(paths.count(actor.at("path").get<std::string>()))identities.push_back(actor);
+    if(!identities.empty()){Editor::Select(identities,false);DesignRefresh(s);}
+    if(placed.size()==1)
+        for(const auto& stored:DesignData(s).at("pieces"))
+            if(stored.at("members")==placed[0].at("members")){DesignActivate(s,stored);break;}
+    InvalidateRect(s.canvas,nullptr,FALSE);
+}
+void DesignCopy(DesignState& s)
+{
+    const auto pieces=DesignSelectedPieces(s);
+    if(pieces.empty())throw std::runtime_error("Select one or more placed pieces to copy: click a piece, or drag a rectangle round several.");
+    s.clipboard=Design::ClipPieces(pieces);
+    DesignStatus(s,"Copied "+std::to_string(pieces.size())+" piece(s). Ctrl+V pastes them at the cursor (or right-click: Paste here); Ctrl+D duplicates them beside the originals.");
+}
+// Where a paste lands from the keyboard: the cursor's world point when it is
+// over the plan, else the middle of the view, on the storey being shown.
+Vector DesignPasteAnchor(DesignState& s)
+{
+    Vector at=s.cursorWorld;
+    if(!s.cursorSet)
+    {
+        RECT r{};GetClientRect(s.canvas,&r);
+        at=DesignWorld(s,r.right/2.0,r.bottom/2.0);
+    }
+    at=DesignSnap(s,at);
+    if(s.plane==0)at[2]=s.depth;
+    return at;
+}
+void DesignPaste(DesignState& s,const Vector& at)
+{
+    if(s.clipboard.is_null() || s.clipboard.value("items",Json::array()).empty())throw std::runtime_error("Nothing copied yet: select a piece and press Ctrl+C first.");
+    const auto items=Design::PasteItems(s.clipboard,at);
+    DesignDeactivate(s);
+    const auto placed=FloorPlace(s,items);
+    DesignSelectPlaced(s,placed);
+    DesignStatus(s,"Pasted "+std::to_string(placed.size())+" piece(s) at "+Design::Round(at[0])+", "+Design::Round(at[1])+", "+Design::Round(at[2])+". They are selected: drag or nudge them into place. One Undo step; rebuild geometry when done.");
+}
+// Copies beside the originals along the view's horizontal axis, a wall's
+// thickness apart, so a row of rooms comes out of repeated Ctrl+D.
+void DesignDuplicate(DesignState& s)
+{
+    const auto pieces=DesignSelectedPieces(s);
+    if(pieces.empty())throw std::runtime_error("Select one or more placed pieces to duplicate.");
+    const int axis=DesignHorizontal(s);
+    double lo=1e18,hi=-1e18;
+    for(const auto& piece:pieces)
+    {
+        const auto bounds=DesignBoundsOf(piece.at("spec"),{piece.at("position").get<Vector>(),piece.at("rotation").get<Rotation>()});
+        lo=std::min(lo,bounds.lo[axis]);hi=std::max(hi,bounds.hi[axis]);
+    }
+    double span=hi-lo+pieces[0].at("spec").value("thickness",16.0);
+    if(s.snap && s.grid[axis]>0)span=std::ceil(span/s.grid[axis])*s.grid[axis];
+    const auto clip=Design::ClipPieces(pieces);
+    Vector at=clip.at("anchor").get<Vector>();
+    at[axis]+=span;
+    const auto items=Design::PasteItems(clip,at);
+    DesignDeactivate(s);
+    const auto placed=FloorPlace(s,items);
+    DesignSelectPlaced(s,placed);
+    DesignStatus(s,"Duplicated "+std::to_string(placed.size())+" piece(s) "+Design::Round(span)+" units along "+(axis==0?"X":axis==1?"Y":"Z")+"; the copies are selected. Ctrl+D again continues the row. One Undo step; rebuild geometry when done.");
+}
+void DesignMirror(DesignState& s,int axis,double at)
+{
+    const auto pieces=DesignSelectedPieces(s);
+    if(pieces.empty())throw std::runtime_error("Select one or more placed pieces to mirror.");
+    size_t handed=0;
+    const auto items=Design::MirrorItems(pieces,axis,at,handed);
+    DesignDeactivate(s);
+    const auto placed=FloorPlace(s,items);
+    DesignSelectPlaced(s,placed);
+    std::string text="Mirrored "+std::to_string(placed.size())+" piece(s) through "+(axis==0?"X = ":"Y = ")+Design::Round(at)+" as new copies, now selected. One Undo step; rebuild geometry when done.";
+    if(handed)text+=" "+std::to_string(handed)+" turning piece(s) (L or U stairs, spirals) keep their turn direction: check them.";
+    DesignStatus(s,text);
+}
+void DesignSelectAll(DesignState& s)
+{
+    Json all=Json::array();
+    for(const auto& actor:s.scene)
+        if(DesignShows(s,actor) && !DesignLockedPath(s,actor.at("path").get<std::string>()))all.push_back(actor);
+    if(all.empty())throw std::runtime_error("Nothing to select on this storey.");
+    Editor::Select(all,false);
+    DesignRefresh(s);
+    InvalidateRect(s.canvas,nullptr,FALSE);
+    DesignStatus(s,"Selected "+std::to_string(all.size())+" actor(s) shown on this storey; locked ones were skipped. Ctrl+C copies the pieces among them, Delete removes them.");
+}
+// Fits the view to the selection or the preview, or to the map when there is
+// neither.
+void DesignFitSelection(DesignState& s)
+{
+    Vector lo{},hi{};bool first=true;
+    auto add=[&](const Vector& p){if(first){lo=hi=p;first=false;}else for(int i=0;i<3;++i){lo[i]=std::min(lo[i],p[i]);hi[i]=std::max(hi[i],p[i]);}};
+    for(const auto& actor:s.scene)
+    {
+        if(!actor.value("selected",false))continue;
+        add(actor.at("position").get<Vector>());
+        for(const auto& e:actor.at("edges")){add(e[0].get<Vector>());add(e[1].get<Vector>());}
+    }
+    if(first && !s.pending.is_null())
+        for(const auto& solid:Design::Geometry(s.pending))for(const auto& f:solid.faces)for(const auto& v:f)add(TransformPoint(v,s.frame));
+    if(first){DesignFit(s);DesignStatus(s,"Nothing selected: fitted the whole map.");return;}
+    RECT r{};GetClientRect(s.canvas,&r);
+    const int a=DesignHorizontal(s),b=DesignVertical(s);
+    const double reserve=DesignLevels(s).empty()?0:48;
+    s.zoom=std::clamp(std::min((r.right-160-reserve)/std::max(hi[a]-lo[a],128.0),(r.bottom-160)/std::max(hi[b]-lo[b],128.0)),.002,8.0);
+    s.panX=(r.right-reserve)/2.0-(hi[a]+lo[a])/2*s.zoom;
+    s.panY=r.bottom/2.0+(hi[b]+lo[b])/2*s.zoom;
+    InvalidateRect(s.canvas,nullptr,FALSE);
+    DesignStatus(s,"Fitted the view to the selection. F fits the whole map.");
+}
+// A size preset chosen in the inspector: the shape's common sizes, applied to
+// the preview or, for a placed piece, to its brushes.
+void DesignApplyPreset(DesignState& s)
+{
+    if(s.pending.is_null())return;
+    const int index=static_cast<int>(SendDlgItemMessage(s.window,DPreset,CB_GETCURSEL,0,0));
+    const auto presets=Design::Presets(s.pending.at("kind"));
+    if(index<1 || static_cast<size_t>(index)>presets.size())return;
+    Json spec=s.pending;
+    Design::ApplyPreset(spec,presets[index-1]);
+    s.pending=spec;
+    DesignInspectorRefresh(s);
+    InvalidateRect(s.canvas,nullptr,FALSE);
+    const std::string note=std::string("Preset ")+presets[index-1].name+" applied.";
+    if(!s.previous.is_null())DesignApplyEdit(s,note);
+    else DesignWarn(s,note+" Place / Apply creates the brushes.");
+}
 void DesignCommand(DesignState& s,int id)
 {
     Sync();
@@ -1697,6 +1913,39 @@ void DesignCommand(DesignState& s,int id)
         s.points=Json::array();s.mode.clear();DesignRefresh(s);DesignFit(s);DesignDepthShow(s);return;
     }
     if(id==DFit){DesignFit(s);return;}
+    if(id==DFitSelection){DesignFitSelection(s);return;}
+    if(id==DCopy){DesignCopy(s);return;}
+    if(id==DPaste){DesignPaste(s,s.contextPointSet?s.contextPoint:DesignPasteAnchor(s));return;}
+    if(id==DDuplicate){DesignDuplicate(s);return;}
+    if(id==DSelectAll){DesignSelectAll(s);return;}
+    if(id==DMirrorX || id==DMirrorY)
+    {
+        const int axis=id==DMirrorX?0:1;
+        double at=s.contextPointSet?s.contextPoint[axis]:DesignPasteAnchor(s)[axis];
+        if(!s.contextPointSet)
+        {
+            if(DesignSelectedPieces(s).empty())throw std::runtime_error("Select one or more placed pieces to mirror.");
+            std::vector<InputField> f={{std::string("Mirror through the line ")+(axis==0?"X":"Y")+" =",Design::Round(at),{}}};
+            if(!Ask(s.window,axis==0?"Mirror Left-Right":"Mirror Front-Back",f))return;
+            at=Design::Number(f[0].value);
+        }
+        DesignMirror(s,axis,at);
+        return;
+    }
+    if(id==DSightline)
+    {
+        if(!s.pending.is_null() && s.previous.is_null())throw std::runtime_error("Place or discard the preview first.");
+        s.mode="Sightline";s.annotationName="Sightline";s.points=Json::array();
+        if(s.contextPointSet)
+        {
+            Vector eye=s.contextPoint;
+            if(s.plane==0)eye[2]+=64;
+            s.points.push_back(eye);
+        }
+        DesignStatus(s,s.points.empty()?"Click where the eye is, then the point it looks at. The line is green where it runs through carved space and red where a wall blocks it. Right-click cancels."
+                                       :"Click the point to look at. Right-click cancels.");
+        return;
+    }
     if(id==DSnap)
     {
         s.snap=SendDlgItemMessage(s.window,DSnap,BM_GETCHECK,0,0)==BST_CHECKED;
@@ -2500,6 +2749,28 @@ void DesignCheck(DesignState& s)
         if(present){live.push_back(data.at("pieces")[i]);indices.push_back(i);}
     }
     s.issues=Json::array();
+    {
+        // A summary first, so the issues below read in context.
+        std::map<std::string,int> kinds;
+        for(const auto& piece:live)++kinds[piece.at("spec").value("kind",std::string("piece"))];
+        std::string pieces;
+        for(const auto& [kind,count]:kinds)
+        {
+            std::string name=Fold(kind);
+            if(count!=1 && name.back()!='s')name+="s";
+            pieces+=(pieces.empty()?"":", ")+std::to_string(count)+" "+name;
+        }
+        size_t brushes=0;
+        for(const auto& actor:s.scene)if(actor.value("class",std::string()).find("Brush")!=std::string::npos)++brushes;
+        int spies=0,mercs=0;
+        for(const auto& spawn:Editor::DesignSpawns())++(spawn.at("team").get<std::string>()=="0"?spies:mercs); // Team 0 is the spies.
+        size_t objectives=0;
+        for(const auto& actor:s.objectives)if(actor.value("kind",std::string())=="Objective")++objectives;
+        auto info=[&](const std::string& text){s.issues.push_back({{"severity","info"},{"text",text},{"piece",-1},{"index",0}});};
+        info("Layout: "+(pieces.empty()?std::string("no pieces yet"):pieces)+" on "+std::to_string(DesignLevels(s).size())+" storey(s); "+std::to_string(brushes)+" brush(es) in the map.");
+        info("Game: "+std::to_string(spies)+" spy start(s), "+std::to_string(mercs)+" merc start(s), "+std::to_string(objectives)+" objective(s), "
+            +std::to_string(s.lights.size())+" light(s), "+std::to_string(s.securityActors.size())+" security device(s).");
+    }
     for(const auto& issue:Design::DesignIssues(live,data))
         s.issues.push_back({{"severity",issue.severity},{"text",issue.text},{"piece",issue.piece},{"index",issue.piece>=0?indices[issue.piece]:0}});
     // What a Versus map needs before Play Level makes sense.
@@ -2588,12 +2859,15 @@ void DesignCheck(DesignState& s)
     SendMessage(list,LB_RESETCONTENT,0,0);
     for(auto& issue:s.issues)
     {
-        const auto line=(issue.at("severity")=="error"?"ERROR  ":"warn   ")+issue.at("text").get<std::string>();
+        const auto severity=issue.at("severity").get<std::string>();
+        const auto line=(severity=="error"?"ERROR  ":severity=="info"?"info   ":"warn   ")+issue.at("text").get<std::string>();
         SendMessageA(list,LB_ADDSTRING,0,reinterpret_cast<LPARAM>(line.c_str()));
     }
-    if(s.issues.empty())SendMessageA(list,LB_ADDSTRING,0,reinterpret_cast<LPARAM>("No issues found."));
+    size_t problems=0;
+    for(const auto& issue:s.issues)if(issue.at("severity")!="info")++problems;
+    if(problems==0)SendMessageA(list,LB_ADDSTRING,0,reinterpret_cast<LPARAM>("No issues found."));
     ShowWindow(s.checkWindow,SW_SHOWNORMAL);
-    DesignStatus(s,std::to_string(s.issues.size())+" design check issue(s). Double-click one in the Design Check window to select its piece.");
+    DesignStatus(s,std::to_string(problems)+" design check issue(s). Double-click one in the Design Check window to select its piece.");
 }
 // The quick-add menu raised from the badge on a hovered wall.
 // From a side-on view: a room stacked on the hovered one, or stairs into it.
@@ -3265,8 +3539,11 @@ const char* const kDesignKeyLegend=
     "R / Shift+R: turn the edited piece 90 degrees either way.\r\n"
     "Arrow keys: nudge the edited piece by the grid. Ctrl + arrows: one unit.\r\n"
     "Enter: place a new preview.   Esc: discard it, or cancel what is being placed.\r\n"
-    "Delete: delete the selection.   B: build geometry.\r\n"
+    "Delete: delete the selection.   B: build geometry.   F2: rename the edited piece.\r\n"
     "Ctrl+Z / Ctrl+Y: undo / redo.   Ctrl+L / Ctrl+Shift+L: lock / unlock the selection.\r\n"
+    "Ctrl+C / Ctrl+V: copy the selected pieces / paste them at the cursor.   Ctrl+D: duplicate them beside the originals.\r\n"
+    "Ctrl+A: select everything on this storey.   F / Shift+F: fit the map / the selection.\r\n"
+    "1 / 2 / 3: top / front / side view.   G: snapping on or off.   O: overlays on or off.\r\n"
     "Page Up / Page Down: one storey up / down.   Home: every storey.\r\n"
     "Slider on the right: pick a storey.   + badge on a wall: add a neighbour there.\r\n"
     "\r\n"
@@ -3393,6 +3670,65 @@ void DesignSliderMenu(DesignState& s,POINT at)
     DestroyMenu(menu);
     if(choice)DesignCommand(s,choice);
 }
+// The readout under the plan: the cursor's world point and what is there.
+void DesignReadout(DesignState& s,POINT at)
+{
+    if(!s.readout)return;
+    const auto world=DesignWorld(s,at.x,at.y);
+    s.cursorWorld=world;s.cursorSet=true;
+    const auto snapped=DesignSnap(s,world);
+    std::string text="X "+Design::Round(snapped[0])+"   Y "+Design::Round(snapped[1])+"   Z "+Design::Round(snapped[2]);
+    Json piece=s.hoverPiece;
+    if(piece.is_null() && s.scene.size()<=3000)piece=DesignPieceAt(s,at.x,at.y);
+    if(!piece.is_null())
+    {
+        const auto& spec=piece.at("spec");
+        text+="\r\n"+spec.value("name",std::string("piece"))+" ("+Fold(spec.value("kind",std::string("piece")))+")  "
+            +Design::Round(spec.value("width",0.0))+" x "+Design::Round(spec.value("length",0.0))+" x "+Design::Round(spec.value("height",0.0));
+        const int yaw=piece.at("rotation").get<Rotation>()[1];
+        if(yaw)text+="  yaw "+Design::Round(yaw*360.0/65536);
+        const auto position=piece.at("position").get<Vector>();
+        text+="\r\nbase "+Design::Round(position[0])+", "+Design::Round(position[1])+", "+Design::Round(position[2]);
+    }
+    else if(const Json light=LightAt(s,at.x,at.y);!light.is_null())text+="\r\n"+LightLabel(light);
+    else if(const Json device=DesignDeviceAt(s,at.x,at.y);!device.is_null())text+="\r\n"+SecurityName(device);
+    else if(const Json actor=ObjectiveAt(s,at.x,at.y);!actor.is_null())text+="\r\n"+ObjectiveLabel(actor);
+    if(text!=s.readoutText){s.readoutText=text;SetWindowTextA(s.readout,text.c_str());}
+}
+// A sightline sampled through the carved space of the pieces still in the
+// map. With no carved pieces nothing can block it.
+Design::Sight DesignSightOf(DesignState& s,const Json& annotation)
+{
+    const auto& points=annotation.at("points");
+    if(points.size()<2)return {};
+    const auto& data=DesignData(s);
+    if(s.carvedRevision!=s.revision || s.carvedData!=s.dataRevision)
+    {
+        std::set<std::string> present;
+        for(const auto& actor:s.scene)present.insert(actor.at("path").get<std::string>());
+        Json live=Json::array();
+        for(const auto& piece:data.at("pieces"))
+        {
+            bool all=!piece.at("members").empty();
+            for(const auto& member:piece.at("members"))if(!present.count(member.at("path").get<std::string>()))all=false;
+            if(all)live.push_back(piece);
+        }
+        s.carved=Design::CarvedSolids(live);
+        s.carvedRevision=s.revision;s.carvedData=s.dataRevision;
+    }
+    const auto a=points[0].get<Vector>(),b=points[1].get<Vector>();
+    if(s.carved.empty()){Design::Sight sight;sight.length=sight.clear=Design::Distance(a,b);return sight;}
+    return Design::Sightline(s.carved,a,b);
+}
+std::string DesignSightlineReport(DesignState& s,const Json& annotation)
+{
+    const auto sight=DesignSightOf(s,annotation);
+    if(sight.length<=0)return "Sightline: the two points are the same.";
+    if(s.carved.empty())return "Sightline of "+Design::Round(sight.length)+" units: no carved pieces in the map yet, so nothing blocks it.";
+    if(sight.runs.empty())return "Clear line of sight over "+Design::Round(sight.length)+" units.";
+    return "Sight blocked: "+Design::Round(sight.blocked)+" of "+Design::Round(sight.length)+" units run through solid, first at "
+        +Design::Round(sight.runs[0].first[0])+", "+Design::Round(sight.runs[0].first[1])+".";
+}
 void DesignContextMenu(DesignState& s,POINT at)
 {
     const auto world=DesignSnap(s,DesignWorld(s,at.x,at.y));
@@ -3506,6 +3842,8 @@ void DesignContextMenu(DesignState& s,POINT at)
     {
         const auto name=piece.at("spec").value("name",std::string("piece"));
         item(DCtxEditPiece,"Edit "+name);
+        item(DCtxCopyPiece,"Copy "+name+"\tCtrl+C");
+        item(DCtxDuplicatePiece,"Duplicate "+name+" beside\tCtrl+D");
         HMENU turn=CreatePopupMenu();
         AppendMenuA(turn,MF_STRING,DCtxTurnCW,"90 degrees\tR");
         AppendMenuA(turn,MF_STRING,DCtxTurnCCW,"-90 degrees\tShift+R");
@@ -3551,6 +3889,15 @@ void DesignContextMenu(DesignState& s,POINT at)
     item(DCtxRoomHere,"New room here");
     item(DCtxCorridorHere,"New corridor here");
     item(DCtxVentHere,"New vent here");
+    if(!s.clipboard.is_null() && !s.clipboard.value("items",Json::array()).empty())
+        item(DCtxPasteHere,"Paste "+std::to_string(s.clipboard.at("items").size())+" copied piece(s) here\tCtrl+V");
+    if(const auto selectedPieces=DesignSelectedPieces(s);!selectedPieces.empty())
+    {
+        HMENU mirror=CreatePopupMenu();
+        AppendMenuA(mirror,MF_STRING,DCtxMirrorXHere,("Left-right, through X = "+Design::Round(world[0])).c_str());
+        AppendMenuA(mirror,MF_STRING,DCtxMirrorYHere,("Front-back, through Y = "+Design::Round(world[1])).c_str());
+        AppendMenuA(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(mirror),("Mirror the "+std::to_string(selectedPieces.size())+" selected piece(s) here").c_str());
+    }
     separator();
     // Game mode: starts, the mission, objectives and their devices.
     HMENU starts=CreatePopupMenu();
@@ -3621,6 +3968,7 @@ void DesignContextMenu(DesignState& s,POINT at)
     item(DCtxGuideHere,"Player reference here...");
     item(DCtxRouteHere,"Route / objective from here...");
     item(DCtxMeasureHere,"Measure from here");
+    item(DCtxSightlineHere,"Sightline from here");
     item(DCtxPlayHere,"Playtest from here...");
     HMENU devices=CreatePopupMenu();
     const auto& catalogue=Security::Devices();
@@ -3822,11 +4170,35 @@ void DesignContextMenu(DesignState& s,POINT at)
         DesignBlockoutAt(s,choice==DCtxRoomHere?"Room":choice==DCtxCorridorHere?"Corridor":"Vent",world);
         return;
     }
-    if(choice==DCtxGuideHere || choice==DCtxRouteHere || choice==DCtxMeasureHere || choice==DCtxPlayHere)
+    if(choice==DCtxCopyPiece || choice==DCtxDuplicatePiece)
+    {
+        // The piece under the cursor, unless it is already among the selected.
+        bool inSelection=false;
+        for(const auto& selected:DesignSelectedPieces(s))if(selected.at("members")==piece.at("members"))inSelection=true;
+        if(!inSelection)
+        {
+            std::set<std::string> paths;
+            for(const auto& member:piece.at("members"))paths.insert(member.at("path").get<std::string>());
+            Json identities=Json::array();
+            for(const auto& actor:s.scene)if(paths.count(actor.at("path").get<std::string>()))identities.push_back(actor);
+            Editor::Select(identities,false);
+            DesignRefresh(s);
+        }
+        if(choice==DCtxCopyPiece)DesignCopy(s);else DesignDuplicate(s);
+        return;
+    }
+    if(choice==DCtxPasteHere){DesignPaste(s,world);return;}
+    if(choice==DCtxMirrorXHere || choice==DCtxMirrorYHere)
+    {
+        const int axis=choice==DCtxMirrorXHere?0:1;
+        DesignMirror(s,axis,world[axis]);
+        return;
+    }
+    if(choice==DCtxGuideHere || choice==DCtxRouteHere || choice==DCtxMeasureHere || choice==DCtxPlayHere || choice==DCtxSightlineHere)
     {
         s.contextPoint=world;
         s.contextPointSet=true;
-        try{DesignCommand(s,choice==DCtxGuideHere?DGuides:choice==DCtxRouteHere?DRoute:choice==DCtxMeasureHere?DMeasure:DPlay);}
+        try{DesignCommand(s,choice==DCtxGuideHere?DGuides:choice==DCtxRouteHere?DRoute:choice==DCtxMeasureHere?DMeasure:choice==DCtxSightlineHere?DSightline:DPlay);}
         catch(...){s.contextPointSet=false;throw;}
         s.contextPointSet=false;
         return;
@@ -3876,6 +4248,7 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             const bool had=!s->hoverPiece.is_null();
             DesignHoverWall(*s,p);
             if(had!=!s->hoverPiece.is_null() || wall!=s->hoverWall)InvalidateRect(window,nullptr,FALSE);
+            DesignReadout(*s,p);
             return 0;
         }
         if(message==WM_MOUSEWHEEL)
@@ -3975,6 +4348,45 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             {
                 DesignCommand(*s,DBuild);
                 return 0;
+            }
+            {
+                const bool ctrl=(GetKeyState(VK_CONTROL)&0x8000)!=0,shift=(GetKeyState(VK_SHIFT)&0x8000)!=0;
+                if(ctrl && w=='C'){DesignCopy(*s);return 0;}
+                if(ctrl && w=='V'){DesignPaste(*s,DesignPasteAnchor(*s));return 0;}
+                if(ctrl && w=='D'){DesignDuplicate(*s);return 0;}
+                if(ctrl && w=='A'){DesignSelectAll(*s);return 0;}
+                if(!ctrl && w=='F')
+                {
+                    if(shift)DesignFitSelection(*s);
+                    else{DesignFit(*s);DesignStatus(*s,"Fitted the whole map. Shift+F fits the selection.");}
+                    return 0;
+                }
+                if(!ctrl && w=='G')
+                {
+                    SendDlgItemMessage(s->window,DSnap,BM_SETCHECK,s->snap?BST_UNCHECKED:BST_CHECKED,0);
+                    DesignCommand(*s,DSnap);
+                    return 0;
+                }
+                if(!ctrl && w=='O')
+                {
+                    SendDlgItemMessage(s->window,DOverlays,BM_SETCHECK,s->overlays?BST_UNCHECKED:BST_CHECKED,0);
+                    DesignCommand(*s,DOverlays);
+                    return 0;
+                }
+                if(!ctrl && (w=='1' || w=='2' || w=='3'))
+                {
+                    SendMessage(GetDlgItem(s->window,DPlane),CB_SETCURSEL,w-'1',0);
+                    DesignCommand(*s,DPlane);
+                    return 0;
+                }
+                if(w==VK_F2 && !s->pending.is_null())
+                {
+                    auto name=GetDlgItem(s->window,DName);
+                    SetFocus(name);
+                    SendMessage(name,EM_SETSEL,0,-1);
+                    DesignStatus(*s,"Type the piece's new name and press Enter.");
+                    return 0;
+                }
             }
             if(w=='L' && (GetKeyState(VK_CONTROL)&0x8000))
             {
@@ -4076,6 +4488,24 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
                                 {"crouched",s->annotationCrouched},{"points",s->points}};
                     DesignStatus(*s,s->annotationName+" so far: "+Design::RouteTimes(sofar,DesignData(*s))
                         +" Click to continue, Finish route / marker to store it, right-click to cancel.");
+                }
+                if(s->mode=="Sightline")
+                {
+                    // Eye height above the floor in the top view; the
+                    // elevations take the clicked height.
+                    if(s->plane==0)s->points.back()=Vector{p[0],p[1],p[2]+64};
+                    if(s->points.size()==2)
+                    {
+                        Json data=DesignData(*s);
+                        const Json annotation={{"name","Sightline"},{"kind","Sightline"},{"team","Any"},{"points",s->points}};
+                        data["annotations"].push_back(annotation);
+                        DesignSave(*s,data);
+                        DesignStatus(*s,DesignSightlineReport(*s,annotation)+" Right-click the line's end to remove it; drag an end to move it.");
+                        s->mode.clear();s->points=Json::array();
+                    }
+                    else DesignStatus(*s,"Click the point to look at. Right-click cancels.");
+                    InvalidateRect(window,nullptr,FALSE);
+                    return 0;
                 }
                 if((s->mode=="Measure" || s->mode=="Calibrate") && s->points.size()==2)
                 {
@@ -4212,12 +4642,15 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             submenu("&Workspace",{{DReference,"Reference image..."},{DCalibrate,"Calibrate image"},{DRemoveReference,"Remove reference..."},{0,nullptr},
                 {DScene,"Scene panel (docked on the right)"},{DMovement,"Movement limits..."},{0,nullptr},{DWorkspace,"Export / import workspace..."}});
             submenu("&Blockout",{{DBlock,"New blockout..."},{DEdit,"Edit selected piece"},{DPlace,"Place / Apply preview"},{DDiscard,"Discard preview"},{0,nullptr},
-                {DDoorway,"Doorway in room..."},{DDetach,"Detach selected piece"},{0,nullptr},{DAlign,"Align / distribute..."},{DRepeat,"Repeat selection..."},{0,nullptr},
+                {DDoorway,"Doorway in room..."},{DDetach,"Detach selected piece"},{0,nullptr},
+                {DCopy,"Copy selected pieces\tCtrl+C"},{DPaste,"Paste pieces at the cursor\tCtrl+V"},{DDuplicate,"Duplicate selected pieces beside\tCtrl+D"},
+                {DMirrorX,"Mirror selected pieces left-right..."},{DMirrorY,"Mirror selected pieces front-back..."},{0,nullptr},
+                {DAlign,"Align / distribute..."},{DRepeat,"Repeat selection..."},{0,nullptr},
                 {DBuild,"Build geometry\tB"}});
-            submenu("&Annotate",{{DGuides,"Player reference..."},{DMeasure,"Measure two points"},{0,nullptr},
+            submenu("&Annotate",{{DGuides,"Player reference..."},{DMeasure,"Measure two points"},{DSightline,"Sightline between two points"},{0,nullptr},
                 {DRoute,"Route / objective..."},{DFinish,"Finish route / marker"},{DCompare,"Compare routes..."},{0,nullptr},{DClear,"Remove annotation..."}});
             submenu("&Tools",{{DPlay,"Playtest from here..."},{DSecurity,"Security..."},{DCheck,"Check design..."},{0,nullptr},
-                {DRefresh,"Refresh from editor"},{DFit,"Fit map / preview"},{DUnlit,"Show unlit areas"},{0,nullptr},{DUndo,"Undo\tCtrl+Z"},{DRedo,"Redo\tCtrl+Y"},{0,nullptr},{DKeys,"Keyboard and mouse..."}});
+                {DRefresh,"Refresh from editor"},{DFit,"Fit map / preview\tF"},{DFitSelection,"Fit selection\tShift+F"},{DSelectAll,"Select all on this storey\tCtrl+A"},{DUnlit,"Show unlit areas"},{0,nullptr},{DUndo,"Undo\tCtrl+Z"},{DRedo,"Redo\tCtrl+Y"},{0,nullptr},{DKeys,"Keyboard and mouse..."}});
             SetMenu(window,bar);
             const std::pair<int,const char*> buttons[]={
                 {DBlock,"New blockout..."},{DPlace,"Place / Apply preview"},
@@ -4231,7 +4664,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             s->inspectorTop=top;
             Control(window,"STATIC","",0,DInspectorTitle,12,top,386,20);
             const std::tuple<int,const char*,const char*> fields[]={
-                {DName,"Name","EDIT"},{DShape,"Shape","COMBOBOX"},{DConstruction,"Construction","COMBOBOX"},
+                {DName,"Name","EDIT"},{DShape,"Shape","COMBOBOX"},{DConstruction,"Construction","COMBOBOX"},{DPreset,"Preset","COMBOBOX"},
                 {DWidth,"Width (X)","EDIT"},{DLength,"Length (Y)","EDIT"},{DHeight,"Height (Z)","EDIT"},
                 {DThickness,"Thickness","EDIT"},{DSteps,"Stair count","EDIT"},
                 {DPositionX,"Base X","EDIT"},{DPositionY,"Base Y","EDIT"},{DPositionZ,"Base Z","EDIT"},{DYaw,"Yaw","EDIT"}};
@@ -4263,6 +4696,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 {DUndo,"Undo the last map or workspace change (Ctrl+Z)."},{DRedo,"Redo (Ctrl+Y)."},
                 {DName,"The piece's name in the Scene panel and the library."},{DShape,"Room, corridor, vent, crawlway, doorway, or a stair shape."},
                 {DConstruction,"Carve cuts the piece out of solid space; Shell builds walls around it."},
+                {DPreset,"Common sizes for this shape. Pick one to set the width, length and height; stairs recount their treads."},
                 {DWidth,"Local X size in units. A player is 96 wide."},{DLength,"Local Y size in units."},{DHeight,"Local Z size in units. A player stands 180 tall, crouches to 125, crawls under 105."},
                 {DThickness,"Wall and floor thickness for shells and stair treads."},{DSteps,"Number of steps for stairs."},
                 {DPositionX,"World X of the piece's base corner."},{DPositionY,"World Y of the piece's base corner."},{DPositionZ,"World Z of the floor. The slider on the plan sets the storey."},
@@ -4273,6 +4707,8 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
                                       reinterpret_cast<HMENU>(DCanvas),GetModuleHandle(nullptr),nullptr);
             SetWindowLongPtr(s->canvas,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(s));
             s->status=Control(window,"STATIC","",0,DStatus,12,600,900,64);
+            // The readout: the cursor's world point and what lies under it.
+            s->readout=Control(window,"STATIC","",SS_RIGHT,DReadout,600,600,300,64);
             DesignRefresh(*s);
             try{SceneOpen(*s);}catch(const std::exception&){ /* The plan works without the dock. */ }
             DesignFit(*s);
@@ -4289,7 +4725,8 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             const int dock=s->sceneWindow?kSceneDockWidth+12:0;
             MoveWindow(s->canvas,412,12,std::max(1,width-424-dock),std::max(1,height-92),TRUE);
             if(s->sceneWindow)MoveWindow(s->sceneWindow,std::max(0,width-12-kSceneDockWidth),12,kSceneDockWidth,std::max(1,height-92),TRUE);
-            MoveWindow(s->status,12,height-72,width-24,66,TRUE);
+            MoveWindow(s->status,12,height-72,std::max(1,width-24-330),66,TRUE);
+            if(s->readout)MoveWindow(s->readout,std::max(0,width-12-320),height-72,320,66,TRUE);
             return 0;
         }
         if(message==WM_GETMINMAXINFO){reinterpret_cast<MINMAXINFO*>(l)->ptMinTrackSize={s->sceneWindow?1520:1150,640};return 0;}
@@ -4302,6 +4739,13 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 if(notification!=EN_KILLFOCUS)return 0;
                 try{DesignDepthRead(*s);}
                 catch(const std::exception& e){DesignStatus(*s,e.what());DesignDepthShow(*s);}
+                return 0;
+            }
+            if(id==DPreset)
+            {
+                if(notification!=CBN_SELCHANGE)return 0;
+                try{DesignApplyPreset(*s);}
+                catch(const std::exception& e){DesignStatus(*s,e.what());DesignInspectorRefresh(*s);}
                 return 0;
             }
             // Inspector fields apply themselves; a rejected value is reported
