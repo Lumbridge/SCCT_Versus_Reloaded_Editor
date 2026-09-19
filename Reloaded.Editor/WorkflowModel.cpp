@@ -80,8 +80,19 @@ void WriteDocument(const std::filesystem::path& path, const Json& document)
         DWORD written=0;
         bool ok=WriteFile(file,text.data(),static_cast<DWORD>(text.size()),&written,nullptr) && written==text.size() && FlushFileBuffers(file);
         CloseHandle(file);
-        if(!ok || !MoveFileExW(temp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))
+        // A reader (an indexer, a virus scanner, a tool inspecting the file)
+        // can hold the target for a moment: the rename is retried briefly.
+        bool moved=false;
+        for(int attempt=0;ok && attempt<10 && !moved;++attempt)
+        {
+            moved=MoveFileExW(temp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0;
+            if(!moved)Sleep(50);
+        }
+        if(!moved)
+        {
+            DeleteFileW(temp.c_str());
             throw std::runtime_error("Could not save workflow document; the previous entry is unchanged.");
+        }
 #else
         std::ofstream output(temp,std::ios::binary); output << text; output.close();
         if(!output) throw std::runtime_error("Cannot write workflow document.");

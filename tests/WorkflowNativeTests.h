@@ -608,6 +608,16 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             require(carved["members"].size()==1,"carve construction places a single subtractive brush");
             auto carvedScene=call({{"op","design.scene"}});
             require(carvedScene.size()==baseline.size()+1,"carved room adds one native actor");
+            {
+                // A spiral stair, with its wedges, post and glide prisms, places and then moves as a whole.
+                J spiral={{"kind","Spiral"},{"construction","Carve"},{"width",256},{"length",256},{"height",256},{"thickness",16},{"steps",12},{"ceiling",false},{"portal",false},{"name","Native spiral"}};
+                auto placedSpiral=call({{"op","design.block"},{"spec",spiral},{"position",{2048,2048,0}},{"rotation",{0,0,0}}});
+                require(placedSpiral["members"].size()==35,"a spiral places its wedges, post and glide prisms");
+                auto movedSpiral=call({{"op","design.block"},{"spec",spiral},{"position",{2304,2048,0}},{"rotation",{0,0,0}},{"previous",placedSpiral}});
+                require(movedSpiral["members"].size()==35 && std::abs(movedSpiral["position"][0].get<double>()-2304)<.01,"a spiral moves to where it was dragged");
+                Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");
+                require(call({{"op","design.scene"}}).size()==carvedScene.size(),"spiral placement and move undo cleanly");
+            }
             for(auto& a:carvedScene)if(a["path"]==carved["members"][0]["path"])require(a["edges"].size()==24,"carved room exports real brush geometry");
             // The brushes a piece generates must sit exactly where its preview
             // says, including at positions that are not on the editor grid.
@@ -1121,6 +1131,32 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             WorkflowProbe::workspaceChoice=1;WorkflowProbe::jsonDialogTicks=0;
             {auto file=SetTimer(nullptr,0,50,WorkflowProbe::AnswerJsonDialog);auto form=SetTimer(nullptr,0,60,WorkflowProbe::Answer);SendMessage(design,WM_COMMAND,727,0);KillTimer(nullptr,file);KillTimer(nullptr,form);}
             require(status().find("Workspace imported")!=std::string::npos,"a workspace file imports back into the map");
+            {
+                // A placed room turned into a spiral in the inspector, then dragged
+                // in the plan: the piece keeps up with the drag like any other.
+                SendMessage(design,WM_COMMAND,702,0);
+                call({{"op","select"},{"actors",placedRoom}});
+                WorkflowProbe::Click(design,707);
+                SendMessage(GetDlgItem(design,741),CB_SETCURSEL,8,0); // Spiral.
+                SendMessage(design,WM_COMMAND,MAKEWPARAM(741,CBN_SELCHANGE),reinterpret_cast<LPARAM>(GetDlgItem(design,741)));
+                char shapeStatus[1024]{};GetWindowTextA(GetDlgItem(design,720),shapeStatus,sizeof(shapeStatus));
+                const std::string shapeWhy=std::string("the inspector turns a placed room into a spiral (status: ")+shapeStatus+")";
+                require(field(741)=="Spiral" && std::string(shapeStatus).find("not changed")==std::string::npos,shapeWhy.c_str());
+                const double x0=std::stod(field(750)),y0=std::stod(field(751));
+                const auto spiralView=call({{"op","design.view"}});
+                const double sz=spiralView["zoom"],spx=spiralView["panX"],spy=spiralView["panY"];
+                // Inside the spiral's footprint but off its centre, where a player guide may sit.
+                const POINT from{static_cast<LONG>(spx+(x0+300)*sz),static_cast<LONG>(spy-(y0-300)*sz)},to{from.x+static_cast<LONG>(std::lround(256*sz)),from.y};
+                SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(from.x,from.y));
+                SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(to.x,to.y));
+                SendMessage(GetDlgItem(design,719),WM_LBUTTONUP,0,MAKELPARAM(to.x,to.y));
+                char dragStatus[1024]{};GetWindowTextA(GetDlgItem(design,720),dragStatus,sizeof(dragStatus));
+                const std::string dragWhy=std::string("dragging a spiral in the plan moves it (status: ")+dragStatus+"; base X "+field(750)+" from "+std::to_string(x0)+")";
+                require(std::stod(field(750))>x0+128 && std::string(dragStatus).find("not changed")==std::string::npos,dragWhy.c_str());
+                SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
+                Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");
+                SendMessage(design,WM_COMMAND,702,0);
+            }
             auto key=call({{"op","map"}})["key"].get<std::string>();std::ifstream libraryInput(directory/"ReloadedEditor"/"library.json");J designLibrary;libraryInput>>designLibrary;
             auto savedDesign=designLibrary["maps"][key]["design"];
             require(savedDesign["annotations"].size()==4 && savedDesign["layers"].size()==1 && savedDesign["guides"].size()==2 && savedDesign["references"].size()==1 && savedDesign.contains("movement"),"design references, measurements, routes, guides, layers and movement limits persist from actual dialogs");

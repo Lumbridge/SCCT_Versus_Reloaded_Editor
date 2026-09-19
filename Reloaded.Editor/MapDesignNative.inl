@@ -34,7 +34,7 @@ namespace
         if(fingerprint.is_object() && fingerprint.contains("actors"))
             for(auto& a:fingerprint["actors"])
                 if(a.is_object() && a.contains("text"))
-                    for(const char* key:{"bHiddenEd","bLockLocation","Location","PrePivot","OldLocation"})a["text"]=RemoveProperty(a.at("text").get<std::string>(),key);
+                    for(const char* key:{"bHiddenEd","bHiddenEdGroup","bLockLocation","Location","PrePivot","OldLocation","Group"})a["text"]=RemoveProperty(a.at("text").get<std::string>(),key);
         return fingerprint;
     }
     Json DesignFingerprint(const Json& members)

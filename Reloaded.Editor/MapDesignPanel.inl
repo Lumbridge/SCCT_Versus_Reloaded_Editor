@@ -2989,7 +2989,8 @@ void DesignEndDrag(DesignState& s,bool add)
             DesignPlanFollow(s,delta);
         }
         const size_t following=s.followers.size();
-        try{DesignApplyEdit(s,summary);}
+        bool applied=false;
+        try{applied=DesignApplyEdit(s,summary);}
         catch(const std::exception&)
         {
             s.pending=s.previous.at("spec");
@@ -2997,6 +2998,9 @@ void DesignEndDrag(DesignState& s,bool add)
             DesignInspectorRefresh(s);
             throw;
         }
+        // A failed apply already explained itself in the status line, and the
+        // outline is back on the brushes: nothing else to report.
+        if(!applied)return;
         // A sub-unit slip between the preview and the brushes is reported, so
         // it can be seen rather than wondered about.
         try
