@@ -2121,15 +2121,15 @@ void DesignPick(DesignState& s,double x,double y,bool add)
     else if(!piece.is_null())
         DesignWarn(s,"Selected "+piece.at("spec").value("name",std::string("the piece"))+". Place the new preview (Enter) or discard it (Esc) first, then click the piece again to edit it.");
 }
-// A rectangle dragged from left to right selects what lies wholly inside it;
-// dragged from right to left, anything it touches. Brushes of a placed piece
-// count as the piece, and the devices, lights and game actors inside come too.
-// One piece on its own is opened for editing.
+// A dragged rectangle selects anything it touches; with Alt held, only what
+// lies wholly inside it. Brushes of a placed piece count as the piece, and the
+// devices, lights and game actors inside come too. One piece on its own is
+// opened for editing.
 void DesignBoxSelect(DesignState& s,bool add)
 {
     const double left=std::min(s.drag.from.x,s.drag.to.x),right=std::max(s.drag.from.x,s.drag.to.x);
     const double top=std::min(s.drag.from.y,s.drag.to.y),bottom=std::max(s.drag.from.y,s.drag.to.y);
-    const bool crossing=s.drag.to.x<s.drag.from.x;
+    const bool crossing=!(GetKeyState(VK_MENU)&0x8000);
     auto inside=[&](const Gdiplus::PointF& p){return p.X>=left && p.X<=right && p.Y>=top && p.Y<=bottom;};
     auto crosses=[&](const Gdiplus::PointF& a,const Gdiplus::PointF& b)
     {
@@ -2199,7 +2199,7 @@ void DesignBoxSelect(DesignState& s,bool add)
         }
     Editor::Select(identities,false);
     DesignRefresh(s);
-    const std::string hint=crossing?" Drag from left to right to select only what lies wholly inside.":" Drag from right to left to select anything the rectangle touches.";
+    const std::string hint=crossing?" Hold Alt while dragging to select only what lies wholly inside.":" Without Alt, the rectangle selects anything it touches.";
     if(pieces+brushes+others==0)
     {
         if(!s.previous.is_null())DesignDeactivate(s);
@@ -3251,7 +3251,7 @@ const char* const kDesignKeyLegend=
     "DESIGN VIEW\r\n"
     "Wheel: zoom.   Middle drag: pan.   Right-click: actions at that point.\r\n"
     "Click: select. A piece's brush selects the whole piece; a group member selects the group.\r\n"
-    "Drag on empty space: box select. Left to right takes what is wholly inside, right to left what it touches.\r\n"
+    "Drag on empty space: box select anything the rectangle touches. Hold Alt for only what is wholly inside.\r\n"
     "Shift or Ctrl + click: add to the selection.\r\n"
     "Drag a piece: move it (and the rest of the selection). Drag a square: resize. Drag the round handle: turn (15 degree steps; Ctrl: free).\r\n"
     "R / Shift+R: turn the edited piece 90 degrees either way.\r\n"
@@ -4217,7 +4217,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             DesignFit(*s);
             DesignInspectorRefresh(*s);
             DesignDepthShow(*s);
-            DesignStatus(*s,"Wheel: zoom. Middle drag: pan. Click a piece to edit it, drag to move, drag a square to resize; arrow keys nudge by the grid. Drag empty space to box-select (right to left selects what it touches); Shift or Ctrl adds. The slider on the right shows one storey; Page Up / Page Down step between them. Right-click for actions at that point.");
+            DesignStatus(*s,"Wheel: zoom. Middle drag: pan. Click a piece to edit it, drag to move, drag a square to resize; arrow keys nudge by the grid. Drag empty space to box-select anything the rectangle touches (Alt: only what is wholly inside); Shift or Ctrl adds. The slider on the right shows one storey; Page Up / Page Down step between them. Right-click for actions at that point.");
             SetTimer(window,1,700,nullptr);
             return 0;
         }

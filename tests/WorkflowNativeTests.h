@@ -343,6 +343,24 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             require(call({{"op","magic.inspect"},{"actor",savedMagic[0]["actor"]}})["values"]==reopenedEvent["values"],"reopened event uses the same editing and undo workflow");
             using Filename=void(__thiscall*)(void*,const char*);
             reinterpret_cast<Filename>(0x10e05e1c)(*reinterpret_cast<void**>(0x1165e80c),destination);
+            {
+                // Design pieces are still whole after a restart: their brushes
+                // came back with the saved map and the library still names them.
+                const auto scene=call({{"op","design.scene"}});
+                const auto key=call({{"op","map"}})["key"].get<std::string>();
+                std::ifstream libraryIn(directory/"ReloadedEditor"/"library.json");J libraryDoc;libraryIn>>libraryDoc;libraryIn.close();
+                const J pieces=libraryDoc["maps"].value(key,J::object()).value("design",J::object()).value("pieces",J::array());
+                size_t wholePieces=0,wholeSpirals=0,brokenPieces=0;
+                for(const auto& piece:pieces)
+                {
+                    size_t live=0;
+                    for(const auto& member:piece["members"])for(const auto& actor:scene)if(actor["path"]==member["path"]){++live;break;}
+                    if(live>0 && live==piece["members"].size()){++wholePieces;if(piece["spec"]["kind"]=="Spiral")++wholeSpirals;}
+                    else ++brokenPieces;
+                }
+                const std::string why="design pieces are still whole after a restart ("+std::to_string(wholePieces)+" whole, "+std::to_string(brokenPieces)+" not, "+std::to_string(pieces.size())+" recorded, key "+key+")";
+                require(wholePieces>0 && wholeSpirals>0,why.c_str());
+            }
             std::ifstream input(oldLibrary);J saved;input>>saved;input.close();
             auto key=call({{"op","map"}}).at("key").get<std::string>();auto view=saved.at("maps").at(key).at("views").at(0);
             SendMessage(frameWindow,WM_COMMAND,40921,0);auto window=WorkflowProbe::FindDialog("Working Views");require(window!=nullptr,"working views reopen after process restart");
@@ -1118,7 +1136,7 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             SendMessage(canvas,WM_LBUTTONDOWN,0,MAKELPARAM(12,12));
             SendMessage(canvas,WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(40,40));
             SendMessage(canvas,WM_LBUTTONUP,0,MAKELPARAM(40,40));
-            require(status().find("Nothing wholly inside the rectangle")!=std::string::npos,"an empty rectangle selects nothing");
+            require(status().find("Nothing touched by the rectangle")!=std::string::npos,"an empty rectangle selects nothing");
             require(call({{"op","actors"},{"selected",true}}).empty(),"box selection replaces the editor selection");
             // Two teams' routes, then their timing comparison.
             WorkflowProbe::routeTeamChoice=1;WorkflowProbe::Click(design,716,"Spy route");

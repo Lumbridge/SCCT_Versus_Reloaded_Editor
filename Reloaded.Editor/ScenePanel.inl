@@ -23,6 +23,10 @@ std::string SceneType(DesignState& s,const Json& actor)
     if(actor.value("portal",false))return "Portal";
     if(actor.value("volume",false))return "Volume";
     const int csg=actor.value("csg",0);
+    // A brush the toolkit named but no piece records any more: its record
+    // was lost (a library save that failed, or a map saved at another time).
+    const auto name=SceneShortName(path);
+    if(name.rfind("Design_",0)==0 && name.find("_Block")!=std::string::npos)return csg==2?"Orphan piece brush (carve)":"Orphan piece brush";
     if(csg==2)return "Brush (carve)";
     if(csg==1)return "Brush (add)";
     if(!actor.at("edges").empty())return "Brush";

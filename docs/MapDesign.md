@@ -114,8 +114,8 @@ view the chosen storey is also where new pieces are placed.
 
 Clicking any brush of a placed piece selects the whole piece, in every view, so a
 staircase with a brush per step selects and edits as one. Dragging a rectangle
-from left to right selects what lies wholly inside it; from right to left, anything
-it touches. Whole pieces, their brushes, and the devices, lights and game actors
+selects anything it touches; hold **Alt** to take only what lies wholly inside
+it. Whole pieces, their brushes, and the devices, lights and game actors
 inside are selected together; a single piece on its own opens for editing, and
 The **Top / Front / Side** buttons under the view caption switch the view with a
 click, and the **brushes changed** banner at the top right rebuilds geometry when
