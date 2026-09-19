@@ -1747,6 +1747,7 @@ std::vector<std::pair<std::string,Json>> DesignLayers(DesignState& s,const Json&
 }
 // --- Clipboard, mirroring, selection and presets ----------------------------
 Json FloorPlace(DesignState& s,const Json& items);
+void StarterLayout(DesignState& s,const Vector& at);
 // The placed pieces the editor's selection belongs to, each once; the piece
 // being edited counts when nothing else is selected.
 Json DesignSelectedPieces(DesignState& s)
@@ -1914,6 +1915,7 @@ void DesignCommand(DesignState& s,int id)
     }
     if(id==DFit){DesignFit(s);return;}
     if(id==DFitSelection){DesignFitSelection(s);return;}
+    if(id==DStarter){StarterLayout(s,s.contextPointSet?s.contextPoint:DesignPasteAnchor(s));return;}
     if(id==DCopy){DesignCopy(s);return;}
     if(id==DPaste){DesignPaste(s,s.contextPointSet?s.contextPoint:DesignPasteAnchor(s));return;}
     if(id==DDuplicate){DesignDuplicate(s);return;}
@@ -2834,6 +2836,23 @@ void DesignCheck(DesignState& s)
                 double nearest=1e18;
                 for(const auto& merc:mercStarts)nearest=std::min(nearest,distance(merc,target));
                 if(nearest>4096)note("warning",label(target)+" is "+Design::Round(nearest)+" units from the nearest merc start: hard to defend.");
+            }
+        }
+        // How each side reaches every objective, as the crow flies: the
+        // asymmetry that decides whether the map plays.
+        if(!targets.empty() && (!spyStarts.empty() || !mercStarts.empty()))
+        {
+            const auto movement=Design::Movement(data);
+            for(const auto& target:targets)
+            {
+                double spy=1e18,merc=1e18;
+                for(const auto& start:spyStarts)spy=std::min(spy,distance(start,target));
+                for(const auto& start:mercStarts)merc=std::min(merc,distance(start,target));
+                std::string text=label(target)+": ";
+                if(spy<1e18)text+="spies "+Design::Round(spy)+" units ("+Design::Round(Design::TravelSeconds(spy,movement.at("spySpeed")),1)+" s)";
+                if(spy<1e18 && merc<1e18)text+=", ";
+                if(merc<1e18)text+="mercs "+Design::Round(merc)+" units ("+Design::Round(Design::TravelSeconds(merc,movement.at("mercSpeed")),1)+" s)";
+                note("info",text+" from the nearest start, as the crow flies.");
             }
         }
     }
@@ -3889,6 +3908,7 @@ void DesignContextMenu(DesignState& s,POINT at)
     item(DCtxRoomHere,"New room here");
     item(DCtxCorridorHere,"New corridor here");
     item(DCtxVentHere,"New vent here");
+    item(DCtxStarterHere,"Versus starter layout here...");
     if(!s.clipboard.is_null() && !s.clipboard.value("items",Json::array()).empty())
         item(DCtxPasteHere,"Paste "+std::to_string(s.clipboard.at("items").size())+" copied piece(s) here\tCtrl+V");
     if(const auto selectedPieces=DesignSelectedPieces(s);!selectedPieces.empty())
@@ -4194,11 +4214,11 @@ void DesignContextMenu(DesignState& s,POINT at)
         DesignMirror(s,axis,world[axis]);
         return;
     }
-    if(choice==DCtxGuideHere || choice==DCtxRouteHere || choice==DCtxMeasureHere || choice==DCtxPlayHere || choice==DCtxSightlineHere)
+    if(choice==DCtxGuideHere || choice==DCtxRouteHere || choice==DCtxMeasureHere || choice==DCtxPlayHere || choice==DCtxSightlineHere || choice==DCtxStarterHere)
     {
         s.contextPoint=world;
         s.contextPointSet=true;
-        try{DesignCommand(s,choice==DCtxGuideHere?DGuides:choice==DCtxRouteHere?DRoute:choice==DCtxMeasureHere?DMeasure:choice==DCtxSightlineHere?DSightline:DPlay);}
+        try{DesignCommand(s,choice==DCtxGuideHere?DGuides:choice==DCtxRouteHere?DRoute:choice==DCtxMeasureHere?DMeasure:choice==DCtxSightlineHere?DSightline:choice==DCtxStarterHere?DStarter:DPlay);}
         catch(...){s.contextPointSet=false;throw;}
         s.contextPointSet=false;
         return;
@@ -4641,7 +4661,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             };
             submenu("&Workspace",{{DReference,"Reference image..."},{DCalibrate,"Calibrate image"},{DRemoveReference,"Remove reference..."},{0,nullptr},
                 {DScene,"Scene panel (docked on the right)"},{DMovement,"Movement limits..."},{0,nullptr},{DWorkspace,"Export / import workspace..."}});
-            submenu("&Blockout",{{DBlock,"New blockout..."},{DEdit,"Edit selected piece"},{DPlace,"Place / Apply preview"},{DDiscard,"Discard preview"},{0,nullptr},
+            submenu("&Blockout",{{DBlock,"New blockout..."},{DStarter,"Versus starter layout..."},{DEdit,"Edit selected piece"},{DPlace,"Place / Apply preview"},{DDiscard,"Discard preview"},{0,nullptr},
                 {DDoorway,"Doorway in room..."},{DDetach,"Detach selected piece"},{0,nullptr},
                 {DCopy,"Copy selected pieces\tCtrl+C"},{DPaste,"Paste pieces at the cursor\tCtrl+V"},{DDuplicate,"Duplicate selected pieces beside\tCtrl+D"},
                 {DMirrorX,"Mirror selected pieces left-right..."},{DMirrorY,"Mirror selected pieces front-back..."},{0,nullptr},

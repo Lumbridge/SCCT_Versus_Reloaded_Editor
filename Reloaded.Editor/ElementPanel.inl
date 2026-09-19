@@ -420,3 +420,94 @@ void ElementPaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void(c
     if(s.elementPoints.size()>=2)g.DrawLine(&line,DesignScreen(s,s.elementPoints[0]),DesignScreen(s,s.elementPoints[1]));
     label(Fold(s.elementKind)+": "+ElementPrompt(s),{10,30});
 }
+// --- A starter layout for a Versus map --------------------------------------
+// A whole starting map round a point: the objective room in the middle, a
+// spawn room for each team at the end of a corridor either side, a
+// crouch-height vent route from the spy side into the objective room, two
+// starts per team, a mission with an objective and its terminal, and a
+// ceiling light in each room. The pieces are one Undo step; the game actors
+// and lights follow as their own.
+void StarterLayout(DesignState& s,const Vector& at)
+{
+    if(s.plane!=0)throw std::runtime_error("Place the starter layout from the top view.");
+    if(!s.pending.is_null() && s.previous.is_null())throw std::runtime_error("Place or discard the preview first.");
+    std::vector<InputField> f={
+        {"Objective room (units square)","1024",{}},
+        {"Spawn rooms (units square)","768",{}},
+        {"Corridors between them (length)","768",{}},
+        {"Spy vent route","Yes",{"Yes","No"}},
+        {"Starts, mission, objective and terminal","Yes",{"Yes","No"}},
+        {"A light in each room","Yes",{"Yes","No"}}};
+    if(!Ask(s.window,"Versus Starter Layout",f))return;
+    const double centre=Design::Number(f[0].value,256,8192),spawn=Design::Number(f[1].value,256,8192),run=Design::Number(f[2].value,64,8192);
+    const bool vents=f[3].value=="Yes",game=f[4].value=="Yes",lights=f[5].value=="Yes";
+    const double t=16,z=s.depth,px=at[0],py=at[1];
+    auto room=[&](const std::string& name,const std::string& kind,double w,double l,double h)
+    {
+        return Json{{"kind",kind},{"construction","Carve"},{"width",w},{"length",l},{"height",h},{"thickness",t},{"steps",8},{"ceiling",kind=="Room"},{"portal",false},{"name",name}};
+    };
+    auto piece=[&](const Json& spec,double x,double y,int yaw){return Json{{"spec",spec},{"position",Vector{x,y,z}},{"rotation",Rotation{0,yaw,0}},{"previous",Json{}}};};
+    Json items=Json::array();
+    items.push_back(piece(room("Objective room","Room",centre,centre,320),px,py,0));
+    // Corridors run along X. Their length is local Y, so they turn a quarter;
+    // a corridor's carve reaches through the walls it meets, so no doorway is
+    // needed at either end.
+    const double corridorX=centre/2+t+run/2,spawnX=centre/2+t+run+t+spawn/2;
+    items.push_back(piece(room("West corridor","Corridor",192,run,256),px-corridorX,py,16384));
+    items.push_back(piece(room("East corridor","Corridor",192,run,256),px+corridorX,py,16384));
+    items.push_back(piece(room("Spy spawn","Room",spawn,spawn,256),px-spawnX,py,0));
+    items.push_back(piece(room("Merc spawn","Room",spawn,spawn,256),px+spawnX,py,0));
+    if(vents)
+    {
+        // Out of the spy room's far wall, along past the map's edge, and down
+        // through the objective room's side wall: the slow, quiet way in.
+        const double vh=Design::ClearanceHeight("Vent",Design::Movement(DesignData(s))),vw=96;
+        const double ventX=px-spawnX+spawn/4;                       // A quarter of the way across the spy room.
+        const double leg=std::max(512.0,(centre/2+t+128)-(spawn/2+t)); // Far enough out to clear the objective room.
+        const double topY=py+spawn/2+t+leg;
+        const double endX=px-centre/4;                                 // Where it drops into the objective room.
+        items.push_back(piece(room("Vent from spy spawn","Vent",vw,leg,vh),ventX,py+spawn/2+t+leg/2,0));
+        items.push_back(piece(room("Vent along","Vent",vw,std::abs(endX-ventX)+vw,vh),(ventX+endX)/2,topY-vw/2,16384));
+        const double drop=topY-(py+centre/2+t);
+        items.push_back(piece(room("Vent into objective room","Vent",vw,drop,vh),endX,(topY+py+centre/2+t)/2,0));
+    }
+    DesignDeactivate(s);
+    const auto placed=FloorPlace(s,items);
+    std::string report=std::to_string(placed.size())+" pieces placed in one Undo step";
+    if(game)
+    {
+        std::string type="Engine.PlayerStart";
+        for(const auto& start:s.objectives)if(start.value("kind",std::string())=="Player start"){type=start.value("class",type);break;}
+        for(double dy:{-128.0,128.0})
+        {
+            Editor::CreatePlayerStart(type,kSpyTeam,{Vector{px-spawnX-spawn/4,py+dy,z+48},{0,0,0}});
+            Editor::CreatePlayerStart(type,kMercTeam,{Vector{px+spawnX+spawn/4,py+dy,z+48},{0,32768,0}});
+        }
+        DesignRefresh(s);
+        std::set<std::string> before;
+        for(const auto& actor:s.objectives)before.insert(actor.at("path").get<std::string>());
+        const auto mission=Editor::CreateSecurityActor("SBase.SMission",{Vector{px,py,z+64},{}},{{"ObjectiveName","\"Mission\""},{"Description","\"Complete the mission\""}});
+        DesignRefresh(s);
+        Json missionEntry;
+        for(const auto& actor:s.objectives)if(actor.value("kind",std::string())=="Mission" && actor.at("path")==mission.at("path"))missionEntry=actor;
+        if(!missionEntry.is_null())
+        {
+            ObjectivePlaceUnder(s,missionEntry,"SBase.SObjective",Vector{px,py+centre/4,z});
+            Json objectiveEntry;
+            for(const auto& actor:s.objectives)if(actor.value("kind",std::string())=="Objective" && !before.count(actor.at("path").get<std::string>()))objectiveEntry=actor;
+            if(!objectiveEntry.is_null())ObjectivePlaceUnder(s,objectiveEntry,"SBase.SComputerObjectiveTrigger",Vector{px,py-centre/4,z});
+        }
+        report+=", two starts per team, a mission with an objective and its computer terminal";
+    }
+    if(lights)
+    {
+        const auto& preset=LightPresets()[0];
+        for(double x:{px-spawnX,px,px+spawnX})LightPlace(s,preset,Vector{x,py,z});
+        report+=", a ceiling light in each room";
+    }
+    DesignRefresh(s);
+    s.depth=z;
+    DesignFit(s);
+    DesignStatus(s,report+". Spies spawn west, mercs east, the objective in the middle"+std::string(vents?", with a vent route in from the spy side":"")
+        +". Press B to build geometry, then Check design; Undo steps back through each part.");
+}
