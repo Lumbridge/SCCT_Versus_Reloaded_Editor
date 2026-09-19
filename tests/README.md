@@ -26,7 +26,9 @@ steps/slopes/clearance, doorway placement in a room wall including rotated rooms
 and rejected offsets, route lengths and spy/merc timings, floor ranges, native
 group name handling, portable workspace export/import, image calibration, 3D
 measurement, stable distribution, and repeated brush/object/event reference
-remapping. `SecurityModelTests.cpp` covers the security device catalogue, Unreal
+remapping, mirrored poses checked vertex by vertex against the reflected
+geometry, the piece clipboard's anchor and offsets, sightlines through a turned
+doorway and through a wall, size presets, and numbered names. `SecurityModelTests.cpp` covers the security device catalogue, Unreal
 yaw from two points, laser length and direction from two clicks, beam ends,
 sensor boxes, tag allocation, and the wiring report with its unwired detectors,
 unfed alarms, dangling events and empty sensors.
@@ -45,7 +47,10 @@ design view, and the direct editing loop: a new blockout opening in the inspecto
 instead of a dialog, a placed piece loaded back into it, an inspector edit
 replacing that piece's brushes rather than adding more, an arrow key nudging it by
 one grid step, Escape ending the edit, the panel's Undo and Redo reaching the
-editor's history, and the quick-add badge on a hovered wall placing a corridor
+editor's history, Copy and Paste placing a copy at the cursor and at a
+right-clicked point, Duplicate placing one beside the original, Delete dropping
+a copy from the library, a size preset resizing a placed piece in place, a
+sightline inside a room reporting clear, and the quick-add badge on a hovered wall placing a corridor
 against it through its menu, the stale-geometry flag clearing when B runs a
 geometry build, the design check window listing its issues, and the security
 tools: creating an alarm, a laser and a motion sensor with its volume through the

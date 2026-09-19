@@ -808,6 +808,106 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 Exec("TRANSACTION UNDO");Exec("TRANSACTION UNDO");
             }
             {
+                // Clipboard: Copy takes the selected room, Paste lands a copy at
+                // the cursor or at a right-clicked point, Duplicate one beside
+                // the original; each placement is one Undo step and Delete
+                // takes the copy out of the library again. A size preset in the
+                // inspector resizes a placed piece in place.
+                auto pieces=[&]{std::ifstream in(directory/"ReloadedEditor"/"library.json");J document;in>>document;return document["maps"][call({{"op","map"}})["key"].get<std::string>()]["design"]["pieces"];};
+                auto status=[&]{char text[1024]{};GetWindowTextA(GetDlgItem(design,720),text,sizeof(text));return std::string(text);};
+                const double grid=call({{"op","design.grid"}})[0].get<double>();
+                SendMessage(design,WM_COMMAND,702,0); // Refresh from editor: the test pumps no timer.
+                call({{"op","select"},{"actors",placedRoom}});
+                SendMessage(design,WM_COMMAND,702,0);
+                const auto actors0=actorCount();
+                J original;
+                for(auto& p:pieces())for(auto& member:p["members"])if(member["path"]==placedRoom[0]["path"])original=p;
+                require(!original.is_null(),"the placed room is still a library piece");
+                SendMessage(design,WM_COMMAND,800,0); // Copy selected pieces.
+                require(status().find("Copied 1 piece")!=std::string::npos,("Copy reports the copied piece (status: "+status()+")").c_str());
+                const auto view=call({{"op","design.view"}});
+                const double zoom=view["zoom"],panX=view["panX"],panY=view["panY"];
+                const double ox=original["position"][0].get<double>(),oy=original["position"][1].get<double>();
+                const double px=ox+4096,py=oy+4096; // Clear of everything, on the grid.
+                const POINT at{static_cast<LONG>(panX+px*zoom),static_cast<LONG>(panY-py*zoom)};
+                auto removeCopy=[&](const J& copy)
+                {
+                    // Delete drops the copy's brushes and its library entry.
+                    SendMessage(design,WM_COMMAND,702,0);
+                    call({{"op","select"},{"actors",copy["members"]}});
+                    SendMessage(design,WM_COMMAND,702,0);
+                    SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_DELETE,0);
+                    require(actorCount()==actors0,"Delete removes the copy's brushes");
+                    bool listed=false;
+                    for(auto& p:pieces())if(p["members"]==copy["members"])listed=true;
+                    require(!listed,"Delete drops the copy from the library");
+                    SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
+                };
+                SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,0,MAKELPARAM(at.x,at.y));
+                SendMessage(design,WM_COMMAND,801,0); // Paste at the cursor.
+                require(actorCount()==actors0+1,("Paste places one copy of the copied room (status: "+status()+")").c_str());
+                auto pasted=pieces().back();
+                require(pasted["spec"]["kind"]=="Room" && std::abs(pasted["position"][0].get<double>()-px)<=grid+1 && std::abs(pasted["position"][1].get<double>()-py)<=grid+1,"the pasted room lands at the cursor, snapped to the grid");
+                Exec("TRANSACTION UNDO");
+                require(actorCount()==actors0,"a paste is one Undo step");
+                Exec("TRANSACTION REDO");
+                require(actorCount()==actors0+1,"Redo brings the pasted room back");
+                removeCopy(pasted);
+                // The right-click menu pastes at the clicked point.
+                call({{"op","select"},{"actors",J::array()}});
+                SendMessage(design,WM_COMMAND,702,0);
+                WorkflowProbe::objectivePopupChoice=817; // Paste copied pieces here.
+                WorkflowProbe::objectivePopupFound=false;WorkflowProbe::objectivePopupTicks=0;
+                auto pastePopup=SetTimer(nullptr,0,50,WorkflowProbe::ChooseObjectivePopup);
+                SendMessage(GetDlgItem(design,719),WM_RBUTTONDOWN,0,MAKELPARAM(at.x,at.y));
+                KillTimer(nullptr,pastePopup);
+                require(WorkflowProbe::objectivePopupFound,"the right-click menu offers to paste the copied piece");
+                require(actorCount()==actors0+1,("Paste here places the copy (status: "+status()+")").c_str());
+                pasted=pieces().back();
+                require(std::abs(pasted["position"][0].get<double>()-px)<=grid+1 && std::abs(pasted["position"][1].get<double>()-py)<=grid+1,"the copy lands at the right-clicked point");
+                removeCopy(pasted);
+                // Duplicate puts the copy beside the original along X, a wall apart.
+                call({{"op","select"},{"actors",placedRoom}});
+                SendMessage(design,WM_COMMAND,702,0);
+                SendMessage(design,WM_COMMAND,802,0); // Duplicate selected pieces beside.
+                require(actorCount()==actors0+1,("Duplicate places one copy (status: "+status()+")").c_str());
+                auto twin=pieces().back();
+                const double width=original["spec"]["width"].get<double>(),thickness=original["spec"]["thickness"].get<double>();
+                require(twin["position"][0].get<double>()>=ox+width && twin["position"][0].get<double>()<=ox+width+3*thickness+grid && std::abs(twin["position"][1].get<double>()-oy)<.001,"the duplicate sits beside the original, a wall apart");
+                Exec("TRANSACTION UNDO");
+                require(actorCount()==actors0,"a duplicate is one Undo step");
+                Exec("TRANSACTION REDO");
+                removeCopy(twin);
+                // A preset resizes the placed piece in place.
+                call({{"op","select"},{"actors",placedRoom}});
+                WorkflowProbe::Click(design,707);
+                require(SendDlgItemMessage(design,807,CB_GETCOUNT,0,0)>1,"the inspector lists size presets for a room");
+                SendDlgItemMessage(design,807,CB_SETCURSEL,3,0); // Medium room 768 x 768 x 256.
+                SendMessage(design,WM_COMMAND,MAKEWPARAM(807,CBN_SELCHANGE),reinterpret_cast<LPARAM>(GetDlgItem(design,807)));
+                require(actorCount()==actors0,("a preset replaces the piece's brushes instead of adding more (status: "+status()+")").c_str());
+                const auto resized=pieces().back();
+                require(resized["spec"]["width"]==768 && resized["spec"]["length"]==768 && resized["spec"]["height"]==256,"a preset sets the placed piece's size");
+                Exec("TRANSACTION UNDO");
+                SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
+                // A sightline through the room reports itself in the status line.
+                SendMessage(design,WM_COMMAND,702,0);
+                SetDlgItemTextA(design,721,std::to_string(static_cast<int>(original["position"][2].get<double>())).c_str()); // The plan's depth: the room's floor.
+                SendMessage(design,WM_COMMAND,MAKEWPARAM(721,EN_KILLFOCUS),reinterpret_cast<LPARAM>(GetDlgItem(design,721)));
+                SendMessage(design,WM_COMMAND,806,0); // Sightline between two points.
+                const POINT eye{static_cast<LONG>(panX+(ox-width/4)*zoom),static_cast<LONG>(panY-oy*zoom)},look{static_cast<LONG>(panX+(ox+width/4)*zoom),static_cast<LONG>(panY-oy*zoom)};
+                SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(eye.x,eye.y));
+                SendMessage(GetDlgItem(design,719),WM_LBUTTONUP,0,MAKELPARAM(eye.x,eye.y));
+                SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(look.x,look.y));
+                SendMessage(GetDlgItem(design,719),WM_LBUTTONUP,0,MAKELPARAM(look.x,look.y));
+                require(status().find("Clear line of sight")!=std::string::npos,("a sightline inside one room is clear (status: "+status()+")").c_str());
+                {
+                    std::ifstream in(directory/"ReloadedEditor"/"library.json");J document;in>>document;
+                    auto annotations=document["maps"][call({{"op","map"}})["key"].get<std::string>()]["design"]["annotations"];
+                    require(!annotations.empty() && annotations.back()["kind"]=="Sightline","the sightline is kept as an annotation");
+                }
+                WorkflowProbe::Click(design,728); // Undo: the workspace change comes first.
+            }
+            {
                 // Quick add: hover the wall of a placed piece and pick from the
                 // badge menu. The view mapping tells the test where that wall is.
                 // The panel refreshes on its timer; this test pumps no messages,

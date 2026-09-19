@@ -179,6 +179,9 @@ struct DesignState
     bool cursorSet=false;
     HWND readout{};
     std::string readoutText;
+    // The brushes of the piece under the cursor, outlined so a click's target
+    // is known before the click.
+    std::set<std::string> hoverPaths;
     // The carved space of the placed pieces, for sightlines, cached per map
     // and workspace revision.
     std::vector<Design::WorldSolid> carved;
@@ -811,7 +814,8 @@ void DesignPaint(DesignState& s,HDC dc)
     {
         if(!DesignShows(s,actor))continue;
         const bool selected=actor.at("selected").get<bool>(),locked=actor.at("locked").get<bool>();
-        Pen pen(selected?Color(230,90,30):locked?Color(160,165,175):Color(60,95,120),selected?2.f:1.f);
+        const bool hovered=!selected && s.drag.kind==DesignDrag::Kind::None && s.hoverPaths.count(actor.at("path").get<std::string>())>0;
+        Pen pen(selected?Color(230,90,30):hovered?Color(240,255,150,30):locked?Color(160,165,175):Color(60,95,120),selected||hovered?2.f:1.f);
         for(auto& edge:actor.at("edges"))
         {
             if(!DesignOnFloor(s,edge[0].get<Vector>()[2],edge[1].get<Vector>()[2]))continue;
@@ -3556,13 +3560,13 @@ const char* const kDesignKeyLegend=
     "Shift or Ctrl + click: add to the selection.\r\n"
     "Drag a piece: move it (and the rest of the selection). Drag a square: resize. Drag the round handle: turn (15 degree steps; Ctrl: free).\r\n"
     "R / Shift+R: turn the edited piece 90 degrees either way.\r\n"
-    "Arrow keys: nudge the edited piece by the grid. Ctrl + arrows: one unit.\r\n"
+    "Arrow keys: nudge the edited piece by the grid. Ctrl + arrows: one unit. Shift + arrows: four grid steps.\r\n"
     "Enter: place a new preview.   Esc: discard it, or cancel what is being placed.\r\n"
     "Delete: delete the selection.   B: build geometry.   F2: rename the edited piece.\r\n"
     "Ctrl+Z / Ctrl+Y: undo / redo.   Ctrl+L / Ctrl+Shift+L: lock / unlock the selection.\r\n"
     "Ctrl+C / Ctrl+V: copy the selected pieces / paste them at the cursor.   Ctrl+D: duplicate them beside the originals.\r\n"
     "Ctrl+A: select everything on this storey.   F / Shift+F: fit the map / the selection.\r\n"
-    "1 / 2 / 3: top / front / side view.   G: snapping on or off.   O: overlays on or off.\r\n"
+    "1 / 2 / 3: top / front / side view.   G: snapping on or off.   O: overlays on or off.   P: playtest from the cursor.\r\n"
     "Page Up / Page Down: one storey up / down.   Home: every storey.\r\n"
     "Slider on the right: pick a storey.   + badge on a wall: add a neighbour there.\r\n"
     "\r\n"
@@ -3699,6 +3703,9 @@ void DesignReadout(DesignState& s,POINT at)
     std::string text="X "+Design::Round(snapped[0])+"   Y "+Design::Round(snapped[1])+"   Z "+Design::Round(snapped[2]);
     Json piece=s.hoverPiece;
     if(piece.is_null() && s.scene.size()<=3000)piece=DesignPieceAt(s,at.x,at.y);
+    std::set<std::string> paths;
+    if(!piece.is_null())for(const auto& member:piece.at("members"))paths.insert(member.at("path").get<std::string>());
+    if(paths!=s.hoverPaths){s.hoverPaths=paths;InvalidateRect(s.canvas,nullptr,FALSE);}
     if(!piece.is_null())
     {
         const auto& spec=piece.at("spec");
@@ -4337,12 +4344,13 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             if(axis>=0 && !s->pending.is_null())
             {
                 DesignUpdateGrid(*s);
-                const double step=fine?1:(s->grid[axis]>0?s->grid[axis]:16);
+                const bool leap=(GetKeyState(VK_SHIFT)&0x8000)!=0; // Shift: four grid steps at a time.
+                const double step=fine?1:(s->grid[axis]>0?s->grid[axis]:16)*(leap?4:1);
                 s->frame.position[axis]+=step*direction;
                 Design::CheckVector(s->frame.position);
                 DesignInspectorRefresh(*s);
                 InvalidateRect(window,nullptr,FALSE);
-                const auto nudged="Nudged to "+Design::Round(s->frame.position[0])+", "+Design::Round(s->frame.position[1])+", "+Design::Round(s->frame.position[2])+". Ctrl nudges by one unit.";
+                const auto nudged="Nudged to "+Design::Round(s->frame.position[0])+", "+Design::Round(s->frame.position[1])+", "+Design::Round(s->frame.position[2])+". Ctrl nudges by one unit, Shift by four grid steps.";
                 if(!s->previous.is_null())
                 {
                     Vector delta{};
@@ -4397,6 +4405,15 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 {
                     SendMessage(GetDlgItem(s->window,DPlane),CB_SETCURSEL,w-'1',0);
                     DesignCommand(*s,DPlane);
+                    return 0;
+                }
+                if(!ctrl && w=='P')
+                {
+                    s->contextPoint=DesignPasteAnchor(*s);
+                    s->contextPointSet=true;
+                    try{DesignCommand(*s,DPlay);}
+                    catch(...){s->contextPointSet=false;throw;}
+                    s->contextPointSet=false;
                     return 0;
                 }
                 if(w==VK_F2 && !s->pending.is_null())

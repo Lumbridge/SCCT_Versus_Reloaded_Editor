@@ -19,7 +19,7 @@ Clicking a brush that a blockout generated picks up **the whole piece** for
 editing: it becomes a live green preview over the brushes it will replace, with
 the dashed outline of its current shape underneath. Drag it to move it, drag one
 of its squares to resize that face while the opposite face stays put, or nudge it
-with the **arrow keys** — one grid step, or one unit with **Ctrl** held. Each
+with the **arrow keys** — one grid step, one unit with **Ctrl** held, or four grid steps with **Shift**. Each
 change replaces the piece's brushes in a single Undo step, so the map always
 matches what the view shows. Moving a room, corridor or vent takes the doorways
 cut into its walls along with it, in that same step. **Escape** ends the edit. Brushes moved in the editor's own viewports keep
@@ -76,7 +76,12 @@ objective flow: a mission with no objectives, an objective no mission lists or
 that has no terminal, bomb target or trigger, a flag without a drop zone, spy
 starts within 512 units of an objective, the two teams' starts within 768 units
 of each other, and objectives more than 4096 units from any merc start.
-Double-click an issue to select its piece.
+Double-click an issue to select its piece. The list opens with a summary of the
+layout (how many rooms, corridors, vents and stairs on how many storeys, and the
+brush count) and of the game actors (starts per team, objectives, lights and
+security devices), and adds a line per objective device with the straight-line
+distance and travel time from the nearest spy start and the nearest merc start
+at the movement limits' speeds, so the asymmetry of the map is read at a glance.
 
 The preview always describes what is in the map. If the piece being edited is
 deleted, moved or reshaped elsewhere, the preview is dropped with a note rather
@@ -88,7 +93,13 @@ construction, dimensions, thickness, stair count, ceiling, zone portal, position
 and yaw. Press **Enter** or move the focus to apply a field. For a piece already
 in the map the change lands immediately; a new preview waits for **Place / Apply
 preview** (or Enter in the design view). **Discard preview** throws an unplaced
-preview away. No dialog appears anywhere in this loop.
+preview away. No dialog appears anywhere in this loop. The **Preset** list
+holds each shape's common sizes (a small, medium or large room, a narrow or
+wide corridor, single or double doors, a one-storey flight, a crate or a
+catwalk); picking one sets the width, length and height, and stairs recount
+their treads. A piece placed under its shape's plain name is numbered (Room 1,
+Room 2, Corridor 3) so the Scene panel tells them apart; a name you typed is
+kept.
 
 **Snap to grid** uses the editor's current grid spacing for clicks, drags and
 nudges, and draws the design view's grid to match. Change the spacing with **Ctrl
@@ -131,7 +142,33 @@ inside any of them moves them all, and the rest of the selection is drawn
 dashed where it will land; arrow keys and grouped members follow the same way.
 
 **Tools > Keyboard and mouse** (or the **Keys...** button) lists every shortcut,
-and each control in the panel has a tooltip.
+and each control in the panel has a tooltip. **F** fits the whole map and
+**Shift+F** the selection; **1**, **2** and **3** switch to the top, front and
+side views; **G** turns snapping on or off and **O** the overlays; **Ctrl+A**
+selects everything shown on the storey (locked things are skipped); **F2** puts
+the cursor in the edited piece's name field.
+
+A **readout** under the plan follows the cursor: its snapped world position,
+and the piece under it with its shape, size, yaw and base, or the light,
+security device or game actor there. A **scale bar** in the plan's bottom-left
+corner shows a round number of units at the current zoom.
+
+### Copy, paste, duplicate and mirror
+
+**Ctrl+C** copies the selected pieces (a box selection, a group, or the piece
+being edited) and **Ctrl+V** pastes them round the cursor on the storey being
+shown, keeping their spacing; right-click a point for **Paste ... here** to put
+them exactly there. **Ctrl+D** duplicates the selection beside itself along the
+view's horizontal axis, a wall's thickness apart, so a row of rooms is a few
+presses. Right-click a piece for **Copy** and **Duplicate ... beside**, and
+right-click anywhere with pieces selected for **Mirror the selected piece(s)
+here**: **left-right** reflects them through the clicked X, **front-back**
+through the clicked Y, as new copies that keep the originals. The **Blockout**
+menu has the same commands; its mirror entries ask for the line. Every paste,
+duplicate or mirror is one Undo step and leaves the copies selected, so they
+can be dragged or nudged straight away. L-shaped and U-shaped stairs and
+spirals have no mirror image the toolkit can build: a mirrored copy keeps its
+turn, and the status line says how many did.
 
 ### Locking
 
@@ -190,6 +227,17 @@ by dragging or by typing, then **Place / Apply preview** creates ordinary native
 brushes in one Undo step. The piece stays selected afterwards so it can be
 adjusted again. Right-click or press Escape in the design view to discard a
 preview without touching the map.
+
+**Versus starter layout...** (Blockout menu, or **Versus starter layout
+here...** in the right-click menu) places a whole starting map round a point
+from the top view: an objective room in the middle, a spawn room for each team
+at the end of a corridor either side, a crouch-height vent route out of the spy
+room and round into the objective room's side wall, two starts per team facing
+inwards, a mission with an objective and its computer terminal, and a ceiling
+light in each room. It asks for the room and corridor sizes and which extras to
+include. The pieces are one Undo step; the starts, mission, objective, terminal
+and lights follow as their own. Build geometry, then run the design check, and
+reshape from there.
 
 - **Room:** carves the interior space. Width/length/height describe that space.
 - **Corridor:** the same carve, extended by the wall thickness at each end so it
@@ -296,6 +344,16 @@ openings in game. References never become gameplay actors.
 field beside the view combo (Y or X in an elevation) is the hidden-axis
 coordinate new points and pieces land on; type a value and press Enter, or let
 the storey slider set it.
+**Sightline between two points** (or **Sightline from here** in the right-click
+menu) takes an eye position and a point to look at, 64 units above the floor
+in the top view or at the clicked height in an elevation, and keeps the line as
+an annotation. It is sampled through the carved space of the placed rooms,
+corridors, vents, crawlways and doorways: drawn green where it runs through open
+space and red where it crosses a wall, with the blocked length in its label and
+the first blocking point in the status line. Use it to check whether a merc at a
+camera can see a terminal, or a spy in a vent can watch a doorway. Walls are the
+toolkit's pieces only; meshes and BSP placed by hand are not considered.
+
 **Align / distribute...** works on native selected actor/brush origins along X,
 Y or Z. Align uses the first actor in native selection order; distribute sorts
 by that axis and applies exact spacing from the lowest position. Other axes are
