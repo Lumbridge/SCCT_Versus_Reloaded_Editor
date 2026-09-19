@@ -26,12 +26,13 @@ namespace
         if(!p || !IsA(p,"NameProperty"))throw std::runtime_error("This editor's actors do not expose the native Group field.");
         Write(actor+Read<int>(p+0x3c),DesignName(groups));
     }
-    // A fingerprint is what the toolkit decided about a brush: its properties
-    // less what the editor changes on its own (hidden/locked flags, Location
-    // and PrePivot, which it rounds and rebalances, the Group), and the set of
-    // its polygon vertices to a tenth of a unit. Polygon normals, texture axes
-    // and polygon order are left out: a geometry build recomputes them, and
-    // for a brush with fractional vertices (a spiral's wedges) the digits move.
+    // A fingerprint is what the toolkit decided about a brush and nothing the
+    // editor changes on its own: the CSG operation, polygon flags, scale and
+    // rotation lines, and the set of polygon vertices to a tenth of a unit.
+    // Everything else is left out: Location and PrePivot (rounded and
+    // rebalanced by the editor; moves are followed elsewhere), Group, hidden
+    // and lock flags, polygon normals, texture axes, links and order (a
+    // geometry build recomputes them). Normalizing twice gives the same text.
     std::string NormalizeBrushText(const std::string& text)
     {
         std::istringstream in(text);
@@ -45,8 +46,6 @@ namespace
             const std::string trimmed=start==std::string::npos?std::string():line.substr(start);
             if(trimmed.rfind("Begin PolyList",0)==0){polygons=true;continue;}
             if(trimmed.rfind("End PolyList",0)==0){polygons=false;continue;}
-            // Already-normalized text lists its vertices after this marker, so
-            // normalizing twice gives the same result.
             if(trimmed=="Vertices"){listed=true;continue;}
             if(listed){if(!trimmed.empty())vertices.insert(trimmed);continue;}
             if(polygons)
@@ -69,19 +68,45 @@ namespace
                 vertices.insert(rounded);
                 continue;
             }
-            properties+=line+"\r\n";
+            for(const char* keep:{"Begin Actor","CsgOper=","PolyFlags=","MainScale=","PostScale=","Rotation=","Begin Brush","End Brush","Brush=","End Actor"})
+                if(trimmed.rfind(keep,0)==0){properties+=trimmed+"\r\n";break;}
         }
-        for(const char* key:{"bHiddenEd","bHiddenEdGroup","bLockLocation","Location","PrePivot","OldLocation","Group"})properties=RemoveProperty(properties,key);
         std::string result=properties+"Vertices\r\n";
         for(const auto& v:vertices)result+=v+"\r\n";
         return result;
     }
-    Json NormalizeFingerprint(Json fingerprint)
+    Json NormalizeFingerprint(const Json& fingerprint)
     {
+        Json result={{"actors",Json::array()}};
         if(fingerprint.is_object() && fingerprint.contains("actors"))
-            for(auto& a:fingerprint["actors"])
-                if(a.is_object() && a.contains("text"))a["text"]=NormalizeBrushText(a.at("text").get<std::string>());
-        return fingerprint;
+            for(const auto& a:fingerprint["actors"])
+                if(a.is_object() && a.contains("text"))
+                    result["actors"].push_back({{"name",a.value("name",std::string())},{"class",a.value("class",std::string())},{"text",NormalizeBrushText(a.at("text").get<std::string>())}});
+        return result;
+    }
+    // Why two fingerprints differ, for the error that says a piece was edited
+    // outside the toolkit.
+    std::string FingerprintDifference(const Json& stored,const Json& fresh)
+    {
+        const auto& a=stored.at("actors");const auto& b=fresh.at("actors");
+        if(a.size()!=b.size())return " ("+std::to_string(a.size())+" brushes recorded, "+std::to_string(b.size())+" found)";
+        for(size_t i=0;i<a.size();++i)
+        {
+            if(a[i].value("class",std::string())!=b[i].value("class",std::string()))return " (brush "+std::to_string(i+1)+" changed class)";
+            std::istringstream was(a[i].value("text",std::string())),now(b[i].value("text",std::string()));
+            std::string wasLine,nowLine;
+            while(true)
+            {
+                const bool moreWas=static_cast<bool>(std::getline(was,wasLine)),moreNow=static_cast<bool>(std::getline(now,nowLine));
+                if(!moreWas && !moreNow)break;
+                if(!moreWas)wasLine.clear();
+                if(!moreNow)nowLine.clear();
+                while(!wasLine.empty() && wasLine.back()=='\r')wasLine.pop_back();
+                while(!nowLine.empty() && nowLine.back()=='\r')nowLine.pop_back();
+                if(wasLine!=nowLine)return " (brush "+std::to_string(i+1)+": recorded '"+wasLine+"', found '"+nowLine+"')";
+            }
+        }
+        return "";
     }
     Json DesignFingerprint(const Json& members)
     {
@@ -172,8 +197,11 @@ namespace
         if(!pasteHookReady || insertionText)throw std::runtime_error("Native brush insertion is unavailable or busy.");
         if(!previous.is_null())
         {
-            if(previous.at("map")!=AuthoringMapKey() || DesignFingerprint(previous.at("members"))!=NormalizeFingerprint(previous.at("fingerprint")))
-                throw std::runtime_error("This piece was edited outside the toolkit. Detach it for manual editing or undo those edits first.");
+            if(previous.at("map")!=AuthoringMapKey())throw std::runtime_error("This piece belongs to another map.");
+            {
+                const auto stored=NormalizeFingerprint(previous.at("fingerprint")),fresh=DesignFingerprint(previous.at("members"));
+                if(fresh!=stored)throw std::runtime_error("This piece was edited outside the toolkit. Detach it for manual editing or undo those edits first."+FingerprintDifference(stored,fresh));
+            }
             for(auto& id:previous.at("members"))if(DesignBool(ResolveIdentity(id),"bLockLocation"))throw std::runtime_error("Unlock this blockout layer first.");
         }
         // Regenerated brushes keep the group the old ones were in.
