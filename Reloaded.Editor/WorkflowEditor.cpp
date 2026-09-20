@@ -410,8 +410,8 @@ void SetMapFile(const std::string& path)
     if(auto window=Read<Address>(0x1165e80c))
         reinterpret_cast<void(__thiscall*)(void*,const char*)>(0x10E05E1C)(reinterpret_cast<void*>(window),path.c_str());
 }
-{
 bool Exec(const std::string& command)
+{
     auto e=Engine(); return Call<int>(e+0x28,0,command.c_str(),reinterpret_cast<void*>(Read<Address>(0x115BEFB0)))!=0;
 }
 void Redraw() { auto e=Engine(); Call(e,0xe8,reinterpret_cast<void*>(Level())); }
