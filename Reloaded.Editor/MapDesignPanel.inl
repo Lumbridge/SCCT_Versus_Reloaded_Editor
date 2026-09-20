@@ -2388,10 +2388,12 @@ void DesignPick(DesignState& s,double x,double y,bool add)
 // lies wholly inside it. Brushes of a placed piece count as the piece, and the
 // devices, lights and game actors inside come too. One piece on its own is
 // opened for editing.
-void DesignBoxSelect(DesignState& s,bool add)
+void DesignBoxSelect(DesignState& s,const DesignDrag& drag,bool add)
 {
-    const double left=std::min(s.drag.from.x,s.drag.to.x),right=std::max(s.drag.from.x,s.drag.to.x);
-    const double top=std::min(s.drag.from.y,s.drag.to.y),bottom=std::max(s.drag.from.y,s.drag.to.y);
+    // The rectangle is the finished drag's: DesignEndDrag has already cleared
+    // s.drag, which used to collapse the box to a point and select nothing.
+    const double left=std::min(drag.from.x,drag.to.x),right=std::max(drag.from.x,drag.to.x);
+    const double top=std::min(drag.from.y,drag.to.y),bottom=std::max(drag.from.y,drag.to.y);
     const bool crossing=!(GetKeyState(VK_MENU)&0x8000);
     auto inside=[&](const Gdiplus::PointF& p){return p.X>=left && p.X<=right && p.Y>=top && p.Y<=bottom;};
     auto crosses=[&](const Gdiplus::PointF& a,const Gdiplus::PointF& b)
@@ -3365,7 +3367,7 @@ void DesignEndDrag(DesignState& s,bool add)
     }
     if(drag.kind==DesignDrag::Kind::Select)
     {
-        if(drag.moved)DesignBoxSelect(s,add);
+        if(drag.moved)DesignBoxSelect(s,drag,add);
         else DesignPick(s,drag.from.x,drag.from.y,add);
         return;
     }

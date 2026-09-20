@@ -880,6 +880,21 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 require(actorCount()==actors0,"a duplicate is one Undo step");
                 Exec("TRANSACTION REDO");
                 removeCopy(twin);
+                // A rectangle dragged round the room selects its brushes.
+                {
+                    const double length=original["spec"]["length"].get<double>();
+                    const POINT a{static_cast<LONG>(panX+(ox-width/2-40)*zoom),static_cast<LONG>(panY-(oy+length/2+40)*zoom)};
+                    const POINT b{static_cast<LONG>(panX+(ox+width/2+40)*zoom),static_cast<LONG>(panY-(oy-length/2-40)*zoom)};
+                    call({{"op","select"},{"actors",J::array()}});
+                    SendMessage(design,WM_COMMAND,702,0);
+                    SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(a.x,a.y));
+                    SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(b.x,b.y));
+                    SendMessage(GetDlgItem(design,719),WM_LBUTTONUP,0,MAKELPARAM(b.x,b.y));
+                    const auto boxed=call({{"op","actors"},{"selected",true}});
+                    require(!boxed.empty(),("a rectangle dragged round a room selects its brushes (status: "+status()+")").c_str());
+                    SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
+                    call({{"op","select"},{"actors",J::array()}});
+                }
                 // A preset resizes the placed piece in place.
                 call({{"op","select"},{"actors",placedRoom}});
                 WorkflowProbe::Click(design,707);
