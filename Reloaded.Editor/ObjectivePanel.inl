@@ -169,7 +169,9 @@ void ObjectivePlaceMission(DesignState& s,const Vector& at)
 }
 void ObjectivePlaceUnder(DesignState& s,const Json& owner,const std::string& type,const Vector& at)
 {
-    auto created=Editor::AddObjectiveActor(owner,type);
+    // The owner is a plan row; the objective link needs the inspected snapshot
+    // of the mission or objective, which carries the map identity it checks.
+    auto created=Editor::AddObjectiveActor(Editor::InspectActor(owner),type);
     Vector position=at;
     position[2]=s.depth+64;
     try{Editor::MoveSecurityActor(created,{position,{}},Json::object());}
