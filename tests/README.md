@@ -70,6 +70,17 @@ stand-on state. `map_design_preview.bmp`, `map_design_workspace.bmp`,
 `design_workspace.json` and `design_clearances.json` are retained in the fixture.
 All native tests use a separate temporary installation, never a working map.
 
+`LevelSnapshotModelTests.cpp` covers the level snapshot's pure parts: the
+snapshot package name, the 24-bit BMP handed to the editor's texture importer
+(bottom-up rows, padding), the `.utc` container header, the package tables of
+a stock-shaped `<Map>-i` package (position-ciphered names, numbered name
+references, imports, exports with their classes), a texture export's size,
+format and mip count read past struct, bool and float properties, and the
+check of the saved file (a 256 x 256 Menu texture, no objects lost, truncated
+or foreign files rejected). The editor side imports the BMP with `TEXTURE
+IMPORT` into the loaded `<Map>-i` package and saves it with the stock
+`SAVEMAPPROP`, so it is exercised in the editor rather than here.
+
 `tools/test_map_package.cmd` also covers packaging a map's Map Design workspace and
 the reference images it names, skipping missing or unsafe image names, and
 tolerating an unreadable workspace file.

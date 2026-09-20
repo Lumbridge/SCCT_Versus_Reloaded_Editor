@@ -2,6 +2,7 @@
 #include "EditorExtras.h"
 #include "WorkflowEditor.h"
 #include "GEKeybindSwap.h"
+#include "LevelSnapshot.h"
 #include "logger.h"
 #include <commctrl.h>
 #include <algorithm>
@@ -133,6 +134,9 @@ namespace
             AppendMenuA(build, MF_SEPARATOR, 0, nullptr);
             AppendMenuA(build, MF_STRING, EditorExtras::kPlayFromCameraSpy, "Play From Camera as &Spy");
             AppendMenuA(build, MF_STRING, EditorExtras::kPlayFromCameraMerc, "Play From Camera as &Merc");
+            AppendMenuA(build, MF_SEPARATOR, 0, nullptr);
+            AppendMenuA(build, MF_STRING, EditorExtras::kLevelSnapshotViewport, "Set Level Snapshot from &Viewport");
+            AppendMenuA(build, MF_STRING, EditorExtras::kLevelSnapshotFile, "Set Level Snapshot from &Image File...");
         }
         if (HMENU help = MenuWithCommand(bar, 40480); help && GetMenuState(help, EditorExtras::kShortcuts, MF_BYCOMMAND) == UINT(-1))
             AppendMenuA(help, MF_STRING, EditorExtras::kShortcuts, "Reloaded &Shortcuts...");
@@ -141,6 +145,7 @@ namespace
     void Install()
     {
         LoadRecent();
+        LevelSnapshot::Attach(frameWindow);
         InstallMenus();
         SetWindowSubclass(frameWindow, FrameProc, 1, 0);
         SetTimer(frameWindow, kTimer, 10000, nullptr);
@@ -185,6 +190,8 @@ namespace
                "File: Open Recent lists the last ten maps. The editor's own autosave (View > Advanced Options,\r\n"
                "Editor.EditorEngine: AutoSave, AutoSaveTimeMinutes) writes Auto0 to Auto9.sdc into MapsEd.\r\n"
                "Build: Play From Camera as Spy / Merc starts a playtest at the perspective viewport's camera.\r\n"
+               "Build: Set Level Snapshot from Viewport / Image File puts the picture the game shows in map selection\r\n"
+               "into the map's <Map>-i package (Packages\\Textures), backing up the old one under ReloadedEditor.\r\n"
                "View > Reloaded Tools: Map Design (its own Keys... window lists the plan's shortcuts), Brush Visibility,\r\n"
                "Gameplay Connections, SMagicEvent Workbench, SCamNetwork Manager, Working Views, Assemblies, JSON.\r\n";
     }
@@ -358,7 +365,7 @@ void EditorExtras::AppendActorMenu(HMENU menu)
 
 bool EditorExtras::HandleCommand(UINT command)
 {
-    const bool ours = (command >= kSelectSameClass && command <= kSelectSameMesh) || (command >= kRecentFirst && command <= kRecentLast);
+    const bool ours = (command >= kSelectSameClass && command <= kLevelSnapshotFile) || (command >= kRecentFirst && command <= kRecentLast);
     if (!ours) return false;
     try
     {
@@ -373,6 +380,8 @@ bool EditorExtras::HandleCommand(UINT command)
         else if (command == kPlayFromCameraSpy) PlayFromCamera("0");
         else if (command == kPlayFromCameraMerc) PlayFromCamera("1");
         else if (command == kShortcuts) ShowShortcuts();
+        else if (command == kLevelSnapshotViewport) LevelSnapshot::FromViewport();
+        else if (command == kLevelSnapshotFile) LevelSnapshot::FromImageFile();
     }
     catch (const std::exception& e)
     {

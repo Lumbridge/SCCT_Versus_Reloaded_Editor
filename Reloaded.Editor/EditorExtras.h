@@ -18,6 +18,8 @@ namespace EditorExtras
     constexpr UINT kPlayFromCameraMerc = 40961;
     constexpr UINT kShortcuts = 40962;
     constexpr UINT kSelectSameMesh = 40963;
+    constexpr UINT kLevelSnapshotViewport = 40964;
+    constexpr UINT kLevelSnapshotFile = 40965;
     constexpr UINT kRecentFirst = 40970, kRecentLast = 40979;
 
     // From the menu-injection thread, once the editor frame exists: brings up

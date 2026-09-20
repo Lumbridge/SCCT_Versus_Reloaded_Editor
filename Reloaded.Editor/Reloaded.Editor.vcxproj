@@ -161,6 +161,8 @@
     <ClInclude Include="BrushGridSnapModel.h" />
     <ClInclude Include="MapPackage.h" />
     <ClInclude Include="MapPackageDialog.h" />
+    <ClInclude Include="LevelSnapshot.h" />
+    <ClInclude Include="LevelSnapshotModel.h" />
     <ClInclude Include="WorkflowEditor.h" />
     <ClInclude Include="WorkflowTools.h" />
     <ClInclude Include="MagicEventWorkbench.h" />
@@ -230,6 +232,7 @@
     <ClCompile Include="WorkflowModel.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="MapPackage.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="MapPackageDialog.cpp" />
+    <ClCompile Include="LevelSnapshot.cpp" />
     <ClCompile Include="WorkflowEditor.cpp" />
     <ClCompile Include="WorkflowGraph.cpp" />
     <ClCompile Include="WorkflowTools.cpp" />

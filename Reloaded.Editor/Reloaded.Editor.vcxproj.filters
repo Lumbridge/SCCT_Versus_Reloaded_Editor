@@ -21,6 +21,8 @@
     <ClInclude Include="BrushGridSnapModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapPackage.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapPackageDialog.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="LevelSnapshot.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="LevelSnapshotModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="WorkflowEditor.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="WorkflowTools.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MagicEventWorkbench.h"><Filter>Header Files</Filter></ClInclude>
@@ -333,6 +335,7 @@
     <ClCompile Include="WorkflowModel.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MapPackage.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MapPackageDialog.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="LevelSnapshot.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="WorkflowEditor.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="WorkflowGraph.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="WorkflowTools.cpp"><Filter>Source Files</Filter></ClCompile>
