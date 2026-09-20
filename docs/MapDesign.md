@@ -249,7 +249,7 @@ reshape from there.
 - **Doorway:** a subtractive opening through a wall, starting at the interior
   face. Length is its depth. It can carry a zone portal.
 - **Stairs:** 1–128 solid steps rising along local +Y; height is the total rise.
-  Every flight, spirals included, also gets an invisible, semi-solid ramp laid
+  Every straight, L or U flight also gets an invisible, semi-solid ramp laid
   over the steps (a build first repairs the brush flags of any stair placed
   by an older version, whose ramp would otherwise swallow its steps, and sends
   every stair, ramp and platform to the end of the brush order, so a room carved
@@ -260,9 +260,11 @@ reshape from there.
   one loses them (type a count in the panel to override). A spiral is round:
   dragging either side handle changes its diameter. Its treads are one slab
   thick round a post, one full turn over the height, so the turn above leaves
-  headroom and the entrance at the bottom stays open; placed from the Floors
-  menu it is 384 across (144 units of tread) in a shaft with 24 units of
-  clearance round it.
+  headroom and the entrance at the bottom stays open. A spiral has no glide
+  ramp (a helix can only be covered by many small semi-solid pieces, whose
+  seams block pawns); its risers are kept to 16 units instead, which a pawn
+  steps up smoothly. Placed from the Floors menu it is 384 across (144 units
+  of tread) in a shaft with 24 units of clearance round it.
 - **Stairs L:** two flights with a landing, turning right; width is one flight,
   length the footprint of the first flight (at least 8 more than the width).
 - **Stairs U:** two flights side by side with a half landing, coming back the

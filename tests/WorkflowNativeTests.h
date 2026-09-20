@@ -632,9 +632,9 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 // A spiral stair, with its wedges, post and glide prisms, places and then moves as a whole.
                 J spiral={{"kind","Spiral"},{"construction","Carve"},{"width",256},{"length",256},{"height",256},{"thickness",16},{"steps",12},{"ceiling",false},{"portal",false},{"name","Native spiral"}};
                 auto placedSpiral=call({{"op","design.block"},{"spec",spiral},{"position",{2048,2048,0}},{"rotation",{0,0,0}}});
-                require(placedSpiral["members"].size()==35,"a spiral places its wedges, post and glide prisms");
+                require(placedSpiral["members"].size()==13,"a spiral places its treads and post");
                 auto movedSpiral=call({{"op","design.block"},{"spec",spiral},{"position",{2304,2048,0}},{"rotation",{0,0,0}},{"previous",placedSpiral}});
-                require(movedSpiral["members"].size()==35 && std::abs(movedSpiral["position"][0].get<double>()-2304)<.01,"a spiral moves to where it was dragged");
+                require(movedSpiral["members"].size()==13 && std::abs(movedSpiral["position"][0].get<double>()-2304)<.01,"a spiral moves to where it was dragged");
                 // The move, the build and the placement, in that order.
                 std::string trail="sizes: carved "+std::to_string(carvedScene.size());
                 for(int step=0;step<5;++step)
@@ -1406,13 +1406,13 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                     require(!spiralMembers.is_null(),"the spiral is a whole piece in the library");
                     if(!spiralMembers.is_null())
                     {
-                        J zeros=J::array();for(size_t i=0;i<spiralMembers.size();++i)zeros.push_back(0);
-                        call({{"op","design.polyflags"},{"members",spiralMembers},{"flags",zeros}});
+                        J wrong=J::array();for(size_t i=0;i<spiralMembers.size();++i)wrong.push_back(33);
+                        call({{"op","design.polyflags"},{"members",spiralMembers},{"flags",wrong}});
                         const auto repaired=call({{"op","design.repairflags"}}).get<size_t>();
                         const auto after=call({{"op","design.polyflags"},{"members",spiralMembers}});
-                        size_t ramps=0;for(auto& f:after)if(!f.is_null() && f.get<unsigned>()==33)++ramps;
-                        const std::string repairWhy="repairing piece flags restores every glide ramp ("+std::to_string(repaired)+" repaired, "+std::to_string(ramps)+" ramps of "+std::to_string(spiralMembers.size())+" brushes)";
-                        require(repaired>0 && ramps>0 && ramps==repaired,repairWhy.c_str());
+                        size_t plain=0;for(auto& f:after)if(!f.is_null() && f.get<unsigned>()==0)++plain;
+                        const std::string repairWhy="repairing piece flags puts a spiral's brushes back to plain ("+std::to_string(repaired)+" repaired, "+std::to_string(plain)+" plain of "+std::to_string(spiralMembers.size())+" brushes)";
+                        require(repaired==spiralMembers.size() && plain==spiralMembers.size(),repairWhy.c_str());
                     }
                     // What the BSP build keeps: every step of a spiral and of a
                     // straight stair must still own faces, or it is invisible in game.
@@ -1439,8 +1439,8 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                     auto facesOf=[&](const J& member){return owners.value(member["path"].get<std::string>(),0);};
                     if(!spiralMembers.is_null())
                     {
-                        // Wedges come first, then the post, then the glide prisms.
-                        const size_t wedges=(spiralMembers.size()+1)/3;
+                        // Treads come first, then the post.
+                        const size_t wedges=spiralMembers.size()-1;
                         size_t spiralSteps=0,spiralMissing=0;
                         for(size_t i=0;i<wedges;++i){if(facesOf(spiralMembers[i])>0)++spiralSteps;else ++spiralMissing;}
                         const std::string spiralWhy="a spiral's wedges keep their faces after a build ("+std::to_string(spiralSteps)+" with faces, "+std::to_string(spiralMissing)+" without, post faces "+std::to_string(facesOf(spiralMembers[wedges]))+")";

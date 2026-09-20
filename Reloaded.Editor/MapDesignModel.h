@@ -74,7 +74,7 @@ inline void RecountSteps(Json& spec)
     int steps=spec.value("steps",8);
     if(kind=="Stairs")steps=std::max(1,static_cast<int>(std::lround(l/32)));
     else if(kind=="Stairs L" || kind=="Stairs U")steps=2*std::max(1,static_cast<int>(std::lround((l-w)/32)));
-    else if(kind=="Spiral")steps=std::max(8,static_cast<int>(std::ceil(h/24)));
+    else if(kind=="Spiral")steps=std::max(8,static_cast<int>(std::ceil(h/16)));
     else return;
     steps=std::max(steps,static_cast<int>(std::ceil(h/24)));
     spec["steps"]=std::clamp(steps,kind=="Spiral"?3:(kind=="Stairs"?1:2),128);
@@ -212,15 +212,10 @@ inline std::vector<Solid> Geometry(const Json& spec)
             out.push_back(Hexa(c));
         }
         box({-r,-r,0},{r,r,h});
-        // The glide ramp climbs from each tread's front edge to the next one's,
-        // as two sloped prisms per step so every face stays planar.
-        for(int i=0;i+1<steps;++i)
-        {
-            const double a0=2*pi*i/steps,a1=2*pi*(i+1)/steps,z0=rise*(i+1),z1=rise*(i+2);
-            const Vector p1{r*std::cos(a0),r*std::sin(a0),z0},p2{R*std::cos(a0),R*std::sin(a0),z0},p3{R*std::cos(a1),R*std::sin(a1),z1},p4{r*std::cos(a1),r*std::sin(a1),z1};
-            out.push_back(Prism(p1,p2,p3,kGlideFlags,std::max(t,rise)));
-            out.push_back(Prism(p1,p3,p4,kGlideFlags,std::max(t,rise)));
-        }
+        // No glide ramp on a spiral: a helix can only be covered by many small
+        // semi-solid pieces, and the seams between them read as invisible
+        // obstacles in the BSP. Its risers are kept to 16 units instead, which
+        // a pawn steps up without a bump.
     }
     else if(kind=="Ramp")
     {
