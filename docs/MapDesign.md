@@ -454,7 +454,8 @@ presence detector or mine, and a dotted wire from every detector to the alarm it
 Event reaches. Hide them with **Overlays**.
 
 Devices are edited in place: **drag a device** to move it (a motion sensor's
-volume moves with it), and **drag the white handle** at the end of a laser beam
+volume moves with it; a device that is not selected moves alone, while dragging
+a selected one brings the rest of the selection and its workspace group along), and **drag the white handle** at the end of a laser beam
 or in front of a camera to turn it — the laser's beam also ends where the handle
 is dropped, so one drag aims it and sets its length. In the top view the handle
 sets the direction; in the front and side views it sets the pitch, so a laser can

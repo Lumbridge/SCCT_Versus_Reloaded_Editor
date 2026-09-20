@@ -1314,10 +1314,20 @@ void DesignVerifyActive(DesignState& s)
 // What moves along with some actors: the rest of their group, and every other
 // selected actor, unlocked and not among the actors themselves. So a box
 // selection of several pieces drags as one.
-Json DesignGroupOthers(DesignState& s,const Json& moved)
+// A device dragged on its own moves alone: the rest of the selection and its
+// group come along only when the device is part of the selection, and only a
+// group made in this workspace counts, since a native Group often spans the
+// whole map.
+bool DesignWorkspaceLayer(DesignState& s,const std::string& name)
+{
+    for(const auto& layer:DesignData(s).at("layers"))if(Fold(layer.at("name").get<std::string>())==Fold(name))return true;
+    return false;
+}
+Json DesignGroupOthers(DesignState& s,const Json& moved,bool device=false)
 {
     Json others=Json::array();
     if(!moved.is_array() || moved.empty())return others;
+    if(device && !moved[0].value("selected",false))return others;
     auto own=[&](const std::string& path){for(auto& done:moved)if(done.at("path")==path)return true;return false;};
     auto add=[&](const Json& identity)
     {
@@ -1326,7 +1336,7 @@ Json DesignGroupOthers(DesignState& s,const Json& moved)
         for(auto& o:others)if(o.at("path")==path)return;
         others.push_back(Json{{"path",path},{"class",identity.at("class")}});
     };
-    if(const auto group=SceneGroupOf(s,moved[0].at("path").get<std::string>());!group.empty())
+    if(const auto group=SceneGroupOf(s,moved[0].at("path").get<std::string>());!group.empty() && (!device || DesignWorkspaceLayer(s,group)))
         for(auto& m:SceneGroupMembers(s,group))add(m);
     for(const auto& actor:s.scene)if(actor.value("selected",false) && DesignShows(s,actor))add(actor);
     return others;
@@ -3363,7 +3373,7 @@ void DesignEndDrag(DesignState& s,bool add)
         }
         Json properties=Json::object();
         if(drag.device.value("kind",std::string())=="Laser")properties["LaserLength"]=std::to_string(static_cast<int>(drag.deviceLength));
-        const Json followers=drag.kind==DesignDrag::Kind::Device?DesignGroupOthers(s,Json::array({drag.device})):Json::array();
+        const Json followers=drag.kind==DesignDrag::Kind::Device?DesignGroupOthers(s,Json::array({drag.device}),true):Json::array();
         Editor::MoveSecurityActor(drag.device,drag.devicePose,properties,followers);
         DesignRefresh(s);
         DesignStatus(s,drag.kind==DesignDrag::Kind::Device
