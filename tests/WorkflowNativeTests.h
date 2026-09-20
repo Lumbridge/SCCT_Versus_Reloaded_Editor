@@ -954,13 +954,7 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 for(auto& a:call({{"op","design.scene"}}))if(a["path"]==one[0]["path"])hidden=a["hidden"].get<bool>();
                 require(!hidden,"Unhide all shows it again");
                 call({{"op","select"},{"actors",J::array()}});
-                const auto fileBefore=call({{"op","map.file"}}).get<std::string>();
-                require(!fileBefore.empty(),"the frame reports the map's file");
-                Record("package_words_before",call({{"op","package.words"}}).dump().c_str());
-                const auto copy=call({{"op","autosave.now"}}).get<std::string>();
-                Record("package_words_after",call({{"op","package.words"}}).dump().c_str());
-                require(std::filesystem::exists(copy) && copy.find("_Autosave1")!=std::string::npos,("an autosave copy is written to the Autosave folder ("+copy+")").c_str());
-                require(call({{"op","map.file"}}).get<std::string>()==fileBefore,"an autosave copy leaves the map's own file name alone");
+                require(!call({{"op","map.file"}}).get<std::string>().empty(),"the frame reports the map's file for the recent list");
             }
             {
                 // Quick add: hover the wall of a placed piece and pick from the

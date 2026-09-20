@@ -1,7 +1,6 @@
 #include "pch.h"
 #include "EditorExtras.h"
 #include "WorkflowEditor.h"
-#include "ReloadedOptions.h"
 #include "GEKeybindSwap.h"
 #include "logger.h"
 #include <commctrl.h>
@@ -26,9 +25,7 @@ namespace
     HWND shortcutsWindow = nullptr;
     std::vector<std::string> recent;
     std::string lastMap;
-    unsigned lastAutosaveRevision = 0, lastCleanRevision = 0;
-    ULONGLONG lastAutosaveTick = 0;
-    int autosaveSlot = 0;
+    unsigned lastCleanRevision = 0;
     constexpr UINT_PTR kTimer = 0x5245;
     constexpr int kRecentMax = 10;
     constexpr UINT kFileSave = 40007, kFileSaveAs = 40008;
@@ -80,85 +77,19 @@ namespace
         RebuildRecentMenu();
     }
 
-    // A short notice near the bottom-right of the frame that fades after a
-    // few seconds: what an autosave did, without a dialog to dismiss.
-    LRESULT CALLBACK NoticeProc(HWND window, UINT message, WPARAM w, LPARAM l)
-    {
-        if (message == WM_PAINT)
-        {
-            PAINTSTRUCT ps{};
-            HDC dc = BeginPaint(window, &ps);
-            SetBkMode(dc, TRANSPARENT);
-            SetTextColor(dc, RGB(255, 255, 255));
-            SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
-            char text[512]{};
-            GetWindowTextA(window, text, sizeof(text));
-            RECT rect{};
-            GetClientRect(window, &rect);
-            DrawTextA(dc, text, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            EndPaint(window, &ps);
-            return 0;
-        }
-        if (message == WM_TIMER || message == WM_LBUTTONDOWN) { DestroyWindow(window); return 0; }
-        return DefWindowProcA(window, message, w, l);
-    }
-    void Notice(const std::string& text)
-    {
-        static bool registered = false;
-        if (!registered)
-        {
-            WNDCLASSA wc{};
-            wc.lpfnWndProc = NoticeProc;
-            wc.hInstance = GetModuleHandle(nullptr);
-            wc.lpszClassName = "ReloadedNotice";
-            wc.hbrBackground = CreateSolidBrush(RGB(40, 60, 80));
-            wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-            registered = RegisterClassA(&wc) != 0;
-            if (!registered) return;
-        }
-        RECT frame{};
-        GetWindowRect(frameWindow, &frame);
-        const int width = static_cast<int>(text.size()) * 7 + 40, height = 34;
-        HWND notice = CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, "ReloadedNotice", text.c_str(), WS_POPUP,
-                                      frame.right - width - 24, frame.bottom - height - 48, width, height, frameWindow, nullptr, GetModuleHandle(nullptr), nullptr);
-        if (!notice) return;
-        ShowWindow(notice, SW_SHOWNOACTIVATE);
-        SetTimer(notice, 1, 4000, nullptr);
-    }
-
-    // Every few seconds on the frame's thread: notice a newly opened or saved
-    // map for the recent list, and take an autosave copy when the map has
-    // changed since the last one and the interval has passed.
+    // Every few seconds on the frame's thread: a newly opened or saved-as
+    // map goes to the top of the recent list, and counts as clean.
     void Tick()
     {
         try
         {
             const auto map = Editor::MapFile();
-            const auto revision = Editor::Revision();
-            if (map != lastMap)
-            {
-                lastMap = map;
-                lastCleanRevision = revision;
-                lastAutosaveRevision = revision;
-                lastAutosaveTick = GetTickCount64();
-                NoteMap(map);
-            }
-            const int minutes = ReloadedAutosaveMinutes();
-            if (minutes <= 0 || map.empty() || revision == lastAutosaveRevision) return;
-            if (GetTickCount64() - lastAutosaveTick < static_cast<ULONGLONG>(minutes) * 60000ull) return;
-            // Not while a dialog or menu is up or a drag holds the mouse: the
-            // map may be mid-transaction, and a save would close the menu.
-            if (!IsWindowEnabled(frameWindow) || GetCapture()) return;
-            GUITHREADINFO gui{ sizeof(gui) };
-            if (GetGUIThreadInfo(GetCurrentThreadId(), &gui) && (gui.flags & (GUI_INMENUMODE | GUI_POPUPMENUMODE | GUI_INMOVESIZE | GUI_SYSTEMMENUMODE))) return;
-            const auto path = EditorExtras::AutosaveNow();
-            Notice("Autosaved a copy to " + std::filesystem::path(path).filename().string());
+            if (map == lastMap) return;
+            lastMap = map;
+            lastCleanRevision = Editor::Revision();
+            NoteMap(map);
         }
-        catch (const std::exception& e)
-        {
-            lastAutosaveTick = GetTickCount64(); // Try again after the interval, not every tick.
-            Logger::log(std::string("Autosave: ") + e.what());
-        }
+        catch (const std::exception&) { /* The engine may not be ready yet. */ }
     }
 
     LRESULT CALLBACK FrameProc(HWND window, UINT message, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR)
@@ -195,7 +126,6 @@ namespace
             // After New and Open.
             recentMenu = CreatePopupMenu();
             InsertMenuA(file, 2, MF_BYPOSITION | MF_POPUP, reinterpret_cast<UINT_PTR>(recentMenu), "Open &Recent");
-            InsertMenuA(file, 3, MF_BYPOSITION | MF_STRING, EditorExtras::kAutosaveNow, "Save an Autosave Cop&y Now");
             RebuildRecentMenu();
         }
         if (HMENU build = MenuWithCommand(bar, 40038); build && GetMenuState(build, EditorExtras::kPlayFromCameraSpy, MF_BYCOMMAND) == UINT(-1))
@@ -252,7 +182,8 @@ namespace
                "Brush face or vertices: snap to the grid per axis.   Texture / mesh browser: Favorites and Find Usages.\r\n"
                "\r\n"
                "MENUS\r\n"
-               "File: Open Recent, Save an Autosave Copy Now (autosave copies land in Autosave beside the map).\r\n"
+               "File: Open Recent lists the last ten maps. The editor's own autosave (View > Advanced Options,\r\n"
+               "Editor.EditorEngine: AutoSave, AutoSaveTimeMinutes) writes Auto0 to Auto9.sdc into MapsEd.\r\n"
                "Build: Play From Camera as Spy / Merc starts a playtest at the perspective viewport's camera.\r\n"
                "View > Reloaded Tools: Map Design (its own Keys... window lists the plan's shortcuts), Brush Visibility,\r\n"
                "Gameplay Connections, SMagicEvent Workbench, SCamNetwork Manager, Working Views, Assemblies, JSON.\r\n";
@@ -293,14 +224,16 @@ namespace
     }
 
     // Selection helpers built on the editor's own actor list, so they work
-    // for several classes or tags at once.
+    // for several classes or tags at once. The builder brush and the level
+    // info (not authorable) are never taken along.
     bool Camera(const Json& actor) { return actor.value("class", std::string()).find("Camera") != std::string::npos; }
+    bool Ordinary(const Json& actor) { return !Camera(actor) && actor.value("authorable", true); }
     void SelectMatching(const char* field, const char* what)
     {
         const auto actors = Editor::Actors();
         std::set<std::string> wanted;
         for (const auto& actor : actors)
-            if (actor.value("selected", false) && !Camera(actor) && actor.value("authorable", true))
+            if (actor.value("selected", false) && Ordinary(actor))
             {
                 const auto value = actor.value(field, std::string());
                 if (!value.empty() && Workflow::Fold(value) != "none") wanted.insert(Workflow::Fold(value));
@@ -308,7 +241,7 @@ namespace
         if (wanted.empty()) throw std::runtime_error(std::string("Select an actor with a ") + what + " first.");
         Json matching = Json::array();
         for (const auto& actor : actors)
-            if (!Camera(actor) && actor.value("authorable", true) && wanted.count(Workflow::Fold(actor.value(field, std::string())))) matching.push_back(actor);
+            if (Ordinary(actor) && wanted.count(Workflow::Fold(actor.value(field, std::string())))) matching.push_back(actor);
         Editor::Select(matching, false);
     }
     void Exec(const char* command, const char* failure)
@@ -322,14 +255,14 @@ namespace
     {
         Json others = Json::array();
         for (const auto& actor : Editor::Actors())
-            if (!Camera(actor) && actor.value("authorable", true) && !actor.value("selected", false)) others.push_back(actor);
+            if (Ordinary(actor) && !actor.value("selected", false)) others.push_back(actor);
         Editor::Select(others, false);
     }
     void Hide(bool selectedOnes)
     {
         Json members = Json::array();
         for (const auto& actor : Editor::Actors())
-            if (!Camera(actor) && actor.value("authorable", true) && actor.value("selected", false) == selectedOnes) members.push_back(actor);
+            if (Ordinary(actor) && actor.value("selected", false) == selectedOnes) members.push_back(actor);
         if (members.empty()) throw std::runtime_error(selectedOnes ? "Select something to hide first." : "Select what should stay visible first.");
         Editor::DesignSetFlags(members, 1, -1);
         Editor::Redraw();
@@ -393,8 +326,7 @@ namespace
         if (!Editor::Exec("MAP LOAD FILE=\"" + path + "\"")) throw std::runtime_error("The editor could not open\n" + path);
         Editor::SetMapFile(path);
         lastMap = path;
-        lastCleanRevision = lastAutosaveRevision = Editor::Revision();
-        lastAutosaveTick = GetTickCount64();
+        lastCleanRevision = Editor::Revision();
         NoteMap(path);
         Editor::Redraw();
     }
@@ -407,28 +339,6 @@ void EditorExtras::Attach(HWND frame)
     startupHook = SetWindowsHookExA(WH_GETMESSAGE, StartupHook, nullptr, GetWindowThreadProcessId(frame, nullptr));
     if (startupHook) PostMessage(frame, WM_NULL, 0, 0); // Something for the hook to see.
     else Logger::log("Editor extras: could not reach the frame's thread");
-}
-
-std::string EditorExtras::AutosaveNow()
-{
-    const auto map = Editor::MapFile();
-    if (map.empty()) throw std::runtime_error("The map has no file name yet: save it once first.");
-    const std::filesystem::path source(map);
-    const auto directory = source.parent_path() / "Autosave";
-    std::error_code error;
-    std::filesystem::create_directories(directory, error);
-    const int keep = (std::max)(1, ReloadedAutosaveKeep());
-    autosaveSlot = autosaveSlot % keep + 1;
-    const auto target = directory / (source.stem().string() + "_Autosave" + std::to_string(autosaveSlot) + source.extension().string());
-    // The save must not make the editor think the map itself is saved: what
-    // it clears on the level's package is put back.
-    const auto words = Editor::PackageWords();
-    if (!Editor::Exec("MAP SAVE FILE=\"" + target.string() + "\"")) throw std::runtime_error("The editor refused to write the autosave copy.");
-    Editor::RestorePackageWords(words);
-    lastAutosaveRevision = Editor::Revision();
-    lastAutosaveTick = GetTickCount64();
-    Logger::log("Autosaved " + target.string());
-    return target.string();
 }
 
 void EditorExtras::AppendActorMenu(HMENU menu)
@@ -448,7 +358,7 @@ void EditorExtras::AppendActorMenu(HMENU menu)
 
 bool EditorExtras::HandleCommand(UINT command)
 {
-    const bool ours = (command >= kSelectSameClass && command <= kAutosaveNow) || (command >= kRecentFirst && command <= kRecentLast);
+    const bool ours = (command >= kSelectSameClass && command <= kSelectSameMesh) || (command >= kRecentFirst && command <= kRecentLast);
     if (!ours) return false;
     try
     {
@@ -463,7 +373,6 @@ bool EditorExtras::HandleCommand(UINT command)
         else if (command == kPlayFromCameraSpy) PlayFromCamera("0");
         else if (command == kPlayFromCameraMerc) PlayFromCamera("1");
         else if (command == kShortcuts) ShowShortcuts();
-        else if (command == kAutosaveNow) Notice("Autosaved a copy to " + std::filesystem::path(AutosaveNow()).filename().string());
     }
     catch (const std::exception& e)
     {

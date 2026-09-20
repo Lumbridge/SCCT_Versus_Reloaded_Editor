@@ -45,7 +45,7 @@ Recovered maps keep their original baked lighting through ordinary builds. Recov
 
 | Tool | What it does |
 | --- | --- |
-| **Autosave and Open Recent** | A copy of the open map is written to an `Autosave` folder beside it every few minutes (set the interval and how many copies to keep in Reloaded Options, F12), with a notice and without changing which file Save writes; **File > Save an Autosave Copy Now** does it on demand, and **File > Open Recent** lists the last ten maps. |
+| **Open Recent** | **File > Open Recent** lists the last ten maps opened or saved, and warns before discarding unsaved changes. (The editor's own autosave, in Advanced Options, still writes `Auto0` to `Auto9.sdc` into MapsEd every five minutes.) |
 | **Play From Camera** | **Build > Play From Camera as Spy / Merc** starts a playtest at the perspective viewport's camera, from that team's start or a temporary one that is removed afterwards. |
 | **Select and hide** | Right-click an actor for **Reloaded: Select** (all of this class, all with this Tag, same static mesh, invert the selection) and **Reloaded: Visibility** (hide selected, isolate selected, unhide all); Brush Visibility has the same three buttons. |
 | **Working Views** | Save and restore viewport cameras and display settings. |

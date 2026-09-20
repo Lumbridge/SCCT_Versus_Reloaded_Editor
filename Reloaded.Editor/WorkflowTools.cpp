@@ -843,8 +843,6 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
     {
         Json q=Json::parse(request),result; std::string op=q.at("op");
         if(op=="actors") result=Editor::Actors(q.value("selected",false));
-        else if(op=="autosave.now")result=EditorExtras::AutosaveNow();
-        else if(op=="package.words")result=Editor::PackageWords();
         else if(op=="map.file")result=Editor::MapFile();
         else if(op=="design.block")result=Editor::DesignBlockout(q.at("spec"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()},q.value("previous",Json{}));
         else if(op=="design.scene")result=Editor::DesignScene();

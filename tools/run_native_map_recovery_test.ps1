@@ -80,12 +80,6 @@ if ($StartupConfigSystem) {
         Where-Object { $_.Name -ne 'native_recovery_test.ini' } |
         ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $testSystem -Force }
 }
-# The suite drives the editor for minutes at a time: a timed autosave copy in
-# the middle of a check would close its menu, so only the explicit op runs.
-$reloadedIni = Join-Path $testSystem 'Reloaded_Editor.ini'
-$reloadedText = if (Test-Path -LiteralPath $reloadedIni) { [IO.File]::ReadAllText($reloadedIni) } else { '' }
-$reloadedText = [regex]::Replace($reloadedText, '(?ms)^\[Autosave\].*?(?=^\[|\z)', '')
-[IO.File]::WriteAllText($reloadedIni, $reloadedText.TrimEnd() + "`r`n`r`n[Autosave]`r`nMinutes=0`r`nKeep=3`r`n")
 foreach ($name in 'EditorRes', '_PC_') {
     if (Test-Path -LiteralPath (Join-Path $installedSystem $name)) {
         Copy-Item -LiteralPath (Join-Path $installedSystem $name) -Destination $testSystem -Recurse
