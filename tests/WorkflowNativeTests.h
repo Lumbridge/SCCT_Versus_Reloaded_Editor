@@ -895,6 +895,18 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                     SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
                     call({{"op","select"},{"actors",J::array()}});
                 }
+                // The settings sheets read the LevelInfo and the mission through reflection.
+                {
+                    auto title=[&]{char text[512]{};GetDlgItemTextA(design,754,text,sizeof(text));return std::string(text);};
+                    SendMessage(design,WM_COMMAND,812,0); // Level settings.
+                    require(title().find("Level settings")!=std::string::npos && GetDlgItem(design,1000)!=nullptr,("Level settings opens a sheet with rows (title: "+title()+"; status: "+status()+")").c_str());
+                    SendMessage(design,WM_COMMAND,813,0); // Environment.
+                    require(title().find("Environment")!=std::string::npos && GetDlgItem(design,1000)!=nullptr,("the environment sheet has rows (status: "+status()+")").c_str());
+                    SendMessage(design,WM_COMMAND,814,0); // Map settings (mission).
+                    const bool mission=title().find("Map settings")!=std::string::npos;
+                    require(mission || status().find("no SMission")!=std::string::npos,("map settings open the mission or say there is none (status: "+status()+")").c_str());
+                    SendMessage(design,WM_COMMAND,702,0);
+                }
                 // A preset resizes the placed piece in place.
                 call({{"op","select"},{"actors",placedRoom}});
                 WorkflowProbe::Click(design,707);

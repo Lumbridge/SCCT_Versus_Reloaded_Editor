@@ -173,6 +173,85 @@ void SheetShowAnnotation(DesignState& s,size_t index)
     if(route)try{title=Design::RouteSummary(annotation,data);}catch(const std::exception&){}
     SheetBuild(s,"annotation",Json{{"index",index}},title,fields,{"Remove"});
 }
+// --- Level, environment and map settings ------------------------------------
+// The LevelInfo's own settings, its zone light and fog, and the mission's
+// settings, read through the editor's reflection and edited in place. Simple
+// leaves only; a small struct (a colour) is spread over its fields; only the
+// categories that belong to the subject, with everything but the generic
+// Actor categories as the fallback when a class names its categories
+// differently.
+const char* const kSettingsGenericCategories[]={"Advanced","Collision","Display","Force","Karma","Lighting","LightColor","Movement","Object","Sound","Networking","Corona","Physics","Events","Havok","Editor"};
+Json SettingsActor(DesignState& s,const std::string& which)
+{
+    if(which=="mission")
+    {
+        for(const auto& actor:s.objectives)if(actor.value("kind",std::string())=="Mission")return actor;
+        throw std::runtime_error("The map has no SMission yet: right-click the plan and choose Mission here.");
+    }
+    for(const auto& actor:Editor::Actors())
+    {
+        const auto cls=actor.value("class",std::string());
+        if(cls=="Engine.LevelInfo" || (cls.size()>10 && cls.compare(cls.size()-10,10,".LevelInfo")==0))return actor;
+    }
+    throw std::runtime_error("The map has no LevelInfo actor.");
+}
+std::vector<SheetField> SettingsFields(const Json& snapshot,const std::set<std::string>& categories,bool everything)
+{
+    std::vector<SheetField> fields;
+    const auto& values=snapshot.at("values");
+    auto leaf=[&](const std::string& key,const std::string& label,const Json& schema,const Json& value)
+    {
+        const auto kind=schema.value("kind",std::string());
+        SheetField field{key,label,"",{}};
+        const std::string text=value.is_string()?value.get<std::string>():value.dump();
+        if(kind=="BoolProperty"){field.value=Fold(text)=="true"?"Yes":"No";field.choices={"Yes","No"};}
+        else if(kind=="ByteProperty" && !schema.value("choices",Json::array()).empty())
+        {
+            for(const auto& choice:schema.at("choices"))field.choices.push_back(choice.get<std::string>());
+            field.value=text;
+        }
+        else if(kind=="StrProperty")
+        {
+            try{field.value=Json::parse(text).get<std::string>();}catch(const std::exception&){field.value=text;}
+        }
+        else if(kind=="IntProperty" || kind=="FloatProperty" || kind=="NameProperty" || kind=="ByteProperty" || kind=="ObjectProperty" || kind=="ClassProperty")field.value=text;
+        else return;
+        fields.push_back(field);
+    };
+    for(auto it=snapshot.at("schema").begin();it!=snapshot.at("schema").end();++it)
+    {
+        const auto& name=it.key();
+        const auto& schema=it.value();
+        const auto category=schema.value("category",std::string());
+        if(everything){bool generic=false;for(const char* g:kSettingsGenericCategories)if(category==g)generic=true;if(generic)continue;}
+        else if(!categories.count(category))continue;
+        if(!values.contains(name))continue;
+        const Json& value=values.at(name);
+        if(schema.value("kind",std::string())=="StructProperty")
+        {
+            const auto sub=schema.value("fields",Json::object());
+            if(!value.is_object() || sub.size()>6)continue; // Colours and other small structs only.
+            for(auto f=sub.begin();f!=sub.end();++f)if(value.contains(f.key()))leaf(name+"."+f.key(),name+" "+f.key(),f.value(),value.at(f.key()));
+        }
+        else leaf(name,name,schema,value);
+        if(fields.size()>=40)break;
+    }
+    return fields;
+}
+void SheetShowSettings(DesignState& s,const std::string& which)
+{
+    const Json actor=SettingsActor(s,which);
+    const Json snapshot=Editor::InspectActor(actor);
+    std::set<std::string> categories;
+    std::string title;
+    if(which=="level"){categories={"LevelInfo","LevelSummary","Audio","Music","Game","Story","Level"};title="Level settings ("+SecurityName(actor)+")";}
+    else if(which=="environment"){categories={"ZoneLight","ZoneInfo","ZoneSound","Fog","DistanceFog","Weather","Sky","Zone"};title="Environment: ambient light and fog ("+SecurityName(actor)+")";}
+    else{categories={};title="Map settings: mission "+SecurityName(actor);}
+    auto fields=SettingsFields(snapshot,categories,which=="mission");
+    if(fields.empty())fields=SettingsFields(snapshot,{},true);
+    if(fields.empty())throw std::runtime_error("No editable settings were found on "+SecurityName(actor)+".");
+    SheetBuild(s,"settings",Json{{"which",which},{"actor",actor},{"schema",snapshot.at("schema")},{"title",title}},title,fields,{"Select in editor","Refresh"});
+}
 void SheetShowRoute(DesignState& s)
 {
     std::vector<SheetField> fields={
@@ -246,6 +325,39 @@ void SheetApply(DesignState& s)
         DesignStatus(s,kind=="guide"?"Reference updated.":"Annotation updated.");
         return;
     }
+    if(kind=="settings")
+    {
+        // Changed rows only; a struct goes back whole, from the rows that show it.
+        const auto& schema=subject.at("schema");
+        Json properties=Json::object();
+        for(const auto& key:s.sheet.keys)
+        {
+            if(values[key]==s.sheet.shown[key])continue;
+            const auto dot=key.find('.');
+            const std::string name=key.substr(0,dot);
+            const Json leaf=dot==std::string::npos?schema.at(name):schema.at(name).at("fields").at(key.substr(dot+1));
+            const auto leafKind=leaf.value("kind",std::string());
+            Json value=leafKind=="BoolProperty"?Json(values[key]=="Yes"?"True":"False"):leafKind=="StrProperty"?Json(Json(values[key]).dump()):Json(values[key]);
+            if(dot==std::string::npos)properties[name]=value;
+            else
+            {
+                if(!properties.contains(name))
+                {
+                    properties[name]=Json::object();
+                    for(const auto& other:s.sheet.keys)
+                        if(other.rfind(name+".",0)==0)properties[name][other.substr(name.size()+1)]=values[other];
+                }
+                properties[name][key.substr(dot+1)]=value;
+            }
+        }
+        if(properties.empty())return;
+        try{Editor::SetActorProperties(subject.at("actor"),properties);}
+        catch(const std::exception& e){DesignStatus(s,e.what());SheetRefreshLater(s);return;}
+        s.sheet.shown=values;
+        DesignRefresh(s);
+        DesignStatus(s,subject.value("title",std::string("Settings"))+": updated. One Undo step.");
+        return;
+    }
     if(kind=="route")
     {
         s.annotationName=values["name"];
@@ -290,6 +402,17 @@ void SheetButton(DesignState& s,int index)
         InvalidateRect(s.canvas,nullptr,FALSE);
         return;
     }
+    if(kind=="settings")
+    {
+        if(index==0)
+        {
+            Editor::Select(Json::array({subject.at("actor")}),true);
+            DesignRefresh(s);
+            DesignStatus(s,"Selected "+SecurityName(subject.at("actor"))+" in the editor; every property is in the editor's property window.");
+        }
+        else if(index==1)SheetShowSettings(s,subject.value("which",std::string("level")));
+        return;
+    }
     if(kind=="route")
     {
         if(index==0){DesignCommand(s,DFinish);SheetHint(s,"Stored. Click a route point to edit it.");}
@@ -320,6 +443,11 @@ void SheetRefresh(DesignState& s)
     }
     else if(kind=="guide")SheetShowGuide(s,subject.value("index",size_t{0}));
     else if(kind=="annotation")SheetShowAnnotation(s,subject.value("index",size_t{0}));
+    else if(kind=="settings")
+    {
+        try{SheetShowSettings(s,subject.value("which",std::string("level")));}
+        catch(const std::exception& e){SheetHint(s,e.what());}
+    }
     else if(kind=="route")
     {
         if(s.mode=="Route")SheetShowRoute(s);

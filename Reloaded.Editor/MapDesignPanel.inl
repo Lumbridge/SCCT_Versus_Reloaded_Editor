@@ -7,6 +7,7 @@ enum DesignControl
     DSnap,DFloor,DDoorway,DMovement,DCompare,DWorkspace,DUndo,DRedo,
     // Clipboard, mirroring, selection, sightlines, presets and the readout.
     DCopy=800,DPaste,DDuplicate,DSelectAll,DMirrorX,DMirrorY,DSightline,DPreset,DReadout,DStarter,DFitSelection,
+    DLevelSettings=812,DEnvironmentSettings,DMapSettings,
     DCtxCopyPiece=815,DCtxDuplicatePiece,DCtxPasteHere,DCtxMirrorXHere,DCtxMirrorYHere,DCtxSightlineHere,DCtxStarterHere,
     // Quick-add menu entries, raised from the hovered wall.
     DAddDoorway=730,DAddCorridor,DAddVent,DAddRoom,DAddRoomAbove,DAddRoomBelow,DAddStairsUp,DAddStairsDown,
@@ -488,6 +489,7 @@ void SheetButton(DesignState& s,int index);
 void SheetRefresh(DesignState& s);
 void SheetRefreshLater(DesignState& s);
 void SheetShowRoute(DesignState& s);
+void SheetShowSettings(DesignState& s,const std::string& which);
 void SheetShowGuide(DesignState& s,size_t index);
 void SheetShowAnnotation(DesignState& s,size_t index);
 void SheetShowLight(DesignState& s,const Json& light);
@@ -1919,6 +1921,13 @@ void DesignCommand(DesignState& s,int id)
     }
     if(id==DFit){DesignFit(s);return;}
     if(id==DFitSelection){DesignFitSelection(s);return;}
+    if(id==DLevelSettings || id==DEnvironmentSettings || id==DMapSettings)
+    {
+        if(!s.pending.is_null())DesignDeactivate(s);
+        SheetShowSettings(s,id==DLevelSettings?"level":id==DEnvironmentSettings?"environment":"mission");
+        DesignStatus(s,"Edit the settings in the panel; each change is one Undo step. Select in editor opens the rest in the property window.");
+        return;
+    }
     if(id==DStarter){StarterLayout(s,s.contextPointSet?s.contextPoint:DesignPasteAnchor(s));return;}
     if(id==DCopy){DesignCopy(s);return;}
     if(id==DPaste){DesignPaste(s,s.contextPointSet?s.contextPoint:DesignPasteAnchor(s));return;}
@@ -4679,7 +4688,9 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 AppendMenuA(bar,MF_POPUP,reinterpret_cast<UINT_PTR>(popup),title);
             };
             submenu("&Workspace",{{DReference,"Reference image..."},{DCalibrate,"Calibrate image"},{DRemoveReference,"Remove reference..."},{0,nullptr},
-                {DScene,"Scene panel (docked on the right)"},{DMovement,"Movement limits..."},{0,nullptr},{DWorkspace,"Export / import workspace..."}});
+                {DScene,"Scene panel (docked on the right)"},{DMovement,"Movement limits..."},{0,nullptr},
+                {DLevelSettings,"Level settings (LevelInfo)"},{DEnvironmentSettings,"Environment: ambient light and fog"},{DMapSettings,"Map settings (mission)"},{0,nullptr},
+                {DWorkspace,"Export / import workspace..."}});
             submenu("&Blockout",{{DBlock,"New blockout..."},{DStarter,"Versus starter layout..."},{DEdit,"Edit selected piece"},{DPlace,"Place / Apply preview"},{DDiscard,"Discard preview"},{0,nullptr},
                 {DDoorway,"Doorway in room..."},{DDetach,"Detach selected piece"},{0,nullptr},
                 {DCopy,"Copy selected pieces\tCtrl+C"},{DPaste,"Paste pieces at the cursor\tCtrl+V"},{DDuplicate,"Duplicate selected pieces beside\tCtrl+D"},

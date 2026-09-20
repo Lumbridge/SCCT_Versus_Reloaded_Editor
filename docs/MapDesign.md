@@ -551,6 +551,22 @@ changed in the Magic Event workbench. **Ladder up** and
 visual brush. **Opening through the floor above** cuts a 128 x 128 hole. Each is
 one Undo step (the climbs two).
 
+## Level, environment and map settings
+
+The **Workspace** menu opens three settings sheets in the panel on the left,
+so the LevelInfo and the mission are edited without a property window:
+**Level settings** (the LevelInfo's own properties: title, author, game type,
+music and the rest of its LevelInfo categories), **Environment** (the
+LevelInfo as the default zone: ambient brightness, hue and saturation, distance
+fog and its colour, and the other zone light and sound settings), and **Map
+settings** (the SMission's own properties, such as its objective name and
+description, leaving the generic Actor categories out). Rows are built from
+the editor's reflection, so whatever the loaded classes expose is there: text,
+numbers, names, Yes/No boxes, enumerations as lists, and a colour spread over
+its channels. Press Enter or move the focus to apply a row; each change is one
+Undo step. **Select in editor** selects the actor for anything the sheet does
+not show; **Refresh** re-reads it.
+
 ## 14. Lights
 
 Lighting decides where a spy can hide, so the plan shows it. Every light in the
