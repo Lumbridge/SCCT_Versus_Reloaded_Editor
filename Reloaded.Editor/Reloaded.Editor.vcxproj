@@ -219,10 +219,10 @@
     <ClInclude Include="RebuildAllMaps.h" />
     <ClInclude Include="ViewportConfigFix.h" />
     <ClInclude Include="GridSizeShortcut.h" />
+    <ClInclude Include="EditorExtras.h" />
     <ClInclude Include="PlayLevelConfig.h" />
     <ClInclude Include="LocalLightingMatch.h" />
     <ClInclude Include="PlayLevelCommand.h" />
-    <ClInclude Include="EditorExtras.h" />
     <ClInclude Include="GridSizeShortcutState.h" />
   </ItemGroup>
   <ItemGroup>
@@ -295,10 +295,10 @@
     <ClCompile Include="RebuildAllMaps.cpp" />
     <ClCompile Include="ViewportConfigFix.cpp" />
     <ClCompile Include="GridSizeShortcut.cpp" />
+    <ClCompile Include="EditorExtras.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Reloaded.Editor.rc" />
-    <ClCompile Include="EditorExtras.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="cpp.hint" />

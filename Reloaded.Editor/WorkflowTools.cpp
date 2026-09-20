@@ -148,8 +148,8 @@ namespace
                 }
                 else if(id==200)Editor::SetBrushVisibility(0,"all");
                 else if(id>=202 && id<=204)EditorExtras::HandleCommand(id==202?EditorExtras::kHideSelected:id==203?EditorExtras::kIsolateSelected:EditorExtras::kUnhideAll);
-            }
                 RefreshBrushVisibility(window);return 0;
+            }
             if(message==WM_DESTROY){brushVisibilityWindow=nullptr;return 0;}
         }
         catch(const std::exception& e)
@@ -733,8 +733,8 @@ namespace
                 }
                 catch(const std::exception&) { /* Only available for valid static-mesh selections. */ }
                 EditorExtras::AppendActorMenu(sub);
-        }
             }
+        }
         return menu;
     }
 }
@@ -747,8 +747,8 @@ void RunObjectiveCommand(UINT command,const Json& snapshot)
 bool HandleCommand(UINT command)
 {
     if(EditorExtras::HandleCommand(command))return true;
-    {
     if(command==kBrushVisibility)
+    {
         try{OpenBrushVisibility();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Brush Visibility",MB_OK|MB_ICONERROR);}
         return true;
     }
@@ -844,8 +844,8 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         Json q=Json::parse(request),result; std::string op=q.at("op");
         if(op=="actors") result=Editor::Actors(q.value("selected",false));
         else if(op=="map.file")result=Editor::MapFile();
-        else if(op=="design.block")result=Editor::DesignBlockout(q.at("spec"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()},q.value("previous",Json{}));
         else if(op=="design.scene")result=Editor::DesignScene();
+        else if(op=="design.block")result=Editor::DesignBlockout(q.at("spec"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()},q.value("previous",Json{}));
         else if(op=="design.align"){Editor::DesignAlign(q.at("scene"),q.at("axis"),q.at("mode"),q.value("spacing",0.0));result=true;}
         else if(op=="design.layer"){Editor::DesignLayer(q.at("members"),q.at("hidden"),q.at("locked"),q.value("group",std::string()),q.value("groupAction",std::string("none")));result=true;}
         else if(op=="design.grid")result=Editor::DesignGrid();
