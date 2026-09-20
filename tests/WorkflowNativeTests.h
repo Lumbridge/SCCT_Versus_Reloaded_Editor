@@ -1050,6 +1050,90 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
             }
             {
+                // Stages: a mission with two objectives and their terminals, a
+                // door and a switchable light; a two-stage plan wires them in one
+                // Undo step, reads back, and the Stages window lists it.
+                auto inspect=[&](const J& actor){return call({{"op","magic.inspect"},{"actor",actor}});};
+                auto stageOf=[&](const J& identity){for(auto& a:call({{"op","stage.actors"}}))if(a["path"]==identity["path"])return a;return J{};};
+                // Earlier tests leave missions behind; one mission keeps Objective
+                // here a top-level menu entry the popup chooser can pick.
+                for(auto& a:call({{"op","objective.actors"}}))if(a["kind"]=="Mission")call({{"op","security.delete"},{"actor",{{"path",a["path"]},{"class",a["class"]}}}});
+                auto mission=call({{"op","magic.create"},{"class","SBase.SMission"}});
+                auto first=call({{"op","objective.add"},{"owner",inspect(mission)},{"class","SBase.SObjective"}}).at(0);
+                auto second=call({{"op","objective.add"},{"owner",inspect(mission)},{"class","SBase.SObjective"}}).at(0);
+                auto terminalA=call({{"op","objective.add"},{"owner",inspect(first)},{"class","SBase.SComputerObjectiveTrigger"}}).at(0);
+                auto terminalB=call({{"op","objective.add"},{"owner",inspect(second)},{"class","SBase.SComputerObjectiveTrigger"}}).at(0);
+                auto door=call({{"op","security.create"},{"class","Engine.Mover"},{"position",{1300,2000,64}}});
+                auto lamp=call({{"op","security.create"},{"class","SBase.STriggerLight"},{"position",{1300,2100,200}}});
+                require(stageOf(first)["kind"]=="Objective" && stageOf(terminalB)["kind"]=="Objective trigger" && stageOf(door)["kind"]=="Mover" && stageOf(lamp)["kind"]=="Light","the stage inventory classifies the actors");
+                {
+                    // Objective here on the plan: the right-click menu adds an
+                    // objective under the map's one mission, linked and placed.
+                    int missions=0;for(auto& a:call({{"op","objective.actors"}}))if(a["kind"]=="Mission")++missions;
+                    require(missions==1,"the stage fixture has the map's only mission");
+                    {
+                        const auto linked=inspect(mission)["values"]["Objectives"].size();
+                        const auto count=actorCount();
+                        const auto view=call({{"op","design.view"}});
+                        const double zoom=view["zoom"],panX=view["panX"],panY=view["panY"];
+                        POINT at{static_cast<LONG>(panX+1500*zoom),static_cast<LONG>(panY-1900*zoom)};
+                        SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
+                        WorkflowProbe::objectivePopupChoice=983; // Objective here (under the mission).
+                        WorkflowProbe::objectivePopupFound=false;WorkflowProbe::objectivePopupTicks=0;
+                        auto popup=SetTimer(nullptr,0,50,WorkflowProbe::ChooseObjectivePopup);
+                        SendMessage(GetDlgItem(design,719),WM_RBUTTONDOWN,0,MAKELPARAM(at.x,at.y));
+                        KillTimer(nullptr,popup);
+                        require(WorkflowProbe::objectivePopupFound,"the right-click menu offers Objective here");
+                        require(actorCount()==count+1 && inspect(mission)["values"]["Objectives"].size()==linked+1,"Objective here adds an objective linked to the mission");
+                        // Placement is the link, then a move that may be refused: undo
+                        // only as far as the objective's own steps.
+                        for(int step=0;step<2 && actorCount()>count;++step)Exec("TRANSACTION UNDO");
+                        require(actorCount()==count && inspect(mission)["values"]["Objectives"].size()==linked,"the placed objective undoes");
+                    }
+                }
+                const bool usableBefore=stageOf(terminalB)["usable"].get<bool>();
+                const auto before=actorCount();
+                J plan={{"format","scct.stages"},{"version",1},{"lockLater",true},{"stages",J::array({
+                    {{"objectives",J::array({first["path"]})},{"required",0},{"actions",J::array({
+                        {{"kind","open"},{"target",door["path"]},{"delay","1.5"}},
+                        {{"kind","light"},{"target",lamp["path"]}},
+                        {{"kind","announce"},{"title","Zone 2"},{"merc","East wing open"},{"spy","East wing open"},{"seconds","6"}}})}},
+                    {{"objectives",J::array({second["path"]})},{"required",0},{"actions",J::array()}}})}};
+                auto preview=call({{"op","stage.preview"},{"plan",plan}});
+                require(preview["creates"].get<size_t>()==5 && actorCount()==before,"stage.preview reports the batch without touching the map");
+                call({{"op","stage.apply"},{"plan",plan}});
+                require(actorCount()==before+5,"stage.apply creates two gates, two completions and the announcement");
+                require(inspect(first)["values"]["Event"]=="Stage1_Gate" && inspect(second)["values"]["Event"]=="Stage2_Gate","objectives feed their stage gates");
+                J gate,complete,announce;
+                for(auto& a:call({{"op","stage.actors"}})){if(a["tag"]=="Stage1_Gate")gate=a;if(a["tag"]=="Stage1_Complete")complete=a;if(a["tag"]=="Stage1_Announce")announce=a;}
+                require(!gate.is_null() && gate["groups"].size()==1 && gate["groups"][0]["Sequence"]=="True" && gate["groups"][0]["EventGroup"].size()==1 && gate["groups"][0]["EventGroup"][0]["Event"]=="Stage1_Complete","the gate is a one-step sequence firing the completion");
+                auto actions=complete["groups"][0]["EventGroup"];
+                require(actions.size()==4 && actions[0]["Event"]==stageOf(terminalB)["tag"] && actions[1]["Event"]==stageOf(door)["tag"] && std::stod(actions[1]["Delay"].get<std::string>())==1.5 && actions[2]["Event"]==stageOf(lamp)["tag"] && actions[3]["Event"]=="Stage1_Announce","the completion unlocks stage 2's terminal, then opens, lights and announces");
+                require(stageOf(terminalB)["usable"]==false && stageOf(terminalB)["method"]=="TriggerControl" && stageOf(terminalA)["usable"]==true,"the later terminal starts locked; the first stays usable");
+                require(stageOf(door)["state"]=="TriggerToggle","the door stays open once triggered");
+                require(announce["kind"]=="Alarm" && announce["title"]=="Zone 2" && announce["spy"]=="East wing open" && std::stod(announce["duration"].get<std::string>())==6,"the announcement is an alarm with the texts and duration");
+                auto readBack=call({{"op","stage.read"}});
+                require(readBack["stages"].size()==2 && readBack["stages"][0]["objectives"][0]==first["path"] && readBack["stages"][0]["actions"].size()==3 && readBack["stages"][0]["actions"][2]["kind"]=="announce" && readBack["stages"][0]["actions"][2]["title"]=="Zone 2","the plan reads back from the map");
+                auto again=call({{"op","stage.preview"},{"plan",readBack}});
+                require(again["creates"].get<size_t>()==0 && again["updates"].get<size_t>()==0,"a map matching its plan needs no changes");
+                Exec("TRANSACTION UNDO");
+                require(actorCount()==before && inspect(first)["values"]["Event"]=="None" && stageOf(terminalB)["usable"]==usableBefore,"one Undo removes the stage actors and restores the objectives and terminals");
+                Exec("TRANSACTION REDO");
+                require(actorCount()==before+5 && inspect(first)["values"]["Event"]=="Stage1_Gate","Redo restores the stages");
+                // The Stages window lists the plan the map carries.
+                WorkflowProbe::Click(design,768);
+                auto stages=WorkflowProbe::FindDialog("Stages");
+                require(stages!=nullptr,"the Stages menu item opens its window");
+                require(SendMessage(GetDlgItem(stages,1000),LB_GETCOUNT,0,0)==2,"the window lists both stages");
+                require(SendMessage(GetDlgItem(stages,1009),LB_GETCOUNT,0,0)==4,"the first stage shows its unlock row and three actions");
+                SendMessage(GetDlgItem(stages,1000),LB_SETCURSEL,1,0);
+                SendMessage(stages,WM_COMMAND,MAKEWPARAM(1000,LBN_SELCHANGE),reinterpret_cast<LPARAM>(GetDlgItem(stages,1000)));
+                require(SendMessage(GetDlgItem(stages,1009),LB_GETCOUNT,0,0)==0,"the last stage has no actions");
+                DestroyWindow(stages);
+                for(int i=0;i<8;++i)Exec("TRANSACTION UNDO");
+                require(actorCount()==before-7,"the stage fixture is undone");
+            }
+            {
                 // Security devices: the ops create and wire them; the Security
                 // window places them from clicks in the plan.
                 auto securityOf=[&](const J& identity){for(auto& a:call({{"op","security.actors"}}))if(a["path"]==identity["path"])return a;return J{};};
@@ -1115,6 +1199,32 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                     J draggedLaser;for(auto& a:call({{"op","security.actors"}}))if(a["path"]==placedLaser["path"])draggedLaser=a;
                     require(draggedLaser["position"][1].get<double>()<laserAt[1]-30,"dragging a laser in the plan moves it");
                     require(draggedLaser["position"][0].get<double>()==laserAt[0],"a drag keeps the other axis");
+                    // Dragging a device that is not selected moves it alone, whatever
+                    // else is selected; dragging a selected device brings the rest of
+                    // the selection with it.
+                    {
+                        const auto alarmAt=securityOf(alarm)["position"].get<std::array<double,3>>();
+                        const auto soloAt=draggedLaser["position"].get<std::array<double,3>>();
+                        call({{"op","select"},{"actors",J::array({alarm,placedAlarm})}});
+                        SendMessage(design,WM_COMMAND,702,0);
+                        POINT solo{static_cast<LONG>(panX2+soloAt[0]*zoom2),static_cast<LONG>(panY2-soloAt[1]*zoom2)};
+                        SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(solo.x,solo.y));
+                        SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(solo.x,solo.y+40));
+                        SendMessage(GetDlgItem(design,719),WM_LBUTTONUP,0,MAKELPARAM(solo.x,solo.y+40));
+                        require(securityOf(placedLaser)["position"][1].get<double>()<soloAt[1]-20,"an unselected laser still drags");
+                        require(securityOf(alarm)["position"].get<std::array<double,3>>()==alarmAt,"dragging an unselected device leaves the selected actors where they are");
+                        Exec("TRANSACTION UNDO");
+                        call({{"op","select"},{"actors",J::array({alarm,placedLaser})}});
+                        SendMessage(design,WM_COMMAND,702,0);
+                        SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(solo.x,solo.y));
+                        SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(solo.x,solo.y+40));
+                        SendMessage(GetDlgItem(design,719),WM_LBUTTONUP,0,MAKELPARAM(solo.x,solo.y+40));
+                        require(securityOf(alarm)["position"][1].get<double>()<alarmAt[1]-20,"dragging a selected device brings the rest of the selection along");
+                        Exec("TRANSACTION UNDO");
+                        call({{"op","select"},{"actors",J::array()}});
+                        SendMessage(design,WM_COMMAND,702,0);
+                        draggedLaser=securityOf(placedLaser);
+                    }
                     // The aim handle at the beam end turns and stretches the beam.
                     const auto newAt=draggedLaser["position"].get<std::array<double,3>>();
                     const double length=draggedLaser["length"];
@@ -1194,32 +1304,6 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                     for(auto& candidate:libraryPieces)
                         for(auto& member:candidate["members"])
                             for(auto& actor:placedRoom)
-                    // Dragging a device that is not selected moves it alone, whatever
-                    // else is selected; dragging a selected device brings the rest of
-                    // the selection with it.
-                    {
-                        const auto alarmAt=securityOf(alarm)["position"].get<std::array<double,3>>();
-                        const auto soloAt=draggedLaser["position"].get<std::array<double,3>>();
-                        call({{"op","select"},{"actors",J::array({alarm,placedAlarm})}});
-                        SendMessage(design,WM_COMMAND,702,0);
-                        POINT solo{static_cast<LONG>(panX2+soloAt[0]*zoom2),static_cast<LONG>(panY2-soloAt[1]*zoom2)};
-                        SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(solo.x,solo.y));
-                        SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(solo.x,solo.y+40));
-                        SendMessage(GetDlgItem(design,719),WM_LBUTTONUP,0,MAKELPARAM(solo.x,solo.y+40));
-                        require(securityOf(placedLaser)["position"][1].get<double>()<soloAt[1]-20,"an unselected laser still drags");
-                        require(securityOf(alarm)["position"].get<std::array<double,3>>()==alarmAt,"dragging an unselected device leaves the selected actors where they are");
-                        Exec("TRANSACTION UNDO");
-                        call({{"op","select"},{"actors",J::array({alarm,placedLaser})}});
-                        SendMessage(design,WM_COMMAND,702,0);
-                        SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(solo.x,solo.y));
-                        SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(solo.x,solo.y+40));
-                        SendMessage(GetDlgItem(design,719),WM_LBUTTONUP,0,MAKELPARAM(solo.x,solo.y+40));
-                        require(securityOf(alarm)["position"][1].get<double>()<alarmAt[1]-20,"dragging a selected device brings the rest of the selection along");
-                        Exec("TRANSACTION UNDO");
-                        call({{"op","select"},{"actors",J::array()}});
-                        SendMessage(design,WM_COMMAND,702,0);
-                        draggedLaser=securityOf(placedLaser);
-                    }
                                 if(member["path"]==actor["path"])followed=candidate;
                 }
                 require(!followed.is_null(),"the placed room is still in the library");

@@ -81,6 +81,20 @@ or foreign files rejected). The editor side imports the BMP with `TEXTURE
 IMPORT` into the loaded `<Map>-i` package and saves it with the stock
 `SAVEMAPPROP`, so it is exercised in the editor rather than here.
 
+`StageModelTests.cpp` covers the stage model: generated Tag names and their
+parsing, plan validation, building the change batch for a fresh map (gates as
+one-step-per-completion sequences, completion events that unlock the next
+stage's terminals before the author's actions, Tags allocated where missing or
+shared, timed doors set to stay open, new sound triggers and announcement
+alarms), reading a wired map back into the same plan, a matching map needing
+no changes, releasing objectives and terminals that leave their stage, stale
+stage events being named, refusing our Tags on the wrong kind of actor, and
+the design-check issues. The native `-WorkflowTools` suite applies a two-stage
+plan through `stage.apply`, checks the objectives' Events, the gate sequence,
+the completion's action order, the locked terminal and the door's state, reads
+the plan back, confirms a matching plan is a no-op, undoes and redoes it in
+one step each, and opens the Stages window to check its lists.
+
 `tools/test_map_package.cmd` also covers packaging a map's Map Design workspace and
 the reference images it names, skipping missing or unsafe image names, and
 tolerating an unreadable workspace file.

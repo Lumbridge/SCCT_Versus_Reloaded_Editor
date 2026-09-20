@@ -176,6 +176,9 @@
     <ClInclude Include="SecurityModel.h" />
     <ClInclude Include="SecurityNative.inl" />
     <ClInclude Include="SecurityPanel.inl" />
+    <ClInclude Include="StageModel.h" />
+    <ClInclude Include="StageNative.inl" />
+    <ClInclude Include="StagePanel.inl" />
     <ClInclude Include="LightingPanel.inl" />
     <ClInclude Include="PropertiesPanel.inl" />
     <ClInclude Include="ScenePanel.inl" />

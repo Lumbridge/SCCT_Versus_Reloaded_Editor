@@ -28,6 +28,7 @@ Looking for maps to open? Recovered, enhanced and community maps are in [SCCT-Ma
 | **SMagicEvent Workbench** | Edit event groups, triggers, actions and timing in one panel, with JSON export/import for sharing an event. See [the JSON format](tests/SMagicEventJson.md). |
 | **SCamNetwork Manager** | Create, name, preview and reorder security cameras; links and first-camera flags are kept consistent. |
 | **Objective creation** | Right-click an SMission or SObjective to add objectives, computer triggers, bomb targets or flag/drop-zone pairs, already linked. |
+| **Stages** | In Map Design, list the match's stages: which objectives each holds, how many must be done, and what happens when it completes (doors open, lights switch, sounds play, a message on both HUDs, any actor triggered). One click wires the counting gates, completion events and terminal locking in one Undo step, and reads them back for later edits. See [docs/MapDesign.md](docs/MapDesign.md#15-stages). |
 | **Map JSON import/export** | Export a map to JSON, edit it (or have something edit it for you), and import the changes in one Undo step. See [docs/MapAuthoring.md](docs/MapAuthoring.md). |
 
 ### Map recovery, lighting and sharing

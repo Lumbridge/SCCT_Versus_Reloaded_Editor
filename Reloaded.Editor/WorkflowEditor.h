@@ -90,6 +90,12 @@ namespace Workflow::Editor
     void DeleteSecurityActor(const Json& identity);
     void AddAlarmOutputs(const Json& alarm,const Json& targets);
     void DesignRemoveTemporaryStart(const Json& identity);
+    // Stages: the actors a plan can name, the plan the map carries, and
+    // applying a plan in one Undo step.
+    Json StageActors();
+    Json StagePlan();
+    Json PreviewStages(const Json& plan);
+    Json ApplyStages(const Json& plan);
     Json InspectActor(const Json& identity);
     Json ExportEventJson(const Json& identity);
     void ImportEventJson(const Json& snapshot,const Json& document);

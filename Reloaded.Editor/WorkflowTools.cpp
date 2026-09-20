@@ -13,6 +13,7 @@
 #include "MemoryWriter.h"
 #include "MapDesignModel.h"
 #include "SecurityModel.h"
+#include "StageModel.h"
 #include <commdlg.h>
 #include <windowsx.h>
 #include <objidl.h>
@@ -873,6 +874,10 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="security.unlink"){Editor::UnwireDetector(q.at("detector"));result=true;}
         else if(op=="security.delete"){Editor::DeleteSecurityActor(q.at("actor"));result=true;}
         else if(op=="security.move")result=Editor::MoveSecurityActor(q.at("actor"),{q.at("position").get<Vector>(),q.value("rotation",Rotation{})},q.value("properties",Json::object()));
+        else if(op=="stage.actors")result=Editor::StageActors();
+        else if(op=="stage.read")result=Editor::StagePlan();
+        else if(op=="stage.preview")result=Editor::PreviewStages(q.at("plan"));
+        else if(op=="stage.apply")result=Editor::ApplyStages(q.at("plan"));
         else if(op=="design.build"){Editor::BuildGeometry();result=true;}
         else if(op=="design.tempstart")result=Editor::DesignTemporaryStart(q.at("class"),q.value("team",std::string()),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()});
         else if(op=="design.removestart"){Editor::DesignRemoveTemporaryStart(q.at("start"));result=true;}

@@ -127,7 +127,8 @@ void ObjectivePaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void
             SolidBrush body(Color(240,90,200,90));
             g.FillPolygon(&body,diamond,4);
             g.DrawPolygon(&outline,diamond,4);
-            label("objective "+actor.value("name",std::string()),{at.X+12,at.Y-8});
+            const int stage=Stages::StageOf(actor.value("event",std::string()),"Gate");
+            label("objective "+actor.value("name",std::string())+(stage?" [stage "+std::to_string(stage)+"]":""),{at.X+12,at.Y-8});
         }
         else if(kind=="Flag" || kind=="Drop zone")
         {

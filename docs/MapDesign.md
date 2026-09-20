@@ -599,6 +599,70 @@ The plan reads and writes the actors; it does not rebuild lighting. Use
 **Build → Rebuild Lighting** (or the selective lighting tools) when the layout
 settles, and check the result in game.
 
+## 15. Stages
+
+A multi-stage map ("finish zone 1, then zone 2 opens") used to mean building
+the counting, locking and wiring by hand from SMagicEvents and triggers.
+**Tools → Stages...** does it from a list.
+
+Each **stage** holds some of the mission's objectives and is complete when
+**all of them** are done, or when **this many** of them are. **Add stage**
+makes a stage; tick the objectives that belong to it in the list (Ctrl+click
+for several; ticking one that is in another stage moves it). Objectives in no
+stage count from the start of the match as usual.
+
+**When this stage is complete** lists what happens, each with an optional
+**Delay** (type it before adding, or select an action and **Set delay**):
+
+- **Open door / lift...** triggers a mover. A timed door is set to stay open
+  (`InitialState` becomes `TriggerToggle`); doors that already toggle or are
+  controlled are left as they are.
+- **Switch light...** triggers a switchable light (`STriggerLight`).
+- **Play sound...** fires an existing sound trigger, or makes a new
+  `SoundTrigger` for a loaded sound and fires that.
+- **Announce on HUD** shows the **Title**, **Merc text** and **Spy text** on
+  both teams' HUDs for **Seconds**. This uses the game's alarm banner: an
+  `SAlarm` named `Stage<N>_Announce` that locks nothing and triggers nothing
+  else, so it looks like an alarm message and sounds like one.
+- **Trigger actor...** triggers any other event, alarm, emitter or trigger in
+  the map, including an SMagicEvent you built yourself for anything the list
+  does not cover.
+
+**Lock later stages' terminals until their stage begins** (on by default)
+makes the computer terminals, bomb targets and flags of stage 2 onwards
+unusable at the start (`bInitialyUsable` off, `TriggerMethode`
+`TriggerControl`) and adds an automatic first action to each stage that
+unlocks the next stage's terminals. Turn it off if the zones are closed by
+doors alone.
+
+**Apply to map** writes the whole plan in one Undo step: each objective's
+`Event` becomes `Stage<N>_Gate`, an SMagicEvent whose single Sequence group
+has one step per completion needed and fires `Stage<N>_Complete` on the last
+step, and that event's group holds the stage's actions. The events sit above
+the stage's objectives; the Gameplay Connections graph and the SMagicEvent
+Workbench show and edit them like any other. Actors that an event needs to
+reach are given a Tag if they have none, or a Tag of their own if theirs is
+shared with other actors, so a door opens alone. The status line lists what
+was created, updated and anything worth knowing, such as an objective whose
+old Event was replaced.
+
+The plan is read back from the map whenever the window opens or **Reload from
+map** is pressed, so a map made this way can be changed later: removing a
+stage or moving an objective out of every stage releases its terminals and
+clears its Event, and events of stages that no longer exist are named so they
+can be deleted. The plan on the plan view shows each objective's stage in its
+label. **Export JSON...** and **Import JSON...** save and load the plan
+(`scct.stages`, version 1), which names actors by path, so it belongs to the
+map it came from. **Check design...** reports gates nothing feeds or that need
+more completions than they have objectives, completion events that reach
+nothing or fire a Tag nothing carries, later-stage terminals left usable, and
+objectives outside every stage.
+
+The mission's own rules still apply: `MinimumObjectives`, `bChained` and
+`RandomObjectives` on the SMission are not changed. Whether an objective fires
+its `Event` on completion, and how a terminal's `TriggerControl` responds, are
+the game's behaviour; playtest a staged map before shipping it.
+
 ## Persistence and portability
 
 Saved-map workspace data lives alongside Working Views and assemblies in

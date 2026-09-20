@@ -15,7 +15,7 @@ enum DesignControl
     DName=740,DShape,DConstruction,DWidth,DLength,DHeight,DThickness,DSteps,DCeiling,DPortal,
     DPositionX,DPositionY,DPositionZ,DYaw,DInspectorTitle,DDiscard,
     // Building, checking and overlays.
-    DBuild=760,DCheck,DOverlays,DSecurity,DUnlit,DScene,DKeys,DDepthLabel,DCheckList=780,DInspectorLabel=785,
+    DBuild=760,DCheck,DOverlays,DSecurity,DUnlit,DScene,DKeys,DDepthLabel,DStages,DCheckList=780,DInspectorLabel=785,
     // Right-click menu on the design view: what is under the cursor, then what
     // can start at that point.
     DCtxEditPiece=850,DCtxSelectPiece,DCtxDetachPiece,DCtxEditAnnotation,DCtxRemoveAnnotation,DCtxEditGuide,DCtxRemoveGuide,
@@ -131,6 +131,14 @@ struct DesignState
     std::string securityMode,securityAlarm;
     Vector securityFirst{};
     bool securityFirstSet=false;
+    // Stages: the window, the plan being edited, the actors it can name, the
+    // stage shown, the objectives list's rows and a popup's choices.
+    HWND stageWindow{};
+    Json stagePlan,stageActors=Json::array();
+    int stageIndex=0;
+    std::vector<std::string> stageObjectiveRows;
+    std::vector<Json> stageMenu;
+    bool stageSyncing=false;
     // The right-clicked point, while a menu action that starts there runs.
     Vector contextPoint{};
     bool contextPointSet=false;
@@ -455,6 +463,8 @@ void DesignQuickAddMenu(DesignState& s,POINT at);
 bool DesignGeometryStale(DesignState& s);
 void DesignCheck(DesignState& s);
 void SecurityOpen(DesignState& s);
+void StageOpen(DesignState& s);
+void StageRefreshList(DesignState& s);
 void SecurityClick(DesignState& s,const Vector& at);
 void SecurityRefreshList(DesignState& s);
 void SecurityPaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void(const std::string&,Gdiplus::PointF)>& label);
@@ -521,7 +531,9 @@ void DesignRefresh(DesignState& s)
     try{s.securityActors=Editor::SecurityActors();}catch(const std::exception&){s.securityActors=Json::array();}
     try{s.lights=Editor::Lights();}catch(const std::exception&){s.lights=Json::array();}
     try{s.objectives=Editor::ObjectiveActors();}catch(const std::exception&){s.objectives=Json::array();}
+    try{s.stageActors=Editor::StageActors();}catch(const std::exception&){s.stageActors=Json::array();}
     SecurityRefreshList(s);
+    StageRefreshList(s);
     SceneRefreshList(s);
     try{s.grid=Editor::DesignGrid();}catch(const std::exception&){s.grid={64,64,64};}
     DesignBuildHulls(s);
@@ -2049,6 +2061,7 @@ void DesignCommand(DesignState& s,int id)
     }
     if(id==DCheck){DesignCheck(s);return;}
     if(id==DSecurity){SecurityOpen(s);return;}
+    if(id==DStages){StageOpen(s);return;}
     if(id==DScene){SceneOpen(s);return;}
     if(id==DKeys){DesignKeys(s);return;}
     if(id==DBlock){DesignNewBlockout(s);return;}
@@ -2883,6 +2896,8 @@ void DesignCheck(DesignState& s)
     }
     for(const auto& issue:Security::Issues(s.securityActors))
         s.issues.push_back({{"severity",issue.severity},{"text",issue.text},{"piece",-1},{"index",0}});
+    for(const auto& issue:Stages::Issues(s.stageActors))
+        s.issues.push_back({{"severity",issue.severity},{"text",issue.text},{"piece",-1},{"index",0}});
     for(const auto& text:LightIssues(s))
         s.issues.push_back({{"severity","warning"},{"text",text},{"piece",-1},{"index",0}});
     if(DesignGeometryStale(s))s.issues.push_back({{"severity","warning"},{"text","Brushes changed since the last geometry build; press B in the design view."},{"piece",-1},{"index",0}});
@@ -3445,6 +3460,7 @@ void DesignEndDrag(DesignState& s,bool add)
     else DesignWarn(s,summary+" Place / Apply creates the brushes.");
 }
 #include "SecurityPanel.inl"
+#include "StagePanel.inl"
 #include "LightingPanel.inl"
 #include "ObjectivePanel.inl"
 #include "ElementPanel.inl"
@@ -4709,7 +4725,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 {DBuild,"Build geometry\tB"}});
             submenu("&Annotate",{{DGuides,"Player reference..."},{DMeasure,"Measure two points"},{DSightline,"Sightline between two points"},{0,nullptr},
                 {DRoute,"Route / objective..."},{DFinish,"Finish route / marker"},{DCompare,"Compare routes..."},{0,nullptr},{DClear,"Remove annotation..."}});
-            submenu("&Tools",{{DPlay,"Playtest from here..."},{DSecurity,"Security..."},{DCheck,"Check design..."},{0,nullptr},
+            submenu("&Tools",{{DPlay,"Playtest from here..."},{DSecurity,"Security..."},{DStages,"Stages..."},{DCheck,"Check design..."},{0,nullptr},
                 {DRefresh,"Refresh from editor"},{DFit,"Fit map / preview\tF"},{DFitSelection,"Fit selection\tShift+F"},{DSelectAll,"Select all on this storey\tCtrl+A"},{DUnlit,"Show unlit areas"},{0,nullptr},{DUndo,"Undo\tCtrl+Z"},{DRedo,"Redo\tCtrl+Y"},{0,nullptr},{DKeys,"Keyboard and mouse..."}});
             SetMenu(window,bar);
             const std::pair<int,const char*> buttons[]={
@@ -4869,6 +4885,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             catch(const std::exception&) { /* Placement memory is best effort. */ }
             if(s->checkWindow)DestroyWindow(s->checkWindow);
             if(s->securityWindow)DestroyWindow(s->securityWindow);
+            if(s->stageWindow)DestroyWindow(s->stageWindow);
             DestroyWindow(window);
             return 0;
         }
