@@ -394,8 +394,46 @@ std::string MapKey()
     if(path.is_relative()) path=Directory().parent_path().parent_path()/"Packages"/"MapsEd"/path;
     return Fold(std::filesystem::weakly_canonical(path).string());
 }
-bool Exec(const std::string& command)
+std::string MapFile()
 {
+    auto window=Read<Address>(0x1165e80c); std::string file=window?String(window+0x58,1024):"";
+    if(file.empty()) return {};
+    std::filesystem::path path(file);
+    if(path.is_relative()) path=Directory().parent_path().parent_path()/"Packages"/"MapsEd"/path;
+    std::error_code error; const auto canonical=std::filesystem::weakly_canonical(path,error);
+    return (error?path:canonical).string();
+}
+void SetMapFile(const std::string& path)
+{
+    // The stock Save As setter: it also becomes the next Save target, which a
+    // raw MAP LOAD leaves stale.
+    if(auto window=Read<Address>(0x1165e80c))
+        reinterpret_cast<void(__thiscall*)(void*,const char*)>(0x10E05E1C)(reinterpret_cast<void*>(window),path.c_str());
+}
+// The first words of the level's outer package after the UObject header. A
+// MAP SAVE clears the package's dirty flag; an autosave copy must not leave
+// the editor thinking the map itself is saved, so whatever the save zeroed
+// among these is put back. The probe records them to see which word moved.
+Json PackageWords()
+{
+    const auto package=Read<Address>(Level()+0x18);
+    Json words=Json::array();
+    for(unsigned offset=0x28;offset<0x40;offset+=4)words.push_back(Read<unsigned>(package+offset));
+    return words;
+}
+void RestorePackageWords(const Json& before)
+{
+    const auto package=Read<Address>(Level()+0x18);
+    unsigned offset=0x28;
+    for(const auto& word:before)
+    {
+        const unsigned was=word.get<unsigned>();
+        if(was!=0 && Read<unsigned>(package+offset)==0)MemoryWriter::WriteBytes(package+offset,&was,sizeof(was));
+        offset+=4;
+    }
+}
+{
+bool Exec(const std::string& command)
     auto e=Engine(); return Call<int>(e+0x28,0,command.c_str(),reinterpret_cast<void*>(Read<Address>(0x115BEFB0)))!=0;
 }
 void Redraw() { auto e=Engine(); Call(e,0xe8,reinterpret_cast<void*>(Level())); }

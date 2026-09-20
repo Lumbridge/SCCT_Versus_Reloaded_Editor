@@ -18,6 +18,13 @@
 #define IDC_CHECK_MUTE_SOUNDS       1008
 #define IDC_CHECK_NO_DUPE_OFFSET    1009
 #define IDC_CHECK_MIN_PLAY          1010
+#define IDC_EDIT_AUTOSAVE_MINUTES   1011
+#define IDC_EDIT_AUTOSAVE_KEEP      1012
+
+static int g_ReloadedAutosaveMinutes = 5;
+static int g_ReloadedAutosaveKeep = 3;
+int ReloadedAutosaveMinutes() { return g_ReloadedAutosaveMinutes; }
+int ReloadedAutosaveKeep() { return g_ReloadedAutosaveKeep; }
 
 // In-memory DLGTEMPLATE builder
 struct OptionsDialogBuf
@@ -79,9 +86,9 @@ static std::vector<uint8_t> BuildReloadedOptionsDlgTemplate()
 
     b.dw(WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | DS_CENTER | DS_SETFONT);
     b.dw(0);
-    b.w(24);              // number of controls
+    b.w(30);              // number of controls
     b.w(0);  b.w(0);      // x, y (DS_CENTER overrides)
-    b.w(290); b.w(206);   // width, height
+    b.w(290); b.w(246);   // width, height
     b.w(0);               // no menu
     b.w(0);               // default class
     b.ws(L"Reloaded Options");
@@ -166,12 +173,29 @@ static std::vector<uint8_t> BuildReloadedOptionsDlgTemplate()
                13, 163, 265, 10, IDC_CHECK_MIN_PLAY,
                L"Minimize Unreal Editor on Play Map");
 
+    // Autosave group (y = 185 to 217)
+    EmitButton(b, WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+               5, 185, 280, 32, 0xFFFF, L"Autosave (copies go to an Autosave folder beside the map)");
+
+    EmitStatic(b, WS_CHILD | WS_VISIBLE | SS_LEFT,
+               13, 200, 24, 8, 0xFFFF, L"Every");
+    EmitEdit(b, WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP
+                | ES_LEFT | ES_NUMBER | ES_AUTOHSCROLL,
+             38, 198, 26, 12, IDC_EDIT_AUTOSAVE_MINUTES);
+    EmitStatic(b, WS_CHILD | WS_VISIBLE | SS_LEFT,
+               68, 200, 92, 8, 0xFFFF, L"minutes (0 = off), keeping");
+    EmitEdit(b, WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP
+                | ES_LEFT | ES_NUMBER | ES_AUTOHSCROLL,
+             162, 198, 26, 12, IDC_EDIT_AUTOSAVE_KEEP);
+    EmitStatic(b, WS_CHILD | WS_VISIBLE | SS_LEFT,
+               192, 200, 80, 8, 0xFFFF, L"copies in rotation.");
+
     // OK and Cancel buttons (right-aligned to the wider dialog)
     EmitButton(b, WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON | WS_TABSTOP,
-               180, 186, 50, 14, IDOK, L"OK");
+               180, 226, 50, 14, IDOK, L"OK");
 
     EmitButton(b, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
-               235, 186, 50, 14, IDCANCEL, L"Cancel");
+               235, 226, 50, 14, IDCANCEL, L"Cancel");
 
     return b.buf;
 }
@@ -221,6 +245,13 @@ static void LoadSettings()
         GetPrivateProfileIntA("General", "MinimizeOnPlay", 0, ini.c_str()));
     g_ReloadedMinimizeOnPlay = (minOnPlay != 0);
 
+    int autosaveMinutes = static_cast<int>(
+        GetPrivateProfileIntA("Autosave", "Minutes", 5, ini.c_str()));
+    g_ReloadedAutosaveMinutes = (autosaveMinutes < 0) ? 0 : (autosaveMinutes > 240) ? 240 : autosaveMinutes;
+    int autosaveKeep = static_cast<int>(
+        GetPrivateProfileIntA("Autosave", "Keep", 3, ini.c_str()));
+    g_ReloadedAutosaveKeep = (autosaveKeep < 1) ? 1 : (autosaveKeep > 20) ? 20 : autosaveKeep;
+
     g_KeyLedgeGrab    = LoadGEKey(ini, "LedgeGrab",    'E'); // default: L
     g_KeyHandOverHand = LoadGEKey(ini, "HandOverHand", 'H');
     g_KeyPipe         = LoadGEKey(ini, "Pipe",         'P');
@@ -233,7 +264,7 @@ static void SaveSettings()
 {
     const std::string ini = GetIniPath();
     // Write the INI manually to keep blank lines between sections.
-    char text[512];
+    char text[768];
     int len = snprintf(text, sizeof(text),
         "[Viewport]\r\n"
         "MaxFPS=%d\r\n"
@@ -249,7 +280,11 @@ static void SaveSettings()
         "Fence=%c\r\n"
         "\r\n"
         "[General]\r\n"
-        "MinimizeOnPlay=%d\r\n",
+        "MinimizeOnPlay=%d\r\n"
+        "\r\n"
+        "[Autosave]\r\n"
+        "Minutes=%d\r\n"
+        "Keep=%d\r\n",
         g_ReloadedMaxFPS,
         g_ReloadedMuteSounds ? 1 : 0,
         g_ReloadedNoDuplicateOffset ? 1 : 0,
@@ -259,7 +294,9 @@ static void SaveSettings()
         static_cast<char>(g_KeyLadder),
         static_cast<char>(g_KeyZipline),
         static_cast<char>(g_KeyFence),
-        g_ReloadedMinimizeOnPlay ? 1 : 0);
+        g_ReloadedMinimizeOnPlay ? 1 : 0,
+        g_ReloadedAutosaveMinutes,
+        g_ReloadedAutosaveKeep);
     if (len <= 0)
         return;
 
@@ -322,6 +359,16 @@ static INT_PTR CALLBACK ReloadedOptionsDlgProc(
 
         CheckDlgButton(hDlg, IDC_CHECK_MIN_PLAY,
                        g_ReloadedMinimizeOnPlay ? BST_CHECKED : BST_UNCHECKED);
+
+        SendDlgItemMessageA(hDlg, IDC_EDIT_AUTOSAVE_MINUTES, EM_SETLIMITTEXT, 3, 0);
+        SendDlgItemMessageA(hDlg, IDC_EDIT_AUTOSAVE_KEEP, EM_SETLIMITTEXT, 2, 0);
+        {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%d", g_ReloadedAutosaveMinutes);
+            SetDlgItemTextA(hDlg, IDC_EDIT_AUTOSAVE_MINUTES, buf);
+            snprintf(buf, sizeof(buf), "%d", g_ReloadedAutosaveKeep);
+            SetDlgItemTextA(hDlg, IDC_EDIT_AUTOSAVE_KEEP, buf);
+        }
 
         return TRUE;   // let Windows set default focus
 
@@ -409,6 +456,15 @@ static INT_PTR CALLBACK ReloadedOptionsDlgProc(
                 bool noDupeOffset = (IsDlgButtonChecked(hDlg, IDC_CHECK_NO_DUPE_OFFSET) == BST_CHECKED);
                 bool minOnPlay = (IsDlgButtonChecked(hDlg, IDC_CHECK_MIN_PLAY) == BST_CHECKED);
 
+                {
+                    char buf[16] = {};
+                    GetDlgItemTextA(hDlg, IDC_EDIT_AUTOSAVE_MINUTES, buf, sizeof(buf));
+                    int minutes = atoi(buf);
+                    g_ReloadedAutosaveMinutes = (minutes < 0) ? 0 : (minutes > 240) ? 240 : minutes;
+                    GetDlgItemTextA(hDlg, IDC_EDIT_AUTOSAVE_KEEP, buf, sizeof(buf));
+                    int keep = atoi(buf);
+                    g_ReloadedAutosaveKeep = (keep < 1) ? 1 : (keep > 20) ? 20 : keep;
+                }
                 g_ReloadedMaxFPS           = fps;
                 g_ReloadedMuteSounds       = mute;
                 g_ReloadedNoDuplicateOffset = noDupeOffset;

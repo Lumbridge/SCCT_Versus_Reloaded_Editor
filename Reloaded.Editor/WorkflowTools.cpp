@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "WorkflowTools.h"
+#include "EditorExtras.h"
 #include "WorkflowEditor.h"
 #include "WorkflowGraph.h"
 #include "MagicEventWorkbench.h"
@@ -128,7 +129,11 @@ namespace
                 }
                 Control(window,"BUTTON","Show all",BS_PUSHBUTTON,200,12,288,110,28);
                 Control(window,"BUTTON","Refresh",BS_PUSHBUTTON,201,132,288,110,28);
-                Control(window,"STATIC","All viewports. Select also reveals that type.\r\nBuilder brush is unchanged. Built BSP remains visible.\r\nViewport show flags and hidden groups still apply.",0,2,12,330,460,60);
+                // The selection's own visibility, through the editor's hide commands.
+                Control(window,"BUTTON","Hide selected",BS_PUSHBUTTON,202,12,322,132,28);
+                Control(window,"BUTTON","Isolate selected",BS_PUSHBUTTON,203,150,322,132,28);
+                Control(window,"BUTTON","Unhide all",BS_PUSHBUTTON,204,288,322,136,28);
+                Control(window,"STATIC","All viewports. Select also reveals that type.\r\nBuilder brush is unchanged. Built BSP remains visible.\r\nViewport show flags and hidden groups still apply.",0,2,12,364,460,60);
                 RefreshBrushVisibility(window);return 0;
             }
             if(message==WM_ACTIVATE && LOWORD(w)!=WA_INACTIVE){RefreshBrushVisibility(window);return 0;}
@@ -142,8 +147,9 @@ namespace
                     Editor::SetBrushVisibility(category,action==1?"only":action==2?"select":checked?"hide":"show");
                 }
                 else if(id==200)Editor::SetBrushVisibility(0,"all");
-                RefreshBrushVisibility(window);return 0;
+                else if(id>=202 && id<=204)EditorExtras::HandleCommand(id==202?EditorExtras::kHideSelected:id==203?EditorExtras::kIsolateSelected:EditorExtras::kUnhideAll);
             }
+                RefreshBrushVisibility(window);return 0;
             if(message==WM_DESTROY){brushVisibilityWindow=nullptr;return 0;}
         }
         catch(const std::exception& e)
@@ -160,7 +166,7 @@ namespace
         Editor::BrushVisibility();
         WNDCLASSA wc{};wc.lpfnWndProc=BrushVisibilityProc;wc.hInstance=GetModuleHandle(nullptr);wc.lpszClassName="ReloadedBrushVisibility";
         wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1);RegisterClassA(&wc);
-        RECT rect{0,0,448,398};AdjustWindowRectEx(&rect,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU, FALSE,WS_EX_TOOLWINDOW);
+        RECT rect{0,0,448,432};AdjustWindowRectEx(&rect,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU, FALSE,WS_EX_TOOLWINDOW);
         brushVisibilityWindow=CreateWindowExA(WS_EX_TOOLWINDOW,wc.lpszClassName,"Brush Visibility",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU,
             CW_USEDEFAULT,CW_USEDEFAULT,rect.right-rect.left,rect.bottom-rect.top,GetActiveWindow(),nullptr,wc.hInstance,nullptr);
         if(!brushVisibilityWindow)throw std::runtime_error("Could not open Brush Visibility.");
@@ -726,8 +732,9 @@ namespace
                     AppendMenuA(sub,MF_STRING,kFitBuilderBrush,"Position the builder brush around this");
                 }
                 catch(const std::exception&) { /* Only available for valid static-mesh selections. */ }
-            }
+                EditorExtras::AppendActorMenu(sub);
         }
+            }
         return menu;
     }
 }
@@ -739,8 +746,9 @@ void RunObjectiveCommand(UINT command,const Json& snapshot)
 }
 bool HandleCommand(UINT command)
 {
-    if(command==kBrushVisibility)
+    if(EditorExtras::HandleCommand(command))return true;
     {
+    if(command==kBrushVisibility)
         try{OpenBrushVisibility();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Brush Visibility",MB_OK|MB_ICONERROR);}
         return true;
     }
@@ -835,8 +843,11 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
     {
         Json q=Json::parse(request),result; std::string op=q.at("op");
         if(op=="actors") result=Editor::Actors(q.value("selected",false));
-        else if(op=="design.scene")result=Editor::DesignScene();
+        else if(op=="autosave.now")result=EditorExtras::AutosaveNow();
+        else if(op=="package.words")result=Editor::PackageWords();
+        else if(op=="map.file")result=Editor::MapFile();
         else if(op=="design.block")result=Editor::DesignBlockout(q.at("spec"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()},q.value("previous",Json{}));
+        else if(op=="design.scene")result=Editor::DesignScene();
         else if(op=="design.align"){Editor::DesignAlign(q.at("scene"),q.at("axis"),q.at("mode"),q.value("spacing",0.0));result=true;}
         else if(op=="design.layer"){Editor::DesignLayer(q.at("members"),q.at("hidden"),q.at("locked"),q.value("group",std::string()),q.value("groupAction",std::string("none")));result=true;}
         else if(op=="design.grid")result=Editor::DesignGrid();

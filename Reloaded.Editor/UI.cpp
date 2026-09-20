@@ -7,6 +7,7 @@
 #include "RebuildAllMaps.h"
 #include "WorkflowTools.h"
 #include "MapPackageDialog.h"
+#include "EditorExtras.h"
 
 INIT_HOOKS;
 
@@ -234,6 +235,7 @@ static DWORD WINAPI MenuInjectThread(LPVOID)
         if (g_reloadedFrame)
         {
             InjectReloadedMenuItems(g_reloadedFrame);
+            EditorExtras::Attach(g_reloadedFrame);
             return 0;
         }
         Sleep(100);

@@ -1,6 +1,8 @@
 // Included by NativeMapRecoveryProbe after its existing fixture helpers.
 #include "../Reloaded.Editor/Include/nlohmann/json.hpp"
 #include <stdexcept>
+#include <map>
+#include <filesystem>
 #include <commctrl.h>
 #include <commdlg.h>
 #include <dlgs.h>
@@ -908,6 +910,44 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 WorkflowProbe::Click(design,728); // Undo: the workspace change comes first.
             }
             {
+                // Editor extras: the frame's selection and visibility commands,
+                // and an autosave copy that leaves the map's own file alone.
+                auto actors=call({{"op","design.scene"}}); // Every actor but the cameras, with its hidden flag.
+                std::map<std::string,int> counts;
+                for(auto& a:actors)++counts[a["class"].get<std::string>()];
+                std::string cls;int best=0;
+                for(auto& [c,n]:counts)if(n>best){best=n;cls=c;}
+                require(best>=2,"the fixture has a class with several actors");
+                J one=J::array();
+                for(auto& a:actors)if(a["class"]==cls){one.push_back(a);break;}
+                call({{"op","select"},{"actors",one}});
+                SendMessage(frameWindow,WM_COMMAND,40954,0); // Reloaded: Select > All of this class.
+                auto selected=call({{"op","actors"},{"selected",true}});
+                require(static_cast<int>(selected.size())==best,("Select all of this class selects every actor of the class ("+std::to_string(selected.size())+" of "+std::to_string(best)+" "+cls+")").c_str());
+                for(auto& a:selected)require(a["class"]==cls,"Select all of this class selects nothing else");
+                SendMessage(frameWindow,WM_COMMAND,40956,0); // Invert selection.
+                auto inverted=call({{"op","actors"},{"selected",true}});
+                for(auto& a:inverted)require(a["class"]!=cls,("Invert selection drops the class ("+a["path"].get<std::string>()+" stayed)").c_str());
+                require(!inverted.empty(),"Invert selection selects the rest");
+                call({{"op","select"},{"actors",one}});
+                SendMessage(frameWindow,WM_COMMAND,40957,0); // Hide selected.
+                bool hidden=false;
+                for(auto& a:call({{"op","design.scene"}}))if(a["path"]==one[0]["path"])hidden=a["hidden"].get<bool>();
+                require(hidden,"Hide selected hides the actor in the editor");
+                SendMessage(frameWindow,WM_COMMAND,40959,0); // Unhide all.
+                hidden=true;
+                for(auto& a:call({{"op","design.scene"}}))if(a["path"]==one[0]["path"])hidden=a["hidden"].get<bool>();
+                require(!hidden,"Unhide all shows it again");
+                call({{"op","select"},{"actors",J::array()}});
+                const auto fileBefore=call({{"op","map.file"}}).get<std::string>();
+                require(!fileBefore.empty(),"the frame reports the map's file");
+                Record("package_words_before",call({{"op","package.words"}}).dump().c_str());
+                const auto copy=call({{"op","autosave.now"}}).get<std::string>();
+                Record("package_words_after",call({{"op","package.words"}}).dump().c_str());
+                require(std::filesystem::exists(copy) && copy.find("_Autosave1")!=std::string::npos,("an autosave copy is written to the Autosave folder ("+copy+")").c_str());
+                require(call({{"op","map.file"}}).get<std::string>()==fileBefore,"an autosave copy leaves the map's own file name alone");
+            }
+            {
                 // Quick add: hover the wall of a placed piece and pick from the
                 // badge menu. The view mapping tells the test where that wall is.
                 // The panel refreshes on its timer; this test pumps no messages,
@@ -1133,6 +1173,32 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                     for(auto& candidate:libraryPieces)
                         for(auto& member:candidate["members"])
                             for(auto& actor:placedRoom)
+                    // Dragging a device that is not selected moves it alone, whatever
+                    // else is selected; dragging a selected device brings the rest of
+                    // the selection with it.
+                    {
+                        const auto alarmAt=securityOf(alarm)["position"].get<std::array<double,3>>();
+                        const auto soloAt=draggedLaser["position"].get<std::array<double,3>>();
+                        call({{"op","select"},{"actors",J::array({alarm,placedAlarm})}});
+                        SendMessage(design,WM_COMMAND,702,0);
+                        POINT solo{static_cast<LONG>(panX2+soloAt[0]*zoom2),static_cast<LONG>(panY2-soloAt[1]*zoom2)};
+                        SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(solo.x,solo.y));
+                        SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(solo.x,solo.y+40));
+                        SendMessage(GetDlgItem(design,719),WM_LBUTTONUP,0,MAKELPARAM(solo.x,solo.y+40));
+                        require(securityOf(placedLaser)["position"][1].get<double>()<soloAt[1]-20,"an unselected laser still drags");
+                        require(securityOf(alarm)["position"].get<std::array<double,3>>()==alarmAt,"dragging an unselected device leaves the selected actors where they are");
+                        Exec("TRANSACTION UNDO");
+                        call({{"op","select"},{"actors",J::array({alarm,placedLaser})}});
+                        SendMessage(design,WM_COMMAND,702,0);
+                        SendMessage(GetDlgItem(design,719),WM_LBUTTONDOWN,0,MAKELPARAM(solo.x,solo.y));
+                        SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,MK_LBUTTON,MAKELPARAM(solo.x,solo.y+40));
+                        SendMessage(GetDlgItem(design,719),WM_LBUTTONUP,0,MAKELPARAM(solo.x,solo.y+40));
+                        require(securityOf(alarm)["position"][1].get<double>()<alarmAt[1]-20,"dragging a selected device brings the rest of the selection along");
+                        Exec("TRANSACTION UNDO");
+                        call({{"op","select"},{"actors",J::array()}});
+                        SendMessage(design,WM_COMMAND,702,0);
+                        draggedLaser=securityOf(placedLaser);
+                    }
                                 if(member["path"]==actor["path"])followed=candidate;
                 }
                 require(!followed.is_null(),"the placed room is still in the library");

@@ -222,6 +222,7 @@
     <ClInclude Include="PlayLevelConfig.h" />
     <ClInclude Include="LocalLightingMatch.h" />
     <ClInclude Include="PlayLevelCommand.h" />
+    <ClInclude Include="EditorExtras.h" />
     <ClInclude Include="GridSizeShortcutState.h" />
   </ItemGroup>
   <ItemGroup>
@@ -297,6 +298,7 @@
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Reloaded.Editor.rc" />
+    <ClCompile Include="EditorExtras.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="cpp.hint" />

@@ -50,7 +50,9 @@ one grid step, Escape ending the edit, the panel's Undo and Redo reaching the
 editor's history, Copy and Paste placing a copy at the cursor and at a
 right-clicked point, Duplicate placing one beside the original, Delete dropping
 a copy from the library, a size preset resizing a placed piece in place, a
-sightline inside a room reporting clear, and the quick-add badge on a hovered wall placing a corridor
+sightline inside a room reporting clear, the frame's Reloaded selection and
+visibility commands (all of a class, invert, hide, unhide all), an autosave
+copy written beside the map without changing its file name, and the quick-add badge on a hovered wall placing a corridor
 against it through its menu, the stale-geometry flag clearing when B runs a
 geometry build, the design check window listing its issues, and the security
 tools: creating an alarm, a laser and a motion sensor with its volume through the

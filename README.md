@@ -45,8 +45,11 @@ Recovered maps keep their original baked lighting through ordinary builds. Recov
 
 | Tool | What it does |
 | --- | --- |
-| **Brush Visibility** | Show, hide, isolate or select zones, portals, volumes, brushes and movers from one panel. |
+| **Autosave and Open Recent** | A copy of the open map is written to an `Autosave` folder beside it every few minutes (set the interval and how many copies to keep in Reloaded Options, F12), with a notice and without changing which file Save writes; **File > Save an Autosave Copy Now** does it on demand, and **File > Open Recent** lists the last ten maps. |
+| **Play From Camera** | **Build > Play From Camera as Spy / Merc** starts a playtest at the perspective viewport's camera, from that team's start or a temporary one that is removed afterwards. |
+| **Select and hide** | Right-click an actor for **Reloaded: Select** (all of this class, all with this Tag, same static mesh, invert the selection) and **Reloaded: Visibility** (hide selected, isolate selected, unhide all); Brush Visibility has the same three buttons. |
 | **Working Views** | Save and restore viewport cameras and display settings. |
+| **Brush Visibility** | Show, hide, isolate or select zones, portals, volumes, brushes and movers from one panel. |
 | **Actor Assemblies** | Save groups of actors and brushes and reuse them across maps. |
 | **Find Usages** | Find where a texture or mesh is used, and replace it. |
 | **Favorites** | Keep frequently used materials and meshes together. |
@@ -54,8 +57,9 @@ Recovered maps keep their original baked lighting through ordinary builds. Recov
 | **Select Brush** | Select the source brush from a BSP surface. |
 | **Grid snapping** | Right-click a brush face or vertices to snap them to the grid per axis; **Ctrl + mouse wheel** changes the grid size. |
 | **Fit builder brush to meshes** | Right-click selected meshes to wrap the builder brush around them. |
-| **Fixes** | Playtests launch at the monitor's resolution, off-screen property windows come back, a missing builder brush is repaired, larger BSP point counts are supported, and crashes are logged. |
+| **Reloaded Shortcuts** | **Help > Reloaded Shortcuts...** lists every key, mouse gesture and menu the patch adds, with the Geometric Event keys as configured. |
 
+| **Fixes** | Playtests launch at the monitor's resolution, off-screen property windows come back, a missing builder brush is repaired, larger BSP point counts are supported, and crashes are logged. |
 AllyPal's original fixes are included: faster selection, restored Echelon lighting, improved lightmaps and larger WAV imports.
 
 <details>

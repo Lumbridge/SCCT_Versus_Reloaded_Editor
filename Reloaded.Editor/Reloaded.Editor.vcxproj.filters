@@ -382,5 +382,11 @@
     <ClCompile Include="GridSizeShortcut.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClInclude Include="EditorExtras.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClCompile Include="EditorExtras.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

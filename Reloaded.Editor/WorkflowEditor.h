@@ -6,6 +6,12 @@ namespace Workflow::Editor
     void Initialize();
     std::filesystem::path Directory();
     std::string MapKey();
+    // The open map's file as the frame shows it (unfolded), and the stock Save As setter.
+    std::string MapFile();
+    void SetMapFile(const std::string& path);
+    // The level package's first words, and their restoration after an autosave copy.
+    Json PackageWords();
+    void RestorePackageWords(const Json& before);
     std::string LevelPath();
     uintptr_t LevelIdentity();
     unsigned Revision();
