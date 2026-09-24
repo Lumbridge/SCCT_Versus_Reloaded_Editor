@@ -35,16 +35,27 @@ outside it. The wall itself still selects the piece or drags its face; click the
 it, sized from the movement limits and already in the right place. It arrives as
 a preview, so adjust it before pressing Place / Apply.
 
+**R** and **Shift+R** turn the piece being edited a quarter turn either way. With
+no piece open they turn whatever is selected in the map instead — loose brushes,
+actors, a mixture — about the middle of what the selection covers, so it keeps
+its shape, and a right-click with nothing under the cursor offers the same two
+turns and **By an angle...** for anything else. Each actor's own yaw moves with
+it, which is what the engine builds from, so brushes change shape on the next
+geometry build; locked actors stay put. It is one Undo step.
+
 A new preview carries a green **tick** and a red **cross** beside its top-right
 corner: click the tick to place it (**Enter** does the same) or the cross to
 discard it (**Escape**). **Delete** removes whatever the panel is showing — a
 light, device, reference or route point — or the piece being edited with its
 brushes, or a new preview, or otherwise the editor's current selection.
 
-The panel on the left is contextual: the six everyday buttons, then the
-properties of whatever was clicked last — a piece, a light, a security device,
-a player reference, a route point, or the route being drawn (with its **Finish**
-button). Edits apply as they are made; nothing opens a separate window.
+The panel on the left is contextual: the everyday buttons across the top, then
+the properties of whatever was clicked last — a piece, a light, a security
+device, a player reference, a route point, or the route being drawn (with its
+**Finish** button). Edits apply as they are made; nothing opens a separate
+window. The properties area fills the panel down to the status line and grows
+with the window; when a subject has more rows than fit, a scroll bar appears
+beside them and the wheel moves them too.
 
 In the front and side views the **+** badge appears on a piece's top and bottom
 as well as its walls: from the top it offers a **room above** (same footprint,
@@ -76,7 +87,14 @@ objective flow: a mission with no objectives, an objective no mission lists or
 that has no terminal, bomb target or trigger, a flag without a drop zone, spy
 starts within 512 units of an objective, the two teams' starts within 768 units
 of each other, and objectives more than 4096 units from any merc start.
-Double-click an issue to select its piece. The list opens with a summary of the
+The window reads by colour: a red disc is something that stops the map being
+built or played, an amber triangle something that only spoils it, a blue disc a
+note worth knowing, and a green tick that nothing was found. Errors come first,
+then warnings, then the notes, with the map's own figures kept on top of them; a
+band across the top says whether the map is ready and tallies each kind, and the
+line under the list spells out the selected issue in full for the ones too long
+for their row. A row with a chevron on the right belongs to a piece:
+double-click it to select that piece. The list opens with a summary of the
 layout (how many rooms, corridors, vents and stairs on how many storeys, and the
 brush count) and of the game actors (starts per team, objectives, lights and
 security devices), and adds a line per objective device with the straight-line
@@ -118,10 +136,54 @@ one storey, keeping a multi-level map readable. It applies to brush edges, actor
 origins, clearance guides, annotations and reference images placed on other
 floors. Right-click the slider for **Custom height range...**, which takes any
 two heights. The slider has
-a detent for each storey the map's rooms, corridors and vents stand on (highest
-at the top) and **All** above them. Drag it, click a detent, or press **Page Up /
-Page Down** to step between storeys and **Home** to show them all. In the top
-view the chosen storey is also where new pieces are placed.
+a detent for each storey the map stands on (highest at the top) and **All**
+above them. Drag it, click a detent, roll the wheel over it, or press **Page Up
+/ Page Down** to step between storeys and **Home** to show them all. The keys
+and the wheel follow the slider: **Page Up** from the highest storey carries on
+up to **All**, and **Page Down** from **All** drops onto that highest storey and
+keeps descending. In the top view the chosen storey is also where new pieces are
+placed.
+
+The same storeys are available to the editor's own viewports through **View >
+Reloaded Tools > Storeys**, which opens a slim palette holding this slider. It
+cannot draw one floor the way the plan does, because the viewports draw the map
+themselves, so it hides everything standing on the other floors instead: actors,
+lights, movers, meshes and brush wireframes all go, and surfaces already built
+into the BSP stay, which makes it read best in the wireframe and brush-wireframe
+views. **Page Up / Page Down / Home** over a viewport step through the storeys
+while the palette is open. It puts back what it hid and nothing else, so an
+actor hidden by the Scene panel or Brush Visibility stays hidden; closing the
+palette shows every storey again.
+
+On a map the toolkit built, the storeys are the floor heights of its rooms,
+corridors and vents, with a vent on a room's wall counted as part of that room's
+storey. A map from anywhere else has no pieces to read, so the storeys come from
+the surfaces its brushes leave to stand on: the bottom of each carved brush and
+the top of each added one. Only brushes at least as broad as they are tall offer
+one, which leaves out walls, pillars and lift shafts, and the single huge
+subtracted volume a map is carved from is recognised by the fact that it holds
+the whole map — it spans every storey, and counting its floor is what used to
+leave an imported map with nothing but a bottom and a top. Each surface counts
+for its width rather than its area, so a floor laid as twenty slabs weighs as
+much as one hall of the same size and no one enormous brush drowns the rest out.
+Surfaces within 64 units of each other — a step, a kerb, a raised platform —
+count as one storey, anything under six per cent of the largest storey is left
+out as scenery, and the 24 broadest survive.
+
+The **type chips** under the **Top / Front / Side** buttons take a whole kind of
+actor out of the plan: one chip per kind the map holds three or more of, most
+abundant first, each with its count. Clicking a chip greys it and drops that
+kind from every design view — its outlines and markers, and the light suns,
+reach discs, device beams and view cones drawn for it — so the hundreds of path
+nodes, static meshes or lights an imported map is packed with stop burying its
+geometry; those actors
+also stop taking clicks, box-selections and **F**, which makes clicking what is
+underneath them possible. Clicking the chip again brings them back. Right-click
+any chip for the full list of kinds in the map with their counts, including the
+ones too few to have earned a chip, and **Show every kind in the plan**. Nothing
+about the map changes: the actors stay where they are, visible in the editor's
+viewports and listed in the Scene panel, which is where **Hide** actually hides
+things. Chips are cleared when another map is opened.
 
 Clicking any brush of a placed piece selects the whole piece, in every view, so a
 staircase with a brush per step selects and edits as one. Dragging a rectangle
@@ -141,7 +203,8 @@ Undo step. **Delete** removes whatever is selected. With several pieces selected
 inside any of them moves them all, and the rest of the selection is drawn
 dashed where it will land; arrow keys and grouped members follow the same way.
 
-**Tools > Keyboard and mouse** (or the **Keys...** button) lists every shortcut,
+**Tools > Keyboard and mouse** (or the **Keyboard and mouse...** button in the
+panel's button grid) lists every shortcut,
 and each control in the panel has a tooltip. **F** fits the whole map and
 **Shift+F** the selection; **1**, **2** and **3** switch to the top, front and
 side views; **G** turns snapping on or off and **O** the overlays; **Ctrl+A**
@@ -507,9 +570,14 @@ mission (or a submenu when there are several), and **Objective device here** —
 a computer terminal, bomb target, or flag with its drop zone — under the nearest
 objective, already linked the way the editor's own objective creation links them.
 Starts, missions, objectives, terminals, bomb targets and flags are drawn on the
-plan with icons and can be dragged; a start's white handle turns it to face where
-the player should look. Right-click one to select or delete it; names
-and settings live in the editor's property window.
+plan with icons and can be dragged. Each one also draws the way it faces as an
+arrow out of its icon, with a round handle on the end: drag the handle to turn
+it, exactly as a camera or laser is aimed, in the elevations as well as the top
+view. Clicking one opens it in the panel, where its facing is a typed angle in
+degrees and its height a typed Z; the selected actor shows its angle beside the
+handle. An actor pointing straight into the view has no arrow to grab there, so
+turn it from another view. Right-click one to select or delete it; names and the
+rest of its settings live in the editor's property window.
 
 Right-click an **alarm** for **When triggered, lock the selected doors, lifts and
 objective triggers**: the selected movers join its `MoversToLock` and the selected
@@ -563,7 +631,8 @@ music and the rest of its LevelInfo categories), **Environment** (the
 LevelInfo as the default zone: ambient brightness, hue and saturation, distance
 fog and its colour, and the other zone light and sound settings), and **Map
 settings** (the SMission's own properties, such as its objective name and
-description, leaving the generic Actor categories out). Rows are built from
+description, leaving the generic Actor categories out; scroll the panel for the
+rest). Rows are built from
 the editor's reflection, so whatever the loaded classes expose is there: text,
 numbers, names, Yes/No boxes, enumerations as lists, and a colour spread over
 its channels. Press Enter or move the focus to apply a row; each change is one
@@ -599,19 +668,56 @@ The plan reads and writes the actors; it does not rebuild lighting. Use
 **Build → Rebuild Lighting** (or the selective lighting tools) when the layout
 settles, and check the result in game.
 
-## 15. Stages
+## 15. Zones
 
-A multi-stage map ("finish zone 1, then zone 2 opens") used to mean building
-the counting, locking and wiring by hand from SMagicEvents and triggers.
-**Tools → Stages...** does it from a list.
+A multi-zone map ("finish zone 1, then zone 2 opens") is something the game
+already knows how to run: a mission can hold other missions, and a chained
+mission works through what it holds one at a time. **Tools → Zones...** builds
+that shape from a list, so nothing has to be counted or locked by hand.
 
-Each **stage** holds some of the mission's objectives and is complete when
-**all of them** are done, or when **this many** of them are. **Add stage**
-makes a stage; tick the objectives that belong to it in the list (Ctrl+click
-for several; ticking one that is in another stage moves it). Objectives in no
-stage count from the start of the match as usual.
+The window is resizable: the zone list, the objectives and the actions take
+whatever room it is given, so a long plan is read without scrolling three lists
+at once. Zones are listed with a numbered badge and what each one needs, and
+actions with a coloured dot for what they do — a door, a light, a sound, an
+announcement, a trigger.
 
-**When this stage is complete** lists what happens, each with an optional
+Each **zone** becomes an `SMission` of its own holding some of the map's
+objectives. Inside a zone nothing is chained, so **every objective of the zone
+is available from the moment the zone starts** — the spies can do them in any
+order. The map's own mission holds the zone missions in match order and is
+chained, so zone 2 only becomes live when zone 1 is done:
+
+```
+SMission (the map's, bChained True, GameMode GM_Multi)
+  MinimumObjectives = how many objectives win the match
+  Objectives = Zone1Mission, Zone2Mission, ...
+    Zone1Mission (SMission, bChained False, GameMode GM_Undefined)
+      Objectives = the zone's SObjectives, MinimumObjectives = how many end it
+```
+
+**Add zone** makes a zone; tick the objectives that belong to it in the list
+(Ctrl+click for several; ticking one that is in another zone moves it).
+**Move up** and **move down** change the order the zones are played in. A zone
+is complete when **all of them** are done, or when **this many** of them are —
+that is the zone mission's `MinimumObjectives`. **Zone name**, **Spy briefing**
+and **Merc briefing** are the mission's `ObjectiveName`, `Description` and
+`DescriptionDEF`, which is what each team reads.
+
+`MinimumObjectives` on the map's own mission is a different number: how many
+objectives the spies need to **win the match**. Working through every zone
+completes each zone's threshold, so the match total is those added up, and
+**the spies win the match after this many objectives** is left at **0** to mean
+exactly that — raise a zone's threshold and the match total follows. Type a
+smaller number to end the match before the last zone does; the box beside it
+shows how many objectives the zones hold and what 0 currently means. **Check
+design...** reports a total the zones can never reach.
+
+Every objective in the map belongs to exactly one zone: the objectives list
+marks the ones still in no zone, and **Apply to map** names any that are left
+over rather than leaving them hanging off the top mission beside the zones,
+where the chain would make each one a step of its own.
+
+**When this zone is complete** lists what happens, each with an optional
 **Delay** (type it before adding, or select an action and **Set delay**):
 
 - **Open door / lift...** triggers a mover. A timed door is set to stay open
@@ -622,46 +728,48 @@ stage count from the start of the match as usual.
   `SoundTrigger` for a loaded sound and fires that.
 - **Announce on HUD** shows the **Title**, **Merc text** and **Spy text** on
   both teams' HUDs for **Seconds**. This uses the game's alarm banner: an
-  `SAlarm` named `Stage<N>_Announce` that locks nothing and triggers nothing
+  `SAlarm` named `Zone<N>_Announce` that locks nothing and triggers nothing
   else, so it looks like an alarm message and sounds like one.
 - **Trigger actor...** triggers any other event, alarm, emitter or trigger in
   the map, including an SMagicEvent you built yourself for anything the list
   does not cover.
 
-**Lock later stages' terminals until their stage begins** (on by default)
-makes the computer terminals, bomb targets and flags of stage 2 onwards
-unusable at the start (`bInitialyUsable` off, `TriggerMethode`
-`TriggerControl`) and adds an automatic first action to each stage that
-unlocks the next stage's terminals. Turn it off if the zones are closed by
-doors alone.
+These hang off the zone mission's `Event`, which the game fires when the zone
+ends: one `SMagicEvent` named `Zone<N>_Complete` whose group holds the actions.
+A zone whose mission already fires an event of your own keeps that Tag, so a
+map wired by hand is not renamed by applying the plan.
 
-**Apply to map** writes the whole plan in one Undo step: each objective's
-`Event` becomes `Stage<N>_Gate`, an SMagicEvent whose single Sequence group
-has one step per completion needed and fires `Stage<N>_Complete` on the last
-step, and that event's group holds the stage's actions. The events sit above
-the stage's objectives; the Gameplay Connections graph and the SMagicEvent
-Workbench show and edit them like any other. Actors that an event needs to
-reach are given a Tag if they have none, or a Tag of their own if theirs is
-shared with other actors, so a door opens alone. The status line lists what
-was created, updated and anything worth knowing, such as an objective whose
-old Event was replaced.
+**Apply to map** writes the whole plan in one Undo step: the zone missions are
+created or updated, the map's mission is chained and given them in order, and
+the completion events, sound triggers and announcements are made. Actors that
+an event needs to reach are given a Tag if they have none, or a Tag of their
+own if theirs is shared with other actors, so a door opens alone. The status
+line lists what was created, updated and anything worth knowing. Terminals are
+left usable: the chain decides when a zone is live, so nothing is locked with
+`bInitialyUsable`.
 
 The plan is read back from the map whenever the window opens or **Reload from
-map** is pressed, so a map made this way can be changed later: removing a
-stage or moving an objective out of every stage releases its terminals and
-clears its Event, and events of stages that no longer exist are named so they
-can be deleted. The plan on the plan view shows each objective's stage in its
-label. **Export JSON...** and **Import JSON...** save and load the plan
-(`scct.stages`, version 1), which names actors by path, so it belongs to the
-map it came from. **Check design...** reports gates nothing feeds or that need
-more completions than they have objectives, completion events that reach
-nothing or fire a Tag nothing carries, later-stage terminals left usable, and
-objectives outside every stage.
+map** is pressed, so a map made this way — or one wired by hand in the same
+shape — can be changed later. The plan on the plan view shows each objective's
+zone in its label, and double-clicking a zone selects its mission, its
+objectives and its completion event. **Export JSON...** and **Import JSON...**
+save and load the plan (`scct.stages`, version 2), which names actors by path,
+so it belongs to the map it came from. **Check design...** reports zones that
+can never be completed, a match total more objectives than finishing every
+zone completes, a top mission that is not chained or has no game mode, zone
+missions the game would treat as a mode of their own, completion events that
+fire a Tag nothing carries, and objectives in no mission.
 
-The mission's own rules still apply: `MinimumObjectives`, `bChained` and
-`RandomObjectives` on the SMission are not changed. Whether an objective fires
-its `Event` on completion, and how a terminal's `TriggerControl` responds, are
-the game's behaviour; playtest a staged map before shipping it.
+Removing a zone from the plan takes it out of the chain but leaves its
+`SMission` in the map; delete it in the editor. An earlier version of this
+window counted completions with `Stage<N>_Gate` events and locked later
+terminals; applying a plan to a map that still carries that wiring clears the
+objectives' Events, makes the locked terminals usable again and names the
+leftover events so they can be deleted.
+
+Whether an objective fires its `Event` on completion, and how a terminal's
+`TriggerControl` responds, are the game's behaviour; playtest a zoned map
+before shipping it.
 
 ## Persistence and portability
 

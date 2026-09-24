@@ -130,6 +130,7 @@ void LightPaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void(con
     for(const auto& stored:s.lights)
     {
         Json light=stored;
+        if(!DesignTypeShown(s,light.at("path").get<std::string>()))continue;
         const bool live=dragging && light.at("path")==s.drag.device.at("path");
         if(live)
         {

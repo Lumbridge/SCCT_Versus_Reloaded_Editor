@@ -739,9 +739,17 @@ namespace
             "convexvolume",
             // ZoneInfo.ZoneEffect instances are authored audio environment
             // settings, stored as package-root objects in the compiled map.
-            "i3dl2listener", "effect_hangar", "effect_bathroom", "effect_stonecorridor",
-            "effect_hallway", "effect_livingroom", "effect_sewerpipe", "effect_stoneroom",
-            "effect_mountains", "effect_quarry", "effect_arena", "effect_cave"
+            // One class per I3DL2 reverb preset, so the whole standard set is
+            // here rather than the presets that happened to turn up first: a
+            // map reverberating like a city or a room is as ordinary as one
+            // that sounds like a hangar.
+            "i3dl2listener", "effect_generic", "effect_paddedcell", "effect_room",
+            "effect_bathroom", "effect_livingroom", "effect_stoneroom", "effect_auditorium",
+            "effect_concerthall", "effect_cave", "effect_arena", "effect_hangar",
+            "effect_carpetedhallway", "effect_hallway", "effect_stonecorridor", "effect_alley",
+            "effect_forest", "effect_city", "effect_mountains", "effect_quarry",
+            "effect_plain", "effect_parkinglot", "effect_sewerpipe", "effect_underwater",
+            "effect_drugged", "effect_dizzy", "effect_psychotic"
         };
         return assets.count(ClassLeaf(className)) != 0;
     }

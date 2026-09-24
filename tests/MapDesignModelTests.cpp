@@ -67,6 +67,27 @@ int main()
     Check(!Design::Carved(spec) && Design::Carved(carve),"construction default must stay Shell for saved pieces");
 
     // Doorways can carry a zone portal sheet.
+    {
+        std::vector<Vector> corners{{0,0,0},{128,0,0},{128,0,64},{0,0,64}};
+        for(const auto rotation:{Rotation{},Rotation{7000,11000,3000}})
+        {
+            auto points=corners;for(auto& p:points)p=TransformPoint(p,{{123,-321,456},rotation});
+            std::swap(points[1],points[2]);points.push_back(points[0]);points.push_back(points[2]);
+            auto portal=Design::VertexPortal(points);
+            Check(portal.faces.size()==6 && portal.flags==Design::kPortalPolyFlags,"vertex portal is a flagged six-face slab");
+            Check(std::abs(Volume(portal)-128*64)<.001,"portal has outward winding and one-unit thickness under rotation");
+            const auto a=portal.faces[0][0],b=portal.faces[0][1],c=portal.faces[0][2];
+            Vector u{b[0]-a[0],b[1]-a[1],b[2]-a[2]},v{c[0]-a[0],c[1]-a[1],c[2]-a[2]};
+            Vector n{u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0]};
+            double length=std::sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
+            for(const auto& face:portal.faces)for(const auto& p:face){double d=0;for(int axis=0;axis<3;++axis)d+=(p[axis]-points[0][axis])*n[axis]/length;Check(std::abs(std::abs(d)-.5)<1e-8,"portal extends half a unit on each side of the selected plane");}
+        }
+        Reject([&]{auto p=corners;p.pop_back();Design::VertexPortal(p);});
+        Reject([&]{auto p=corners;p.push_back({64,0,32});Design::VertexPortal(p);});
+        Reject([&]{auto p=corners;p[3][1]=2;Design::VertexPortal(p);});
+        Reject([]{Design::VertexPortal({{0,0,0},{1,0,0},{2,0,0},{3,0,0}});});
+        Reject([]{Design::VertexPortal({{0,0,0},{128,0,0},{128,0,64},{100,0,20}});});
+    }
     auto door=carve;door["kind"]="Doorway";door["portal"]=true;
     auto doorway=Design::Geometry(door);
     Check(doorway.size()==2 && doorway[0].subtract,"portal doorway must subtract and add a sheet");
@@ -250,6 +271,53 @@ int main()
 
     // Floor filters.
     Check(Design::WithinFloor(0,256,-100,10) && !Design::WithinFloor(0,256,300,400) && Design::WithinFloor(0,256,256,900),"floor range filter incorrect");
+    {
+        // What a brush leaves to stand on. The enclosing volume a map is
+        // carved from is taller than it is broad and offers nothing, which is
+        // what used to make a whole map one storey.
+        Design::FloorEvidence surface;
+        const Vector mapLow{-20480,-20480,-20480},mapHigh{20480,20480,20480};
+        Check(Design::EnclosesMap({mapLow,mapHigh,true},mapLow,mapHigh),"the volume a map is carved from holds the whole map");
+        Check(!Design::EnclosesMap({{-1024,-1024,0},{1024,1024,256},true},mapLow,mapHigh),"a carved room inside a map is not the volume it was carved from");
+        Check(!Design::EnclosesMap({{-1024,-1024,0},{1024,1024,512},true},{-1024,-1024,0},{1024,1024,512}),"one carved room is not mistaken for a void when it is all there is");
+        Check(!Design::EnclosesMap({mapLow,mapHigh,false},mapLow,mapHigh),"added solid is never the volume a map is carved from");
+        Check(!Design::FloorSurface({{0,0,0},{16,512,256},false},surface),"a wall is not a floor");
+        Check(!Design::FloorSurface({{0,0,0},{64,64,256},false},surface),"a pillar is not a floor");
+        Check(Design::FloorSurface({{0,0,0},{512,512,32},false},surface) && surface.base==32 && surface.weight==512,"an added slab is stood on at its top, and counts for its width");
+        Check(Design::FloorSurface({{0,0,256},{1024,256,512},true},surface) && surface.base==256 && surface.top==512,"a carved room is stood in at its bottom");
+        Check(!Design::FloorSurface({{0,0,0},{0,512,32},false},surface),"a brush with no thickness offers nothing");
+        // The storeys those surfaces make. Pieces the toolkit placed nest: a
+        // vent on a room's wall belongs to the room's storey, and a step up
+        // inside a room is not a storey of its own.
+        Design::StoreyRules nested;
+        nested.nest=true;
+        auto placed=Design::Storeys({{0,256,256},{0,256,256},{32,288,64},{140,236,45},{256,512,256},{512,768,256}},nested);
+        Check(placed.size()==3 && placed[0].base==0 && placed[1].base==256 && placed[2].base==512,"placed pieces make one storey per floor height");
+        Check(placed[0].top==288,"a storey reaches as high as the space on it");
+        // An imported map: a floor laid as many slabs must weigh as much as
+        // one broad hall, or the biggest brush would be the only storey.
+        Design::StoreyRules imported;
+        imported.share=.06;
+        std::vector<Design::FloorEvidence> stockFloors={{0,256,4000}};
+        for(int i=0;i<12;++i)stockFloors.push_back({256,512,512});
+        for(int i=0;i<6;++i)stockFloors.push_back({512,768,512});
+        auto stock=Design::Storeys(stockFloors,imported);
+        Check(stock.size()==3 && stock[0].base==0 && stock[1].base==256 && stock[2].base==512,"an imported map's storeys come from the floor at each height, however it was laid");
+        // Scenery is not a storey: a crate lid partway up a hall is too narrow
+        // beside the floor it stands on.
+        auto hall=Design::Storeys({{0,512,4000},{96,112,128}},imported);
+        Check(hall.size()==1 && hall[0].base==0,"a crate is not a storey");
+        // Heights within the tolerance are one storey, however many surfaces
+        // are at them, and the storey sits at the broadest one's height.
+        auto stepped=Design::Storeys({{20,276,900},{0,256,300},{-30,226,280}},imported);
+        Check(stepped.size()==1 && stepped[0].base==20,"surfaces a step apart are the same storey, at the height of the broadest");
+        Design::StoreyRules few;
+        few.share=.06;few.limit=2;
+        auto capped=Design::Storeys({{0,256,900},{256,512,800},{512,768,700}},few);
+        Check(capped.size()==2 && capped[0].base==0 && capped[1].base==256,"the limit keeps the storeys with the most floor");
+        Check(Design::Storeys({}).empty(),"a map with nothing in it has no storeys");
+        Check(Design::Storeys({{std::numeric_limits<double>::quiet_NaN(),0,1},{0,256,256}}).size()==1,"unreadable geometry is skipped");
+    }
 
     // Layers written into the map's native Group field.
     Check(Design::ValidGroupName("Upper_Floor") && !Design::ValidGroupName("Upper Floor") && !Design::ValidGroupName("") && !Design::ValidGroupName("None"),"group name validation incorrect");

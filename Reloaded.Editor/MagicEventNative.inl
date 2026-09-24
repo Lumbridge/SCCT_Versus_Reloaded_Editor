@@ -1,7 +1,10 @@
 // Included inside Workflow::Editor; shares the verified native bridge helpers.
 namespace
 {
-    Address MagicResolve(const Json& identity)
+    // level allows the map's LevelInfo, which is Actors[0] and is otherwise
+    // held back with the builder brush because neither may be authored. The
+    // settings sheets read it; nothing that writes a change batch passes true.
+    Address MagicResolve(const Json& identity,bool level=false)
     {
         auto object=Find(identity.at("path"),false);
         if(!object || Path(Read<Address>(object+0x24))!=identity.at("class").get<std::string>())return 0;
@@ -12,7 +15,9 @@ namespace
             bool referenced=false;for(const auto& ref:ReferencesOf(parent,false))if(ref.target==owner)referenced=true;
             if(!referenced)return 0;owner=parent;
         }
-        if(!owner)return 0;auto live=LiveActors();if(std::find(live.begin(),live.end(),owner)==live.end() || owner==live[0] || (live.size()>1 && owner==live[1]) || IsA(owner,"Camera"))return 0;
+        if(!owner)return 0;auto live=LiveActors();
+        if(std::find(live.begin(),live.end(),owner)==live.end() || IsA(owner,"Camera"))return 0;
+        if((owner==live[0] && !(level && IsA(owner,"LevelInfo"))) || (live.size()>1 && owner==live[1]))return 0;
         return object;
     }
     std::vector<Address> MagicFields(Address type)
@@ -243,21 +248,35 @@ void CaptureMoverKey(const Json& snapshot,int key)
     }
     EditActor(snapshot,{{"KeyPos",positions},{"KeyRot",rotations},{"NumKeys",std::to_string(std::max(key+1,std::stoi(values.at("NumKeys").get<std::string>())))}});
 }
+namespace
+{
+    Json InspectResolved(Address actor)
+    {
+        Json result={{"actor",Identity(actor)},{"level",LevelIdentity()},{"generation",MapGeneration()},{"values",Json::object()},{"schema",Json::object()},{"unavailable",Json::object()}};
+        for(auto p:Properties(Read<Address>(actor+0x24)))
+        {
+            if(!MagicEditable(p,actor))continue;auto name=NameOf(p);
+            try
+            {
+                auto schema=MagicSchema(p);schema["category"]=Name(Read<int>(p+0x38));
+                result["values"][name]=MagicValue(p,actor+Read<int>(p+0x3c));result["schema"][name]=std::move(schema);
+            }
+            catch(const std::exception& e){result["unavailable"][name]=e.what();}
+        }
+        return result;
+    }
+}
 Json InspectActor(const Json& identity)
 {
     auto actor=MagicResolve(identity);if(!actor)throw std::runtime_error("Actor or owned component is no longer available.");
-    Json result={{"actor",Identity(actor)},{"level",LevelIdentity()},{"generation",MapGeneration()},{"values",Json::object()},{"schema",Json::object()},{"unavailable",Json::object()}};
-    for(auto p:Properties(Read<Address>(actor+0x24)))
-    {
-        if(!MagicEditable(p,actor))continue;auto name=NameOf(p);
-        try
-        {
-            auto schema=MagicSchema(p);schema["category"]=Name(Read<int>(p+0x38));
-            result["values"][name]=MagicValue(p,actor+Read<int>(p+0x3c));result["schema"][name]=std::move(schema);
-        }
-        catch(const std::exception& e){result["unavailable"][name]=e.what();}
-    }
-    return result;
+    return InspectResolved(actor);
+}
+// The same read, for the settings sheets, which edit the map's LevelInfo as
+// well as ordinary actors.
+Json InspectSettingsActor(const Json& identity)
+{
+    auto actor=MagicResolve(identity,true);if(!actor)throw std::runtime_error("Actor or owned component is no longer available.");
+    return InspectResolved(actor);
 }
 Json ExportEventJson(const Json& identity)
 {

@@ -4,49 +4,59 @@
 #include <map>
 #include <set>
 
-// Stages of a Versus match: a stage is a set of objectives; when enough of
-// them are complete the stage ends and things happen (doors open, lights
-// switch, sounds play, both HUDs get a message, other actors are triggered)
-// and the next stage's objective terminals unlock. The map carries all of it
-// as ordinary actors wired through Tag and Event, so the game needs nothing
-// new and the editor's own tools still show every link:
+// Zones of a Versus match: a zone is a set of objectives that are all
+// available at once, and the match works through the zones in order. The game
+// already does this with its own mission actors, so the editor builds that
+// shape rather than a counting machine of its own:
 //
-//   objective.Event = Stage<N>_Gate  --->  Stage<N>_Gate (SMagicEvent)
-//     a Sequence group with one entry per completion needed; the last entry
-//     fires Stage<N>_Complete, so it counts "K of N" with no counter actor.
-//   Stage<N>_Complete (SMagicEvent) holds the stage's actions, plus one
-//     Trigger per terminal of stage N+1, which start locked (bInitialyUsable
-//     False, TriggerMethode TriggerControl) and become usable when triggered.
+//   TopLevelMission (SMission, bChained True, GameMode GM_Multi)
+//     Objectives = Zone1Mission, Zone2Mission, ...   in match order
+//   Zone<N>Mission (SMission, bChained False, GameMode GM_Undefined)
+//     Objectives = the zone's SObjectives, all live from the moment the zone
+//     starts; MinimumObjectives is how many of them end the zone.
+//
+// MinimumObjectives on the top mission is not a count of zones: it is how many
+// objectives the spies need to win the match. Working through every zone
+// completes each zone's own threshold, so the match total is those added up
+// unless the author wants the spies to win before the last zone ends.
+//
+// Because the parent is chained, the game runs the zones one after another and
+// nothing has to be locked by hand. A zone's Event fires when it is complete,
+// so the things an author wants then (doors, lights, sounds, a HUD message,
+// any other actor) hang off one SMagicEvent with that Tag.
 //
 // A plan is a small JSON document; Read derives it from a map's actors and
 // Plan turns it back into a scct.map-changes batch, so the map can be
 // re-read and re-applied at any time. Engine-independent.
 namespace Workflow::Stages
 {
-inline std::string GateTag(int n){return "Stage"+std::to_string(n)+"_Gate";}
-inline std::string CompleteTag(int n){return "Stage"+std::to_string(n)+"_Complete";}
-inline std::string AnnounceTag(int n){return "Stage"+std::to_string(n)+"_Announce";}
-inline std::string SoundTag(int n,int i){return "Stage"+std::to_string(n)+"_Sound"+std::to_string(i);}
-// The stage number of a generated Tag such as Stage2_Gate, or 0 when the Tag
-// is not one of ours. Sound tags carry an index after the suffix.
-inline int StageOf(const std::string& tag,const std::string& suffix)
+inline std::string ZoneTag(int n){return "Zone"+std::to_string(n)+"Mission";}
+inline std::string CompleteTag(int n){return "Zone"+std::to_string(n)+"_Complete";}
+inline std::string AnnounceTag(int n){return "Zone"+std::to_string(n)+"_Announce";}
+inline std::string SoundTag(int n,int i){return "Zone"+std::to_string(n)+"_Sound"+std::to_string(i);}
+// The number in a generated Tag such as Zone2Mission or Zone2_Complete, or 0
+// when the Tag is not one of ours. Sound tags carry an index after the suffix.
+inline int TagNumber(const std::string& tag,const std::string& prefix,const std::string& suffix)
 {
-    const auto folded=Fold(tag);
-    const std::string prefix="stage";
-    if(folded.size()<=prefix.size() || folded.compare(0,prefix.size(),prefix)!=0)return 0;
-    size_t i=prefix.size();const size_t start=i;
+    const auto folded=Fold(tag),head=Fold(prefix);
+    if(folded.size()<=head.size() || folded.compare(0,head.size(),head)!=0)return 0;
+    size_t i=head.size();const size_t start=i;
     while(i<folded.size() && std::isdigit(static_cast<unsigned char>(folded[i])))++i;
     if(i==start || i-start>6)return 0;
-    const auto rest=folded.substr(i),wanted="_"+Fold(suffix);
+    const auto rest=folded.substr(i),wanted=Fold(suffix);
     if(rest.compare(0,wanted.size(),wanted)!=0)return 0;
     const auto index=rest.substr(wanted.size());
-    if(!index.empty() && (suffix!="Sound" || index.find_first_not_of("0123456789")!=std::string::npos))return 0;
+    if(!index.empty() && (wanted!="_sound" || index.find_first_not_of("0123456789")!=std::string::npos))return 0;
     return std::stoi(folded.substr(start,i-start));
 }
+inline int ZoneOf(const std::string& tag,const std::string& suffix){return TagNumber(tag,"Zone",suffix);}
+// Tags the earlier counting-event version of this window generated, which a
+// map may still carry.
+inline int LegacyOf(const std::string& tag,const std::string& suffix){return TagNumber(tag,"Stage","_"+suffix);}
 inline bool NoneTag(const std::string& tag){return tag.empty() || Fold(tag)=="none";}
 inline std::string ShortName(const std::string& path){return path.substr(path.find_last_of('.')+1);}
-inline Json Empty(){return {{"format","scct.stages"},{"version",1},{"lockLater",true},{"stages",Json::array()}};}
-inline Json NewStage(){return {{"objectives",Json::array()},{"required",0},{"actions",Json::array()}};}
+inline Json Empty(){return {{"format","scct.stages"},{"version",2},{"required",0},{"zones",Json::array()}};}
+inline Json NewZone(){return {{"name",""},{"brief",""},{"briefDefend",""},{"objectives",Json::array()},{"required",0},{"actions",Json::array()}};}
 inline const Json* ByPath(const Json& actors,const std::string& path)
 {
     for(const auto& actor:actors)if(actor.value("path",std::string())==path)return &actor;
@@ -57,6 +67,11 @@ inline const Json* ByTag(const Json& actors,const std::string& tag)
     if(NoneTag(tag))return nullptr;
     for(const auto& actor:actors)if(Fold(actor.value("tag",std::string()))==Fold(tag))return &actor;
     return nullptr;
+}
+// An actor as an object-reference property value.
+inline std::string Reference(const Json& actor)
+{
+    return actor.value("class",std::string())+"'"+actor.value("path",std::string())+"'";
 }
 // Property text compares as numbers where both sides are numbers, so "0" and
 // "0.000000" read back from the map count as the same value.
@@ -92,31 +107,66 @@ inline void CheckText(const std::string& text,const char* what)
 {
     if(text.size()>200 || text.find_first_of("\r\n")!=std::string::npos)throw std::runtime_error(std::string(what)+" uses up to 200 characters on one line.");
 }
-// A plan document: format, lockLater and stages, each with objectives (actor
-// paths), required (0 means all) and actions.
+inline int Whole(const std::string& text)
+{
+    try{return std::stoi(text);}catch(const std::exception&){return 0;}
+}
+// How many of a zone's objectives end it, 0 meaning all of them.
+inline int Needed(const Json& zone)
+{
+    const int total=static_cast<int>(zone.value("objectives",Json::array()).size()),required=zone.value("required",0);
+    return required?required:total;
+}
+// Every objective the plan's zones hold.
+inline int Objectives(const Json& plan)
+{
+    int total=0;
+    for(const auto& zone:plan.value("zones",Json::array()))total+=static_cast<int>(zone.value("objectives",Json::array()).size());
+    return total;
+}
+// The objectives the spies complete by working through every zone: what the
+// top mission's MinimumObjectives is unless the plan names a smaller number.
+inline int Thresholds(const Json& plan)
+{
+    int needed=0;
+    for(const auto& zone:plan.value("zones",Json::array()))needed+=Needed(zone);
+    return needed;
+}
+inline int WinsAfter(const Json& plan)
+{
+    const int required=plan.value("required",0);
+    return required?required:Thresholds(plan);
+}
+// A plan document: format, version and zones, each with a name, the briefing
+// both teams read, objectives (actor paths), required (0 means all) and the
+// actions its completion fires.
 inline void Validate(const Json& plan)
 {
-    if(!plan.is_object() || plan.value("format",std::string())!="scct.stages" || plan.value("version",0)!=1)
-        throw std::runtime_error("This is not a stages file (scct.stages, version 1).");
-    if(!plan.contains("stages") || !plan.at("stages").is_array() || plan.at("stages").size()>64)throw std::runtime_error("A plan lists up to 64 stages.");
-    if(plan.contains("lockLater") && !plan.at("lockLater").is_boolean())throw std::runtime_error("lockLater must be true or false.");
+    if(!plan.is_object() || plan.value("format",std::string())!="scct.stages")throw std::runtime_error("This is not a zones file (scct.stages).");
+    const int version=plan.value("version",0);
+    if(version==1)throw std::runtime_error("This plan comes from the earlier version of this window, which counted objectives with its own events instead of giving each zone a mission. Build the zones again from the map.");
+    if(version!=2)throw std::runtime_error("This is not a zones file (scct.stages, version 2).");
+    if(!plan.contains("zones") || !plan.at("zones").is_array() || plan.at("zones").size()>64)throw std::runtime_error("A plan lists up to 64 zones.");
+    if(plan.contains("required") && (!plan.at("required").is_number_integer() || plan.at("required").get<int>()<0))
+        throw std::runtime_error("The objectives the spies need to win must be a whole number, or 0 for every zone's threshold added up.");
     std::set<std::string> seen;
     int n=0;
-    for(const auto& stage:plan.at("stages"))
+    for(const auto& zone:plan.at("zones"))
     {
         ++n;
-        const auto label="Stage "+std::to_string(n);
-        if(!stage.is_object() || !stage.contains("objectives") || !stage.at("objectives").is_array() || !stage.contains("actions") || !stage.at("actions").is_array())
+        const auto label="Zone "+std::to_string(n);
+        if(!zone.is_object() || !zone.contains("objectives") || !zone.at("objectives").is_array() || !zone.contains("actions") || !zone.at("actions").is_array())
             throw std::runtime_error(label+" needs objectives and actions lists.");
-        for(const auto& objective:stage.at("objectives"))
+        for(const char* field:{"name","brief","briefDefend"})CheckText(zone.value(field,std::string()),field);
+        for(const auto& objective:zone.at("objectives"))
         {
             if(!objective.is_string() || objective.get<std::string>().empty())throw std::runtime_error(label+" lists an objective without a path.");
-            if(!seen.insert(Fold(objective.get<std::string>())).second)throw std::runtime_error(ShortName(objective.get<std::string>())+" is in two stages. An objective belongs to one stage.");
+            if(!seen.insert(Fold(objective.get<std::string>())).second)throw std::runtime_error(ShortName(objective.get<std::string>())+" is in two zones. An objective belongs to one zone.");
         }
-        const int required=stage.value("required",0);
-        if(required<0 || required>static_cast<int>(stage.at("objectives").size()))
-            throw std::runtime_error(label+" needs "+std::to_string(required)+" completions but has "+std::to_string(stage.at("objectives").size())+" objectives.");
-        for(const auto& action:stage.at("actions"))
+        const int required=zone.value("required",0);
+        if(required<0 || required>static_cast<int>(zone.at("objectives").size()))
+            throw std::runtime_error(label+" needs "+std::to_string(required)+" completions but has "+std::to_string(zone.at("objectives").size())+" objectives.");
+        for(const auto& action:zone.at("actions"))
         {
             if(!action.is_object())throw std::runtime_error(label+" has an action that is not an object.");
             const auto kind=action.value("kind",std::string());
@@ -150,69 +200,122 @@ inline void Validate(const Json& plan)
             else throw std::runtime_error(label+": unknown action kind '"+kind+"'. Use open, light, sound, announce or trigger.");
         }
     }
+    if(const int required=plan.value("required",0);required>Objectives(plan))
+        throw std::runtime_error("The spies need "+std::to_string(required)+" objectives to win, but the zones hold "+std::to_string(Objectives(plan))+".");
 }
 inline bool Untriggers(const std::string& type){const auto t=Fold(type);return t=="evt_untrigger" || t=="evt_untriggertrigger";}
-// Reads the stages a map already carries: every Stage<N>_Gate names a stage,
-// the objectives whose Event feeds it belong to it, the gate's entry count is
-// the completions it needs, and Stage<N>_Complete's actions are listed by what
-// each target is.
+// The mission the game plays: the one no other mission holds. Where a map has
+// several such missions the multiplayer one wins.
+inline const Json* TopMission(const Json& actors)
+{
+    std::set<std::string> nested;
+    for(const auto& actor:actors)
+        if(actor.value("kind",std::string())=="Mission")
+            for(const auto& child:actor.value("objectives",Json::array()))
+                if(child.is_string())nested.insert(Fold(child.get<std::string>()));
+    const Json* top=nullptr;
+    for(const auto& actor:actors)
+    {
+        if(actor.value("kind",std::string())!="Mission" || nested.count(Fold(actor.value("path",std::string()))))continue;
+        if(!top || (Fold(actor.value("mode",std::string()))=="gm_multi" && Fold(top->value("mode",std::string()))!="gm_multi"))top=&actor;
+    }
+    return top;
+}
+// The zone missions a map carries, in the order the top mission holds them.
+inline std::vector<const Json*> ZoneMissions(const Json& actors)
+{
+    std::vector<const Json*> zones;
+    const auto* top=TopMission(actors);
+    if(!top)return zones;
+    for(const auto& child:top->value("objectives",Json::array()))
+    {
+        if(!child.is_string())continue;
+        const auto* actor=ByPath(actors,child.get<std::string>());
+        if(actor && actor->value("kind",std::string())=="Mission")zones.push_back(actor);
+    }
+    return zones;
+}
+// The actions an SMagicEvent with this Tag fires, listed by what each target
+// is. The zone number tells its own sound and announcement actors apart from
+// ones the author placed.
+inline Json ReadActions(const Json& actors,const std::string& tag,int n)
+{
+    Json actions=Json::array();
+    const auto* event=ByTag(actors,tag);
+    if(!event || event->value("kind",std::string())!="Magic event")return actions;
+    const auto groups=event->value("groups",Json::array());
+    if(groups.empty() || !groups[0].is_object() || !groups[0].contains("EventGroup"))return actions;
+    for(const auto& entry:groups[0].at("EventGroup"))
+    {
+        const auto fired=entry.value("Event",std::string("None"));
+        if(NoneTag(fired))continue;
+        Json action={{"delay",entry.value("Delay",std::string("0"))}};
+        const auto* target=ByTag(actors,fired);
+        if(!target){action["kind"]="trigger";action["tag"]=fired;action["untrigger"]=Untriggers(entry.value("Type",std::string()));actions.push_back(action);continue;}
+        const auto kind=target->value("kind",std::string());
+        action["target"]=target->at("path");
+        if(kind=="Mover"){action["kind"]="open";action["hold"]=Fold(target->value("state",std::string()))=="triggertoggle";}
+        else if(kind=="Light")action["kind"]="light";
+        else if(kind=="Sound")
+        {
+            action["kind"]="sound";
+            if(ZoneOf(fired,"_Sound")==n){action.erase("target");action["sound"]=target->value("sound",std::string());}
+        }
+        else if(kind=="Alarm" && ZoneOf(fired,"_Announce")==n)
+        {
+            action.erase("target");action["kind"]="announce";
+            action["title"]=target->value("title",std::string());action["merc"]=target->value("merc",std::string());
+            action["spy"]=target->value("spy",std::string());action["seconds"]=target->value("duration",std::string("8"));
+        }
+        else {action["kind"]="trigger";action["untrigger"]=Untriggers(entry.value("Type",std::string()));}
+        actions.push_back(action);
+    }
+    return actions;
+}
+// Reads the zones a map already carries: the missions the top mission holds,
+// in its order, each with its own objectives, threshold and completion
+// actions.
 inline Json Read(const Json& actors)
 {
     Json plan=Empty();
-    int last=0;
-    for(const auto& actor:actors)
-        if(actor.value("kind",std::string())=="Magic event")
-            last=std::max({last,StageOf(actor.value("tag",std::string()),"Gate"),StageOf(actor.value("tag",std::string()),"Complete")});
-    bool unlocks=false;
-    for(int n=1;n<=last;++n)
+    const auto* top=TopMission(actors);
+    if(!top)return plan;
+    plan["mission"]=top->at("path");
+    int n=0;
+    for(const auto* mission:ZoneMissions(actors))
     {
-        Json stage=NewStage();
-        for(const auto& actor:actors)
-            if(actor.value("kind",std::string())=="Objective" && Fold(actor.value("event",std::string()))==Fold(GateTag(n)))stage["objectives"].push_back(actor.at("path"));
-        if(const auto* gate=ByTag(actors,GateTag(n)))
+        ++n;
+        Json zone=NewZone();
+        zone["mission"]=mission->at("path");
+        zone["name"]=mission->value("name",std::string());
+        zone["brief"]=mission->value("brief",std::string());
+        zone["briefDefend"]=mission->value("briefDefend",std::string());
+        for(const auto& path:mission->value("objectives",Json::array()))
         {
-            const auto groups=gate->value("groups",Json::array());
-            if(!groups.empty() && groups[0].is_object() && groups[0].contains("EventGroup"))
-            {
-                const int needed=static_cast<int>(groups[0].at("EventGroup").size());
-                if(needed>0 && needed!=static_cast<int>(stage["objectives"].size()))stage["required"]=needed;
-            }
+            if(!path.is_string())continue;
+            const auto* objective=ByPath(actors,path.get<std::string>());
+            if(objective && objective->value("kind",std::string())=="Objective")zone["objectives"].push_back(objective->at("path"));
         }
-        if(const auto* complete=ByTag(actors,CompleteTag(n)))
-        {
-            const auto groups=complete->value("groups",Json::array());
-            if(!groups.empty() && groups[0].is_object() && groups[0].contains("EventGroup"))
-                for(const auto& entry:groups[0].at("EventGroup"))
-                {
-                    const auto tag=entry.value("Event",std::string("None"));
-                    if(NoneTag(tag))continue;
-                    Json action={{"delay",entry.value("Delay",std::string("0"))}};
-                    const auto* target=ByTag(actors,tag);
-                    if(!target){action["kind"]="trigger";action["tag"]=tag;action["untrigger"]=Untriggers(entry.value("Type",std::string()));stage["actions"].push_back(action);continue;}
-                    const auto kind=target->value("kind",std::string());
-                    if(kind=="Objective trigger"){unlocks=true;continue;}
-                    action["target"]=target->at("path");
-                    if(kind=="Mover"){action["kind"]="open";action["hold"]=Fold(target->value("state",std::string()))=="triggertoggle";}
-                    else if(kind=="Light")action["kind"]="light";
-                    else if(kind=="Sound")
-                    {
-                        action["kind"]="sound";
-                        if(StageOf(tag,"Sound")==n){action.erase("target");action["sound"]=target->value("sound",std::string());}
-                    }
-                    else if(kind=="Alarm" && StageOf(tag,"Announce")==n)
-                    {
-                        action.erase("target");action["kind"]="announce";
-                        action["title"]=target->value("title",std::string());action["merc"]=target->value("merc",std::string());
-                        action["spy"]=target->value("spy",std::string());action["seconds"]=target->value("duration",std::string("8"));
-                    }
-                    else {action["kind"]="trigger";action["untrigger"]=Untriggers(entry.value("Type",std::string()));}
-                    stage["actions"].push_back(action);
-                }
-        }
-        plan["stages"].push_back(stage);
+        const int total=static_cast<int>(zone["objectives"].size()),minimum=Whole(mission->value("minimum",std::string("0")));
+        zone["required"]=(minimum>0 && minimum<total)?minimum:0;
+        zone["actions"]=ReadActions(actors,mission->value("event",std::string("None")),n);
+        plan["zones"].push_back(zone);
     }
-    plan["lockLater"]=last<=1 || unlocks;
+    // The match total, kept only where it is not simply the zones' own.
+    const int minimum=Whole(top->value("minimum",std::string("0")));
+    plan["required"]=(minimum>0 && minimum!=Thresholds(plan))?minimum:0;
     return plan;
+}
+// The zone an objective belongs to, or 0 when it is in none.
+inline int ZoneOfObjective(const Json& actors,const std::string& path)
+{
+    int n=0;
+    for(const auto* mission:ZoneMissions(actors))
+    {
+        ++n;
+        for(const auto& member:mission->value("objectives",Json::array()))if(member.is_string() && member.get<std::string>()==path)return n;
+    }
+    return 0;
 }
 // One line per action for lists and previews.
 inline std::string Describe(const Json& action,const Json& actors)
@@ -251,6 +354,14 @@ inline Build Plan(const Json& actors,std::set<std::string> used,const Json& plan
         used.insert(Fold(id));++build.creates;
     };
     auto location=[](const Vector& at){return Json{{"X",std::to_string(at[0])},{"Y",std::to_string(at[1])},{"Z",std::to_string(at[2])}};};
+    // A Tag of ours, or the next free variation of it where the map already
+    // uses that name.
+    auto reserve=[&](const std::string& wanted)
+    {
+        auto tag=used.count(Fold(wanted))?Security::NextTag(wanted,used):wanted;
+        used.insert(Fold(tag));
+        return tag;
+    };
     // Anything an event reaches needs a Tag; one is allocated where missing.
     std::map<std::string,std::string> tags;
     auto tagFor=[&](const Json& actor)->std::string
@@ -265,56 +376,151 @@ inline Build Plan(const Json& actors,std::set<std::string> used,const Json& plan
             if(stem.size()>1 && stem[0]=='S' && std::isupper(static_cast<unsigned char>(stem[1])))stem=stem.substr(1);
             tag=Security::NextTag(stem,used);
             update(actor,"Tag",tag);
-            build.notes.push_back(ShortName(path)+" gets Tag "+tag+(NoneTag(actor.value("tag",std::string()))?" so the stage can reach it.":" of its own; its old Tag "+actor.value("tag",std::string())+" is shared with other actors, which the stage must not trigger too."));
+            build.notes.push_back(ShortName(path)+" gets Tag "+tag+(NoneTag(actor.value("tag",std::string()))?" so the zone can reach it.":" of its own; its old Tag "+actor.value("tag",std::string())+" is shared with other actors, which the zone must not trigger too."));
         }
         used.insert(Fold(tag));tags[path]=tag;
         return tag;
     };
-    const auto& stages=plan.at("stages");
-    const int count=static_cast<int>(stages.size());
-    const bool lock=plan.value("lockLater",true);
-    std::map<std::string,int> stageOf;
+    const auto& zones=plan.at("zones");
+    const int count=static_cast<int>(zones.size());
+    const auto* top=TopMission(actors);
+    if(!top)throw std::runtime_error("This map has no SMission, so there is nothing to hold the zones. Right-click the plan and choose Mission here first.");
+    if(count==0)
+    {
+        build.notes.push_back("No zones in the plan: the mission and its objectives are left as they are.");
+        return build;
+    }
+    // Every objective in the map belongs to exactly one zone, so the mission
+    // tree stays the whole picture of what the spies have to do.
+    std::map<std::string,int> zoneOf;
     for(int n=1;n<=count;++n)
     {
-        if(stages[n-1].at("objectives").empty())throw std::runtime_error("Stage "+std::to_string(n)+" has no objectives. Add one or remove the stage.");
-        for(const auto& path:stages[n-1].at("objectives"))
+        if(zones[n-1].at("objectives").empty())throw std::runtime_error("Zone "+std::to_string(n)+" has no objectives. Tick some or remove the zone.");
+        for(const auto& path:zones[n-1].at("objectives"))
         {
             const auto* actor=ByPath(actors,path.get<std::string>());
-            if(!actor || actor->value("kind",std::string())!="Objective")throw std::runtime_error("Stage "+std::to_string(n)+" lists "+ShortName(path.get<std::string>())+", which is not an objective in this map.");
-            stageOf[path.get<std::string>()]=n;
+            if(!actor || actor->value("kind",std::string())!="Objective")throw std::runtime_error("Zone "+std::to_string(n)+" lists "+ShortName(path.get<std::string>())+", which is not an objective in this map.");
+            zoneOf[path.get<std::string>()]=n;
         }
     }
-    // Objectives feed their stage's gate; the terminals of later stages start
-    // locked and the rest are usable from the start.
     for(const auto& actor:actors)
+        if(actor.value("kind",std::string())=="Objective" && !zoneOf.count(actor.value("path",std::string())))
+            throw std::runtime_error(ShortName(actor.value("path",std::string()))+" is in no zone. Every objective belongs to one zone; tick it in the zone it is part of.");
+    // Which actor is each zone's mission: the one the plan names, else one
+    // already tagged Zone<N>Mission, else a new mission.
+    std::vector<const Json*> missions(count,nullptr);
+    std::vector<std::string> made(count);
+    std::set<std::string> claimed{Fold(top->at("path").get<std::string>())};
+    auto claim=[&](const Json* actor)
     {
-        if(actor.value("kind",std::string())!="Objective")continue;
-        const auto path=actor.at("path").get<std::string>(),current=actor.value("event",std::string("None"));
-        const int n=stageOf.count(path)?stageOf.at(path):0;
-        const bool fedAGate=StageOf(current,"Gate")!=0;
-        const std::string desired=n?GateTag(n):(fedAGate?"None":current);
-        if(Fold(desired)!=Fold(current))
+        return actor && actor->value("kind",std::string())=="Mission" && claimed.insert(Fold(actor->value("path",std::string()))).second;
+    };
+    for(int n=1;n<=count;++n)
+    {
+        const auto named=zones[n-1].value("mission",std::string());
+        const auto* actor=named.empty()?nullptr:ByPath(actors,named);
+        if(claim(actor))missions[n-1]=actor;
+    }
+    for(int n=1;n<=count;++n)
+        if(!missions[n-1])
         {
-            update(actor,"Event",desired);
-            if(n && !NoneTag(current) && !fedAGate)build.notes.push_back(ShortName(path)+": Event "+current+" replaced by "+desired+"; that event is no longer fired by this objective.");
+            const auto* actor=ByTag(actors,ZoneTag(n));
+            if(claim(actor))missions[n-1]=actor;
         }
-        for(const auto& trigger:actor.value("triggers",Json::array()))
+    // Each zone's mission: its objectives, how many end it, and the fact that
+    // they are all live at once. The zone's Event fires when it ends.
+    std::vector<std::string> firing(count);
+    std::vector<Vector> anchors(count);
+    for(int n=1;n<=count;++n)
+    {
+        const auto& zone=zones[n-1];
+        const auto label="Zone "+std::to_string(n);
+        const int total=static_cast<int>(zone.at("objectives").size());
+        const int needed=Needed(zone);
+        Vector anchor{};
+        for(const auto& path:zone.at("objectives"))
         {
-            const auto* terminal=ByPath(actors,trigger.get<std::string>());
-            if(!terminal)continue;
-            const bool usable=terminal->value("usable",true),locked=!usable && Fold(terminal->value("method",std::string()))=="triggercontrol";
-            if(n>=2 && lock)
+            const auto at=ByPath(actors,path.get<std::string>())->value("position",Vector{});
+            for(int axis=0;axis<3;++axis)anchor[axis]+=at[axis]/total;
+        }
+        anchor[2]+=96;
+        anchors[n-1]=anchor;
+        Json members=Json::array();
+        for(const auto& path:zone.at("objectives"))members.push_back(Reference(*ByPath(actors,path.get<std::string>())));
+        const auto name=zone.value("name",std::string()).empty()?label:zone.value("name",std::string());
+        const auto brief=zone.value("brief",std::string()).empty()?std::string("Complete the objectives"):zone.value("brief",std::string());
+        const auto briefDefend=zone.value("briefDefend",std::string()).empty()?std::string("Defend the objectives"):zone.value("briefDefend",std::string());
+        // Where the zone's completion actions live: the Tag the mission
+        // already fires if it has one, else a new event of ours.
+        const auto* mission=missions[n-1];
+        auto fires=mission?mission->value("event",std::string("None")):std::string("None");
+        const bool hasActions=!zone.at("actions").empty();
+        if(NoneTag(fires))fires=hasActions?reserve(CompleteTag(n)):std::string("None");
+        firing[n-1]=fires;
+        Json properties={{"Objectives",members},{"MinimumObjectives",std::to_string(needed)},{"bChained","False"},
+                         {"GameMode","GM_Undefined"},{"ObjectiveName",Quoted(name)},{"Description",Quoted(brief)},
+                         {"DescriptionDEF",Quoted(briefDefend)},{"Event",fires}};
+        if(mission)
+        {
+            Json current=Json::array();
+            for(const auto& path:mission->value("objectives",Json::array()))if(path.is_string())current.push_back(path);
+            if(current!=zone.at("objectives"))update(*mission,"Objectives",members);
+            if(!Equivalent(Json(mission->value("minimum",std::string("0"))),properties.at("MinimumObjectives")))update(*mission,"MinimumObjectives",properties.at("MinimumObjectives"));
+            if(mission->value("chained",false))
             {
-                tagFor(*terminal);
-                if(usable)update(*terminal,"bInitialyUsable","False");
-                if(Fold(terminal->value("method",std::string()))!="triggercontrol")update(*terminal,"TriggerMethode","TriggerControl");
-                if(usable)build.notes.push_back(ShortName(trigger.get<std::string>())+" starts locked until stage "+std::to_string(n)+" begins.");
+                update(*mission,"bChained","False");
+                build.notes.push_back(label+"'s objectives are all available at once now (bChained off).");
             }
-            else if(locked && (n==1 || (n==0 && fedAGate) || (n>=2 && !lock)))
+            if(Fold(mission->value("mode",std::string()))!="gm_undefined")
             {
-                update(*terminal,"bInitialyUsable","True");
-                build.notes.push_back(ShortName(trigger.get<std::string>())+" is usable from the start again.");
+                update(*mission,"GameMode","GM_Undefined");
+                build.notes.push_back(label+"'s mission is no longer a game mode of its own; the top mission plays it.");
             }
+            if(mission->value("name",std::string())!=name)update(*mission,"ObjectiveName",properties.at("ObjectiveName"));
+            if(mission->value("brief",std::string())!=brief)update(*mission,"Description",properties.at("Description"));
+            if(mission->value("briefDefend",std::string())!=briefDefend)update(*mission,"DescriptionDEF",properties.at("DescriptionDEF"));
+            if(Fold(mission->value("event",std::string("None")))!=Fold(fires))update(*mission,"Event",fires);
+            if(NoneTag(mission->value("tag",std::string())))
+            {
+                const auto tag=reserve(ZoneTag(n));
+                update(*mission,"Tag",tag);
+                build.notes.push_back(ShortName(mission->at("path").get<std::string>())+" gets Tag "+tag+".");
+            }
+        }
+        else
+        {
+            made[n-1]=reserve(ZoneTag(n));
+            properties["Location"]=location(anchor);
+            create(made[n-1],"SBase.SMission",properties);
+            build.notes.push_back(label+" gets its own mission "+made[n-1]+", holding "+std::to_string(total)+" objective(s).");
+        }
+        build.notes.push_back(label+" ends when "+(needed==total?(total==1?std::string("its objective is"):"all "+std::to_string(total)+" objectives are"):std::to_string(needed)+" of "+std::to_string(total)+" objectives are")+" done"+(NoneTag(fires)?", and triggers nothing.":", then fires "+fires+"."));
+    }
+    // The top mission holds the zones and runs them in order.
+    {
+        Json order=Json::array(),paths=Json::array();
+        for(int n=1;n<=count;++n)
+        {
+            if(missions[n-1]){order.push_back(Reference(*missions[n-1]));paths.push_back(missions[n-1]->at("path"));}
+            else {order.push_back(Json{{"$ref",made[n-1]}});paths.push_back(nullptr);}
+        }
+        Json current=Json::array();
+        for(const auto& path:top->value("objectives",Json::array()))if(path.is_string())current.push_back(path);
+        if(current!=paths)update(*top,"Objectives",order);
+        if(!top->value("chained",false))
+        {
+            update(*top,"bChained","True");
+            build.notes.push_back(ShortName(top->at("path").get<std::string>())+" runs its zones in order (bChained on).");
+        }
+        // How many objectives win the match, not how many zones there are.
+        const int wins=WinsAfter(plan);
+        if(!Equivalent(Json(top->value("minimum",std::string("0"))),Json(std::to_string(wins))))update(*top,"MinimumObjectives",std::to_string(wins));
+        build.notes.push_back("The spies win after "+std::to_string(wins)+" of the "+std::to_string(Objectives(plan))+" objectives"+
+            (wins<Thresholds(plan)?", before the last zone they are in ends.":(count>1?", which is every zone's threshold added up.":".")));
+        if(Fold(top->value("mode",std::string()))=="gm_undefined")
+        {
+            update(*top,"GameMode","GM_Multi");
+            build.notes.push_back(ShortName(top->at("path").get<std::string>())+" is the multiplayer mission (GameMode GM_Multi).");
         }
     }
     auto entry=[](const std::string& tag,const std::string& delay,bool untrigger)
@@ -331,35 +537,20 @@ inline Build Plan(const Json& actors,std::set<std::string> used,const Json& plan
         }
         create(tag,"SBase.SMagicEvent",{{"Location",location(at)},{"Groups",groups}});
     };
+    // What each zone's completion fires.
     for(int n=1;n<=count;++n)
     {
-        const auto& stage=stages[n-1];
-        const int total=static_cast<int>(stage.at("objectives").size());
-        const int needed=stage.value("required",0)?stage.value("required",0):total;
-        Vector anchor{};
-        for(const auto& path:stage.at("objectives"))
-        {
-            const auto at=ByPath(actors,path.get<std::string>())->value("position",Vector{});
-            for(int axis=0;axis<3;++axis)anchor[axis]+=at[axis]/total;
-        }
-        anchor[2]+=96;
-        // The gate: a Sequence that steps once per completion and fires the
-        // stage's completion on the last step, then retires (Repeat 1).
-        Json steps=Json::array();
-        for(int i=0;i<needed;++i)steps.push_back(entry(i+1==needed?CompleteTag(n):"None","0",false));
-        event(GateTag(n),Json::array({{{"EventGroup",steps},{"Repeat","1"},{"Sequence","True"},{"SequenceIndex","0"}}}),{anchor[0]-48,anchor[1],anchor[2]});
-        // The completion: unlock the next stage, then the author's actions.
+        const auto& zone=zones[n-1];
+        if(zone.at("actions").empty())continue;
+        const auto fires=firing[n-1];
+        const auto anchor=anchors[n-1];
         Json actions=Json::array();
-        if(lock && n<count)
-            for(const auto& path:stages[n].at("objectives"))
-                for(const auto& trigger:ByPath(actors,path.get<std::string>())->value("triggers",Json::array()))
-                    if(const auto* terminal=ByPath(actors,trigger.get<std::string>()))actions.push_back(entry(tagFor(*terminal),"0",false));
         int sounds=0;
-        for(const auto& action:stage.at("actions"))
+        for(const auto& action:zone.at("actions"))
         {
             const auto kind=action.value("kind",std::string());
             const auto delay=Magic::Seconds(Magic::Number(action.value("delay",std::string("0"))));
-            const auto label="Stage "+std::to_string(n);
+            const auto label="Zone "+std::to_string(n);
             auto target=[&](const char* wanted)->const Json&
             {
                 const auto* actor=ByPath(actors,action.value("target",std::string()));
@@ -418,16 +609,43 @@ inline Build Plan(const Json& actors,std::set<std::string> used,const Json& plan
                 else actions.push_back(entry(action.at("tag").get<std::string>(),delay,action.value("untrigger",false)));
             }
         }
-        event(CompleteTag(n),Json::array({{{"EventGroup",actions},{"Repeat","1"},{"Sequence","False"},{"SequenceIndex","0"}}}),{anchor[0]+48,anchor[1],anchor[2]});
-        build.notes.push_back("Stage "+std::to_string(n)+" completes when "+(needed==total?(total==1?std::string("its objective is"):"all "+std::to_string(total)+" objectives are"):std::to_string(needed)+" of "+std::to_string(total)+" objectives are")+" done, then "+
-            (actions.empty()?std::string("triggers nothing")+(n<count?".":" (it is the last stage)."):std::to_string(actions.size())+" action(s) fire."));
+        event(fires,Json::array({{{"EventGroup",actions},{"Repeat","0"},{"Sequence","False"},{"SequenceIndex","0"}}}),{anchor[0]+48,anchor[1],anchor[2]});
     }
-    for(const auto& actor:actors)
+    // A zone that no longer fires anything leaves its event behind rather than
+    // firing the last plan's actions.
+    for(int n=1;n<=count;++n)
     {
-        if(actor.value("kind",std::string())!="Magic event")continue;
-        const auto tag=actor.value("tag",std::string());
-        const int n=std::max(StageOf(tag,"Gate"),StageOf(tag,"Complete"));
-        if(n>count)build.notes.push_back(ShortName(actor.at("path").get<std::string>())+" belongs to stage "+std::to_string(n)+", which no longer exists; delete it in the editor.");
+        if(!zones[n-1].at("actions").empty() || !missions[n-1])continue;
+        const auto fires=missions[n-1]->value("event",std::string("None"));
+        const auto* existing=ByTag(actors,fires);
+        if(existing && existing->value("kind",std::string())=="Magic event" && !ReadActions(actors,fires,n).empty())
+        {
+            update(*existing,"Groups",Json::array({{{"EventGroup",Json::array()},{"Repeat","0"},{"Sequence","False"},{"SequenceIndex","0"}}}));
+            build.notes.push_back("Zone "+std::to_string(n)+" fires nothing now; "+fires+" is left in the map with no actions.");
+        }
+    }
+    // Anything the earlier counting-event version of this window left behind.
+    bool legacy=false;
+    for(const auto& actor:actors)
+        if(actor.value("kind",std::string())=="Magic event" && (LegacyOf(actor.value("tag",std::string()),"Gate") || LegacyOf(actor.value("tag",std::string()),"Complete")))legacy=true;
+    if(legacy)
+    {
+        for(const auto& actor:actors)
+        {
+            const auto kind=actor.value("kind",std::string()),path=actor.value("path",std::string());
+            if(kind=="Objective" && LegacyOf(actor.value("event",std::string()),"Gate"))
+            {
+                update(actor,"Event","None");
+                build.notes.push_back(ShortName(path)+" no longer feeds a counting event; its zone's mission counts it now.");
+            }
+            if(kind=="Objective trigger" && !actor.value("usable",true) && Fold(actor.value("method",std::string()))=="triggercontrol")
+            {
+                update(actor,"bInitialyUsable","True");
+                build.notes.push_back(ShortName(path)+" is usable again; the chained mission decides when its zone is live.");
+            }
+            if(kind=="Magic event" && (LegacyOf(actor.value("tag",std::string()),"Gate") || LegacyOf(actor.value("tag",std::string()),"Complete")))
+                build.notes.push_back(ShortName(path)+" is left over from the earlier counting wiring; delete it in the editor once its actions are in a zone.");
+        }
     }
     for(auto& [path,properties]:updates)
     {
@@ -436,64 +654,81 @@ inline Build Plan(const Json& actors,std::set<std::string> used,const Json& plan
     }
     return build;
 }
-// Design-check issues for the stages a map carries: gates nothing feeds or
-// that can never complete, events that reach nothing, terminals usable before
-// their stage, objectives outside every stage, and numbering gaps.
+// Design-check issues for the zones a map carries: missions that can never
+// complete, a top mission that does not run its zones in order, zone missions
+// the game would treat as separate modes, completion events that reach
+// nothing, objectives in no mission, and leftovers of the earlier wiring.
 inline std::vector<Security::Issue> Issues(const Json& actors)
 {
     std::vector<Security::Issue> issues;
-    std::map<int,const Json*> gates,completes;
+    const auto* top=TopMission(actors);
+    const auto zones=ZoneMissions(actors);
+    std::set<std::string> held;
     for(const auto& actor:actors)
+        if(actor.value("kind",std::string())=="Mission")
+            for(const auto& child:actor.value("objectives",Json::array()))if(child.is_string())held.insert(child.get<std::string>());
+    if(top && zones.size()>1 && !top->value("chained",false))
+        issues.push_back({"warning",ShortName(top->at("path").get<std::string>())+" holds "+std::to_string(zones.size())+" zones but is not chained, so every zone is live from the start. Open Zones and apply the plan again.",top->value("path",std::string())});
+    if(top && !zones.empty() && Fold(top->value("mode",std::string()))=="gm_undefined")
+        issues.push_back({"warning",ShortName(top->at("path").get<std::string>())+" has GameMode GM_Undefined, so the match has no mission to play.",top->value("path",std::string())});
+    if(top && !zones.empty())
     {
-        if(actor.value("kind",std::string())!="Magic event")continue;
-        const auto tag=actor.value("tag",std::string());
-        if(const int n=StageOf(tag,"Gate"))gates[n]=&actor;
-        if(const int n=StageOf(tag,"Complete"))completes[n]=&actor;
-    }
-    if(gates.empty() && completes.empty())return issues;
-    int last=0;
-    for(const auto& [n,gate]:gates)last=std::max(last,n);
-    for(const auto& [n,complete]:completes)last=std::max(last,n);
-    bool unlocks=false;
-    std::set<std::string> lateTerminals;
-    for(int n=1;n<=last;++n)
-    {
-        const auto label="Stage "+std::to_string(n);
-        int feeding=0;
-        for(const auto& actor:actors)
-            if(actor.value("kind",std::string())=="Objective" && Fold(actor.value("event",std::string()))==Fold(GateTag(n)))
-            {
-                ++feeding;
-                if(n>=2)for(const auto& trigger:actor.value("triggers",Json::array()))lateTerminals.insert(trigger.get<std::string>());
-            }
-        if(!gates.count(n)){issues.push_back({"error",label+" has no "+GateTag(n)+" event, yet stage "+std::to_string(last)+" exists. Open Stages and apply the plan again.",""});continue;}
-        const auto& gate=*gates.at(n);
-        const auto groups=gate.value("groups",Json::array());
-        const Json steps=(!groups.empty() && groups[0].is_object())?groups[0].value("EventGroup",Json::array()):Json::array();
-        if(feeding==0)issues.push_back({"error",label+": no objective's Event feeds "+GateTag(n)+", so the stage can never complete.",gate.value("path",std::string())});
-        else if(static_cast<int>(steps.size())>feeding)issues.push_back({"error",label+" needs "+std::to_string(steps.size())+" completions but only "+std::to_string(feeding)+" objectives feed it, so it can never complete.",gate.value("path",std::string())});
-        if(steps.empty() || Fold(steps.back().value("Event",std::string()))!=Fold(CompleteTag(n)))issues.push_back({"warning",label+": "+GateTag(n)+" does not end by firing "+CompleteTag(n)+".",gate.value("path",std::string())});
-        if(!completes.count(n)){issues.push_back({"error",label+" has no "+CompleteTag(n)+" event to fire when it ends.",""});continue;}
-        const auto& complete=*completes.at(n);
-        const auto cgroups=complete.value("groups",Json::array());
-        const Json actions=(!cgroups.empty() && cgroups[0].is_object())?cgroups[0].value("EventGroup",Json::array()):Json::array();
-        if(actions.empty() && n<last)issues.push_back({"warning",label+" completing triggers nothing, so nothing opens the way to stage "+std::to_string(n+1)+".",complete.value("path",std::string())});
-        for(const auto& action:actions)
+        // Working through every zone completes each zone's own threshold; the
+        // spies can never win if the match asks for more than that.
+        const int minimum=Whole(top->value("minimum",std::string("0")));
+        int reachable=0;
+        for(const auto* mission:zones)
         {
-            const auto tag=action.value("Event",std::string("None"));
-            if(NoneTag(tag))continue;
-            const auto* target=ByTag(actors,tag);
-            if(!target)issues.push_back({"error",label+" fires Event "+tag+" but nothing has that Tag.",complete.value("path",std::string())});
-            else if(target->value("kind",std::string())=="Objective trigger")unlocks=true;
+            int members=0;
+            for(const auto& child:mission->value("objectives",Json::array()))
+                if(const auto* actor=child.is_string()?ByPath(actors,child.get<std::string>()):nullptr;actor && actor->value("kind",std::string())=="Objective")++members;
+            const int threshold=Whole(mission->value("minimum",std::string("0")));
+            reachable+=(threshold>0 && threshold<members)?threshold:members;
         }
+        if(minimum>reachable)
+            issues.push_back({"error",ShortName(top->at("path").get<std::string>())+" needs "+std::to_string(minimum)+" objectives to win, but finishing every zone completes only "+std::to_string(reachable)+", so the match can never be won.",top->value("path",std::string())});
+        for(const auto& child:top->value("objectives",Json::array()))
+        {
+            if(!child.is_string())continue;
+            const auto* actor=ByPath(actors,child.get<std::string>());
+            if(actor && actor->value("kind",std::string())=="Objective")
+                issues.push_back({"warning",ShortName(child.get<std::string>())+" hangs straight off the top mission beside the zones, so it becomes a step of its own in the chain. Put it in a zone.",child.get<std::string>()});
+        }
+    }
+    int n=0;
+    for(const auto* mission:zones)
+    {
+        ++n;
+        const auto label="Zone "+std::to_string(n),path=mission->value("path",std::string());
+        int members=0;
+        for(const auto& child:mission->value("objectives",Json::array()))
+            if(const auto* actor=child.is_string()?ByPath(actors,child.get<std::string>()):nullptr;actor && actor->value("kind",std::string())=="Objective")++members;
+        if(!members)issues.push_back({"error",label+" ("+ShortName(path)+") has no objectives, so it can never be completed.",path});
+        else
+        {
+            const int minimum=Whole(mission->value("minimum",std::string("0")));
+            if(minimum>members)issues.push_back({"error",label+" needs "+std::to_string(minimum)+" completions but holds "+std::to_string(members)+" objectives, so it can never be completed.",path});
+        }
+        if(mission->value("chained",false))
+            issues.push_back({"warning",label+" is chained, so its objectives must be done in a fixed order rather than being available together.",path});
+        if(Fold(mission->value("mode",std::string()))!="gm_undefined")
+            issues.push_back({"warning",label+" has GameMode "+mission->value("mode",std::string())+"; a zone inside another mission should be GM_Undefined.",path});
+        const auto fires=mission->value("event",std::string("None"));
+        if(!NoneTag(fires) && !ByTag(actors,fires))
+            issues.push_back({"error",label+" fires Event "+fires+" when it ends, but nothing in the map has that Tag.",path});
+        for(const auto& action:ReadActions(actors,fires,n))
+            if(action.value("kind",std::string())=="trigger" && action.contains("tag") && !ByTag(actors,action.at("tag").get<std::string>()))
+                issues.push_back({"error",label+" fires Event "+action.at("tag").get<std::string>()+" but nothing has that Tag.",path});
     }
     for(const auto& actor:actors)
     {
         const auto kind=actor.value("kind",std::string()),path=actor.value("path",std::string());
-        if(kind=="Objective" && !StageOf(actor.value("event",std::string()),"Gate"))
-            issues.push_back({"info",ShortName(path)+" (objective) is in no stage, so it counts from the start of the match.",path});
-        if(kind=="Objective trigger" && unlocks && lateTerminals.count(path) && actor.value("usable",true))
-            issues.push_back({"warning",ShortName(path)+" is usable from the start although its stage begins later. Apply the stages plan again to lock it.",path});
+        if(kind=="Objective" && !held.count(path))
+            issues.push_back({"info",ShortName(path)+" (objective) is in no mission, so no zone counts it.",path});
+        if(kind=="Magic event" && (LegacyOf(actor.value("tag",std::string()),"Gate") || LegacyOf(actor.value("tag",std::string()),"Complete")))
+            issues.push_back({"warning",ShortName(path)+" is left over from the earlier counting wiring; the zones' missions do the counting now. Move its actions into a zone and delete it.",path});
+        if(kind=="Objective" && LegacyOf(actor.value("event",std::string()),"Gate"))
+            issues.push_back({"warning",ShortName(path)+" still feeds "+actor.value("event",std::string())+"; apply the zones plan again to clear it.",path});
     }
     return issues;
 }

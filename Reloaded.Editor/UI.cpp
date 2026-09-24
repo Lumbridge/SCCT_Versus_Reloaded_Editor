@@ -6,6 +6,7 @@
 #include "WindowDriftFix.h"
 #include "RebuildAllMaps.h"
 #include "WorkflowTools.h"
+#include "StoreyFilter.h"
 #include "MapPackageDialog.h"
 #include "EditorExtras.h"
 
@@ -65,7 +66,7 @@ JMP_HOOK(0x10E3E0B8, SkipPointlessSecondPopupOnExit) {
     }
 }
 
-// Add Reloaded menu items to the main menu
+// Add RE+ menu items to the main menu
 // Command IDs are handled by MenuBarDispatch (General.cpp)
 static int MenuPosByCommand(HMENU menu, UINT cmd)
 {
@@ -106,29 +107,42 @@ static void InjectReloadedMenuItems(HWND frame)
     HMENU bar = GetMenu(frame);
     if (!bar) return;
 
+    HMENU reTools = nullptr;
+    const int reToolsPos = MenuPosByText(bar, "RE+ &Tools");
+    if (reToolsPos >= 0)
+        reTools = GetSubMenu(bar, reToolsPos);
+
+    if (!reTools)
+    {
+        reTools = CreatePopupMenu();
+        AppendMenuA(reTools, MF_STRING, 40948, "&Map Design...");
+        AppendMenuA(reTools, MF_STRING, WorkflowTools::kBrushVisibility, "&Brush Visibility...");
+        AppendMenuA(reTools, MF_STRING, StoreyFilter::kOpen, "S&toreys (one floor at a time)...");
+        AppendMenuA(reTools, MF_SEPARATOR, 0, nullptr);
+        AppendMenuA(reTools, MF_STRING, WorkflowTools::kConnections, "Gameplay &Connections...");
+        AppendMenuA(reTools, MF_STRING, 40927, "SMagicEvent &Workbench...");
+        AppendMenuA(reTools, MF_STRING, 40932, "SCamNetwork Ma&nager...");
+        AppendMenuA(reTools, MF_SEPARATOR, 0, nullptr);
+        AppendMenuA(reTools, MF_STRING, WorkflowTools::kViews, "Working &Views...");
+        AppendMenuA(reTools, MF_STRING, WorkflowTools::kAssemblies, "Actor &Assemblies...");
+        AppendMenuA(reTools, MF_STRING, WorkflowTools::kSaveAssembly, "&Save Selection as Assembly...");
+        AppendMenuA(reTools, MF_SEPARATOR, 0, nullptr);
+        AppendMenuA(reTools, MF_STRING, 40934, "&Export Map to JSON...");
+        AppendMenuA(reTools, MF_STRING, 40935, "&Import Map from JSON...");
+        AppendMenuA(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(reTools), "RE+ &Tools");
+    }
+
     HMENU view = SubMenuWithCommand(bar, 40065); // "Advanced Options" lives in View
     if (view)
     {
-        // One "Reloaded Tools" submenu, grouped by what the tools are for,
-        // instead of eleven entries loose in View. Command ids are unchanged.
-        if (MenuPosByText(view, "Reloaded &Tools") < 0)
+        // Remove the previous release's View > Reloaded Tools submenu if a
+        // menu was rebuilt in-place. The commands now live under RE+ Tools.
+        const int oldToolsPos = MenuPosByText(view, "Reloaded &Tools");
+        if (oldToolsPos >= 0)
         {
-            HMENU tools = CreatePopupMenu();
-            AppendMenuA(tools, MF_STRING, 40948, "&Map Design...");
-            AppendMenuA(tools, MF_STRING, WorkflowTools::kBrushVisibility, "&Brush Visibility...");
-            AppendMenuA(tools, MF_SEPARATOR, 0, nullptr);
-            AppendMenuA(tools, MF_STRING, WorkflowTools::kConnections, "Gameplay &Connections...");
-            AppendMenuA(tools, MF_STRING, 40927, "SMagicEvent &Workbench...");
-            AppendMenuA(tools, MF_STRING, 40932, "SCamNetwork Ma&nager...");
-            AppendMenuA(tools, MF_SEPARATOR, 0, nullptr);
-            AppendMenuA(tools, MF_STRING, WorkflowTools::kViews, "Working &Views...");
-            AppendMenuA(tools, MF_STRING, WorkflowTools::kAssemblies, "Actor &Assemblies...");
-            AppendMenuA(tools, MF_STRING, WorkflowTools::kSaveAssembly, "&Save Selection as Assembly...");
-            AppendMenuA(tools, MF_SEPARATOR, 0, nullptr);
-            AppendMenuA(tools, MF_STRING, 40934, "&Export Map to JSON...");
-            AppendMenuA(tools, MF_STRING, 40935, "&Import Map from JSON...");
-            AppendMenuA(view, MF_SEPARATOR, 0, nullptr);
-            AppendMenuA(view, MF_POPUP, reinterpret_cast<UINT_PTR>(tools), "Reloaded &Tools");
+            HMENU oldTools = GetSubMenu(view, oldToolsPos);
+            RemoveMenu(view, oldToolsPos, MF_BYPOSITION);
+            if (oldTools) DestroyMenu(oldTools);
         }
         int pos = MenuPosByCommand(view, 19004); // after "Show Actor Class Browser"
         if (pos >= 0 && MenuPosByCommand(view, 40067) < 0)

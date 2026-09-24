@@ -15,7 +15,7 @@ enum DesignControl
     DName=740,DShape,DConstruction,DWidth,DLength,DHeight,DThickness,DSteps,DCeiling,DPortal,
     DPositionX,DPositionY,DPositionZ,DYaw,DInspectorTitle,DDiscard,
     // Building, checking and overlays.
-    DBuild=760,DCheck,DOverlays,DSecurity,DUnlit,DScene,DKeys,DDepthLabel,DStages,DCheckList=780,DInspectorLabel=785,
+    DBuild=760,DCheck,DOverlays,DSecurity,DUnlit,DScene,DKeys,DDepthLabel,DStages,DSheetScroll,DTypes=775,DCheckList=780,DCheckDetail=781,DInspectorLabel=785,
     // Right-click menu on the design view: what is under the cursor, then what
     // can start at that point.
     DCtxEditPiece=850,DCtxSelectPiece,DCtxDetachPiece,DCtxEditAnnotation,DCtxRemoveAnnotation,DCtxEditGuide,DCtxRemoveGuide,
@@ -37,10 +37,22 @@ enum DesignControl
     DAddStairsUpFirst=1140,DAddStairsDownFirst=1144,DCtxStairsUpFirst=1150,DCtxStairsDownFirst=1154,
     DAddLiftUp=1148,DAddLiftDown,DCtxLiftUp=1158,DCtxLiftDown,
     // Locking what is under the cursor or selected, and the Scene panel.
-    DCtxLock=1160,DCtxUnlock,DCtxLockSelection,DCtxUnlockSelection,DCtxScene,DCtxSliderAll=1170,DCtxTurnCW,DCtxTurnCCW,
-    // The contextual properties sheet: its fields, their labels and its buttons.
-    DSheetField=1000,DSheetLabel=1040,DSheetButton=1100
+    DCtxLock=1160,DCtxUnlock,DCtxLockSelection,DCtxUnlockSelection,DCtxScene,DCtxTurnAngle=1165,DCtxSliderAll=1170,DCtxTurnCW,DCtxTurnCCW,
+    // The plan's type chips: show every kind again, then one entry per kind
+    // the map holds, whether or not it earned a chip.
+    DCtxTypeAll=1173,DCtxTypeFirst=1174,DCtxTypeLast=1199,
+    // The contextual properties sheet: its fields, their labels and its
+    // buttons, kept above every menu command id so a long sheet cannot collide
+    // with one.
+    DSheetField=2000,DSheetLabel=2200,DSheetButton=2400
 };
+// Where one control of the properties sheet sits within the sheet's content,
+// before scrolling moves it into view.
+struct SheetPlacement { int id=0,x=0,y=0,width=0,height=0; };
+// The caption above the inspector and the properties sheet takes two lines:
+// the hint shown when nothing is being edited does not fit on one. Everything
+// under it starts from the same place, whichever of the two is shown.
+constexpr int kInspectorTitleHeight=36,kInspectorBodyTop=kInspectorTitleHeight+4;
 // What the properties sheet is showing: a light, a device, a reference, an
 // annotation, or the route being drawn.
 struct Sheet
@@ -53,7 +65,7 @@ struct Sheet
 // Dragging in the design views edits the preview directly; a drag that starts
 // on empty space selects instead.
 // A storey the floor slider can show: where its floor is and how high it goes.
-struct DesignLevel{double base=0,top=0;};
+using DesignLevel=Design::Storey;
 // A row of the Scene panel: a library piece, a loose actor, or a group header.
 struct SceneRow
 {
@@ -159,9 +171,23 @@ struct DesignState
     Sheet sheet;
     bool writingSheet=false;
     int inspectorTop=0;
+    // The sheet scrolls when it holds more rows than the panel is tall: where
+    // each control belongs in the content, how tall the content is, how far it
+    // is scrolled, and the bar that moves it.
+    std::vector<SheetPlacement> sheetPlacements;
+    int sheetContent=0,sheetScroll=0;
+    HWND sheetBar{};
     // The storeys the floor slider offers, cached per map and workspace revision.
     std::vector<DesignLevel> levels;
     unsigned levelRevision=~0u,levelDataRevision=~0u;
+    // What kind of actor each one is and how many of each the map holds, most
+    // abundant first, cached the same way; the kinds taken out of the plan by
+    // their chip; and where those chips were painted, so clicks find them.
+    std::map<std::string,std::string> typeOf;
+    std::vector<std::pair<std::string,size_t>> typeCounts;
+    unsigned typeRevision=~0u,typeDataRevision=~0u;
+    std::set<std::string> hiddenTypes;
+    std::vector<std::pair<std::string,RECT>> typeChips;
     // The Scene panel: its rows, what they were last time, folded groups, the
     // filter, and a guard while the list is being written.
     HWND sceneWindow{};
@@ -322,45 +348,65 @@ bool DesignOnFloor(DesignState& s,double first,double second)
 }
 // The storeys of the map, lowest first: one per room, corridor or vent floor
 // height, with pieces that sit inside a storey (a vent on its wall) folded into
-// it. Without library pieces, carved brushes stand in. Stairwells are left out
-// because they span two storeys.
+// it. Stairwells are left out because they span two storeys.
 const std::vector<DesignLevel>& DesignLevels(DesignState& s)
 {
     if(s.levelRevision==s.revision && s.levelDataRevision==s.dataRevision)return s.levels;
-    std::vector<std::pair<double,double>> spans;
+    std::vector<Design::FloorEvidence> evidence;
+    Design::StoreyRules rules;
+    rules.nest=true;
     try
     {
         for(const auto& piece:DesignData(s).at("pieces"))
         {
-            const auto kind=piece.at("spec").at("kind").get<std::string>();
+            const auto& spec=piece.at("spec");
+            const auto kind=spec.at("kind").get<std::string>();
             if(kind!="Room" && kind!="Corridor" && !Design::Crouching(kind))continue;
-            if(piece.at("spec").value("name",std::string())=="Stairwell")continue;
+            if(spec.value("name",std::string())=="Stairwell")continue;
             bool live=false;
             for(auto& member:piece.at("members"))for(auto& actor:s.scene)if(actor.at("path")==member.at("path"))live=true;
             if(!live)continue;
             const double base=piece.at("position").get<Vector>()[2];
-            spans.push_back({base,base+piece.at("spec").value("height",256.0)});
+            evidence.push_back({base,base+spec.value("height",256.0),
+                                std::sqrt(std::max(spec.value("width",256.0),1.0)*std::max(spec.value("length",256.0),1.0))});
         }
     }
-    catch(const std::exception&) { spans.clear(); }
-    if(spans.empty())
+    catch(const std::exception&) { evidence.clear(); }
+    if(evidence.empty())
+    {
+        // A map the toolkit did not build has no pieces to read, so its floors
+        // are the surfaces its brushes leave to stand on, which is what
+        // Design::FloorSurface works out from each brush's box.
+        rules.nest=false;
+        rules.share=.06;
+        rules.limit=24;
+        std::vector<Design::BrushBox> brushes;
+        Vector low{1e18,1e18,1e18},high{-1e18,-1e18,-1e18};
         for(const auto& actor:s.scene)
         {
-            if(actor.value("csg",0)!=2 || actor.at("edges").empty())continue;
-            double lo=1e18,hi=-1e18;
-            for(auto& edge:actor.at("edges"))for(int end=0;end<2;++end){const double z=edge[end].get<Vector>()[2];lo=std::min(lo,z);hi=std::max(hi,z);}
-            spans.push_back({lo,hi});
+            const int csg=actor.value("csg",0);
+            if((csg!=1 && csg!=2) || actor.at("edges").empty() || actor.value("portal",false))continue;
+            Design::BrushBox brush;
+            brush.carve=csg==2;
+            brush.low={1e18,1e18,1e18};
+            brush.high={-1e18,-1e18,-1e18};
+            for(auto& edge:actor.at("edges"))
+                for(int end=0;end<2;++end)
+                {
+                    const auto v=edge[end].get<Vector>();
+                    for(int axis=0;axis<3;++axis){brush.low[axis]=std::min(brush.low[axis],v[axis]);brush.high[axis]=std::max(brush.high[axis],v[axis]);}
+                }
+            if(brush.low[0]>brush.high[0])continue;
+            for(int axis=0;axis<3;++axis){low[axis]=std::min(low[axis],brush.low[axis]);high[axis]=std::max(high[axis],brush.high[axis]);}
+            brushes.push_back(brush);
         }
-    std::sort(spans.begin(),spans.end());
-    std::vector<DesignLevel> levels;
-    for(const auto& span:spans)
-    {
-        // A base well inside the storey below belongs to it.
-        if(!levels.empty() && span.first<levels.back().top-32){levels.back().top=std::max(levels.back().top,span.second);continue;}
-        levels.push_back({span.first,span.second});
+        for(const auto& brush:brushes)
+        {
+            if(Design::EnclosesMap(brush,low,high))continue;
+            if(Design::FloorEvidence surface;Design::FloorSurface(brush,surface))evidence.push_back(surface);
+        }
     }
-    if(levels.size()>40)levels.resize(40);
-    s.levels=levels;
+    s.levels=Design::Storeys(evidence,rules);
     s.levelRevision=s.revision;
     s.levelDataRevision=s.dataRevision;
     return s.levels;
@@ -434,9 +480,51 @@ void DesignSetLevel(DesignState& s,int index)
     DesignStatus(s,"Showing the floor at Z "+Design::Round(level.base)+" ("+std::to_string(index)+" of "+std::to_string(count)+" from the top)"
         +(s.plane==0?"; new pieces go at that height.":".")+" Page Up / Page Down step between floors; the top of the slider shows all of them.");
 }
+// What one actor is, in the words the Scene panel uses: defined with the rest
+// of that panel, and read here for every actor the plan draws.
+std::string SceneType(DesignState& s,const Json& actor);
+// Every actor's kind, and how many of each the map holds, most abundant first.
+// Cached per map, because working it out means searching the device, objective
+// and light lists, and the plan asks for it each time it draws an actor.
+void DesignTallyTypes(DesignState& s)
+{
+    if(s.typeRevision==s.revision && s.typeDataRevision==s.dataRevision)return;
+    std::map<std::string,size_t> counts;
+    s.typeOf.clear();
+    for(const auto& actor:s.scene)
+    {
+        auto type=SceneType(s,actor);
+        ++counts[type];
+        s.typeOf[actor.at("path").get<std::string>()]=std::move(type);
+    }
+    s.typeCounts.assign(counts.begin(),counts.end());
+    std::stable_sort(s.typeCounts.begin(),s.typeCounts.end(),
+        [](const auto& a,const auto& b){return a.second!=b.second?a.second>b.second:a.first<b.first;});
+    s.typeRevision=s.revision;
+    s.typeDataRevision=s.dataRevision;
+}
+const std::string& DesignTypeOf(DesignState& s,const Json& actor)
+{
+    static const std::string unknown="Other";
+    DesignTallyTypes(s);
+    const auto found=s.typeOf.find(actor.at("path").get<std::string>());
+    return found==s.typeOf.end()?unknown:found->second;
+}
+// The same answer for the painters that work from their own lists — lights,
+// security devices, game actors — instead of from the scene.
+bool DesignTypeShown(DesignState& s,const std::string& path)
+{
+    if(s.hiddenTypes.empty())return true;
+    DesignTallyTypes(s);
+    const auto found=s.typeOf.find(path);
+    return found==s.typeOf.end() || s.hiddenTypes.count(found->second)==0;
+}
 bool DesignShows(DesignState& s,const Json& actor)
 {
     if(actor.at("hidden").get<bool>())return false;
+    // A kind switched off by its chip is out of the plan altogether, so it
+    // cannot be clicked, box-selected or fitted to either.
+    if(!s.hiddenTypes.empty() && s.hiddenTypes.count(DesignTypeOf(s,actor)))return false;
     if(!s.floorFilter)return true;
     const auto& edges=actor.at("edges");
     if(edges.empty())return DesignOnFloor(s,actor.at("position").get<Vector>()[2],actor.at("position").get<Vector>()[2]);
@@ -482,6 +570,7 @@ void DesignRelayout(DesignState& s)
 void DesignDeleteSelection(DesignState& s);
 void DesignKeys(DesignState& s);
 void DesignCommand(DesignState& s,int id);
+void DesignTypeMenu(DesignState& s,POINT at);
 size_t DesignRepairPieceFlags(DesignState& s);
 size_t DesignOrderPiecesLast(DesignState& s);
 std::string SceneGroupOf(DesignState& s,const std::string& path);
@@ -498,6 +587,7 @@ void SheetApply(DesignState& s);
 void SheetButton(DesignState& s,int index);
 void SheetRefresh(DesignState& s);
 void SheetRefreshLater(DesignState& s);
+void SheetLayout(DesignState& s);
 void SheetShowRoute(DesignState& s);
 void SheetShowSettings(DesignState& s,const std::string& which);
 void SheetShowGuide(DesignState& s,size_t index);
@@ -525,6 +615,8 @@ void DesignRefresh(DesignState& s)
     {
         s.pending=Json{};s.previous=Json{};s.points=Json::array();s.mode.clear();
         s.images.clear();s.drag={};s.epoch=mapEpoch;
+        // Another map holds other kinds of actor: it starts with all of them.
+        s.hiddenTypes.clear();
     }
     s.scene=Editor::DesignScene();
     s.revision=Editor::Revision();
@@ -664,9 +756,39 @@ std::vector<DesignHandle> DesignHandles(DesignState& s)
 // piece straight away.
 bool DesignApplyEdit(DesignState& s,const std::string& summary);
 void DesignInspectorRefresh(DesignState& s);
+// Turns whatever is selected in the map when no piece is being edited: loose
+// brushes, actors, a mixture. They swing about the middle of what they cover,
+// so a selection keeps its shape, and the geometry follows on the next build.
+void DesignTurnSelection(DesignState& s,double degrees)
+{
+    Json selected=Json::array();
+    Vector lo{1e18,1e18,1e18},hi{-1e18,-1e18,-1e18};
+    size_t locked=0;
+    for(const auto& actor:s.scene)
+    {
+        if(!actor.value("selected",false) || !DesignShows(s,actor))continue;
+        if(actor.at("locked").get<bool>()){++locked;continue;}
+        selected.push_back(Json{{"path",actor.at("path")},{"class",actor.at("class")}});
+        auto note=[&](const Vector& v){for(int axis=0;axis<3;++axis){lo[axis]=std::min(lo[axis],v[axis]);hi[axis]=std::max(hi[axis],v[axis]);}};
+        note(actor.at("position").get<Vector>());
+        for(const auto& edge:actor.at("edges")){note(edge[0].get<Vector>());note(edge[1].get<Vector>());}
+    }
+    if(selected.empty())
+        throw std::runtime_error(locked?"Everything selected is locked. Unlock it first (Ctrl+Shift+L)."
+                                       :"Select a piece or one or more brushes first, then press R to turn them.");
+    Vector pivot{};
+    for(int axis=0;axis<3;++axis)pivot[axis]=(lo[axis]+hi[axis])/2;
+    const auto turned=Editor::DesignTurnActors(selected,degrees,pivot);
+    DesignRefresh(s);
+    InvalidateRect(s.canvas,nullptr,FALSE);
+    DesignStatus(s,"Turned "+std::to_string(turned)+" selected actor(s) "+Design::Round(std::abs(degrees))+" degrees "
+        +(degrees<0?"anticlockwise":"clockwise")+" about "+Design::Round(pivot[0])+", "+Design::Round(pivot[1])
+        +". One Undo step; rebuild geometry to see brushes change shape."
+        +(locked?" "+std::to_string(locked)+" locked actor(s) stayed put.":""));
+}
 void DesignTurn(DesignState& s,double degrees)
 {
-    if(s.pending.is_null())throw std::runtime_error("Click a piece first, then press R to turn it.");
+    if(s.pending.is_null()){DesignTurnSelection(s,degrees);return;}
     const double current=s.frame.rotation[1]*360.0/65536;
     double next=std::fmod(current+degrees,360.0);
     if(next<0)next+=360;
@@ -1088,6 +1210,9 @@ void DesignPaint(DesignState& s,HDC dc)
         {
             const float y=layout.top+layout.step*i;
             g.DrawLine(&tick,layout.x-5,y,layout.x+5,y);
+            // With the detents packed close, only the storey being shown is
+            // named, so the heights do not run into one another.
+            if(layout.step<18 && i!=0 && i!=current)continue;
             const std::string text=i==0?"All":"Z "+Design::Round(levels[layout.count-i].base);
             const std::wstring wide(text.begin(),text.end());
             g.DrawString(wide.c_str(),-1,&font,RectF(layout.x-72,y-9,62,18),&rightAligned,i==current?&strong:&dim);
@@ -1147,6 +1272,43 @@ void DesignPaint(DesignState& s,HDC dc)
             const std::wstring wide(names[i],names[i]+strlen(names[i]));
             g.DrawString(wide.c_str(),-1,&font,box,&centre,&text);
             s.viewButtons[i]={static_cast<LONG>(x),28,static_cast<LONG>(x+w),46};
+            x+=w+4;
+        }
+    }
+    // Type chips beside them: the kinds of actor the map holds most of, each
+    // with its count, clicked to take that kind out of the plan. Whatever is
+    // already switched off keeps its chip however few there are, so it can
+    // always be switched back on.
+    {
+        DesignTallyTypes(s);
+        s.typeChips.clear();
+        StringFormat centre;
+        centre.SetAlignment(StringAlignmentCenter);
+        centre.SetLineAlignment(StringAlignmentCenter);
+        Pen edge(Color(200,60,80,100),1);
+        Pen struck(Color(200,140,145,155),1);
+        float x=10;
+        const float y=50;
+        for(const auto& [type,count]:s.typeCounts)
+        {
+            const bool off=s.hiddenTypes.count(type)>0;
+            if(count<3 && !off)continue;
+            if(s.typeChips.size()>=12)break;
+            const std::string text=type+"  "+std::to_string(count);
+            const std::wstring wide(text.begin(),text.end());
+            RectF measured;
+            g.MeasureString(wide.c_str(),-1,&font,PointF(0,0),&measured);
+            const float w=measured.Width+14;
+            if(x+w>rect.right-100)break;
+            const RectF box(x,y,w,18);
+            SolidBrush fill(off?Color(150,215,220,228):Color(170,255,255,255));
+            SolidBrush ink(off?Color(255,120,126,136):Color(255,20,30,40));
+            g.FillRectangle(&fill,box);
+            g.DrawRectangle(off?&struck:&edge,box);
+            g.DrawString(wide.c_str(),-1,&font,box,&centre,&ink);
+            if(off)g.DrawLine(&struck,x+4,y+9,x+w-4,y+9);
+            s.typeChips.push_back({type,RECT{static_cast<LONG>(x),static_cast<LONG>(y),
+                                             static_cast<LONG>(x+w),static_cast<LONG>(y+18)}});
             x+=w+4;
         }
     }
@@ -2003,6 +2165,12 @@ void DesignCommand(DesignState& s,int id)
     }
     if(id==DDepth){DesignDepthRead(s);return;}
     if(id==DCtxSliderAll){DesignSetLevel(s,0);return;}
+    if(id==DTypes)
+    {
+        // The same list the chips offer, for a panel too narrow to show them.
+        DesignTypeMenu(s,{10,68});
+        return;
+    }
     if(id==DUndo || id==DRedo)
     {
         // Workspace edits first, when nothing in the map changed after them.
@@ -2728,6 +2896,148 @@ bool DesignGeometryStale(DesignState& s)
 }
 // Design check: the model's layout issues for the pieces still in the map,
 // plus what a Versus map needs before it can be played at all.
+// The design check reads by colour: what stops a map playing, what only spoils
+// it, what is worth knowing, and the map's own figures.
+constexpr int kCheckHeader=66,kCheckRow=28,kCheckDetail=52;
+Gdiplus::Color DesignCheckInk(const std::string& severity)
+{
+    using namespace Gdiplus;
+    if(severity=="error")return Color(255,192,57,43);
+    if(severity=="warning")return Color(255,201,132,12);
+    if(severity=="clear")return Color(255,34,139,88);
+    if(severity=="summary")return Color(255,84,96,112);
+    return Color(255,41,109,164);
+}
+// Errors before warnings before notes, with the map's figures kept on top.
+int DesignCheckRank(const Json& issue)
+{
+    const auto severity=issue.value("severity",std::string("info"));
+    if(issue.value("summary",false) || severity=="summary")return 0;
+    if(severity=="error")return 1;
+    if(severity=="warning")return 2;
+    if(severity=="clear")return 4;
+    return 3;
+}
+void DesignCheckCounts(DesignState& s,size_t& errors,size_t& warnings,size_t& notes)
+{
+    errors=warnings=notes=0;
+    for(const auto& issue:s.issues)
+    {
+        const auto severity=issue.value("severity",std::string("info"));
+        if(severity=="error")++errors;
+        else if(severity=="warning")++warnings;
+        else if(severity=="info" && !issue.value("summary",false))++notes;
+    }
+}
+// The band above the list: whether the map is ready, the tally, and the hint.
+void DesignCheckPaintHeader(DesignState& s,HWND window,HDC dc)
+{
+    using namespace Gdiplus;
+    RECT rect{};GetClientRect(window,&rect);
+    const int width=std::max(1L,rect.right);
+    Bitmap buffer(width,kCheckHeader);
+    Graphics g(&buffer);
+    g.Clear(Color(255,255,255,255));
+    g.SetSmoothingMode(SmoothingModeAntiAlias);
+    size_t errors=0,warnings=0,notes=0;
+    DesignCheckCounts(s,errors,warnings,notes);
+    const std::string state=errors?"Not ready to play":warnings?"Playable, with warnings":"All checks passed";
+    const auto ink=DesignCheckInk(errors?"error":warnings?"warning":"clear");
+    Font heading(L"Segoe UI",12,FontStyleBold);
+    Font body(L"Segoe UI",9);
+    SolidBrush strong(ink);
+    const std::wstring wide(state.begin(),state.end());
+    SolidBrush dot(ink);
+    g.FillEllipse(&dot,14.f,17.f,12.f,12.f);
+    g.DrawString(wide.c_str(),-1,&heading,PointF(32,13),&strong);
+    RectF measured;
+    g.MeasureString(wide.c_str(),-1,&heading,PointF(0,0),&measured);
+    // A pill per severity, in its own colour, left out when it holds nothing.
+    float x=38+measured.Width;
+    const std::pair<const char*,size_t> tally[]={{"error",errors},{"warning",warnings},{"info",notes}};
+    for(const auto& [severity,count]:tally)
+    {
+        if(!count)continue;
+        const std::string name=std::string(severity)=="error"?"error":std::string(severity)=="warning"?"warning":"note";
+        const std::string text=std::to_string(count)+" "+name+(count==1?"":"s");
+        const std::wstring label(text.begin(),text.end());
+        RectF size;
+        g.MeasureString(label.c_str(),-1,&body,PointF(0,0),&size);
+        const float pill=size.Width+30;
+        if(x+pill>width-12)break;
+        const auto colour=DesignCheckInk(severity);
+        SolidBrush fill(Color(38,colour.GetR(),colour.GetG(),colour.GetB()));
+        SolidBrush mark(colour),text2(colour);
+        g.FillRectangle(&fill,x,15.f,pill,17.f);
+        g.FillEllipse(&mark,x+8,20.f,7.f,7.f);
+        g.DrawString(label.c_str(),-1,&body,PointF(x+20,17),&text2);
+        x+=pill+6;
+    }
+    SolidBrush hint(Color(255,110,118,130));
+    g.DrawString(L"Double-click an issue to select its piece; the line under the list spells it out in full. Check again after changes.",
+                 -1,&body,RectF(14,40,static_cast<float>(width-28),18),nullptr,&hint);
+    Pen edge(Color(255,222,226,232),1);
+    g.DrawLine(&edge,0.f,static_cast<float>(kCheckHeader-1),static_cast<float>(width),static_cast<float>(kCheckHeader-1));
+    Graphics target(dc);
+    target.DrawImage(&buffer,0,0);
+}
+// One row of the list: a colour bar, a badge for its severity and its text.
+void DesignCheckPaintRow(DesignState& s,DRAWITEMSTRUCT* item)
+{
+    using namespace Gdiplus;
+    if(item->itemID==static_cast<UINT>(-1) || item->itemID>=s.issues.size())return;
+    const auto& issue=s.issues[item->itemID];
+    const auto severity=issue.value("summary",false)?std::string("summary"):issue.value("severity",std::string("info"));
+    const bool selected=(item->itemState&ODS_SELECTED)!=0;
+    const auto colour=DesignCheckInk(severity);
+    const RECT& r=item->rcItem;
+    const float x=static_cast<float>(r.left),y=static_cast<float>(r.top);
+    const float width=static_cast<float>(r.right-r.left),height=static_cast<float>(r.bottom-r.top);
+    Graphics g(item->hDC);
+    g.SetSmoothingMode(SmoothingModeAntiAlias);
+    SolidBrush back(selected?Color(255,214,230,247):(item->itemID%2)?Color(255,248,249,251):Color(255,255,255,255));
+    g.FillRectangle(&back,x,y,width,height);
+    SolidBrush bar(colour);
+    g.FillRectangle(&bar,x,y,3.f,height);
+    // The badge: a warning is a triangle, everything else a disc.
+    const float cx=x+22,cy=y+height/2;
+    SolidBrush badge(colour);
+    if(severity=="warning")
+    {
+        PointF points[3]={{cx,cy-8},{cx+8,cy+6},{cx-8,cy+6}};
+        g.FillPolygon(&badge,points,3);
+    }
+    else g.FillEllipse(&badge,cx-8,cy-8,16.f,16.f);
+    Font glyphFont(L"Segoe UI",severity=="clear"?8.f:9.f,FontStyleBold);
+    SolidBrush white(Color(255,255,255,255));
+    StringFormat centre;
+    centre.SetAlignment(StringAlignmentCenter);
+    centre.SetLineAlignment(StringAlignmentCenter);
+    const wchar_t* glyph=severity=="error"?L"×":severity=="warning"?L"!":severity=="clear"?L"✓":severity=="summary"?L"≡":L"i";
+    g.DrawString(glyph,-1,&glyphFont,RectF(cx-9,cy-9+(severity=="warning"?3.f:0.f),18.f,18.f),&centre,&white);
+    // A piece of the map behind the issue: double-click takes you to it.
+    const bool piece=issue.value("piece",-1)>=0;
+    Font text(L"Segoe UI",9,severity=="error"||severity=="summary"?FontStyleBold:FontStyleRegular);
+    SolidBrush ink(severity=="summary"?Color(255,72,82,96):Color(255,32,38,48));
+    StringFormat line;
+    line.SetTrimming(StringTrimmingEllipsisCharacter);
+    line.SetFormatFlags(StringFormatFlagsNoWrap);
+    line.SetLineAlignment(StringAlignmentCenter);
+    const auto body=issue.value("text",std::string());
+    const std::wstring wide(body.begin(),body.end());
+    g.DrawString(wide.c_str(),-1,&text,RectF(x+40,y,std::max(10.f,width-40-(piece?22:10)),height),&line,&ink);
+    if(piece)
+    {
+        SolidBrush chevron(Color(255,150,158,170));
+        Font mark(L"Segoe UI",10);
+        g.DrawString(L"›",-1,&mark,RectF(width-20,y,16.f,height),&centre,&chevron);
+    }
+    if(item->itemState&ODS_FOCUS)
+    {
+        Pen focus(Color(120,41,109,164),1);
+        g.DrawRectangle(&focus,x+.5f,y+.5f,width-1,height-1);
+    }
+}
 LRESULT CALLBACK DesignCheckProc(HWND window,UINT message,WPARAM w,LPARAM l)
 {
     auto s=reinterpret_cast<DesignState*>(GetWindowLongPtr(window,GWLP_USERDATA));
@@ -2741,13 +3051,40 @@ LRESULT CALLBACK DesignCheckProc(HWND window,UINT message,WPARAM w,LPARAM l)
     {
         if(message==WM_CREATE)
         {
-            Control(window,"STATIC","Double-click an issue to select its piece. Check again after changes.",0,0,12,10,560,20);
-            Control(window,"LISTBOX","",LBS_NOTIFY|LBS_NOINTEGRALHEIGHT|WS_VSCROLL|WS_BORDER,DCheckList,12,34,560,300);
+            Control(window,"LISTBOX","",LBS_NOTIFY|LBS_OWNERDRAWFIXED|LBS_NOINTEGRALHEIGHT|WS_VSCROLL,DCheckList,0,kCheckHeader,600,240);
+            Control(window,"STATIC","",0,DCheckDetail,14,kCheckHeader+240,572,kCheckDetail-8);
+            return 0;
+        }
+        if(message==WM_MEASUREITEM){reinterpret_cast<MEASUREITEMSTRUCT*>(l)->itemHeight=kCheckRow;return TRUE;}
+        if(message==WM_DRAWITEM)
+        {
+            auto item=reinterpret_cast<DRAWITEMSTRUCT*>(l);
+            if(item->CtlID==DCheckList && item->itemAction!=ODA_FOCUS)DesignCheckPaintRow(*s,item);
+            return TRUE;
+        }
+        if(message==WM_PAINT)
+        {
+            PAINTSTRUCT ps{};
+            auto dc=BeginPaint(window,&ps);
+            try{DesignCheckPaintHeader(*s,window,dc);}catch(...){EndPaint(window,&ps);throw;}
+            EndPaint(window,&ps);
             return 0;
         }
         if(message==WM_SIZE)
         {
-            MoveWindow(GetDlgItem(window,DCheckList),12,34,std::max(1,LOWORD(l)-24),std::max(1,HIWORD(l)-46),TRUE);
+            const int width=LOWORD(l),height=HIWORD(l);
+            MoveWindow(GetDlgItem(window,DCheckList),0,kCheckHeader,std::max(1,width),std::max(1,height-kCheckHeader-kCheckDetail),TRUE);
+            MoveWindow(GetDlgItem(window,DCheckDetail),14,std::max(0,height-kCheckDetail+4),std::max(1,width-28),kCheckDetail-10,TRUE);
+            InvalidateRect(window,nullptr,TRUE);
+            return 0;
+        }
+        if(message==WM_COMMAND && LOWORD(w)==DCheckList && HIWORD(w)==LBN_SELCHANGE)
+        {
+            // The full wording of the selected issue, for the ones too long
+            // for their row.
+            const auto row=SendDlgItemMessage(window,DCheckList,LB_GETCURSEL,0,0);
+            const bool valid=row>=0 && row<static_cast<LRESULT>(s->issues.size());
+            SetWindowTextA(GetDlgItem(window,DCheckDetail),valid?s->issues[row].value("text",std::string()).c_str():"");
             return 0;
         }
         if(message==WM_COMMAND && LOWORD(w)==DCheckList && HIWORD(w)==LBN_DBLCLK)
@@ -2806,7 +3143,7 @@ void DesignCheck(DesignState& s)
         for(const auto& spawn:Editor::DesignSpawns())++(spawn.at("team").get<std::string>()=="0"?spies:mercs); // Team 0 is the spies.
         size_t objectives=0;
         for(const auto& actor:s.objectives)if(actor.value("kind",std::string())=="Objective")++objectives;
-        auto info=[&](const std::string& text){s.issues.push_back({{"severity","info"},{"text",text},{"piece",-1},{"index",0}});};
+        auto info=[&](const std::string& text){s.issues.push_back({{"severity","info"},{"summary",true},{"text",text},{"piece",-1},{"index",0}});};
         info("Layout: "+(pieces.empty()?std::string("no pieces yet"):pieces)+" on "+std::to_string(DesignLevels(s).size())+" storey(s); "+std::to_string(brushes)+" brush(es) in the map.");
         info("Game: "+std::to_string(spies)+" spy start(s), "+std::to_string(mercs)+" merc start(s), "+std::to_string(objectives)+" objective(s), "
             +std::to_string(s.lights.size())+" light(s), "+std::to_string(s.securityActors.size())+" security device(s).");
@@ -2906,25 +3243,32 @@ void DesignCheck(DesignState& s)
         WNDCLASSA wc{};
         wc.hInstance=GetModuleHandle(nullptr);
         wc.hCursor=LoadCursor(nullptr,IDC_ARROW);
-        wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1);
+        wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_WINDOW+1);
         wc.lpfnWndProc=DesignCheckProc;
         wc.lpszClassName="ReloadedDesignCheck";
         RegisterClassA(&wc);
         s.checkWindow=CreateWindowExA(WS_EX_TOOLWINDOW,wc.lpszClassName,"Design Check",WS_OVERLAPPEDWINDOW|WS_VISIBLE,
-                                      CW_USEDEFAULT,CW_USEDEFAULT,600,380,s.window,nullptr,wc.hInstance,&s);
+                                      CW_USEDEFAULT,CW_USEDEFAULT,760,480,s.window,nullptr,wc.hInstance,&s);
         if(!s.checkWindow)throw std::runtime_error("Cannot open the design check.");
-    }
-    auto list=GetDlgItem(s.checkWindow,DCheckList);
-    SendMessage(list,LB_RESETCONTENT,0,0);
-    for(auto& issue:s.issues)
-    {
-        const auto severity=issue.at("severity").get<std::string>();
-        const auto line=(severity=="error"?"ERROR  ":severity=="info"?"info   ":"warn   ")+issue.at("text").get<std::string>();
-        SendMessageA(list,LB_ADDSTRING,0,reinterpret_cast<LPARAM>(line.c_str()));
     }
     size_t problems=0;
     for(const auto& issue:s.issues)if(issue.at("severity")!="info")++problems;
-    if(problems==0)SendMessageA(list,LB_ADDSTRING,0,reinterpret_cast<LPARAM>("No issues found."));
+    if(problems==0)
+        s.issues.push_back({{"severity","clear"},{"text","No issues found: nothing here stops the map being built or played."},{"piece",-1},{"index",0}});
+    // What stops the map playing comes first, then what spoils it, then the
+    // notes; the map's own figures stay on top of all of it.
+    std::stable_sort(s.issues.begin(),s.issues.end(),
+        [](const Json& a,const Json& b){return DesignCheckRank(a)<DesignCheckRank(b);});
+    auto list=GetDlgItem(s.checkWindow,DCheckList);
+    SendMessage(list,LB_RESETCONTENT,0,0);
+    // Owner-drawn rows: the text comes from the issue, not from the item.
+    for(size_t i=0;i<s.issues.size();++i)SendMessageA(list,LB_ADDSTRING,0,reinterpret_cast<LPARAM>(""));
+    SetWindowTextA(GetDlgItem(s.checkWindow,DCheckDetail),"");
+    size_t errors=0,warnings=0,notes=0;
+    DesignCheckCounts(s,errors,warnings,notes);
+    SetWindowTextA(s.checkWindow,(problems==0?std::string("Design Check - all checks passed")
+        :"Design Check - "+std::to_string(errors)+" error(s), "+std::to_string(warnings)+" warning(s)").c_str());
+    InvalidateRect(s.checkWindow,nullptr,TRUE);
     ShowWindow(s.checkWindow,SW_SHOWNORMAL);
     DesignStatus(s,std::to_string(problems)+" design check issue(s). Double-click one in the Design Check window to select its piece.");
 }
@@ -3596,7 +3940,8 @@ const char* const kDesignKeyLegend=
     "Drag on empty space: box select anything the rectangle touches. Hold Alt for only what is wholly inside.\r\n"
     "Shift or Ctrl + click: add to the selection.\r\n"
     "Drag a piece: move it (and the rest of the selection). Drag a square: resize. Drag the round handle: turn (15 degree steps; Ctrl: free).\r\n"
-    "R / Shift+R: turn the edited piece 90 degrees either way.\r\n"
+    "R / Shift+R: turn the edited piece 90 degrees either way, or the selected brushes and actors about their middle.\r\n"
+    "Right-click with nothing under the cursor: Turn the selection, including by a typed angle.\r\n"
     "Arrow keys: nudge the edited piece by the grid. Ctrl + arrows: one unit. Shift + arrows: four grid steps.\r\n"
     "Enter: place a new preview.   Esc: discard it, or cancel what is being placed.\r\n"
     "Delete: delete the selection.   B: build geometry.   F2: rename the edited piece.\r\n"
@@ -3604,8 +3949,10 @@ const char* const kDesignKeyLegend=
     "Ctrl+C / Ctrl+V: copy the selected pieces / paste them at the cursor.   Ctrl+D: duplicate them beside the originals.\r\n"
     "Ctrl+A: select everything on this storey.   F / Shift+F: fit the map / the selection.\r\n"
     "1 / 2 / 3: top / front / side view.   G: snapping on or off.   O: overlays on or off.   P: playtest from the cursor.\r\n"
-    "Page Up / Page Down: one storey up / down.   Home: every storey.\r\n"
-    "Slider on the right: pick a storey.   + badge on a wall: add a neighbour there.\r\n"
+    "Page Up / Page Down: one storey up / down; up from the highest shows every storey.   Home: every storey.\r\n"
+    "Slider on the right: pick a storey. Wheel over it steps between them; right-click it for a typed height range.\r\n"
+    "Type chips under Top / Front / Side: click one to take that kind of actor out of the plan, again to bring it back.\r\n"
+    "Right-click a chip: every kind in the map, with its count.   + badge on a wall: add a neighbour there.\r\n"
     "\r\n"
     "SCENE PANEL\r\n"
     "Ctrl+A: select all rows.   Delete: delete.   Ctrl+G: new group from the rows.\r\n"
@@ -3729,6 +4076,61 @@ void DesignSliderMenu(DesignState& s,POINT at)
     const auto choice=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_NONOTIFY|TPM_LEFTALIGN,screen.x,screen.y,0,s.canvas,nullptr);
     DestroyMenu(menu);
     if(choice)DesignCommand(s,choice);
+}
+// A kind of actor in or out of the plan. Nothing in the map changes: the
+// actors are still there, still in the viewports, and still in the Scene
+// panel; the plan simply stops drawing them, which also stops them taking
+// clicks.
+void DesignToggleType(DesignState& s,const std::string& type)
+{
+    DesignTallyTypes(s);
+    size_t count=0;
+    for(const auto& [name,tally]:s.typeCounts)if(name==type)count=tally;
+    if(s.hiddenTypes.count(type))
+    {
+        s.hiddenTypes.erase(type);
+        DesignStatus(s,"Showing "+std::to_string(count)+" "+type+" again.");
+    }
+    else
+    {
+        s.hiddenTypes.insert(type);
+        DesignStatus(s,"Hiding "+std::to_string(count)+" "+type+" in the plan: they cannot be clicked or box-selected while the chip is off. "
+                       "The map is unchanged; click the chip again to bring them back.");
+    }
+    s.hoverPiece=Json{};
+    s.hoverPaths.clear();
+    InvalidateRect(s.canvas,nullptr,FALSE);
+}
+// Right-click on the type chips: every kind the map holds, chip or no chip.
+void DesignTypeMenu(DesignState& s,POINT at)
+{
+    DesignTallyTypes(s);
+    HMENU menu=CreatePopupMenu();
+    if(!menu)throw std::runtime_error("Could not open the menu.");
+    AppendMenuA(menu,MF_STRING|(s.hiddenTypes.empty()?MF_GRAYED:0),DCtxTypeAll,"Show every kind in the plan");
+    AppendMenuA(menu,MF_SEPARATOR,0,nullptr);
+    const size_t room=DCtxTypeLast-DCtxTypeFirst+1;
+    for(size_t i=0;i<s.typeCounts.size() && i<room;++i)
+    {
+        const auto& [type,count]=s.typeCounts[i];
+        AppendMenuA(menu,MF_STRING|(s.hiddenTypes.count(type)?0:MF_CHECKED),DCtxTypeFirst+i,
+                    (type+"\t"+std::to_string(count)).c_str());
+    }
+    POINT screen=at;
+    ClientToScreen(s.canvas,&screen);
+    const auto choice=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_NONOTIFY|TPM_LEFTALIGN,screen.x,screen.y,0,s.canvas,nullptr);
+    DestroyMenu(menu);
+    if(choice==DCtxTypeAll)
+    {
+        s.hiddenTypes.clear();
+        InvalidateRect(s.canvas,nullptr,FALSE);
+        DesignStatus(s,"Every kind of actor is back in the plan.");
+    }
+    else if(choice>=DCtxTypeFirst && choice<=DCtxTypeLast)
+    {
+        const size_t index=static_cast<size_t>(choice-DCtxTypeFirst);
+        if(index<s.typeCounts.size())DesignToggleType(s,s.typeCounts[index].first);
+    }
 }
 // The readout under the plan: the cursor's world point and what is there.
 void DesignReadout(DesignState& s,POINT at)
@@ -3915,6 +4317,25 @@ void DesignContextMenu(DesignState& s,POINT at)
         item(DCtxDetachPiece,"Detach "+name+" (keep its brushes)");
         item(DCtxDeletePiece,"Delete "+name+" and its brushes");
         separator();
+    }
+    else
+    {
+        // No piece here, so the Turn entries take whatever is selected in the
+        // map: loose brushes and actors turn about the middle of what they
+        // cover, which is how a map the toolkit did not build gets turned.
+        size_t turnable=0;
+        for(const auto& actor:s.scene)
+            if(actor.value("selected",false) && !actor.at("locked").get<bool>() && DesignShows(s,actor))++turnable;
+        if(turnable)
+        {
+            HMENU turn=CreatePopupMenu();
+            AppendMenuA(turn,MF_STRING,DCtxTurnCW,"90 degrees	R");
+            AppendMenuA(turn,MF_STRING,DCtxTurnCCW,"-90 degrees	Shift+R");
+            AppendMenuA(turn,MF_STRING,DCtxTurnAngle,"By an angle...");
+            AppendMenuA(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(turn),
+                        ("Turn the "+std::to_string(turnable)+" selected actor(s)").c_str());
+            separator();
+        }
     }
     {
         // Locking what is under the cursor, then the selection.
@@ -4195,6 +4616,18 @@ void DesignContextMenu(DesignState& s,POINT at)
     }
     if(choice==DCtxLockSelection || choice==DCtxUnlockSelection){DesignLockSelection(s,choice==DCtxLockSelection);return;}
     if(choice==DCtxScene){SceneOpen(s);return;}
+    if(choice==DCtxTurnAngle)
+    {
+        std::vector<InputField> f={{"Turn the selection by (degrees)","90",{}}};
+        if(!Ask(s.window,"Turn Selected Actors",f))return;
+        DesignTurnSelection(s,Design::Number(f[0].value,-3600,3600));
+        return;
+    }
+    if((choice==DCtxTurnCW || choice==DCtxTurnCCW) && piece.is_null())
+    {
+        DesignTurnSelection(s,choice==DCtxTurnCW?90:-90);
+        return;
+    }
     if(choice==DCtxTurnCW || choice==DCtxTurnCCW)
     {
         if(s.previous.is_null() || s.previous.at("members")!=piece.at("members"))
@@ -4319,6 +4752,15 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
         {
             POINT p{GET_X_LPARAM(l),GET_Y_LPARAM(l)};
             ScreenToClient(window,&p);
+            // Over the floor slider the wheel steps storeys instead of zooming:
+            // up the map, not into it.
+            if(int index=0;DesignSliderHit(*s,p,index))
+            {
+                const int count=static_cast<int>(DesignLevels(*s).size());
+                const int current=DesignLevelIndex(*s);
+                DesignSetLevel(*s,std::clamp(current+(GET_WHEEL_DELTA_WPARAM(w)>0?-1:1),0,count));
+                return 0;
+            }
             auto world=DesignWorld(*s,p.x,p.y);
             s->zoom=std::clamp(s->zoom*(GET_WHEEL_DELTA_WPARAM(w)>0?1.2:1/1.2),.002,8.0);
             auto after=DesignScreen(*s,world);
@@ -4349,6 +4791,13 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 DesignSliderMenu(*s,{GET_X_LPARAM(l),GET_Y_LPARAM(l)});
                 return 0;
             }
+            {
+                // The chips offer every kind in the map, not just the ones
+                // abundant enough to have earned a chip of their own.
+                const POINT at{GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+                for(const auto& [type,box]:s->typeChips)
+                    if(PtInRect(&box,at)){DesignTypeMenu(*s,at);return 0;}
+            }
             DesignContextMenu(*s,{GET_X_LPARAM(l),GET_Y_LPARAM(l)});
             return 0;
         }
@@ -4358,7 +4807,9 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             GetCursorPos(&at);
             ScreenToClient(window,&at);
             LPCTSTR cursor=IDC_ARROW;
-            if((DesignGeometryStale(*s) && PtInRect(&s->banner,at)) || PtInRect(&s->viewButtons[0],at) || PtInRect(&s->viewButtons[1],at) || PtInRect(&s->viewButtons[2],at))cursor=IDC_HAND;
+            bool chip=false;
+            for(const auto& [type,box]:s->typeChips)if(PtInRect(&box,at))chip=true;
+            if(chip || (DesignGeometryStale(*s) && PtInRect(&s->banner,at)) || PtInRect(&s->viewButtons[0],at) || PtInRect(&s->viewButtons[1],at) || PtInRect(&s->viewButtons[2],at))cursor=IDC_HAND;
             else if(s->drag.kind==DesignDrag::Kind::Move)cursor=IDC_SIZEALL;
             else if(s->drag.kind==DesignDrag::Kind::Rotate)cursor=IDC_HAND;
             else if(s->drag.kind==DesignDrag::Kind::Resize)cursor=s->drag.axis==DesignVertical(*s)?IDC_SIZENS:IDC_SIZEWE;
@@ -4479,14 +4930,14 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             }
             if(w==VK_PRIOR || w==VK_NEXT || w==VK_HOME)
             {
-                // Page Up climbs a storey (a lower detent index), Page Down descends.
+                // The keys follow the slider: Page Up climbs towards All at the
+                // top of it, so the storey above the highest one is all of
+                // them, and Page Down descends from All onto that highest
+                // storey and carries on down to the lowest.
                 const int count=static_cast<int>(DesignLevels(*s).size());
-                if(count==0){DesignStatus(*s,"No storeys yet: place a room first, then the floor slider appears.");return 0;}
+                if(count==0){DesignStatus(*s,"Nothing to stand on yet: place a room or carve a brush, then the floor slider appears.");return 0;}
                 const int current=DesignLevelIndex(*s);
-                int next=w==VK_HOME?0:w==VK_PRIOR?(current==0?count:current-1):(current==0?count:current+1);
-                if(next>count)next=count;
-                if(next<1 && w!=VK_HOME)next=1;
-                DesignSetLevel(*s,next);
+                DesignSetLevel(*s,std::clamp(w==VK_HOME?0:current+(w==VK_PRIOR?-1:1),0,count));
                 return 0;
             }
             if(w==VK_ESCAPE)
@@ -4619,6 +5070,13 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
                     DesignCommand(*s,DPlane);
                     return 0;
                 }
+            // The type chips under them switch a kind of actor in or out.
+            for(const auto& [type,box]:s->typeChips)
+                if(PtInRect(&box,at))
+                {
+                    DesignToggleType(*s,type);
+                    return 0;
+                }
             // The floor slider along the right edge.
             if(int index=0;DesignSliderHit(*s,at,index))
             {
@@ -4725,20 +5183,21 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 {DBuild,"Build geometry\tB"}});
             submenu("&Annotate",{{DGuides,"Player reference..."},{DMeasure,"Measure two points"},{DSightline,"Sightline between two points"},{0,nullptr},
                 {DRoute,"Route / objective..."},{DFinish,"Finish route / marker"},{DCompare,"Compare routes..."},{0,nullptr},{DClear,"Remove annotation..."}});
-            submenu("&Tools",{{DPlay,"Playtest from here..."},{DSecurity,"Security..."},{DStages,"Stages..."},{DCheck,"Check design..."},{0,nullptr},
-                {DRefresh,"Refresh from editor"},{DFit,"Fit map / preview\tF"},{DFitSelection,"Fit selection\tShift+F"},{DSelectAll,"Select all on this storey\tCtrl+A"},{DUnlit,"Show unlit areas"},{0,nullptr},{DUndo,"Undo\tCtrl+Z"},{DRedo,"Redo\tCtrl+Y"},{0,nullptr},{DKeys,"Keyboard and mouse..."}});
+            submenu("&Tools",{{DPlay,"Playtest from here..."},{DSecurity,"Security..."},{DStages,"Zones..."},{DCheck,"Check design..."},{0,nullptr},
+                {DRefresh,"Refresh from editor"},{DFit,"Fit map / preview\tF"},{DFitSelection,"Fit selection\tShift+F"},{DSelectAll,"Select all on this storey\tCtrl+A"},{DUnlit,"Show unlit areas"},{DTypes,"Kinds of actor in the plan..."},{0,nullptr},{DUndo,"Undo\tCtrl+Z"},{DRedo,"Redo\tCtrl+Y"},{0,nullptr},{DKeys,"Keyboard and mouse..."}});
             SetMenu(window,bar);
             const std::pair<int,const char*> buttons[]={
                 {DBlock,"New blockout..."},{DPlace,"Place / Apply preview"},
                 {DBuild,"Build geometry (B)"},{DCheck,"Check design..."},
-                {DUndo,"Undo"},{DRedo,"Redo"}};
+                {DUndo,"Undo"},{DRedo,"Redo"},
+                {DKeys,"Keyboard and mouse..."}};
             const int rows=(static_cast<int>(std::size(buttons))+1)/2;
             for(int i=0;i<static_cast<int>(std::size(buttons));++i)
                 Control(window,"BUTTON",buttons[i].second,0,buttons[i].first,12+(i%2)*196,46+(i/2)*30,190,27);
             // Inspector: live fields for the preview or the selected piece.
             const int top=46+rows*30+10;
             s->inspectorTop=top;
-            Control(window,"STATIC","",0,DInspectorTitle,12,top,386,20);
+            Control(window,"STATIC","",0,DInspectorTitle,12,top,386,kInspectorTitleHeight);
             const std::tuple<int,const char*,const char*> fields[]={
                 {DName,"Name","EDIT"},{DShape,"Shape","COMBOBOX"},{DConstruction,"Construction","COMBOBOX"},{DPreset,"Preset","COMBOBOX"},
                 {DWidth,"Width (X)","EDIT"},{DLength,"Length (Y)","EDIT"},{DHeight,"Height (Z)","EDIT"},
@@ -4746,7 +5205,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 {DPositionX,"Base X","EDIT"},{DPositionY,"Base Y","EDIT"},{DPositionZ,"Base Z","EDIT"},{DYaw,"Yaw","EDIT"}};
             for(int i=0;i<static_cast<int>(std::size(fields));++i)
             {
-                const int column=i%2,row=i/2,x=12+column*196,y=top+24+row*26;
+                const int column=i%2,row=i/2,x=12+column*196,y=top+kInspectorBodyTop+row*26;
                 Control(window,"STATIC",std::get<1>(fields[i]),0,DInspectorLabel+i,x,y+4,84,20);
                 const bool edit=std::string(std::get<2>(fields[i]))=="EDIT";
                 auto control=Control(window,std::get<2>(fields[i]),"",edit?ES_AUTOHSCROLL:CBS_DROPDOWNLIST|WS_VSCROLL,
@@ -4755,11 +5214,12 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             }
             for(const char* shape:kDesignShapes)SendDlgItemMessageA(window,DShape,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(shape));
             for(const char* construction:kDesignConstructions)SendDlgItemMessageA(window,DConstruction,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(construction));
-            const int checks=top+24+((static_cast<int>(std::size(fields))+1)/2)*26;
+            const int checks=top+kInspectorBodyTop+((static_cast<int>(std::size(fields))+1)/2)*26;
             Control(window,"BUTTON","Ceiling (shell)",BS_AUTOCHECKBOX,DCeiling,12,checks,140,24);
             Control(window,"BUTTON","Zone portal (doorway)",BS_AUTOCHECKBOX,DPortal,160,checks,170,24);
             Control(window,"BUTTON","Discard preview",0,DDiscard,12,checks+28,190,26);
-            Control(window,"BUTTON","Keys...",0,DKeys,208,checks+28,90,26);
+            s->sheetBar=CreateWindowExA(0,"SCROLLBAR","",WS_CHILD|SBS_VERT,392,top+kInspectorBodyTop,16,200,window,
+                                        reinterpret_cast<HMENU>(DSheetScroll),GetModuleHandle(nullptr),nullptr);
             const std::pair<int,const char*> tips[]={
                 {DPlane,"Which way the plan looks: top (a floor plan) or front / side (an elevation). Page Up / Page Down step between storeys."},
                 {DDepth,"Where clicks land on the axis the view cannot show: the floor height in the top view, the depth in an elevation. Enter applies; the storey slider sets it too."},
@@ -4790,7 +5250,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             DesignFit(*s);
             DesignInspectorRefresh(*s);
             DesignDepthShow(*s);
-            DesignStatus(*s,"Wheel: zoom. Middle drag: pan. Click a piece to edit it, drag to move, drag a square to resize; arrow keys nudge by the grid. Drag empty space to box-select anything the rectangle touches (Alt: only what is wholly inside); Shift or Ctrl adds. The slider on the right shows one storey; Page Up / Page Down step between them. Right-click for actions at that point.");
+            DesignStatus(*s,"Wheel: zoom. Middle drag: pan. Click a piece to edit it, drag to move, drag a square to resize; arrow keys nudge by the grid. Drag empty space to box-select anything the rectangle touches (Alt: only what is wholly inside); Shift or Ctrl adds. The slider on the right shows one storey; Page Up / Page Down step between them, and the wheel over it does too. The chips under Top / Front / Side take a whole kind of actor out of the plan. Right-click for actions at that point.");
             SetTimer(window,1,700,nullptr);
             return 0;
         }
@@ -4803,9 +5263,42 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             if(s->sceneWindow)MoveWindow(s->sceneWindow,std::max(0,width-12-kSceneDockWidth),12,kSceneDockWidth,std::max(1,height-92),TRUE);
             MoveWindow(s->status,12,height-72,std::max(1,width-24-330),66,TRUE);
             if(s->readout)MoveWindow(s->readout,std::max(0,width-12-320),height-72,320,66,TRUE);
+            SheetLayout(*s);
             return 0;
         }
         if(message==WM_GETMINMAXINFO){reinterpret_cast<MINMAXINFO*>(l)->ptMinTrackSize={s->sceneWindow?1520:1150,640};return 0;}
+        if(message==WM_VSCROLL && reinterpret_cast<HWND>(l)==s->sheetBar)
+        {
+            SCROLLINFO info{sizeof(info)};info.fMask=SIF_ALL;
+            GetScrollInfo(s->sheetBar,SB_CTL,&info);
+            const int page=static_cast<int>(info.nPage);
+            switch(LOWORD(w))
+            {
+                case SB_LINEUP:s->sheetScroll-=26;break;
+                case SB_LINEDOWN:s->sheetScroll+=26;break;
+                case SB_PAGEUP:s->sheetScroll-=page;break;
+                case SB_PAGEDOWN:s->sheetScroll+=page;break;
+                case SB_TOP:s->sheetScroll=0;break;
+                case SB_BOTTOM:s->sheetScroll=s->sheetContent;break;
+                case SB_THUMBTRACK:case SB_THUMBPOSITION:s->sheetScroll=info.nTrackPos;break;
+                default:return 0;
+            }
+            SheetLayout(*s);
+            return 0;
+        }
+        if(message==WM_MOUSEWHEEL && s->sheetBar && IsWindowVisible(s->sheetBar))
+        {
+            POINT at{GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+            // The bar's column, widened to the whole sheet so the wheel works
+            // over the rows as well as the bar.
+            RECT area{};GetWindowRect(s->sheetBar,&area);area.left-=392;
+            if(PtInRect(&area,at))
+            {
+                s->sheetScroll-=GET_WHEEL_DELTA_WPARAM(w)*26/WHEEL_DELTA;
+                SheetLayout(*s);
+                return 0;
+            }
+        }
         if(message==WM_COMMAND)
         {
             const int id=LOWORD(w),notification=HIWORD(w);

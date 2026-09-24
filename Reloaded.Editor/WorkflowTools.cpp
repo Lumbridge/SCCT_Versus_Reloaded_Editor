@@ -3,6 +3,7 @@
 #undef max
 #include "WorkflowTools.h"
 #include "EditorExtras.h"
+#include "StoreyFilter.h"
 #include "WorkflowEditor.h"
 #include "WorkflowGraph.h"
 #include "MagicEventWorkbench.h"
@@ -665,6 +666,8 @@ namespace
             AppendMenuA(menu,MF_SEPARATOR,0,nullptr);
             const char* labels[]={"X axis","Y axis","Z axis","All axes"};
             for(unsigned i=0;i<4;++i)AppendMenuA(menu,MF_STRING|(available?0:MF_GRAYED),kVertexSnapX+i,labels[i]);
+            AppendMenuA(menu,MF_SEPARATOR,0,nullptr);
+            AppendMenuA(menu,MF_STRING|(Editor::CanAddVertexPortal()?0:MF_GRAYED),kAddVertexPortal,"Add portal (1 unit thick)");
             POINT point{};GetCursorPos(&point);
             auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,point.x,point.y,0,GetActiveWindow(),nullptr);
             DestroyMenu(menu);if(command)HandleCommand(command);return;
@@ -733,7 +736,24 @@ namespace
                     AppendMenuA(sub,MF_STRING,kFitBuilderBrush,"Position the builder brush around this");
                 }
                 catch(const std::exception&) { /* Only available for valid static-mesh selections. */ }
+                try
+                {
+                    Editor::BrushSnapBounds(false);
+                    AppendMenuA(sub,MF_STRING,kFitBuilderBrushToBrush,"Position the builder brush around this brush");
+                }
+                catch(const std::exception&) { /* Only available for valid editable-brush selections. */ }
                 EditorExtras::AppendActorMenu(sub);
+            }
+            // Brush/surface context resource: the native menu is the useful
+            // target when the user right-clicks an existing BSP brush face.
+            if(reinterpret_cast<uintptr_t>(resource)==108) if(auto sub=GetSubMenu(menu,0))
+            {
+                try
+                {
+                    Editor::BrushSnapBounds(false);
+                    AppendMenuA(sub,MF_STRING,kFitBuilderBrushToBrush,"Position the builder brush around this brush");
+                }
+                catch(const std::exception&) { /* Only available for valid editable-brush selections. */ }
             }
         }
         return menu;
@@ -748,6 +768,11 @@ void RunObjectiveCommand(UINT command,const Json& snapshot)
 bool HandleCommand(UINT command)
 {
     if(EditorExtras::HandleCommand(command))return true;
+    if(command==StoreyFilter::kOpen)
+    {
+        try{StoreyFilter::Open();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Storeys",MB_OK|MB_ICONERROR);}
+        return true;
+    }
     if(command==kBrushVisibility)
     {
         try{OpenBrushVisibility();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Brush Visibility",MB_OK|MB_ICONERROR);}
@@ -764,6 +789,12 @@ bool HandleCommand(UINT command)
         return true;
     }
     if(command==40948){try{OpenDesign(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Map Design",MB_OK|MB_ICONERROR);}return true;}
+    if(command==kAddVertexPortal)
+    {
+        try{Editor::AddVertexPortal();}
+        catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Add Portal",MB_OK|MB_ICONINFORMATION);}
+        return true;
+    }
     if(command>=kVertexSnapX && command<=kVertexSnapAll)
     {
         try{const auto axis=command-kVertexSnapX;Editor::SnapSelectedBrushVertices(axis==3?7u:1u<<axis);}
@@ -781,6 +812,12 @@ bool HandleCommand(UINT command)
     if(command==kFitBuilderBrush)
     {
         try { Editor::FitBuilderBrushToMeshes(); }
+        catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Position Builder Brush",MB_OK|MB_ICONINFORMATION); }
+        return true;
+    }
+    if(command==kFitBuilderBrushToBrush)
+    {
+        try { Editor::FitBuilderBrushToBrushes(); }
         catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Position Builder Brush",MB_OK|MB_ICONINFORMATION); }
         return true;
     }
@@ -913,8 +950,10 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="surface.brushes") result=Editor::SelectedSurfaceBrushes();
         else if(op=="mesh.bounds") result=Editor::SelectedMeshBounds();
         else if(op=="builder.fit") {Editor::FitBuilderBrushToMeshes();result=true;}
+        else if(op=="builder.fit.brush") {Editor::FitBuilderBrushToBrushes();result=true;}
         else if(op=="brush.snap.bounds") result=Editor::BrushSnapBounds(q.value("surfaces",false));
         else if(op=="vertex.selection") result=Editor::SelectedBrushVertices();
+        else if(op=="vertex.portal") result=Editor::AddVertexPortal();
         else if(op=="vertex.snap") {Editor::SnapSelectedBrushVertices(q.at("axes").get<unsigned>());result=true;}
         else if(op=="brush.snap") {Editor::SnapBrushesToGrid(q.at("axes").get<unsigned>(),q.value("surfaces",false));result=true;}
         else if(op=="tag.preview") result=Editor::PreviewTagRename(q.at("actor"),q.at("tag"));

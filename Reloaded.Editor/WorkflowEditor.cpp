@@ -475,6 +475,32 @@ Json BrushVisibility()
     }
     return rows;
 }
+// A geometry build turns every actor visible again, whichever tool hid it, so
+// what is hidden is noted before a build and hidden again after it. The flags
+// go straight in: putting back what the user already had is not an edit worth
+// an Undo step of its own.
+Json HiddenActors()
+{
+    Json result=Json::array();
+    for(auto actor:LiveActors())
+        if(Read<unsigned>(actor+0x2f4)&0x10u)result.push_back(Identity(actor));
+    return result;
+}
+size_t RestoreHiddenActors(const Json& hidden)
+{
+    size_t restored=0;
+    for(const auto& id:hidden)
+    {
+        auto actor=ResolveIdentity(id);
+        if(!actor)continue;
+        const auto flags=Read<unsigned>(actor+0x2f4);
+        if(flags&0x10u)continue;
+        Write(actor+0x2f4,(flags|0x10u)&~0x40u);
+        ++restored;
+    }
+    if(restored){Call(Engine(),0xe4);Redraw();}
+    return restored;
+}
 void SetBrushVisibility(int category,const std::string& action)
 {
     if(category<0 || category>=7 || (action!="show" && action!="hide" && action!="only" && action!="select" && action!="all"))
@@ -796,6 +822,54 @@ Json SelectedBrushVertices()
     if(result.empty())throw std::runtime_error("Select vertices with the Vertex Editing tool first.");
     return result;
 }
+static Design::Solid SelectedPortalGeometry()
+{
+    std::vector<Vector> points;
+    for(const auto& item:SelectedBrushVertices())points.push_back(item.at("world").get<Vector>());
+    return Design::VertexPortal(points);
+}
+bool CanAddVertexPortal()
+{
+    try{SelectedPortalGeometry();return true;}catch(const std::exception&){return false;}
+}
+Json AddVertexPortal()
+{
+    auto solid=SelectedPortalGeometry();Vector center{};
+    for(const auto& face:solid.faces)for(const auto& p:face)for(int a=0;a<3;++a)center[a]+=p[a]/24;
+    for(auto& face:solid.faces)for(auto& p:face)for(int a=0;a<3;++a)p[a]-=center[a];
+    auto definition=Design::SolidDefinition({solid});
+    auto prepared=PreparePlacement(definition,{center,{}},"Portal_"+Id().substr(0,12)+"_",LevelPath(),{});
+    if(!pasteHookReady || insertionText)throw std::runtime_error("Native brush insertion is unavailable or busy.");
+    const auto text=ConvertText(prepared.at("t3d").get<std::string>(),CP_UTF8,CP_ACP);
+    const auto before=SelectedIdentities();Json members=Json::array();
+    // Native paste deselects actors and empties the vertex-selection array.
+    // Keep the source selection detached while it creates the new brush.
+    struct Scope
+    {
+        std::array<unsigned,3> vertices=Read<std::array<unsigned,3>>(0x11685a9c);
+        Scope(){Write(0x11685a9c,std::array<unsigned,3>{});}
+        ~Scope(){Write(0x11685a9c,vertices);insertionText=nullptr;}
+    } scope;
+    try
+    {
+        Transaction transaction("Add portal from selected vertices");
+        insertionText=text.c_str();Select(Json::array());Call(Engine(),0x26c,reinterpret_cast<void*>(Level()),0);
+        for(const auto& item:prepared.at("actors"))
+        {
+            auto actor=Find(LevelPath()+"."+item.at("name").get<std::string>(),true);
+            if(!actor)throw std::runtime_error("Could not create the portal brush.");
+            Modify(actor);
+            Write(Field(actor,"PrePivot"),std::array<float,3>{});
+            Write(Field(actor,"PolyFlags"),Design::kPortalPolyFlags);
+            SetPosition(actor,item.at("position").get<Vector>());
+            Write(Field(actor,"Rotation"),Rotation{});Call(actor,0x44);members.push_back(Identity(actor));
+        }
+        if(SelectedIdentities().size()!=1)throw std::runtime_error("Unexpected number of portal brushes.");
+        Select(before);transaction.Commit();
+    }
+    catch(...){Select(before);throw;}
+    Redraw();return members;
+}
 void SnapSelectedBrushVertices(unsigned axes)
 {
     const auto selected=SelectedBrushVertices();const auto grid=Read<std::array<float,3>>(Engine()+0x200);
@@ -829,7 +903,7 @@ void SnapSelectedBrushVertices(unsigned axes)
     for(auto model:models)reinterpret_cast<void(__thiscall*)(void*)>(0x110ce0d0)(reinterpret_cast<void*>(model));
     transaction.Commit();Redraw();
 }
-Json BrushSnapBounds(bool surfaces)
+static Json BrushBounds(bool surfaces,bool localSpace=false)
 {
     Engine();
     auto identities=surfaces?SelectedSurfaceBrushes():SelectedIdentities();
@@ -844,12 +918,10 @@ Json BrushSnapBounds(bool surfaces)
                 throw std::runtime_error("Unlock the selected brush location before snapping.");
         auto model=Read<Address>(actor+0x238),polys=model?Read<Address>(model+0x50):0;
         if(!polys || Read<int>(polys+0x2c)<=0)throw std::runtime_error("A selected brush has no editable polygons.");
-        // Use the same native BuildCoords/point transform as polyUpdateMaster.
-        // This build bakes brush rotation/scale into authored polygons; the
-        // native helper is authoritative rather than an actor mesh transform.
-        std::array<float,24> coords{};
-        reinterpret_cast<float(__thiscall*)(void*,void*,void*)>(0x10eb2eb0)(reinterpret_cast<void*>(actor),coords.data(),nullptr);
-        auto pivot=Read<std::array<float,3>>(Field(actor,"PrePivot"));auto location=Position(actor);
+        // Match the displayed brush and native vertex editing, including actor
+        // rotation, scale and pivot. BuildCoords alone omits actor rotation.
+        std::array<float,12> coords{};
+        Call<void*>(actor,0xac,coords.data());
         size_t count=0;
         for(auto poly:Array(polys+0x28,0x14c))
         {
@@ -858,11 +930,10 @@ Json BrushSnapBounds(bool surfaces)
             for(unsigned i=0;i<n;++i)
             {
                 auto local=Read<std::array<float,3>>(poly+0x18+i*12);std::array<float,3> transformed{};
-                for(int axis=0;axis<3;++axis)local[axis]-=pivot[axis];
-                reinterpret_cast<void(__cdecl*)(const void*,const void*,void*)>(0x10eb2a70)(coords.data(),local.data(),transformed.data());
+                reinterpret_cast<void*(__thiscall*)(void*,void*,const void*)>(0x10eb2ba0)(local.data(),transformed.data(),coords.data());
                 for(int axis=0;axis<3;++axis)
                 {
-                    const double value=transformed[axis]+location[axis];
+                    const double value=localSpace?local[axis]:transformed[axis];
                     if(!std::isfinite(value) || std::abs(value)>10000000)throw std::runtime_error("Brush bounds are out of range.");
                     if(!vertices)minimum[axis]=maximum[axis]=value;
                     else {minimum[axis]=std::min(minimum[axis],value);maximum[axis]=std::max(maximum[axis],value);}
@@ -875,6 +946,7 @@ Json BrushSnapBounds(bool surfaces)
     auto nativeGrid=Read<std::array<float,3>>(Engine()+0x200);
     return {{"min",minimum},{"max",maximum},{"actors",identities},{"grid",nativeGrid}};
 }
+Json BrushSnapBounds(bool surfaces) { return BrushBounds(surfaces); }
 void SnapBrushesToGrid(unsigned axes,bool surfaces)
 {
     const auto bounds=BrushSnapBounds(surfaces);
@@ -896,10 +968,10 @@ void SnapBrushesToGrid(unsigned axes,bool surfaces)
     for(const auto& move:moves){Modify(move.first);SetPosition(move.first,move.second);Call(move.first,0x44);}
     transaction.Commit();Redraw();
 }
-void FitBuilderBrushToMeshes()
+static void FitBuilderBrushToBounds(const Json& bounds, const char* transactionLabel,
+    const std::array<float,12>* orientation=nullptr,const Vector* worldCenter=nullptr)
 {
-    // Re-resolve at activation, never retain actor pointers from the popup.
-    auto bounds=SelectedMeshBounds();auto minimum=bounds.at("min").get<Vector>(),maximum=bounds.at("max").get<Vector>();
+    auto minimum=bounds.at("min").get<Vector>(),maximum=bounds.at("max").get<Vector>();
     Vector center{},extent{};
     for(int axis=0;axis<3;++axis)
     {
@@ -917,7 +989,23 @@ void FitBuilderBrushToMeshes()
     for(const auto& face:faces)
     {
         text<<"Begin Polygon Texture="<<texture<<" Flags=0\r\n";
-        for(const auto& vertex:face)text<<"Vertex "<<vertex[0]*extent[0]<<','<<vertex[1]*extent[1]<<','<<vertex[2]*extent[2]<<"\r\n";
+        for(const auto& vertex:face)
+        {
+            Vector point{vertex[0]*extent[0],vertex[1]*extent[1],vertex[2]*extent[2]};
+            if(orientation)
+            {
+                // Bake the source axes into the box. Native BSP building ignores
+                // actor Rotation, so retaining it only on the actor looks right
+                // in the viewport but produces unrotated Add/Subtract geometry.
+                const auto local=point;
+                for(int axis=0;axis<3;++axis)
+                {
+                    point[axis]=0;
+                    for(int j=0;j<3;++j)point[axis]+=(*orientation)[3+axis*3+j]*local[j];
+                }
+            }
+            text<<"Vertex "<<point[0]<<','<<point[1]<<','<<point[2]<<"\r\n";
+        }
         text<<"End Polygon\r\n";
     }
     text<<"End PolyList\r\n";
@@ -925,15 +1013,95 @@ void FitBuilderBrushToMeshes()
     if(!builder)throw std::runtime_error("The builder brush is unavailable.");
     auto model=Read<Address>(builder+0x238),polys=model?Read<Address>(model+0x50):0;
     if(!polys)throw std::runtime_error("Rebuild the builder brush before using this command.");
-    Transaction transaction("Position builder brush around static meshes");
+    Transaction transaction(transactionLabel);
     Modify(builder);Modify(model);Modify(polys);
     if(!Exec("BRUSH RESET") || !Exec(text.str()))throw std::runtime_error("Could not resize the builder brush.");
-    SetPosition(builder,center);
+    SetPosition(builder,worldCenter?*worldCenter:center);
     Write(Field(builder,"Rotation"),Rotation{});
     Write(Field(builder,"PrePivot"),std::array<float,3>{});
     Write(Field(builder,"DrawScale"),1.0f);
     Write(Field(builder,"DrawScale3D"),std::array<float,3>{1,1,1});
     Call(builder,0x44);transaction.Commit();Redraw();
+}
+void FitBuilderBrushToMeshes()
+{
+    // Re-resolve at activation, never retain actor pointers from the popup.
+    FitBuilderBrushToBounds(SelectedMeshBounds(),"Position builder brush around static meshes");
+}
+// Editor rotations may already be baked into the polygons. Recover the axes
+// of a rectangular brush from its edges, rather than boxing its rotated shape
+// in the actor's (now unrotated) axes. Other shapes retain the actor frame.
+static bool BrushBoxAxes(Address actor,Json& bounds,std::array<Vector,3>& axes)
+{
+    auto model=Read<Address>(actor+0x238),polys=Read<Address>(model+0x50);
+    if(Read<int>(polys+0x2c)!=6)return false;
+    std::vector<Vector> points;
+    for(auto poly:Array(polys+0x28,0x14c))
+    {
+        if(Read<unsigned short>(poly+0x148)!=4)return false;
+        for(int i=0;i<4;++i)
+        {
+            auto p=Read<std::array<float,3>>(poly+0x18+i*12);
+            points.push_back({p[0],p[1],p[2]});
+        }
+    }
+    for(int a=0;a<2;++a)
+    {
+        double length=0;
+        for(int j=0;j<3;++j){axes[a][j]=points[a+1][j]-points[a][j];length+=axes[a][j]*axes[a][j];}
+        if(length<1e-12)return false;
+        for(double& v:axes[a])v/=std::sqrt(length);
+    }
+    double dot=0;for(int j=0;j<3;++j)dot+=axes[0][j]*axes[1][j];
+    if(std::abs(dot)>1e-5)return false;
+    axes[2]={axes[0][1]*axes[1][2]-axes[0][2]*axes[1][1],
+        axes[0][2]*axes[1][0]-axes[0][0]*axes[1][2],axes[0][0]*axes[1][1]-axes[0][1]*axes[1][0]};
+    Vector minimum{},maximum{};std::vector<Vector> projected;
+    for(const auto& p:points)
+    {
+        Vector q{};for(int a=0;a<3;++a)for(int j=0;j<3;++j)q[a]+=p[j]*axes[a][j];
+        for(int a=0;a<3;++a){if(projected.empty())minimum[a]=maximum[a]=q[a];else{minimum[a]=std::min(minimum[a],q[a]);maximum[a]=std::max(maximum[a],q[a]);}}
+        projected.push_back(q);
+    }
+    unsigned corners=0;
+    for(const auto& q:projected)
+    {
+        unsigned corner=0;
+        for(int a=0;a<3;++a)
+        {
+            if(maximum[a]-minimum[a]<.001)return false;
+            if(std::abs(q[a]-minimum[a])<.01)continue;
+            if(std::abs(q[a]-maximum[a])>=.01)return false;
+            corner|=1u<<a;
+        }
+        corners|=1u<<corner;
+    }
+    if(corners!=255)return false;
+    bounds["min"]=minimum;bounds["max"]=maximum;return true;
+}
+void FitBuilderBrushToBrushes()
+{
+    if(SelectedIdentities().size()!=1)
+    {
+        FitBuilderBrushToBounds(BrushSnapBounds(false),"Position builder brush around brushes");
+        return;
+    }
+    // A single brush gets a box in its own axes. World-axis bounds discard its
+    // rotation and inflate the dimensions, especially for long thin brushes.
+    auto bounds=BrushBounds(false,true);
+    const auto actor=ResolveIdentity(bounds.at("actors").at(0));
+    std::array<Vector,3> axes{};
+    if(!BrushBoxAxes(actor,bounds,axes))axes={Vector{1,0,0},Vector{0,1,0},Vector{0,0,1}};
+    const auto minimum=bounds.at("min").get<Vector>(),maximum=bounds.at("max").get<Vector>();
+    std::array<float,3> localCenter{},world{};std::array<float,12> coords{},orientation{};
+    for(int j=0;j<3;++j)
+        for(int a=0;a<3;++a)localCenter[j]+=static_cast<float>(axes[a][j]*(minimum[a]+maximum[a])*0.5);
+    Call<void*>(actor,0xac,coords.data());
+    reinterpret_cast<void*(__thiscall*)(void*,void*,const void*)>(0x10eb2ba0)(localCenter.data(),world.data(),coords.data());
+    for(int row=0;row<3;++row)for(int col=0;col<3;++col)
+        for(int j=0;j<3;++j)orientation[3+row*3+col]+=static_cast<float>(coords[3+row*3+j]*axes[col][j]);
+    const Vector center{world[0],world[1],world[2]};
+    FitBuilderBrushToBounds(bounds,"Position builder brush around brush",&orientation,&center);
 }
 Json CaptureAssembly(const Json& members,const Pose& frame)
 {

@@ -105,6 +105,29 @@ namespace
             try { lastCleanRevision = Editor::Revision(); } catch (const std::exception&) {}
             return result;
         }
+        if (message == WM_COMMAND)
+        {
+            // Rebuilding geometry makes every hidden actor visible again, so
+            // whatever the Brush Visibility tool, the Scene panel or Hide
+            // selected had hidden before the command is hidden again after a
+            // command that turns out to have built.
+            unsigned long before = 0;
+            Json hidden;
+            try
+            {
+                before = Editor::GeometryBuilds();
+                hidden = Editor::HiddenActors();
+            }
+            catch (const std::exception&) { /* Not ready: nothing to restore. */ }
+            const LRESULT result = DefSubclassProc(window, message, w, l);
+            if (!hidden.empty())
+                try
+                {
+                    if (Editor::GeometryBuilds() != before) Editor::RestoreHiddenActors(hidden);
+                }
+                catch (const std::exception&) { /* The map went away under us. */ }
+            return result;
+        }
         if (message == WM_NCDESTROY) { RemoveWindowSubclass(window, FrameProc, 1); frameWindow = nullptr; }
         return DefSubclassProc(window, message, w, l);
     }

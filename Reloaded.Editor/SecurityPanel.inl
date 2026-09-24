@@ -508,6 +508,7 @@ void SecurityPaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void(
     for(const auto& stored:s.securityActors)
     {
         Json actor=stored;
+        if(!DesignTypeShown(s,actor.at("path").get<std::string>()))continue;
         // A device being dragged is drawn where the cursor has it.
         if(dragging && actor.at("path")==s.drag.device.at("path"))
         {

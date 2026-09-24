@@ -50,14 +50,35 @@ Json ObjectiveAt(DesignState& s,double x,double y)
     }
     return found;
 }
-// A player start's facing handle: 28 pixels out along its yaw in the top view.
+// Which way a game actor faces, as this view sees it: the unit vector of its
+// rotation projected onto the view's two axes. An actor pointing into the
+// screen has nothing to show here, and nothing to grab.
+bool ObjectiveFacing(DesignState& s,const Json& actor,double& horizontal,double& vertical)
+{
+    if(!actor.contains("rotation"))return false;
+    const auto direction=Security::BeamEnd({0,0,0},actor.at("rotation").get<Rotation>(),1.0);
+    horizontal=direction[DesignHorizontal(s)];
+    vertical=direction[DesignVertical(s)];
+    const double length=std::hypot(horizontal,vertical);
+    if(length<.05)return false;
+    horizontal/=length;vertical/=length;
+    return true;
+}
+// A game actor's facing handle: 28 pixels out along the way it points. Drag it
+// to turn the actor, exactly as a camera or laser is aimed.
 bool ObjectiveAimHandle(DesignState& s,const Json& actor,Gdiplus::PointF& handle)
 {
-    if(s.plane!=0 || actor.value("kind",std::string())!="Player start")return false;
+    double dh=0,dv=0;
+    if(!ObjectiveFacing(s,actor,dh,dv))return false;
     const auto at=DesignScreen(s,actor.at("position").get<Vector>());
-    const double yaw=actor.at("rotation")[1].get<int>()*2*3.14159265358979323846/65536;
-    handle={static_cast<float>(at.X+std::cos(yaw)*28),static_cast<float>(at.Y-std::sin(yaw)*28)};
+    handle={static_cast<float>(at.X+dh*28),static_cast<float>(at.Y-dv*28)};
     return true;
+}
+// The degrees a game actor faces, for the label and the properties sheet.
+int ObjectiveYaw(const Json& actor)
+{
+    if(!actor.contains("rotation"))return 0;
+    return ((actor.at("rotation")[1].get<int>()%65536)+65536)%65536;
 }
 bool ObjectiveAimHandleAt(DesignState& s,double x,double y,Json& start)
 {
@@ -82,6 +103,7 @@ void ObjectivePaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void
     const float pi=3.14159265f;
     for(const auto& actor:s.objectives)
     {
+        if(!DesignTypeShown(s,actor.at("path").get<std::string>()))continue;
         const auto kind=actor.value("kind",std::string());
         const Vector position=actor.at("position");
         if(!DesignOnFloor(s,position[2],position[2]))continue;
@@ -94,18 +116,6 @@ void ObjectivePaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void
             SolidBrush body(spy?Color(240,40,110,220):Color(240,210,60,50));
             g.FillEllipse(&body,at.X-8,at.Y-8,16.f,16.f);
             g.DrawEllipse(&outline,at.X-8,at.Y-8,16.f,16.f);
-            // Facing, with a handle to drag it round.
-            const double yaw=actor.at("rotation")[1].get<int>()*2*3.14159265358979323846/65536;
-            Pen aim(Color(255,255,255,255),2);
-            g.DrawLine(&aim,at.X,at.Y,static_cast<float>(at.X+std::cos(yaw)*14),static_cast<float>(at.Y-std::sin(yaw)*14));
-            Gdiplus::PointF handle;
-            if(ObjectiveAimHandle(s,actor,handle))
-            {
-                Pen ring(Color(230,40,40,40),1.5f);
-                SolidBrush fill(Color(230,255,255,255));
-                g.FillEllipse(&fill,handle.X-5,handle.Y-5,10.f,10.f);
-                g.DrawEllipse(&ring,handle.X-5,handle.Y-5,10.f,10.f);
-            }
             label(std::string(spy?"S":"M")+(selected?" (selected)":""),{at.X-4,at.Y-8});
         }
         else if(kind=="Mission")
@@ -127,8 +137,8 @@ void ObjectivePaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void
             SolidBrush body(Color(240,90,200,90));
             g.FillPolygon(&body,diamond,4);
             g.DrawPolygon(&outline,diamond,4);
-            const int stage=Stages::StageOf(actor.value("event",std::string()),"Gate");
-            label("objective "+actor.value("name",std::string())+(stage?" [stage "+std::to_string(stage)+"]":""),{at.X+12,at.Y-8});
+            const int zone=Stages::ZoneOfObjective(s.stageActors,actor.value("path",std::string()));
+            label("objective "+actor.value("name",std::string())+(zone?" [zone "+std::to_string(zone)+"]":""),{at.X+12,at.Y-8});
         }
         else if(kind=="Flag" || kind=="Drop zone")
         {
@@ -147,6 +157,34 @@ void ObjectivePaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void
             g.DrawRectangle(&outline,at.X-6,at.Y-6,12.f,12.f);
             label(Fold(kind),{at.X+10,at.Y-8});
         }
+        // Which way it faces, whatever it is: an arrow out of the icon, with a
+        // handle on the end to turn it by. A start's arrow is white against
+        // its disc; the rest take the ink of the plan's other aiming lines.
+        double dh=0,dv=0;
+        if(!ObjectiveFacing(s,actor,dh,dv))continue;
+        const bool start=kind=="Player start";
+        Pen aim(start?Color(255,255,255,255):Color(220,60,70,85),2);
+        const float tipX=static_cast<float>(at.X+dh*(start?14:20)),tipY=static_cast<float>(at.Y-dv*(start?14:20));
+        g.DrawLine(&aim,at.X,at.Y,tipX,tipY);
+        if(!start)
+        {
+            // A head on the arrow, so the direction reads at a glance.
+            const double angle=std::atan2(-dv,dh);
+            PointF head[3]={{tipX,tipY},
+                            {static_cast<float>(tipX-std::cos(angle-.4)*7),static_cast<float>(tipY-std::sin(angle-.4)*7)},
+                            {static_cast<float>(tipX-std::cos(angle+.4)*7),static_cast<float>(tipY-std::sin(angle+.4)*7)}};
+            SolidBrush point(Color(220,60,70,85));
+            g.FillPolygon(&point,head,3);
+        }
+        Gdiplus::PointF handle;
+        if(ObjectiveAimHandle(s,actor,handle))
+        {
+            Pen ring(Color(230,40,40,40),1.5f);
+            SolidBrush fill(Color(230,255,255,255));
+            g.FillEllipse(&fill,handle.X-5,handle.Y-5,10.f,10.f);
+            g.DrawEllipse(&ring,handle.X-5,handle.Y-5,10.f,10.f);
+        }
+        if(selected)label(Design::Round(ObjectiveYaw(actor)*360.0/65536)+" degrees",{handle.X+8,handle.Y-8});
     }
 }
 // Placement from the menu.

@@ -230,10 +230,10 @@ inline std::vector<Solid> Geometry(const Json& spec)
 // but its geometry build does not, so a rotated brush would build sideways.
 // A material path puts the same texture on every face, so a blockout arrives
 // as a greybox rather than in the default texture.
-inline Json Definition(const Json& spec,const Rotation& rotation={},const std::string& material="")
+inline Json SolidDefinition(const std::vector<Solid>& geometry,const Rotation& rotation={},const std::string& material="")
 {
     if(material.find_first_of("\"\r\n ")!=std::string::npos)throw std::runtime_error("Invalid material path.");
-    auto geometry=Geometry(spec);Json actors=Json::array();size_t index=0;
+    Json actors=Json::array();size_t index=0;
     const Pose turn{{},rotation};
     auto coordinate=[](double value){return std::abs(value)<1e-6?0.0:value;};
     for(auto& solid:geometry)
@@ -259,6 +259,50 @@ inline Json Definition(const Json& spec,const Rotation& rotation={},const std::s
         actors.push_back({{"name",name},{"class","Engine.Brush"},{"path","MyLevel."+name},{"text",text.str()},{"position",Vector{}},{"rotation",Rotation{}},{"tag","None"},{"event","None"}});
     }
     return {{"id","blockout"},{"actors",actors},{"bindings",Json::array()},{"dependencies",Json::array()}};
+}
+inline Json Definition(const Json& spec,const Rotation& rotation={},const std::string& material="")
+{return SolidDefinition(Geometry(spec),rotation,material);}
+
+// Vertex selection contains repeated polygon copies of each corner and has no
+// perimeter order. Resolve four distinct corners, then sort in their own plane.
+inline Solid VertexPortal(const std::vector<Vector>& selected)
+{
+    auto sub=[](const Vector& a,const Vector& b){return Vector{a[0]-b[0],a[1]-b[1],a[2]-b[2]};};
+    auto dot=[](const Vector& a,const Vector& b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];};
+    auto cross=[](const Vector& a,const Vector& b){return Vector{a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]};};
+    Face points;
+    for(const auto& p:selected)
+    {
+        CheckVector(p);
+        if(std::none_of(points.begin(),points.end(),[&](const Vector& q){auto d=sub(p,q);return dot(d,d)<1e-8;}))points.push_back(p);
+    }
+    if(points.size()!=4)throw std::runtime_error("Select exactly four distinct portal corners.");
+    Vector normal{};double area=0;
+    for(size_t i=1;i<3;++i)for(size_t j=i+1;j<4;++j)
+    {
+        auto n=cross(sub(points[i],points[0]),sub(points[j],points[0]));auto a=dot(n,n);
+        if(a>area){normal=n;area=a;}
+    }
+    if(area<1e-8)throw std::runtime_error("Portal corners must form a convex quadrilateral.");
+    for(auto& n:normal)n/=std::sqrt(area);
+    Vector center{};for(auto& p:points)for(int a=0;a<3;++a)center[a]+=p[a]/4;
+    for(auto& p:points)if(std::abs(dot(sub(p,points[0]),normal))>0.01)throw std::runtime_error("Portal corners must lie in one plane.");
+    auto u=sub(points[0],center);auto v=cross(normal,u);
+    std::sort(points.begin(),points.end(),[&](const Vector& a,const Vector& b){auto x=sub(a,center),y=sub(b,center);return std::atan2(dot(x,v),dot(x,u))<std::atan2(dot(y,v),dot(y,u));});
+    for(size_t i=0;i<4;++i)
+        if(dot(cross(sub(points[(i+1)%4],points[i]),sub(points[(i+2)%4],points[(i+1)%4])),normal)<=1e-4)
+            throw std::runtime_error("Portal corners must form a convex quadrilateral.");
+    Face front,back;
+    for(auto p:points)
+    {
+        // Remove tiny native float error so all faces remain planar.
+        const auto offset=dot(sub(p,center),normal);Vector a=p,b=p;
+        for(int axis=0;axis<3;++axis){a[axis]+=(0.5-offset)*normal[axis];b[axis]+=(-0.5-offset)*normal[axis];}
+        front.push_back(a);back.push_back(b);
+    }
+    std::vector<Face> faces{front,back};
+    for(size_t i=0;i<4;++i){auto j=(i+1)%4;faces.push_back({front[i],back[i],back[j],front[j]});}
+    return Convex(std::move(faces),kPortalPolyFlags);
 }
 inline double Distance(const Vector& a,const Vector& b)
 {CheckVector(a);CheckVector(b);double d=0;for(int i=0;i<3;++i)d+=(a[i]-b[i])*(a[i]-b[i]);return std::sqrt(d);}
@@ -705,6 +749,99 @@ inline std::string RouteComparison(const Json& first,const Json& second,const Js
 inline bool WithinFloor(double low,double high,double first,double second)
 {
     return std::max(first,second)>=low && std::min(first,second)<=high;
+}
+
+// A storey the floor slider can show: where its floor is and how high it goes.
+struct Storey { double base=0,top=0; };
+// What one solid says about where a floor is: the height of a surface a pawn
+// could stand on, how high the space above it reaches, and how broad that
+// surface is. Breadth is what tells a storey from a crate.
+struct FloorEvidence { double base=0,top=0,weight=0; };
+// A brush as the plan sees it: the box it occupies, and whether it carves
+// space out of the map or adds solid to it.
+struct BrushBox { Vector low{},high{}; bool carve=false; };
+// The volume a map is carved from: one brush holding the whole map, floor to
+// sky. Its bottom is not a storey — it is the bottom of the void, thousands of
+// units under the lowest floor — and with every other floor inside it, taking
+// it for one would leave a map with a single level. Height keeps a map that is
+// one carved room from being mistaken for its own void.
+inline bool EnclosesMap(const BrushBox& brush,const Vector& low,const Vector& high)
+{
+    if(!brush.carve || brush.high[2]-brush.low[2]<=1024)return false;
+    for(int axis=0;axis<3;++axis)
+    {
+        const double extent=high[axis]-low[axis];
+        if(!std::isfinite(extent) || extent<=0)return false;
+        if(brush.high[axis]-brush.low[axis]<extent*.85)return false;
+    }
+    return true;
+}
+// The surface a brush leaves to stand on: the bottom of carved space, the top
+// of added space. A brush narrower than it is tall offers none, which leaves
+// out walls, pillars and shafts. The surface counts for its width, not its
+// area, so a floor laid as twenty slabs weighs as much as one hall of the same
+// size and no single enormous brush can drown the rest out.
+inline bool FloorSurface(const BrushBox& brush,FloorEvidence& surface)
+{
+    const double width=brush.high[0]-brush.low[0],length=brush.high[1]-brush.low[1],height=brush.high[2]-brush.low[2];
+    if(!std::isfinite(width) || !std::isfinite(length) || !std::isfinite(height))return false;
+    if(width<=0 || length<=0 || height<=0)return false;
+    if(width*length<height*height)return false;
+    surface.weight=std::sqrt(width*length);
+    surface.base=brush.carve?brush.low[2]:brush.high[2];
+    surface.top=brush.high[2];
+    return true;
+}
+// How the evidence becomes storeys. Surfaces within `tolerance` of each other
+// are the same storey, so a kerb or a step is not a floor of its own. With
+// `nest`, a surface that sits inside the space of a larger one below it joins
+// that one, which is how a vent on a room's wall stays part of the room's
+// storey; a map the toolkit did not build leaves it off, because its biggest
+// carved volume spans the whole map and would swallow every floor in it.
+// A storey holding less than `share` of the largest storey's weight is
+// dropped as scenery, and the `limit` largest survive.
+struct StoreyRules { double tolerance=64,share=0; size_t limit=40; bool nest=false; };
+// The storeys of a map, lowest first, each at the height of the broadest
+// surface in it. The broadest surfaces are placed first, so every storey is
+// anchored on a real floor and the small things attach to it, rather than each
+// one extending the storey below until the map is a single level.
+inline std::vector<Storey> Storeys(std::vector<FloorEvidence> evidence,const StoreyRules& rules={})
+{
+    struct Cluster { double base=0,top=0,weight=0; };
+    std::vector<Cluster> clusters;
+    std::stable_sort(evidence.begin(),evidence.end(),[](const FloorEvidence& a,const FloorEvidence& b){return a.weight>b.weight;});
+    for(const auto& piece:evidence)
+    {
+        if(!std::isfinite(piece.base) || !std::isfinite(piece.top) || !std::isfinite(piece.weight))continue;
+        const double weight=std::max(piece.weight,0.0),top=std::max(piece.top,piece.base);
+        size_t home=clusters.size();
+        double nearest=std::max(rules.tolerance,0.0);
+        for(size_t i=0;i<clusters.size();++i)
+        {
+            if(const double gap=std::abs(clusters[i].base-piece.base);gap<=nearest){nearest=gap;home=i;}
+            // Inside the storey below, well clear of its floor.
+            else if(rules.nest && home==clusters.size() && piece.base>clusters[i].base && piece.base<clusters[i].top-32)home=i;
+        }
+        if(home==clusters.size())clusters.push_back({piece.base,top,weight});
+        else{clusters[home].weight+=weight;clusters[home].top=std::max(clusters[home].top,top);}
+    }
+    double largest=0;
+    for(const auto& cluster:clusters)largest=std::max(largest,cluster.weight);
+    if(largest>0 && rules.share>0)
+    {
+        std::vector<Cluster> kept;
+        for(const auto& cluster:clusters)if(cluster.weight>=largest*rules.share)kept.push_back(cluster);
+        clusters=kept;
+    }
+    if(clusters.size()>rules.limit)
+    {
+        std::stable_sort(clusters.begin(),clusters.end(),[](const Cluster& a,const Cluster& b){return a.weight>b.weight;});
+        clusters.resize(rules.limit);
+    }
+    std::sort(clusters.begin(),clusters.end(),[](const Cluster& a,const Cluster& b){return a.base<b.base;});
+    std::vector<Storey> storeys;
+    for(const auto& cluster:clusters)storeys.push_back({cluster.base,cluster.top});
+    return storeys;
 }
 
 // Named layers are kept in the map itself through the native actor Group

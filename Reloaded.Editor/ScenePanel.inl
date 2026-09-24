@@ -370,7 +370,7 @@ Json SceneGroupMembers(DesignState& s,const std::string& name)
     return Json::array();
 }
 // --- The window.
-void SceneRenamePiece(DesignState& s,const SceneRow& row)
+void SceneRenamePiece(DesignState& s,const SceneRow row)
 {
     std::string name=row.name;
     if(!GetName(s.window,"Rename Piece",name))return;
@@ -392,7 +392,10 @@ void SceneAction(DesignState& s,int choice,const std::vector<int>& rows)
 {
     auto list=GetDlgItem(s.sceneWindow,DScnList);
     const Json members=SceneMembersOf(s,rows);
-    const SceneRow* single=rows.size()==1 && rows[0]>=0 && rows[0]<static_cast<int>(s.sceneRows.size())?&s.sceneRows[rows[0]]:nullptr;
+    // A copy, not a pointer into s.sceneRows: these actions call DesignRefresh,
+    // which rebuilds the rows, so anything pointing into them would dangle.
+    const bool one=rows.size()==1 && rows[0]>=0 && rows[0]<static_cast<int>(s.sceneRows.size());
+    const SceneRow single=one?s.sceneRows[rows[0]]:SceneRow{};
     // The group the rows concern: a header of one, or members of one.
     std::string group;
     for(int r:rows)
@@ -410,16 +413,16 @@ void SceneAction(DesignState& s,int choice,const std::vector<int>& rows)
         Editor::Select(members,false);
         DesignRefresh(s);
         SceneFrame(s,members);
-        if(single && single->piece && (s.pending.is_null() || !s.previous.is_null()))DesignActivate(s,single->data);
-        DesignStatus(s,"Showing "+(single?single->name:std::to_string(members.size())+" actors")+" in the plan.");
+        if(one && single.piece && (s.pending.is_null() || !s.previous.is_null()))DesignActivate(s,single.data);
+        DesignStatus(s,"Showing "+(one?single.name:std::to_string(members.size())+" actors")+" in the plan.");
     }
-    else if(choice==DScnCtxEdit && single && single->piece)
+    else if(choice==DScnCtxEdit && one && single.piece)
     {
         Editor::Select(members,false);
         DesignRefresh(s);
-        DesignActivate(s,single->data);
+        DesignActivate(s,single.data);
         SceneFrame(s,members);
-        DesignWarn(s,"Editing "+single->name+". Drag it, drag a square to resize, use the arrow keys, or edit its fields.");
+        DesignWarn(s,"Editing "+single.name+". Drag it, drag a square to resize, use the arrow keys, or edit its fields.");
     }
     else if(choice==DScnCtxHide)SceneSetFlags(s,members,1,-1);
     else if(choice==DScnCtxShow)SceneSetFlags(s,members,0,-1);
@@ -462,15 +465,15 @@ void SceneAction(DesignState& s,int choice,const std::vector<int>& rows)
         SceneGroupRename(s,group,name);
     }
     else if(choice==DScnCtxDeleteGroup && !group.empty())SceneGroupDelete(s,group);
-    else if(choice==DScnCtxSelectType && single && !single->header)
+    else if(choice==DScnCtxSelectType && one && !single.header)
     {
         std::vector<int> same;
-        for(int i=0;i<static_cast<int>(s.sceneRows.size());++i)if(!s.sceneRows[i].header && s.sceneRows[i].type==single->type)same.push_back(i);
+        for(int i=0;i<static_cast<int>(s.sceneRows.size());++i)if(!s.sceneRows[i].header && s.sceneRows[i].type==single.type)same.push_back(i);
         Editor::Select(SceneMembersOf(s,same),false);
         DesignRefresh(s);
-        DesignStatus(s,"Selected every "+single->type+" entry ("+std::to_string(same.size())+").");
+        DesignStatus(s,"Selected every "+single.type+" entry ("+std::to_string(same.size())+").");
     }
-    else if(choice==DScnCtxRename && single && single->piece)SceneRenamePiece(s,*single);
+    else if(choice==DScnCtxRename && one && single.piece)SceneRenamePiece(s,single);
     else if(choice==DScnCtxDelete)SceneDelete(s,members);
     else if(choice==DScnCtxCollapseAll || choice==DScnCtxExpandAll)
     {
@@ -487,10 +490,12 @@ void SceneContextMenu(DesignState& s,HWND window,POINT screen)
     if(rows.empty())return;
     bool anyHidden=false,anyShown=false,anyLocked=false,anyUnlocked=false,anyGrouped=false;
     int pieces=0;
-    const SceneRow* single=rows.size()==1?&s.sceneRows[rows[0]]:nullptr;
+    const bool one=rows.size()==1 && rows[0]>=0 && rows[0]<static_cast<int>(s.sceneRows.size());
+    const SceneRow single=one?s.sceneRows[rows[0]]:SceneRow{};
     std::string group;bool oneGroup=true;
     for(int r:rows)
     {
+        if(r<0 || r>=static_cast<int>(s.sceneRows.size()))continue;
         const auto& row=s.sceneRows[r];
         if(row.hidden)anyHidden=true;else anyShown=true;
         if(row.locked)anyLocked=true;else anyUnlocked=true;
@@ -507,7 +512,7 @@ void SceneContextMenu(DesignState& s,HWND window,POINT screen)
     auto separator=[&]{AppendMenuA(menu,MF_SEPARATOR,0,nullptr);};
     item(DScnCtxSelect,"Select in the editor");
     item(DScnCtxFrame,"Show in the plan");
-    if(single && single->piece)item(DScnCtxEdit,"Edit "+single->name);
+    if(one && single.piece)item(DScnCtxEdit,"Edit "+single.name);
     separator();
     if(anyHidden)item(DScnCtxShow,"Show");
     if(anyShown)item(DScnCtxHide,"Hide");
@@ -533,8 +538,8 @@ void SceneContextMenu(DesignState& s,HWND window,POINT screen)
         item(DScnCtxDeleteGroup,"Ungroup "+group+" (keep its members)");
     }
     separator();
-    if(single && !single->header)item(DScnCtxSelectType,"Select every "+single->type);
-    if(single && single->piece)item(DScnCtxRename,"Rename piece...");
+    if(one && !single.header)item(DScnCtxSelectType,"Select every "+single.type);
+    if(one && single.piece)item(DScnCtxRename,"Rename piece...");
     item(DScnCtxDelete,"Delete");
     separator();
     item(DScnCtxCollapseAll,"Collapse all groups");
@@ -621,7 +626,7 @@ LRESULT CALLBACK SceneProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 if(s->sceneSyncing)return 0;
                 auto change=reinterpret_cast<NMLISTVIEW*>(l);
                 if(change->iItem<0 || change->iItem>=static_cast<int>(s->sceneRows.size()))return 0;
-                const auto& row=s->sceneRows[change->iItem];
+                const auto row=s->sceneRows[change->iItem];
                 const unsigned oldImage=change->uOldState&LVIS_STATEIMAGEMASK,newImage=change->uNewState&LVIS_STATEIMAGEMASK;
                 if(oldImage && newImage && oldImage!=newImage)
                 {

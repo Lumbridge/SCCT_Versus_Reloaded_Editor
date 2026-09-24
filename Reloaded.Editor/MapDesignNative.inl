@@ -336,6 +336,127 @@ void DesignLayer(const Json& members,bool hidden,bool locked,const std::string& 
     }
     transaction.Commit();Redraw();
 }
+// Where every actor stands, without the design scene's polygon edges: the
+// storey filter needs one box per actor and nothing else, and a map far too
+// heavy to draw as a plan is still light enough to sort into floors.
+Json DesignActorSpans()
+{
+    Json result=Json::array();auto live=LiveActors();
+    for(size_t i=2;i<live.size();++i)
+    {
+        auto actor=live[i];if(IsA(actor,"Camera"))continue;
+        auto item=Identity(actor);
+        const auto position=Position(actor);
+        Vector low=position,high=position;
+        bool measured=false;
+        const bool brush=IsA(actor,"Brush");
+        if(brush)
+        {
+            auto model=Read<Address>(actor+0x238),polys=model?Read<Address>(model+0x50):0;
+            if(polys)
+            {
+                std::array<float,12> coords{};Call<void*>(actor,0xac,coords.data());
+                for(auto poly:Array(polys+0x28,0x14c))
+                {
+                    auto count=Read<unsigned short>(poly+0x148);if(count<3 || count>16)continue;
+                    for(int j=0;j<count;++j)
+                    {
+                        auto local=Read<std::array<float,3>>(poly+0x18+j*12);std::array<float,3> world{};
+                        reinterpret_cast<void*(__thiscall*)(void*,void*,const void*)>(0x10eb2ba0)(local.data(),world.data(),coords.data());
+                        const Vector v{world[0],world[1],world[2]};
+                        bool sane=true;
+                        for(auto n:v)if(!std::isfinite(n) || std::abs(n)>1000000)sane=false;
+                        if(!sane)continue;
+                        if(!measured){low=high=v;measured=true;continue;}
+                        for(int axis=0;axis<3;++axis){low[axis]=std::min(low[axis],v[axis]);high[axis]=std::max(high[axis],v[axis]);}
+                    }
+                }
+            }
+        }
+        item["low"]=low;item["high"]=high;item["box"]=measured;
+        item["csg"]=brush?Read<unsigned char>(actor+0x34c):0;
+        item["portal"]=brush && (Read<unsigned>(actor+0x344)&0x04000000u)!=0;
+        item["hidden"]=(Read<unsigned>(actor+0x2f4)&0x10)!=0;
+        result.push_back(item);
+    }
+    return result;
+}
+// Hides one set of actors and shows another in a single Undo step, which is
+// what changing storey does: the floor being left goes, the floor arrived at
+// comes back.
+size_t DesignSetHidden(const Json& hide,const Json& show)
+{
+    std::vector<Address> hiding,showing;
+    auto live=LiveActors();
+    auto gather=[&](const Json& members,std::vector<Address>& into)
+    {
+        for(const auto& id:members)
+        {
+            auto a=ResolveIdentity(id);
+            if(!a || a==live[0] || a==live[1] || IsA(a,"Camera"))continue;
+            into.push_back(a);
+        }
+    };
+    gather(hide,hiding);gather(show,showing);
+    if(hiding.empty() && showing.empty())return 0;
+    size_t changed=0;
+    Transaction transaction("Show one storey");
+    for(auto a:hiding)
+    {
+        const auto flags=Read<unsigned>(a+0x2f4);
+        if(flags&0x10u)continue;
+        Modify(a);Write(a+0x2f4,(flags|0x10u)&~0x40u);++changed;
+    }
+    for(auto a:showing)
+    {
+        const auto flags=Read<unsigned>(a+0x2f4);
+        if(!(flags&0x10u))continue;
+        Modify(a);Write(a+0x2f4,flags&~0x10u);++changed;
+    }
+    transaction.Commit();
+    if(changed)Redraw();
+    return changed;
+}
+// Turns actors about a point, in one Undo step: each one's yaw moves by the
+// same angle and its position swings round the pivot, so a selection keeps its
+// shape. A brush turns with its actor, which is what the engine builds from,
+// so the geometry follows on the next build.
+size_t DesignTurnActors(const Json& members,double degrees,const Vector& pivot)
+{
+    if(!std::isfinite(degrees))throw std::runtime_error("Enter a finite angle.");
+    Design::CheckVector(pivot);
+    std::vector<Address> actors;auto live=LiveActors();
+    for(auto& id:members)
+    {
+        auto a=ResolveIdentity(id);
+        if(!a || a==live[0] || a==live[1] || IsA(a,"Camera"))continue;
+        if(DesignBool(a,"bLockLocation"))continue;
+        actors.push_back(a);
+    }
+    if(actors.empty())return 0;
+    const double radians=degrees*3.14159265358979323846/180,cosine=std::cos(radians),sine=std::sin(radians);
+    const int step=static_cast<int>(std::lround(degrees*65536/360));
+    Transaction transaction("Turn actors");
+    for(auto a:actors)
+    {
+        Modify(a);
+        auto at=Position(a);
+        const double dx=at[0]-pivot[0],dy=at[1]-pivot[1];
+        at[0]=pivot[0]+dx*cosine-dy*sine;
+        at[1]=pivot[1]+dx*sine+dy*cosine;
+        Design::CheckVector(at);
+        SetPosition(a,at);
+        if(auto field=Field(a,"Rotation"))
+        {
+            auto rotation=Read<Rotation>(field);
+            rotation[1]=((rotation[1]+step)%65536+65536)%65536;
+            Write(field,rotation);
+        }
+        Call(a,0x44);
+    }
+    transaction.Commit();Redraw();
+    return actors.size();
+}
 // Hides/shows and locks/unlocks actors; -1 leaves a flag as it is. Hidden or
 // locked actors leave the selection so nothing moves them by accident.
 void DesignSetFlags(const Json& members,int hidden,int locked)

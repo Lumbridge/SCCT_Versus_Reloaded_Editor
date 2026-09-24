@@ -28,7 +28,7 @@ Looking for maps to open? Recovered, enhanced and community maps are in [SCCT-Ma
 | **SMagicEvent Workbench** | Edit event groups, triggers, actions and timing in one panel, with JSON export/import for sharing an event. See [the JSON format](tests/SMagicEventJson.md). |
 | **SCamNetwork Manager** | Create, name, preview and reorder security cameras; links and first-camera flags are kept consistent. |
 | **Objective creation** | Right-click an SMission or SObjective to add objectives, computer triggers, bomb targets or flag/drop-zone pairs, already linked. |
-| **Stages** | In Map Design, list the match's stages: which objectives each holds, how many must be done, and what happens when it completes (doors open, lights switch, sounds play, a message on both HUDs, any actor triggered). One click wires the counting gates, completion events and terminal locking in one Undo step, and reads them back for later edits. See [docs/MapDesign.md](docs/MapDesign.md#15-stages). |
+| **Zones** | In Map Design, list the match's zones: which objectives each holds, how many must be done, and what happens when it completes (doors open, lights switch, sounds play, a message on both HUDs, any actor triggered). One click gives each zone its own SMission, all of its objectives playable at once, under the map's chained top mission, in one Undo step, and reads them back for later edits. See [docs/MapDesign.md](docs/MapDesign.md#15-zones). |
 | **Map JSON import/export** | Export a map to JSON, edit it (or have something edit it for you), and import the changes in one Undo step. See [docs/MapAuthoring.md](docs/MapAuthoring.md). |
 
 ### Map recovery, lighting and sharing
@@ -50,7 +50,8 @@ Recovered maps keep their original baked lighting through ordinary builds. Recov
 | **Play From Camera** | **Build > Play From Camera as Spy / Merc** starts a playtest at the perspective viewport's camera, from that team's start or a temporary one that is removed afterwards. |
 | **Level Snapshot** | **Build > Set Level Snapshot from Viewport** captures the perspective viewport as the picture the game shows in map selection; **from Image File...** takes a PNG, JPG or BMP instead. Either goes into the map's `<Map>-i` package next to its loading screens and map settings, with the previous package backed up under `System\ReloadedEditor\snapshot-backups`. |
 | **Select and hide** | Right-click an actor for **Reloaded: Select** (all of this class, all with this Tag, same static mesh, invert the selection) and **Reloaded: Visibility** (hide selected, isolate selected, unhide all); Brush Visibility has the same three buttons. |
-| **Brush Visibility** | Show, hide, isolate or select zones, portals, volumes, brushes and movers from one panel. |
+| **Brush Visibility** | Show, hide, isolate or select zones, portals, volumes, brushes and movers from one panel. What is hidden stays hidden through a geometry build, which the stock editor makes visible again. |
+| **Storeys** | The Map Design plan's floor slider, for the editor's own viewports: pick a storey and everything standing on the other floors is hidden, so a multi-level map is worked on one floor at a time. **Page Up / Page Down / Home** over a viewport step through them while the palette is open. Surfaces already built into the BSP stay, so it reads best in the wireframe views. |
 | **Working Views** | Save and restore viewport cameras and display settings. |
 | **Actor Assemblies** | Save groups of actors and brushes and reuse them across maps. |
 | **Find Usages** | Find where a texture or mesh is used, and replace it. |
@@ -58,7 +59,8 @@ Recovered maps keep their original baked lighting through ordinary builds. Recov
 | **BSP texture copy/paste** | Copy a surface's material without disturbing the target's alignment. |
 | **Select Brush** | Select the source brush from a BSP surface. |
 | **Grid snapping** | Right-click a brush face or vertices to snap them to the grid per axis; **Ctrl + mouse wheel** changes the grid size. |
-| **Fit builder brush to meshes** | Right-click selected meshes to wrap the builder brush around them. |
+| **Fit builder brush** | Right-click selected meshes or brushes to enclose them in the builder brush, including rotated brushes. |
+| **Quick portal** | In Vertex Editing, select four coplanar corners and right-click **Add portal (1 unit thick)**. Creates an invisible, non-solid zone portal centred on their plane, with Undo/Redo. |
 | **Reloaded Shortcuts** | **Help > Reloaded Shortcuts...** lists every key, mouse gesture and menu the patch adds, with the Geometric Event keys as configured. |
 | **Fixes** | Playtests launch at the monitor's resolution, off-screen property windows come back, a missing builder brush is repaired, larger BSP point counts are supported, and crashes are logged. |
 

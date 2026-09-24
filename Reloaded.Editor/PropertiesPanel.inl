@@ -4,10 +4,49 @@
 // security devices, player references, routes and a route being drawn get rows
 // built for them. Included inside MapDesignPanel.inl after LightingPanel.inl.
 struct SheetField { std::string key,label,value; std::vector<std::string> choices; };
+// How many rows a sheet can hold; the ids from DSheetField up to DSheetLabel
+// leave room for these and their labels.
+constexpr size_t kSheetFieldLimit=180;
 void SheetDestroyControls(DesignState& s)
 {
     for(int id=DSheetField;id<DSheetButton+10;++id)
         if(auto control=GetDlgItem(s.window,id))DestroyWindow(control);
+    s.sheetPlacements.clear();
+    s.sheetContent=0;
+    s.sheetScroll=0;
+    SheetLayout(s);
+}
+// Puts the sheet's rows where the current scroll offset says, hides the ones
+// that would fall outside the panel, and shows the bar only when the rows do
+// not all fit. The area runs from under the title to just above the status
+// line, so it grows with the window.
+void SheetLayout(DesignState& s)
+{
+    if(!s.window)return;
+    RECT client{};
+    GetClientRect(s.window,&client);
+    const int top=s.inspectorTop+kInspectorBodyTop,bottom=std::max(top+26,static_cast<int>(client.bottom)-78),view=bottom-top;
+    const bool scrolls=s.sheetContent>view;
+    s.sheetScroll=std::clamp(s.sheetScroll,0,scrolls?s.sheetContent-view:0);
+    for(const auto& placement:s.sheetPlacements)
+    {
+        auto control=GetDlgItem(s.window,placement.id);
+        if(!control)continue;
+        const int y=top+placement.y-s.sheetScroll;
+        // A drop-down list's height is how far it opens, not how tall its row
+        // is, so the row height decides whether it is in view.
+        const bool showing=y+std::min(placement.height,26)>top && y<bottom;
+        if(showing)MoveWindow(control,placement.x,y,placement.width,placement.height,TRUE);
+        ShowWindow(control,showing?SW_SHOWNA:SW_HIDE);
+    }
+    if(!s.sheetBar)return;
+    ShowWindow(s.sheetBar,scrolls?SW_SHOW:SW_HIDE);
+    if(!scrolls)return;
+    MoveWindow(s.sheetBar,392,top,16,view,TRUE);
+    SCROLLINFO info{sizeof(info)};
+    info.fMask=SIF_RANGE|SIF_PAGE|SIF_POS;
+    info.nMin=0;info.nMax=s.sheetContent-1;info.nPage=view;info.nPos=s.sheetScroll;
+    SetScrollInfo(s.sheetBar,SB_CTL,&info,TRUE);
 }
 void SheetPieceControls(DesignState& s,bool show)
 {
@@ -42,8 +81,9 @@ void SheetBuild(DesignState& s,const std::string& kind,const Json& subject,const
     SheetDestroyControls(s);
     SheetPieceControls(s,false);
     SetWindowTextA(GetDlgItem(s.window,DInspectorTitle),title.c_str());
-    int y=s.inspectorTop+24;
-    for(size_t i=0;i<fields.size() && i<40;++i)
+    auto place=[&](int id,int x,int y,int width,int height){s.sheetPlacements.push_back({id,x,y,width,height});};
+    int y=0;
+    for(size_t i=0;i<fields.size() && i<kSheetFieldLimit;++i)
     {
         const auto& field=fields[i];
         const int id=DSheetField+static_cast<int>(i);
@@ -51,21 +91,24 @@ void SheetBuild(DesignState& s,const std::string& kind,const Json& subject,const
         const bool yesNo=field.choices.size()==2 && field.choices[0]=="Yes" && field.choices[1]=="No";
         if(yesNo)
         {
-            auto box=Control(s.window,"BUTTON",field.label,BS_AUTOCHECKBOX,id,12,y,376,22);
+            auto box=Control(s.window,"BUTTON",field.label,BS_AUTOCHECKBOX,id,12,0,376,22);
             SendMessage(box,BM_SETCHECK,field.value=="Yes"?BST_CHECKED:BST_UNCHECKED,0);
             shown=field.value=="Yes"?"Yes":"No";
+            place(id,12,y,376,22);
         }
         else
         {
-            Control(s.window,"STATIC",field.label,0,DSheetLabel+static_cast<int>(i),12,y+4,150,20);
+            Control(s.window,"STATIC",field.label,0,DSheetLabel+static_cast<int>(i),12,0,150,20);
+            place(DSheetLabel+static_cast<int>(i),12,y+4,150,20);
             if(field.choices.empty())
             {
-                auto edit=Control(s.window,"EDIT",field.value,ES_AUTOHSCROLL,id,166,y,222,22);
+                auto edit=Control(s.window,"EDIT",field.value,ES_AUTOHSCROLL,id,166,0,222,22);
                 SetWindowSubclass(edit,DesignFieldProc,id,reinterpret_cast<DWORD_PTR>(&s));
+                place(id,166,y,222,22);
             }
             else
             {
-                auto combo=Control(s.window,"COMBOBOX","",CBS_DROPDOWNLIST|WS_VSCROLL,id,166,y,222,220);
+                auto combo=Control(s.window,"COMBOBOX","",CBS_DROPDOWNLIST|WS_VSCROLL,id,166,0,222,220);
                 int select=0;
                 for(size_t c=0;c<field.choices.size();++c)
                 {
@@ -74,6 +117,7 @@ void SheetBuild(DesignState& s,const std::string& kind,const Json& subject,const
                 }
                 SendMessage(combo,CB_SETCURSEL,select,0);
                 shown=field.choices[select];
+                place(id,166,y,222,220);
             }
         }
         s.sheet.keys.push_back(field.key);
@@ -82,7 +126,14 @@ void SheetBuild(DesignState& s,const std::string& kind,const Json& subject,const
     }
     y+=6;
     for(size_t i=0;i<buttons.size() && i<8;++i)
-        Control(s.window,"BUTTON",buttons[i],0,DSheetButton+static_cast<int>(i),12+static_cast<int>(i%2)*196,y+static_cast<int>(i/2)*30,190,26);
+    {
+        const int id=DSheetButton+static_cast<int>(i),x=12+static_cast<int>(i%2)*196,row=y+static_cast<int>(i/2)*30;
+        Control(s.window,"BUTTON",buttons[i],0,id,x,0,182,26);
+        place(id,x,row,182,26);
+    }
+    s.sheetContent=y+((static_cast<int>(std::min(buttons.size(),size_t{8}))+1)/2)*30;
+    s.sheetScroll=0;
+    SheetLayout(s);
     s.writingSheet=false;
 }
 std::map<std::string,std::string> SheetValues(DesignState& s)
@@ -124,12 +175,24 @@ void SheetShowLight(DesignState& s,const Json& light)
 {
     SheetBuild(s,"light",light,"Light "+SecurityName(light)+(light.value("switchable",false)?" (switchable)":""),SheetFrom(LightFields(light)),{"Select in editor","Delete light"});
 }
+// A game actor is not a security device: the editor's property window holds
+// its settings. What the plan can edit is where it faces, which is what the
+// arrow on its icon shows and its handle turns.
+void SheetShowGameActor(DesignState& s,const Json& actor)
+{
+    std::vector<SheetField> fields={
+        {"yaw","Facing (degrees)",Design::Round(ObjectiveYaw(actor)*360.0/65536,1),{}},
+        {"z","Height (Z)",Design::Round(actor.at("position").get<Vector>()[2]),{}}};
+    SheetBuild(s,"actor",actor,ObjectiveLabel(actor),fields,{"Select in editor"});
+    DesignStatus(s,ObjectiveLabel(actor)+" faces "+Design::Round(ObjectiveYaw(actor)*360.0/65536)
+        +" degrees. Drag the handle on its arrow to turn it, or type the angle here; its name and settings are in the editor's property window.");
+}
 void SheetShowDevice(DesignState& s,const Json& device)
 {
     const auto kind=device.value("kind",std::string());
     if(!Security::Find(kind) && !device.contains("event"))
     {
-        SheetHint(s,ObjectiveLabel(device)+": select it to edit its name and settings in the editor's property window.");
+        SheetShowGameActor(s,device);
         return;
     }
     auto fields=SheetFrom(SecurityFields(device));
@@ -234,14 +297,16 @@ std::vector<SheetField> SettingsFields(const Json& snapshot,const std::set<std::
             for(auto f=sub.begin();f!=sub.end();++f)if(value.contains(f.key()))leaf(name+"."+f.key(),name+" "+f.key(),f.value(),value.at(f.key()));
         }
         else leaf(name,name,schema,value);
-        if(fields.size()>=40)break;
+        if(fields.size()>=kSheetFieldLimit)break;
     }
     return fields;
 }
 void SheetShowSettings(DesignState& s,const std::string& which)
 {
     const Json actor=SettingsActor(s,which);
-    const Json snapshot=Editor::InspectActor(actor);
+    // The level and environment sheets edit the map's LevelInfo, which the
+    // ordinary read holds back along with the builder brush.
+    const Json snapshot=Editor::InspectSettingsActor(actor);
     std::set<std::string> categories;
     std::string title;
     if(which=="level"){categories={"LevelInfo","LevelSummary","Audio","Music","Game","Story","Level"};title="Level settings ("+SecurityName(actor)+")";}
@@ -298,6 +363,19 @@ void SheetApply(DesignState& s)
         s.sheet.shown=values;
         DesignRefresh(s);
         DesignStatus(s,SecurityName(subject)+" updated. One Undo step.");
+        return;
+    }
+    if(kind=="actor")
+    {
+        Pose pose{subject.at("position").get<Vector>(),subject.at("rotation").get<Rotation>()};
+        const double degrees=std::fmod(Design::Number(values["yaw"],-100000,100000),360.0);
+        pose.rotation[1]=((static_cast<int>(std::lround(degrees*65536/360))%65536)+65536)%65536;
+        pose.position[2]=Design::Number(values["z"]);
+        Editor::MoveSecurityActor(subject,pose,Json::object());
+        s.sheet.shown=values;
+        DesignRefresh(s);
+        DesignStatus(s,SecurityName(subject)+" now faces "+Design::Round(pose.rotation[1]*360.0/65536)
+            +" degrees at Z "+Design::Round(pose.position[2])+". One Undo step.");
         return;
     }
     if(kind=="guide" || kind=="annotation")
@@ -373,6 +451,14 @@ void SheetButton(DesignState& s,int index)
 {
     const auto kind=s.sheet.kind;
     const Json subject=s.sheet.subject;
+    if(kind=="actor")
+    {
+        if(index!=0)return;
+        Editor::Select(Json::array({subject}),true);
+        DesignRefresh(s);
+        DesignStatus(s,"Selected "+SecurityName(subject)+" in the editor; its name and settings are in the editor's property window.");
+        return;
+    }
     if(kind=="light" || kind=="device")
     {
         if(index==0)
@@ -440,6 +526,11 @@ void SheetRefresh(DesignState& s)
     {
         for(const auto& device:s.securityActors)if(device.at("path")==subject.at("path")){SheetShowDevice(s,device);return;}
         SheetHint(s,"The device is no longer in the map.");
+    }
+    else if(kind=="actor")
+    {
+        for(const auto& actor:s.objectives)if(actor.at("path")==subject.at("path")){SheetShowGameActor(s,actor);return;}
+        SheetHint(s,"The actor is no longer in the map.");
     }
     else if(kind=="guide")SheetShowGuide(s,subject.value("index",size_t{0}));
     else if(kind=="annotation")SheetShowAnnotation(s,subject.value("index",size_t{0}));

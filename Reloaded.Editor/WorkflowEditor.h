@@ -17,11 +17,16 @@ namespace Workflow::Editor
     Json SelectedIdentities();
     Json BrushVisibility();
     void SetBrushVisibility(int category, const std::string& action);
+    Json HiddenActors();
+    size_t RestoreHiddenActors(const Json& hidden);
     void Select(const Json& identities, bool focus = false);
     Json SelectedSurfaceBrushes();
     Json BspSurfaceOwners();
     Json SelectedMeshBounds();
     void FitBuilderBrushToMeshes();
+    void FitBuilderBrushToBrushes();
+    bool CanAddVertexPortal();
+    Json AddVertexPortal();
     Json BrushSnapBounds(bool surfaces = false);
     Json SelectedBrushVertices();
     void SnapSelectedBrushVertices(unsigned axes);
@@ -65,6 +70,9 @@ namespace Workflow::Editor
     void DesignAlign(const Json& scene,int axis,const std::string& mode,double spacing);
     void DesignLayer(const Json& members,bool hidden,bool locked,const std::string& group = "",const std::string& groupAction = "none");
     void DesignSetFlags(const Json& members,int hidden,int locked);
+    size_t DesignTurnActors(const Json& members,double degrees,const Vector& pivot);
+    Json DesignActorSpans();
+    size_t DesignSetHidden(const Json& hide,const Json& show);
     void DesignGroupMembers(const Json& members,const std::string& group,const std::string& action);
     void DesignTranslate(const Json& members,const Vector& delta);
     Json CreateLift(const Vector& position,double width,double length,double thickness,double rise,double moveTime);
@@ -82,6 +90,7 @@ namespace Workflow::Editor
     Json CreatePlayerStart(const std::string& type,const std::string& team,const Pose& pose);
     Json AddAlarmLocks(const Json& alarm,const Json& targets);
     Json SetActorProperties(const Json& identity,const Json& properties);
+    Json InspectSettingsActor(const Json& identity);
     Json CreateSecurityActor(const std::string& type,const Pose& pose,const Json& properties);
     Json CreateMotionSensor(const Vector& low,const Vector& high,const Json& properties);
     Json MoveSecurityActor(const Json& identity,const Pose& pose,const Json& properties,const Json& followers = Json{});

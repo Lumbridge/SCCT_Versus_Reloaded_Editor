@@ -27,6 +27,7 @@ void CALLBACK ChooseObjectivePopup(HWND,UINT,UINT_PTR,DWORD)
     },0);
 }
 bool vertexPopupChecked=false;
+bool vertexPortalEnabled=false;
 void CALLBACK InspectVertexPopup(HWND,UINT,UINT_PTR,DWORD)
 {
     EnumThreadWindows(GetCurrentThreadId(),[](HWND window,LPARAM)->BOOL {
@@ -35,6 +36,8 @@ void CALLBACK InspectVertexPopup(HWND,UINT,UINT_PTR,DWORD)
             auto menu=reinterpret_cast<HMENU>(SendMessage(window,0x01e1,0,0)); // MN_GETHMENU
             auto state=GetMenuState(menu,40944,MF_BYCOMMAND);
             vertexPopupChecked=state!=UINT(-1) && !(state&(MF_DISABLED|MF_GRAYED));
+            const auto portalState=GetMenuState(menu,40981,MF_BYCOMMAND);
+            vertexPortalEnabled=portalState!=UINT(-1) && !(portalState&(MF_DISABLED|MF_GRAYED));
             EndMenu();return FALSE;
         }
         return TRUE;
@@ -458,6 +461,7 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             unsigned cause[3]={0,0,2};auto timer=SetTimer(nullptr,0,50,WorkflowProbe::InspectVertexPopup);
             reinterpret_cast<void(__thiscall*)(void*,void*,void*)>(0x10e045e9)(nullptr,cause,nullptr);KillTimer(nullptr,timer);
             require(WorkflowProbe::vertexPopupChecked && call({{"op","vertex.selection"}})==before,"right-click vertex menu preserves selection and cancelled geometry");
+            require(!WorkflowProbe::vertexPortalEnabled,"portal action is disabled for only one distinct corner");
             SendMessage(frameWindow,WM_COMMAND,40944,0);auto after=call({{"op","vertex.selection"}});
             for(size_t i=0;i<after.size();++i){double x=after[i]["world"][0];require(std::abs(x/16-std::round(x/16))<.0001,"selected vertex X snaps in world space");for(int axis=1;axis<3;++axis)require(before[i]["world"][axis]==after[i]["world"][axis],"vertex X snap preserves Y and Z");}
             for(int pi=0;pi<count;++pi){auto p=data+pi*0x14c;for(int vi=0;vi<*reinterpret_cast<unsigned short*>(p+0x148);++vi){bool chosen=false;for(auto e:entries)chosen|=e[1]==pi && e[2]==vi;if(!chosen)require(!memcmp(p+0x18+vi*12,displaced.data()+pi*0x14c+0x18+vi*12,12),"unselected vertices remain exact");}}
@@ -471,7 +475,138 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             data=*reinterpret_cast<unsigned char**>(polys+0x28);memcpy(data,original.data(),original.size());
             std::copy(savedHeader.begin(),savedHeader.end(),selectionHeader);*reinterpret_cast<int*>(editor+0x1ac)=mode;memcpy(editor+0x200,grid,12);
         }
-        if(snapOnly){finish("native brush and selected-vertex grid snap commands and transactions");return;}
+        {
+            const auto brush=*std::find_if(actors.begin(),actors.end(),[](const J& a){return a.at("class")=="Engine.Brush" && a.value("authorable",false);});
+            call({{"op","select"},{"actors",J::array({brush})}});
+            auto actor=WorkflowProbe::MagicActor(brush),editor=*reinterpret_cast<unsigned char**>(kEditor);
+            auto field=[&](const char* name)->unsigned char*{
+                for(auto type=*reinterpret_cast<unsigned char**>(actor+0x24);type;type=*reinterpret_cast<unsigned char**>(type+0x28))
+                    for(auto p=*reinterpret_cast<unsigned char**>(type+0x58);p;p=*reinterpret_cast<unsigned char**>(p+0x40))
+                        if(std::string(ObjectName(p))==name)return actor+*reinterpret_cast<int*>(p+0x3c);
+                throw std::runtime_error("missing brush transform property");
+            };
+            std::array<int,3> oldRotation{};memcpy(oldRotation.data(),field("Rotation"),12);
+            const std::array<int,3> rotation{7000,11000,3000};memcpy(field("Rotation"),rotation.data(),12);
+            auto model=*reinterpret_cast<unsigned char**>(actor+0x238),polys=*reinterpret_cast<unsigned char**>(model+0x50);
+            auto data=*reinterpret_cast<unsigned char**>(polys+0x28);const int count=*reinterpret_cast<int*>(polys+0x2c);
+            const std::vector<unsigned char> sourcePolygons(data,data+count*0x14c);
+            const float shapeScale[3]={2,.5f,.25f},shapeOffset[3]={17,-31,9};
+            for(int pi=0;pi<count;++pi)for(int vi=0;vi<*reinterpret_cast<unsigned short*>(data+pi*0x14c+0x148);++vi)
+                for(int axis=0;axis<3;++axis){auto v=reinterpret_cast<float*>(data+pi*0x14c+0x18+vi*12+axis*4);*v=*v*shapeScale[axis]+shapeOffset[axis];}
+            const int mode=*reinterpret_cast<int*>(editor+0x1ac);*reinterpret_cast<int*>(editor+0x1ac)=0x19;
+            auto header=reinterpret_cast<uintptr_t*>(0x11685a9c);std::array<uintptr_t,3> saved{header[0],header[1],header[2]};
+            std::vector<std::array<uintptr_t,3>> entries;
+            for(int pi=0;pi<count;++pi)for(int vi=0;vi<*reinterpret_cast<unsigned short*>(data+pi*0x14c+0x148);++vi)
+                entries.push_back({reinterpret_cast<uintptr_t>(actor),static_cast<uintptr_t>(pi),static_cast<uintptr_t>(vi)});
+            header[0]=reinterpret_cast<uintptr_t>(entries.data());header[1]=header[2]=entries.size();
+            std::array<float,3> oldLocation{},oldPivot{};
+            memcpy(oldLocation.data(),field("Location"),12);memcpy(oldPivot.data(),field("PrePivot"),12);
+            const std::array<float,3> location{3200,-1856,768},pivot{41,-23,17};
+            memcpy(field("Location"),location.data(),12);memcpy(field("PrePivot"),pivot.data(),12);
+            // Independent Euler rotation: do not derive the oracle from the same
+            // native ToWorld/vertex.selection helper as the implementation.
+            const double radians=6.28318530717958647692/65536;
+            const double cp=cos(rotation[0]*radians),sp=sin(rotation[0]*radians);
+            const double cy=cos(rotation[1]*radians),sy=sin(rotation[1]*radians);
+            const double cr=cos(rotation[2]*radians),sr=sin(rotation[2]*radians);
+            const double axes[3][3]={{cp*cy,sr*sp*cy-cr*sy,-cr*sp*cy-sr*sy},
+                {cp*sy,sr*sp*sy+cr*cy,sr*cy-cr*sp*sy},{sp,-sr*cp,cr*cp}};
+            double expectedLow[3]={1e20,1e20,1e20},expectedHigh[3]={-1e20,-1e20,-1e20};
+            for(const auto& entry:entries)
+            {
+                const auto local=reinterpret_cast<float*>(data+entry[1]*0x14c+0x18+entry[2]*12);
+                for(int axis=0;axis<3;++axis)
+                {
+                    double world=location[axis];for(int j=0;j<3;++j)world+=axes[axis][j]*(local[j]-pivot[j]);
+                    expectedLow[axis]=(std::min)(expectedLow[axis],world);expectedHigh[axis]=(std::max)(expectedHigh[axis],world);
+                }
+            }
+            auto bounds=call({{"op","brush.snap.bounds"}});
+            for(int axis=0;axis<3;++axis)require(std::abs(bounds["min"][axis].get<double>()-expectedLow[axis])<.02 && std::abs(bounds["max"][axis].get<double>()-expectedHigh[axis])<.02,"rotated brush bounds apply pivot then rotation then world translation");
+            const auto fitView=call({{"op","view.capture"}}),fitSelection=call({{"op","actors"},{"selected",true}});
+            auto level=*reinterpret_cast<unsigned char**>(editor+0x130),builder=(*reinterpret_cast<unsigned char***>(level+0x2c))[1];
+            auto builderPose=[&](){std::array<unsigned char,36> state{};for(int i=0;i<3;++i)memcpy(state.data()+12*i,builder+(field(i==0?"Location":i==1?"Rotation":"PrePivot")-actor),12);return state;};
+            const auto oldBuilderPose=builderPose();
+            const std::vector<unsigned char> fittedSourcePolygons(data,data+count*0x14c);
+            SendMessage(frameWindow,WM_COMMAND,40980,0);
+            const auto fittedBuilderPose=builderPose();
+            require(!memcmp(data,fittedSourcePolygons.data(),fittedSourcePolygons.size()) && !memcmp(field("Rotation"),rotation.data(),12) && !memcmp(field("Location"),location.data(),12) && !memcmp(field("PrePivot"),pivot.data(),12),"fitting leaves source brush geometry and transform unchanged");
+            auto bm=*reinterpret_cast<unsigned char**>(builder+0x238),bp=*reinterpret_cast<unsigned char**>(bm+0x50),bd=*reinterpret_cast<unsigned char**>(bp+0x28);
+            auto builderField=[&](const char* name){return builder+(field(name)-actor);};
+            const std::array<int,3> zeroRotation{};require(!memcmp(builderField("Rotation"),zeroRotation.data(),12),"builder orientation is baked into vertices for native BSP building");
+            double low[3]={1e20,1e20,1e20},high[3]={-1e20,-1e20,-1e20};
+            double localLow[3]={1e20,1e20,1e20},localHigh[3]={-1e20,-1e20,-1e20};
+            for(int pi=0;pi<*reinterpret_cast<int*>(bp+0x2c);++pi)for(int vi=0;vi<*reinterpret_cast<unsigned short*>(bd+pi*0x14c+0x148);++vi)
+            {
+                const auto local=reinterpret_cast<float*>(bd+pi*0x14c+0x18+vi*12);
+                for(int axis=0;axis<3;++axis)
+                {
+                    double unrotated=0;for(int j=0;j<3;++j)unrotated+=axes[j][axis]*local[j];
+                    localLow[axis]=(std::min)(localLow[axis],unrotated);localHigh[axis]=(std::max)(localHigh[axis],unrotated);
+                    double world=*reinterpret_cast<float*>(builderField("Location")+axis*4)+local[axis];
+                    low[axis]=(std::min)(low[axis],world);high[axis]=(std::max)(high[axis],world);
+                }
+            }
+            for(int axis=0;axis<3;++axis)
+            {
+                require(std::abs(low[axis]-expectedLow[axis])<.02 && std::abs(high[axis]-expectedHigh[axis])<.02,"oriented builder tightly encloses the rotated brush in world space");
+                require(std::abs(localHigh[axis]-localLow[axis]-1024*shapeScale[axis])<.02,"rotated fit preserves the brush local dimensions instead of inflating them");
+            }
+            require(call({{"op","actors"},{"selected",true}})==fitSelection && call({{"op","view.capture"}})==fitView,"rotated brush fit preserves selection and viewports");
+            auto builderVertices=[&](){std::vector<std::array<float,3>> result;auto current=*reinterpret_cast<unsigned char**>(bp+0x28);for(int pi=0;pi<*reinterpret_cast<int*>(bp+0x2c);++pi)for(int vi=0;vi<*reinterpret_cast<unsigned short*>(current+pi*0x14c+0x148);++vi){std::array<float,3> p{};memcpy(p.data(),current+pi*0x14c+0x18+vi*12,12);for(int a=0;a<3;++a)p[a]+=*reinterpret_cast<float*>(builderField("Location")+a*4);result.push_back(p);}return result;};
+            const auto orientedVertices=builderVertices();
+            Exec("TRANSACTION UNDO");require(builderPose()==oldBuilderPose,"oriented builder fit undoes position rotation and pivot in one step");
+            Exec("TRANSACTION REDO");require(builderPose()==fittedBuilderPose,"oriented builder fit redoes position rotation and pivot in one step");
+            Exec("TRANSACTION UNDO");
+            // The editor also stores rotations directly in brush polygons. That
+            // identical visible shape must fit identically with Rotation=0.
+            for(int pi=0;pi<count;++pi)for(int vi=0;vi<*reinterpret_cast<unsigned short*>(data+pi*0x14c+0x148);++vi)
+            {
+                auto p=reinterpret_cast<float*>(data+pi*0x14c+0x18+vi*12);std::array<float,3> original{p[0],p[1],p[2]};
+                for(int a=0;a<3;++a){double v=0;for(int j=0;j<3;++j)v+=axes[a][j]*(original[j]-pivot[j]);p[a]=static_cast<float>(v);}
+            }
+            memset(field("Rotation"),0,12);memset(field("PrePivot"),0,12);
+            SendMessage(frameWindow,WM_COMMAND,40980,0);
+            const auto bakedVertices=builderVertices();bool sameShape=bakedVertices.size()==orientedVertices.size();
+            if(sameShape)for(size_t i=0;i<bakedVertices.size();++i)for(int a=0;a<3;++a)sameShape&=std::abs(bakedVertices[i][a]-orientedVertices[i][a])<.02;
+            require(sameShape,"fitting a rotation baked into brush polygons preserves the same oriented box");
+            Exec("TRANSACTION UNDO");memcpy(field("Rotation"),rotation.data(),12);
+            memcpy(field("Location"),oldLocation.data(),12);memcpy(field("PrePivot"),oldPivot.data(),12);
+            data=*reinterpret_cast<unsigned char**>(polys+0x28);memcpy(data,sourcePolygons.data(),sourcePolygons.size());
+            require(*reinterpret_cast<unsigned short*>(data+0x148)==4,"portal fixture starts with a quad");
+            entries.clear();for(uintptr_t vi=0;vi<4;++vi)entries.push_back({reinterpret_cast<uintptr_t>(actor),0,vi});
+            entries.push_back(entries[0]);header[0]=reinterpret_cast<uintptr_t>(entries.data());header[1]=header[2]=entries.size();
+            const auto before=call({{"op","vertex.selection"}});const auto total=call({{"op","actors"}}).size();
+            unsigned cause[3]={0,0,2};auto timer=SetTimer(nullptr,0,50,WorkflowProbe::InspectVertexPopup);
+            reinterpret_cast<void(__thiscall*)(void*,void*,void*)>(0x10e045e9)(nullptr,cause,nullptr);KillTimer(nullptr,timer);
+            require(WorkflowProbe::vertexPortalEnabled,"right-click enables the portal action for four rotated corners");
+            auto portals=call({{"op","vertex.portal"}});require(portals.size()==1 && call({{"op","actors"}}).size()==total+1,"four selected corners add exactly one portal");
+            auto portal=WorkflowProbe::MagicActor(portals[0]);require((*reinterpret_cast<unsigned*>(portal+0x344)&0x04000009u)==0x04000009u,"portal actor has invisible non-solid zone flags");
+            auto pm=*reinterpret_cast<unsigned char**>(portal+0x238),pp=*reinterpret_cast<unsigned char**>(pm+0x50);require(*reinterpret_cast<int*>(pp+0x2c)==6,"portal has six slab faces");
+            const auto a=before[0]["world"].get<std::array<double,3>>(),b=before[1]["world"].get<std::array<double,3>>(),c=before[2]["world"].get<std::array<double,3>>();
+            std::array<double,3> u{},v{},n{};for(int axis=0;axis<3;++axis){u[axis]=b[axis]-a[axis];v[axis]=c[axis]-a[axis];}
+            n={u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0]};const auto length=std::sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
+            auto pd=*reinterpret_cast<unsigned char**>(pp+0x28);bool thickness=true,flags=true;
+            std::array<float,12> coords{};auto table=*reinterpret_cast<uintptr_t**>(portal);
+            reinterpret_cast<void*(__thiscall*)(void*,void*)>(table[0xac/4])(portal,coords.data());
+            for(int pi=0;pi<6;++pi)
+            {
+                flags&=(*reinterpret_cast<unsigned*>(pd+pi*0x14c+0x140)&0x04000009u)==0x04000009u;
+                for(int vi=0;vi<4;++vi)
+                {
+                    std::array<float,3> world{};auto local=pd+pi*0x14c+0x18+vi*12;
+                    reinterpret_cast<void*(__thiscall*)(void*,void*,const void*)>(0x10eb2ba0)(local,world.data(),coords.data());
+                    double distance=0;for(int axis=0;axis<3;++axis)distance+=(world[axis]-a[axis])*n[axis]/length;
+                    thickness&=std::abs(std::abs(distance)-.5)<.002;
+                }
+            }
+            require(thickness && flags,"native portal retains one-unit thickness and flags on every rotated face");
+            require(call({{"op","vertex.selection"}})==before,"adding a portal preserves the selected source vertices");
+            Exec("TRANSACTION UNDO");require(call({{"op","actors"}}).size()==total,"portal creation undoes in one step");
+            Exec("TRANSACTION REDO");require(call({{"op","actors"}}).size()==total+1,"portal creation redoes in one step");Exec("TRANSACTION UNDO");
+            std::copy(saved.begin(),saved.end(),header);*reinterpret_cast<int*>(editor+0x1ac)=mode;memcpy(field("Rotation"),oldRotation.data(),12);
+        }
+        if(snapOnly){finish("native brush fitting, vertex portals, grid snap commands and transactions");return;}
         {
             auto inspect=[&](const J& actor){return call({{"op","magic.inspect"},{"actor",actor}});};
             auto ref=[](const J& actor){auto type=actor.at("class").get<std::string>();return type.substr(type.find_last_of('.')+1)+"'"+actor.at("path").get<std::string>()+"'";};
@@ -1050,9 +1185,10 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
             }
             {
-                // Stages: a mission with two objectives and their terminals, a
-                // door and a switchable light; a two-stage plan wires them in one
-                // Undo step, reads back, and the Stages window lists it.
+                // Zones: a mission with two objectives and their terminals, a
+                // door and a switchable light; a two-zone plan gives each zone
+                // its own mission under the map's, in one Undo step, reads back,
+                // and the Zones window lists it.
                 auto inspect=[&](const J& actor){return call({{"op","magic.inspect"},{"actor",actor}});};
                 auto stageOf=[&](const J& identity){for(auto& a:call({{"op","stage.actors"}}))if(a["path"]==identity["path"])return a;return J{};};
                 // Earlier tests leave missions behind; one mission keeps Objective
@@ -1091,44 +1227,51 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                         require(actorCount()==count && inspect(mission)["values"]["Objectives"].size()==linked,"the placed objective undoes");
                     }
                 }
-                const bool usableBefore=stageOf(terminalB)["usable"].get<bool>();
                 const auto before=actorCount();
-                J plan={{"format","scct.stages"},{"version",1},{"lockLater",true},{"stages",J::array({
-                    {{"objectives",J::array({first["path"]})},{"required",0},{"actions",J::array({
+                J plan={{"format","scct.stages"},{"version",2},{"zones",J::array({
+                    {{"name","Docks"},{"objectives",J::array({first["path"]})},{"required",0},{"actions",J::array({
                         {{"kind","open"},{"target",door["path"]},{"delay","1.5"}},
                         {{"kind","light"},{"target",lamp["path"]}},
                         {{"kind","announce"},{"title","Zone 2"},{"merc","East wing open"},{"spy","East wing open"},{"seconds","6"}}})}},
                     {{"objectives",J::array({second["path"]})},{"required",0},{"actions",J::array()}}})}};
                 auto preview=call({{"op","stage.preview"},{"plan",plan}});
-                require(preview["creates"].get<size_t>()==5 && actorCount()==before,"stage.preview reports the batch without touching the map");
+                require(preview["creates"].get<size_t>()==4 && actorCount()==before,"stage.preview reports the batch without touching the map");
                 call({{"op","stage.apply"},{"plan",plan}});
-                require(actorCount()==before+5,"stage.apply creates two gates, two completions and the announcement");
-                require(inspect(first)["values"]["Event"]=="Stage1_Gate" && inspect(second)["values"]["Event"]=="Stage2_Gate","objectives feed their stage gates");
-                J gate,complete,announce;
-                for(auto& a:call({{"op","stage.actors"}})){if(a["tag"]=="Stage1_Gate")gate=a;if(a["tag"]=="Stage1_Complete")complete=a;if(a["tag"]=="Stage1_Announce")announce=a;}
-                require(!gate.is_null() && gate["groups"].size()==1 && gate["groups"][0]["Sequence"]=="True" && gate["groups"][0]["EventGroup"].size()==1 && gate["groups"][0]["EventGroup"][0]["Event"]=="Stage1_Complete","the gate is a one-step sequence firing the completion");
+                require(actorCount()==before+4,"stage.apply creates a mission per zone, the first zone's event and its announcement");
+                auto missionValues=inspect(mission)["values"];
+                require(missionValues["Objectives"].size()==2 && missionValues["bChained"]=="True","the map's mission now holds both zones and runs them in order");
+                require(missionValues["MinimumObjectives"]=="2","the spies win after the objectives both zones' thresholds add up to");
+                J zone1,zone2,complete,announce;
+                for(auto& a:call({{"op","stage.actors"}}))
+                {
+                    if(a["tag"]=="Zone1Mission")zone1=a;if(a["tag"]=="Zone2Mission")zone2=a;
+                    if(a["tag"]=="Zone1_Complete")complete=a;if(a["tag"]=="Zone1_Announce")announce=a;
+                }
+                require(!zone1.is_null() && zone1["kind"]=="Mission" && zone1["objectives"].size()==1 && zone1["objectives"][0]==first["path"],"the first zone's mission holds its objective");
+                require(zone1["chained"]==false && zone1["mode"]=="GM_Undefined" && zone1["minimum"]=="1" && zone1["name"]=="Docks","a zone's objectives are all available at once and it is not a game mode of its own");
+                require(zone1["event"]=="Zone1_Complete" && zone2["event"]=="None","a zone with actions fires its completion event; one without fires nothing");
                 auto actions=complete["groups"][0]["EventGroup"];
-                require(actions.size()==4 && actions[0]["Event"]==stageOf(terminalB)["tag"] && actions[1]["Event"]==stageOf(door)["tag"] && std::stod(actions[1]["Delay"].get<std::string>())==1.5 && actions[2]["Event"]==stageOf(lamp)["tag"] && actions[3]["Event"]=="Stage1_Announce","the completion unlocks stage 2's terminal, then opens, lights and announces");
-                require(stageOf(terminalB)["usable"]==false && stageOf(terminalB)["method"]=="TriggerControl" && stageOf(terminalA)["usable"]==true,"the later terminal starts locked; the first stays usable");
+                require(actions.size()==3 && actions[0]["Event"]==stageOf(door)["tag"] && std::stod(actions[0]["Delay"].get<std::string>())==1.5 && actions[1]["Event"]==stageOf(lamp)["tag"] && actions[2]["Event"]=="Zone1_Announce","the completion opens, lights and announces");
+                require(stageOf(terminalA)["usable"]==true && stageOf(terminalB)["usable"]==true,"no terminal is locked: the chained mission decides when a zone is live");
                 require(stageOf(door)["state"]=="TriggerToggle","the door stays open once triggered");
                 require(announce["kind"]=="Alarm" && announce["title"]=="Zone 2" && announce["spy"]=="East wing open" && std::stod(announce["duration"].get<std::string>())==6,"the announcement is an alarm with the texts and duration");
                 auto readBack=call({{"op","stage.read"}});
-                require(readBack["stages"].size()==2 && readBack["stages"][0]["objectives"][0]==first["path"] && readBack["stages"][0]["actions"].size()==3 && readBack["stages"][0]["actions"][2]["kind"]=="announce" && readBack["stages"][0]["actions"][2]["title"]=="Zone 2","the plan reads back from the map");
+                require(readBack["zones"].size()==2 && readBack["zones"][0]["objectives"][0]==first["path"] && readBack["zones"][0]["name"]=="Docks" && readBack["zones"][0]["actions"].size()==3 && readBack["zones"][0]["actions"][2]["kind"]=="announce" && readBack["zones"][0]["actions"][2]["title"]=="Zone 2","the plan reads back from the map");
                 auto again=call({{"op","stage.preview"},{"plan",readBack}});
                 require(again["creates"].get<size_t>()==0 && again["updates"].get<size_t>()==0,"a map matching its plan needs no changes");
                 Exec("TRANSACTION UNDO");
-                require(actorCount()==before && inspect(first)["values"]["Event"]=="None" && stageOf(terminalB)["usable"]==usableBefore,"one Undo removes the stage actors and restores the objectives and terminals");
+                require(actorCount()==before && inspect(mission)["values"]["Objectives"].size()==2 && inspect(mission)["values"]["Objectives"][0].get<std::string>().find("SObjective")!=std::string::npos,"one Undo removes the zone missions and gives the objectives back to the map's mission");
                 Exec("TRANSACTION REDO");
-                require(actorCount()==before+5 && inspect(first)["values"]["Event"]=="Stage1_Gate","Redo restores the stages");
-                // The Stages window lists the plan the map carries.
+                require(actorCount()==before+4 && inspect(mission)["values"]["bChained"]=="True","Redo restores the zones");
+                // The Zones window lists the plan the map carries.
                 WorkflowProbe::Click(design,768);
-                auto stages=WorkflowProbe::FindDialog("Stages");
-                require(stages!=nullptr,"the Stages menu item opens its window");
-                require(SendMessage(GetDlgItem(stages,1000),LB_GETCOUNT,0,0)==2,"the window lists both stages");
-                require(SendMessage(GetDlgItem(stages,1009),LB_GETCOUNT,0,0)==4,"the first stage shows its unlock row and three actions");
+                auto stages=WorkflowProbe::FindDialog("Zones");
+                require(stages!=nullptr,"the Zones menu item opens its window");
+                require(SendMessage(GetDlgItem(stages,1000),LB_GETCOUNT,0,0)==2,"the window lists both zones");
+                require(SendMessage(GetDlgItem(stages,1009),LB_GETCOUNT,0,0)==3,"the first zone shows its three actions");
                 SendMessage(GetDlgItem(stages,1000),LB_SETCURSEL,1,0);
                 SendMessage(stages,WM_COMMAND,MAKEWPARAM(1000,LBN_SELCHANGE),reinterpret_cast<LPARAM>(GetDlgItem(stages,1000)));
-                require(SendMessage(GetDlgItem(stages,1009),LB_GETCOUNT,0,0)==0,"the last stage has no actions");
+                require(SendMessage(GetDlgItem(stages,1009),LB_GETCOUNT,0,0)==0,"the last zone has no actions");
                 DestroyWindow(stages);
                 for(int i=0;i<8;++i)Exec("TRANSACTION UNDO");
                 require(actorCount()==before-7,"the stage fixture is undone");

@@ -209,6 +209,7 @@
     <ClInclude Include="RecoveredActorImport.h" />
     <ClInclude Include="RecoveredAssetPackage.h" />
     <ClInclude Include="StaticMeshCollisionFix.h" />
+    <ClInclude Include="StoreyFilter.h" />
     <ClInclude Include="StaticMeshBrowserFavorites.h" />
     <ClInclude Include="DdsImportFix.h" />
     <ClInclude Include="LightCullFix.h" />
@@ -288,6 +289,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="StaticMeshCollisionFix.cpp" />
+    <ClCompile Include="StoreyFilter.cpp" />
     <ClCompile Include="StaticMeshBrowserFavorites.cpp" />
     <ClCompile Include="DdsImportFix.cpp" />
     <ClCompile Include="LightCullFix.cpp" />

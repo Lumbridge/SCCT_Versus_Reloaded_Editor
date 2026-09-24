@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "GridSizeShortcut.h"
+#include "StoreyFilter.h"
 #include "GridSizeShortcutState.h"
 #include "MemoryWriter.h"
 #include <windowsx.h>
@@ -118,6 +119,11 @@ namespace
             else
                 g_gesture.ObserveViewport(target);
         }
+        // The storey palette, when it is open, takes the paging keys over a
+        // viewport, so one floor is stepped through where it is being looked
+        // at rather than only from the palette itself.
+        if (message == WM_KEYDOWN && StoreyFilter::ViewportKey(wParam))
+            return true;
         if (message != WM_MOUSEWHEEL)
             return false;
 

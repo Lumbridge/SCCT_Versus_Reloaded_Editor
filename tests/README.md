@@ -7,7 +7,12 @@ bevel falls below native `CalcNormal` minimum area. Repair keeps the remaining
 supporting planes and a closed brush within the native BSP precision band;
 a long tapered brush verifies that distant intersections are rejected without
 changing the input. Actor tests cover omitted all-null `MoversToLock` entries
-while retaining checks for live references and other struct fields.
+while retaining checks for live references and other struct fields, and every
+I3DL2 reverb preset a `ZoneInfo.ZoneEffect` can name — the whole standard set,
+not the presets that happened to turn up in the maps recovered so far, since a
+map-local object whose class is not recognised stops recovery rather than being
+moved to the dependency package. Anything else map-local, an `ESBPatch` among
+them, is still refused.
 
 The native recovery harness with `-SourceMap <HELI02.sdc>` additionally checks
 the map's duplicate portal outlines (cooked surfaces 1165 and 1168), recovery,
@@ -23,7 +28,14 @@ projected convex outlines, vent and crawlway shapes with crouch clearance,
 attaching a new piece to a wall, route journeys with climbs and crouched sections,
 both teams' route times, a material on every generated polygon, the design check's unreached rooms, orphan doorways and merging carves, preview resizing against a fixed opposite face, traversal warnings for
 steps/slopes/clearance, doorway placement in a room wall including rotated rooms
-and rejected offsets, route lengths and spy/merc timings, floor ranges, native
+and rejected offsets, route lengths and spy/merc timings, floor ranges, the
+storeys behind the floor slider (which brushes leave a surface to stand on and
+which do not — walls, pillars and the volume a map is carved from — placed
+pieces nesting a vent into the room's storey, an imported map's floors read from
+the width of those surfaces rather than collapsing into one level, a floor laid
+as many slabs weighing as much as one hall, scenery and crate lids excluded,
+surfaces a step apart counted once, and the cap on how many storeys are kept),
+native
 group name handling, portable workspace export/import, image calibration, 3D
 measurement, stable distribution, and repeated brush/object/event reference
 remapping, mirrored poses checked vertex by vertex against the reflected
@@ -81,19 +93,25 @@ or foreign files rejected). The editor side imports the BMP with `TEXTURE
 IMPORT` into the loaded `<Map>-i` package and saves it with the stock
 `SAVEMAPPROP`, so it is exercised in the editor rather than here.
 
-`StageModelTests.cpp` covers the stage model: generated Tag names and their
-parsing, plan validation, building the change batch for a fresh map (gates as
-one-step-per-completion sequences, completion events that unlock the next
-stage's terminals before the author's actions, Tags allocated where missing or
-shared, timed doors set to stay open, new sound triggers and announcement
-alarms), reading a wired map back into the same plan, a matching map needing
-no changes, releasing objectives and terminals that leave their stage, stale
-stage events being named, refusing our Tags on the wrong kind of actor, and
-the design-check issues. The native `-WorkflowTools` suite applies a two-stage
-plan through `stage.apply`, checks the objectives' Events, the gate sequence,
-the completion's action order, the locked terminal and the door's state, reads
-the plan back, confirms a matching plan is a no-op, undoes and redoes it in
-one step each, and opens the Stages window to check its lists.
+`StageModelTests.cpp` covers the zone model: generated Tag names and their
+parsing, plan validation (including refusing a plan from the earlier
+counting-event version), building the change batch for a fresh map (a mission
+per zone holding its objectives unchained with its threshold and briefings,
+the map's mission chained over them in order and carrying how many objectives
+win the match, completion events, Tags
+allocated where missing or shared, timed doors set to stay open, new sound
+triggers and announcement alarms), reading the result back into the same plan,
+a matching map needing no changes, a match total smaller than the zones' own
+being kept, moving an objective between zones,
+reordering zones without rebuilding their missions, emptying a zone's event,
+reusing a mission and event the author wired by hand, refusing an objective
+that is in no zone or a map with no mission, cleaning up the earlier wiring,
+and the design-check issues. The native `-WorkflowTools` suite applies a
+two-zone plan through `stage.apply`, checks the zone missions' settings and
+the top mission's chaining, the completion's action order, that no terminal is
+locked and the door's state, reads the plan back, confirms a matching plan is
+a no-op, undoes and redoes it in one step each, and opens the Zones window to
+check its lists.
 
 `tools/test_map_package.cmd` also covers packaging a map's Map Design workspace and
 the reference images it names, skipping missing or unsafe image names, and
@@ -112,6 +130,11 @@ and invalid inputs. The native `-WorkflowTools -GenerateFixture` suite exercises
 the brush and BSP-face context menus, axis isolation, preserved dimensions,
 Undo/Redo, and rejection of an empty selection.
 Use `-BrushGridSnapOnly -GenerateFixture` for the focused native snapping run.
+This run also checks builder fitting against the displayed vertices of a brush
+rotated on all three axes, and four-corner portal creation, native portal flags,
+source vertex selection preservation, menu availability and one-step Undo/Redo.
+The model suite checks one-unit portal thickness on rotated planes, unordered
+corners and repeated polygon copies, and rejects non-planar or concave selections.
 This also checks the vertex right-click popup, selection preservation on cancel,
 world-space selected-corner alignment, exact preservation of unselected vertices,
 shared polygon corners, and vertex Undo/Redo.
@@ -172,7 +195,14 @@ then verifies the six box faces, centered placement, multiple-mesh bounds,
 preserved selection and viewports, one-step undo/redo, and rejection of empty
 or mixed selections. It also checks selected-material assignment and a valid
 default texture on all six faces when no material is selected. All brush
-and mesh changes occur in the disposable fixture.
+and mesh changes occur in the disposable fixture. The brush-fit regression uses
+an elongated brush rotated on all three axes, away from the world origin, with
+an offset pivot and polygon centre. It checks the actual menu command, preserved
+orientation baked into the polygons for native BSP building, local dimensions,
+independently calculated world bounds, unchanged
+source geometry/selection/viewports, and one-step Undo/Redo. The oracle does not
+reuse the production vertex transform. The same shape is then tested with its
+rotation baked into the source polygons and a zero Rotation property.
 
 The SCamNetwork suite checks separate networks, linear and circular ordering,
 singleton loops, broken references, inconsistent first flags, duplicate/missing

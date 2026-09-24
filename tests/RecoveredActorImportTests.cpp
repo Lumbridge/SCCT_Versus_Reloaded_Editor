@@ -353,8 +353,15 @@ int main(int argc, char** argv)
     assert(VerifySourceMap(bad, composed, error));
     assert(!Prepare(Replace(zoneEffect, "ZoneEffect=EFFECT_Hangar", "ZoneEffect=EFFECT_Unknown"),
                     bad, error, "RecoveryAssets_Test"));
-    for (const auto* effect : {"EFFECT_Mountains", "EFFECT_Quarry", "EFFECT_Hallway", "EFFECT_Livingroom",
-                              "EFFECT_Arena", "EFFECT_Cave"})
+    // Every I3DL2 reverb preset, so a map that sounds like a city or a plain
+    // recovers as readily as one that sounds like a hangar.
+    for (const auto* effect : {"EFFECT_Generic", "EFFECT_PaddedCell", "EFFECT_Room", "EFFECT_Bathroom",
+                              "EFFECT_Livingroom", "EFFECT_StoneRoom", "EFFECT_Auditorium",
+                              "EFFECT_ConcertHall", "EFFECT_Cave", "EFFECT_Arena",
+                              "EFFECT_CarpetedHallway", "EFFECT_Hallway", "EFFECT_StoneCorridor",
+                              "EFFECT_Alley", "EFFECT_Forest", "EFFECT_City", "EFFECT_Mountains",
+                              "EFFECT_Quarry", "EFFECT_Plain", "EFFECT_ParkingLot", "EFFECT_SewerPipe",
+                              "EFFECT_Underwater", "EFFECT_Drugged", "EFFECT_Dizzy", "EFFECT_Psychotic"})
     {
         assert(Prepare(ReplaceAll(zoneEffect, "EFFECT_Hangar", effect), bad, error, "RecoveryAssets_Test"));
         assert(bad.externalizedAssets.size() == 1);

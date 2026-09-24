@@ -1,6 +1,6 @@
-// Native operations for stages: the inventory the stage model reads, the plan
-// a map already carries, and applying a plan as one map-changes batch in one
-// Undo step. Included after SecurityNative.inl inside Workflow::Editor;
+// Native operations for zones: the inventory the zone model reads, the plan
+// a map's missions already describe, and applying a plan as one map-changes
+// batch in one Undo step. Included after SecurityNative.inl inside Workflow::Editor;
 // UsedTags, NameList and AuthoringMapKey come from the earlier includes.
 namespace
 {
@@ -32,7 +32,7 @@ namespace
         return paths;
     }
 }
-// The actors a stage plan can name: the mission, objectives and their
+// The actors a zone plan can name: the missions, objectives and their
 // terminals, movers, switchable lights, sound triggers, alarms, events and
 // other triggerable actors, each with what the model needs to wire it.
 Json StageActors()
@@ -65,7 +65,15 @@ Json StageActors()
         else if(kind=="Objective trigger"){name=StageText(actor,"TriggerName");if(name.empty())name=StageText(actor,"sDescriptionText");}
         else if(kind=="Alarm")name=StageText(actor,"AlarmName");
         item["name"]=name;
-        if(kind=="Mission")item["objectives"]=StagePaths(actor,"Objectives");
+        if(kind=="Mission")
+        {
+            item["objectives"]=StagePaths(actor,"Objectives");
+            item["chained"]=DesignBool(actor,"bChained");
+            item["minimum"]=StageValue(actor,"MinimumObjectives");
+            item["mode"]=StageValue(actor,"GameMode");
+            item["brief"]=StageText(actor,"Description");
+            item["briefDefend"]=StageText(actor,"DescriptionDEF");
+        }
         if(kind=="Objective")item["triggers"]=StagePaths(actor,"Triggers");
         if(kind=="Objective trigger"){item["usable"]=DesignBool(actor,"bInitialyUsable");item["method"]=StageValue(actor,"TriggerMethode");}
         if(kind=="Mover")item["state"]=NameField(actor,"InitialState");
@@ -94,9 +102,9 @@ Json PreviewStages(const Json& plan)
     auto build=Stages::Plan(StageActors(),UsedTags(),plan);
     return {{"notes",build.notes},{"creates",build.creates},{"updates",build.updates}};
 }
-// Applies a plan as one map-changes batch: new events, sound triggers and
-// announcements are created, objectives and terminals rewired, all in one
-// Undo step. Update operations check the live values first, so a map that
+// Applies a plan as one map-changes batch: zone missions, events, sound
+// triggers and announcements are created and the mission tree rewired, all in
+// one Undo step. Update operations check the live values first, so a map that
 // changed since the plan was read is refused rather than half-applied.
 Json ApplyStages(const Json& plan)
 {
@@ -104,7 +112,7 @@ Json ApplyStages(const Json& plan)
     for(auto& op:build.operations)if(op.at("op")=="update")op["before"]=InspectActor(op.at("actor")).at("values");
     Json result={{"notes",build.notes},{"creates",build.creates},{"updates",build.updates},{"created",Json::array()}};
     if(build.operations.empty())return result;
-    auto applied=ApplyMapAuthoring({{"format","scct.map-changes"},{"version",1},{"map",AuthoringMapKey()},{"description","Apply stages"},{"operations",build.operations}});
+    auto applied=ApplyMapAuthoring({{"format","scct.map-changes"},{"version",1},{"map",AuthoringMapKey()},{"description","Apply zones"},{"operations",build.operations}});
     result["created"]=applied.at("created");
     Redraw();
     return result;
