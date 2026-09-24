@@ -221,6 +221,7 @@
     <ClInclude Include="SizingBoxFix.h" />
     <ClInclude Include="EngineLog.h" />
     <ClInclude Include="LightmapPacker.h" />
+    <ClInclude Include="PasteFix.h" />
     <ClInclude Include="MapCheckLog.h" />
     <ClInclude Include="RebuildAllMaps.h" />
     <ClInclude Include="ViewportConfigFix.h" />
@@ -299,6 +300,7 @@
     <ClCompile Include="SizingBoxFix.cpp" />
     <ClCompile Include="EngineLog.cpp" />
     <ClCompile Include="LightmapPacker.cpp" />
+    <ClCompile Include="PasteFix.cpp" />
     <ClCompile Include="MapCheckLog.cpp" />
     <ClCompile Include="RebuildAllMaps.cpp" />
     <ClCompile Include="ViewportConfigFix.cpp" />
