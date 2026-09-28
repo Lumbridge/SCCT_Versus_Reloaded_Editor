@@ -12,6 +12,10 @@ namespace
             if(Path(c)==wanted || NameOf(c)==wanted)return true;
         return false;
     }
+    // A new player start's TeamNumber goes in the pasted text, as the Map Design start tool writes it: the property is
+    // not in the reflected editable set, but it is what makes the start a team's spawn.
+    bool AuthoringPastedTeam(const Json& op,Address type,const std::string& name)
+    {return name=="TeamNumber" && op.at("op")=="create" && AuthoringSubclass(type,"PlayerStart");}
     bool AuthoringAppearance(const std::string& name)
     {return name=="StaticMesh" || name=="DrawType" || name=="DrawScale" || name=="DrawScale3D";}
     Json AuthoringSchema(Address type)
@@ -20,7 +24,9 @@ namespace
         for(auto p:Properties(type))
         {
             const auto name=NameOf(p);
-            if(!MagicEditable(p) && !(AuthoringSubclass(type,"Actor") && AuthoringAppearance(name)) && name!="Location" && name!="Rotation" && !(AuthoringSubclass(type,"Mover") && (name=="KeyPos" || name=="KeyRot" || name=="NumKeys")))continue;
+            // A particle emitter's MaxParticles is const in this build, yet it is what a pasted emitter sets; a new
+            // component has no particles yet, so writing it before its first update is safe.
+            if(!MagicEditable(p) && !(AuthoringSubclass(type,"Actor") && AuthoringAppearance(name)) && !(AuthoringSubclass(type,"ParticleEmitter") && name=="MaxParticles") && name!="Location" && name!="Rotation" && !(AuthoringSubclass(type,"Mover") && (name=="KeyPos" || name=="KeyRot" || name=="NumKeys")))continue;
             try{result[name]=MagicSchema(p);}catch(const std::exception&){}
         }
         return result;
@@ -237,11 +243,17 @@ namespace
                 if(deferred && !plan.types.count(owner))continue;
                 if(!plan.types.count(owner) || !AuthoringSubclass(plan.types.at(owner),"Emitter"))throw std::runtime_error("Particle component owner must be an emitter actor.");
                 checkExisting(owner);
-                for(const auto& other:document.at("operations"))if(other.at("op")!="link" && other.at("properties").contains("Emitters") && ((other.at("op")=="update" && other.at("actor").at("path")==owner) || (other.at("op")=="create" && other.at("id")==owner)))throw std::runtime_error("Do not replace Emitters while adding components to the same owner.");
+                for(const auto& other:document.at("operations"))if(other.contains("properties") && other.at("properties").contains("Emitters") && ((other.at("op")=="update" && other.at("actor").at("path")==owner) || (other.at("op")=="create" && other.at("id")==owner)))throw std::runtime_error("Do not replace Emitters while adding components to the same owner.");
             }
             plan.summary.push_back(kind+" "+id+" ("+Path(plan.types.at(id))+")"+(kind=="component"?" attached to "+op.at("owner").get<std::string>():std::string{}));
             for(auto it=op["properties"].begin();it!=op["properties"].end();++it)
             {
+                if(AuthoringPastedTeam(op,plan.types.at(id),it.key()))
+                {
+                    const auto team=it.value().is_string()?it.value().get<std::string>():std::string{};
+                    if(team.empty() || team.size()>3 || team.find_first_not_of("0123456789")!=std::string::npos || std::stoi(team)>255)throw std::runtime_error(id+": TeamNumber must be \"0\"-\"255\".");
+                    plan.summary.push_back("  TeamNumber = "+team);continue;
+                }
                 if(!plan.schemas.at(id).contains(it.key()))throw std::runtime_error(id+": unsupported property "+it.key());
                 const auto& schema=plan.schemas.at(id).at(it.key());
                 auto value=Authoring::Resolve(schema,it.value(),[&](const std::string& ref,const Json& field)->Json
@@ -255,7 +267,18 @@ namespace
                     if(original.is_object() && original.contains("$ref"))return;
                     if(resolved.is_array()){for(size_t i=0;i<resolved.size();++i)references(s.at("inner"),original[i],resolved[i]);}
                     else if(resolved.is_object()){for(auto f=resolved.begin();f!=resolved.end();++f)references(s.at("fields").at(f.key()),original.at(f.key()),f.value());}
-                    else MagicReferences(s,resolved);
+                    else
+                    {
+                        // Before the preview has loaded the file's packages, a reference into one of them is checked on Apply.
+                        try{MagicReferences(s,resolved);}
+                        catch(const std::exception&)
+                        {
+                            if(!deferred || !resolved.is_string())throw;
+                            const auto text=resolved.get<std::string>();const auto quote=text.find('\'');
+                            const auto path=quote==std::string::npos?text:text.substr(quote+1,text.find('.',quote+1)-quote-1);
+                            if(!loadedPackages.count(Fold(path)) && !std::any_of(importedTextures.begin(),importedTextures.end(),[&](const std::string& t){return t.rfind(Fold(path)+".",0)==0;}))throw;
+                        }
+                    }
                 };
                 references(schema,it.value(),value);
                 if(kind=="update")plan.summary.push_back("  "+it.key()+": "+Magic::Text(op.at("before").at(it.key()))+" -> "+Magic::Text(value));
@@ -320,6 +343,7 @@ Json ApplyMapAuthoring(const Json& document)
         auto id=op.at("id").get<std::string>(),type=op.at("class").get<std::string>();
         auto path=plan.identities.at(id).at("path").get<std::string>();auto name=path.substr(path.find_last_of('.')+1);
         text+="Begin Actor Class="+type+" Name="+name+"\r\nTag="+id+"\r\nLocation="+Magic::Text(op.at("properties").at("Location"))+"\r\n";
+        if(op.at("properties").contains("TeamNumber") && AuthoringPastedTeam(op,plan.types.at(id),"TeamNumber"))text+="TeamNumber="+op.at("properties").at("TeamNumber").get<std::string>()+"\r\n";
         const auto geometry=op.value("geometry",std::string("point"));
         // The paste turns a plain Brush left at its default CSG_Active into the builder brush and creates no actor,
         // so a CSG brush carries its operation in the pasted text (CSG_Add unless the file sets one).
@@ -355,17 +379,19 @@ Json ApplyMapAuthoring(const Json& document)
         auto identity=plan.identities.at(id);auto actor=MagicResolve(identity);Modify(actor);
         auto snapshot=InspectActor(identity);Json changes=Json::object();
         for(auto it=op.at("properties").begin();it!=op.at("properties").end();++it)
-            changes[it.key()]=Authoring::Resolve(plan.schemas.at(id).at(it.key()),it.value(),[&](const std::string& ref,const Json&)->Json
+            if(!AuthoringPastedTeam(op,plan.types.at(id),it.key()))changes[it.key()]=Authoring::Resolve(plan.schemas.at(id).at(it.key()),it.value(),[&](const std::string& ref,const Json&)->Json
             {const auto& target=plan.identities.at(ref);return target.at("class").get<std::string>()+"'"+target.at("path").get<std::string>()+"'";});
         auto ordinary=changes;
-        for(auto it=changes.begin();it!=changes.end();++it)if(AuthoringAppearance(it.key()))
+        const bool newComponent=op.at("op")=="component";
+        auto direct=[&](const std::string& name){return AuthoringAppearance(name) || (newComponent && name=="MaxParticles");};
+        for(auto it=changes.begin();it!=changes.end();++it)if(direct(it.key()))
         {
-            auto p=Property(actor,it.key());if(!p || !IsA(actor,"Actor"))throw std::runtime_error("Appearance needs an actor property.");
+            auto p=Property(actor,it.key());if(!p || (!IsA(actor,"Actor") && !(newComponent && it.key()=="MaxParticles")))throw std::runtime_error("Appearance needs an actor property.");
             Magic::Validate(MagicSchema(p),it.value());MagicReferences(MagicSchema(p),it.value());ordinary.erase(it.key());
         }
         ValidateActorChanges(snapshot,ordinary);
         for(auto it=changes.begin();it!=changes.end();++it)
-            if(AuthoringAppearance(it.key())){auto p=Property(actor,it.key());MagicImport(p,actor+Read<int>(p+0x3c),it.value());}
+            if(direct(it.key())){auto p=Property(actor,it.key());MagicImport(p,actor+Read<int>(p+0x3c),it.value());}
             else MagicSet(actor,it.key(),it.value());
         if(!IsA(actor,"Actor")){auto owner=Read<Address>(actor+0x18);Modify(owner);Call(owner,0x44);}
         Call(actor,0x44);

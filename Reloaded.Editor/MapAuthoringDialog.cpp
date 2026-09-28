@@ -22,8 +22,10 @@ namespace
         if(message==WM_CREATE)
         {
             state=static_cast<Preview*>(reinterpret_cast<CREATESTRUCT*>(l)->lpCreateParams);SetWindowLongPtr(window,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(state));
-            auto edit=CreateWindowExW(WS_EX_CLIENTEDGE,L"EDIT",state->text.c_str(),WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,0,0,0,0,window,reinterpret_cast<HMENU>(10),nullptr,nullptr);
-            SendMessage(edit,EM_SETLIMITTEXT,0,0);
+            // Created empty: an edit control refuses creation text beyond its default 30,000-character limit,
+            // which a large change file's preview exceeds. Raise the limit, then set the text.
+            auto edit=CreateWindowExW(WS_EX_CLIENTEDGE,L"EDIT",L"",WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,0,0,0,0,window,reinterpret_cast<HMENU>(10),nullptr,nullptr);
+            SendMessage(edit,EM_SETLIMITTEXT,0,0);SetWindowTextW(edit,state->text.c_str());
             CreateWindowW(L"BUTTON",L"Apply changes",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,0,0,0,0,window,reinterpret_cast<HMENU>(IDOK),nullptr,nullptr);
             CreateWindowW(L"BUTTON",L"Cancel",WS_CHILD|WS_VISIBLE|WS_TABSTOP,0,0,0,0,window,reinterpret_cast<HMENU>(IDCANCEL),nullptr,nullptr);
             for(int id:{10,IDOK,IDCANCEL})SendMessage(GetDlgItem(window,id),WM_SETFONT,reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)),TRUE);
