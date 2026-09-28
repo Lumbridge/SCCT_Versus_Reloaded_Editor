@@ -30,6 +30,9 @@ lighting rebuild; dynamic effects still need an in-game check. Brush creation or
 movement may require rebuilding geometry. Version 1 does not delete actors,
 import asset files, load packages automatically, edit arbitrary brush polygons,
 or execute commands/scripts from JSON.
+Version 2 adds package loads, texture imports, package saves, brushes made of
+textured polygons and BSP surface texturing; see
+[Version 2](#version-2-packages-textures-polygon-brushes-and-surfaces).
 
 ## Snapshot (`scct.map-authoring`, version 1)
 
@@ -187,6 +190,132 @@ expectation for that object. This rejects stale links and attachments:
   "MyLevel.ExistingEmitter": {"COPY": "the entire exported values object here"}
 }
 ```
+
+## Version 2: packages, textures, polygon brushes and surfaces
+
+Set `"version": 2` to use the operations below. Version 1 files keep working
+unchanged, and every version 1 operation is also valid in version 2. A version 2
+file may set `"map": "*"` to mean "the map that is open", so a generated file can
+build a new map without exporting it first. The preview names it "The map that is
+open". Version 2 files may hold up to 20,000 operations.
+
+Package loads, texture imports and package saves run **first, in file order,
+before any map change**. They change packages, not the map, so Undo does not
+reverse them. The map changes then apply in one Undo step as in version 1. Before
+the preview, classes and materials that only exist once the file's packages load
+are listed as "checked after the file's packages load"; Apply checks them in full.
+
+### Load a package
+
+```json
+{"op": "load", "package": "Bunker"}
+```
+
+Finds the package by name: `System\<name>.u`, then `Packages\Textures\<name>.utx`,
+`Packages\StaticMeshes\<name>.usx`, `Packages\Animations\<name>.ukx`,
+`Packages\Sounds\<name>.uax`/`.uas`. Loading makes its classes, materials, meshes
+and sounds available to later operations.
+
+### Import a texture
+
+```json
+{"op": "texture", "package": "CisternHR", "group": "Walls", "name": "Brick",
+ "file": "textures/brick.tga", "format": "DXT1", "mips": true}
+```
+
+- `file`: `.bmp`, `.tga`, `.pcx` or `.dds`. A relative path is relative to the
+  change file's folder (the workflow API takes `baseDirectory` for this).
+- Both sides must be powers of two, each up to 8,192. The texture keeps the file's
+  full resolution. 4,096 is the practical size: the 32-bit editor and game hold a
+  system-memory copy of every texture.
+- `format`: `DXT1` (default), `DXT3`, `DXT5` (alpha) or `RGBA8` (uncompressed).
+  A `.dds` file keeps its own DXT format and mip chain, so omit `format` for it.
+- `mips` (default `true`) builds the whole mip chain down to 1x1. `masked` and
+  `alphaTexture` (default `false`) are the importer's MASKED and ALPHATEXTURE
+  flags. `lodSet` (0-15) is passed through to the importer.
+- `group` is optional. The texture's path is `Package.Group.Name` (or
+  `Package.Name`). Importing over an existing texture is rejected.
+
+The import is checked after it runs: the texture must exist with the file's size
+and the requested format.
+
+### Save a package
+
+```json
+{"op": "save", "package": "CisternHR", "overwrite": false}
+```
+
+Saves the package to `Packages\Textures\<package>.utx`. Only a package that an
+earlier `load` or `texture` operation in the same file names can be saved. An
+existing file is replaced only with `"overwrite": true`, and is first copied to
+`System\ReloadedEditor\map-json-backups`. Save the package before saving a map
+that uses its textures; the map stores references, not the images.
+
+### Create a brush from polygons
+
+```json
+{
+  "op": "create", "id": "Hall", "class": "Engine.Brush", "geometry": "polygons",
+  "properties": {"Location": {"X": "0", "Y": "0", "Z": "256"}, "CsgOper": "CSG_Subtract"},
+  "polygons": [
+    {"texture": "CisternHR.Walls.Brick", "flags": 0,
+     "origin": [0, 0, 0], "textureU": [0, 1, 0], "textureV": [0, 0, -1], "pan": [0, 0],
+     "vertices": [[768, -768, -256], [768, 768, -256], [768, 768, 256], [768, -768, 256]]}
+  ]
+}
+```
+
+`geometry: "polygons"` works for every brush class (CSG brushes and volumes),
+beside `"box"`. Each polygon has 3-16 `vertices` as numbers in the brush's local
+space (relative to `Location`), in the same winding the editor uses for brush
+faces (the box brush's faces are an example). The other keys are optional:
+`texture` (`Package.Group.Name`, loaded or imported by this file), `flags`
+(PolyFlags, unsigned 32-bit), `origin`, `textureU`, `textureV` (the UV basis; the
+editor picks one when both are absent) and `pan` (`[U, V]` integers). A brush holds
+up to 16,384 polygons.
+
+The editor's text importer converts vertices to floats, drops coincident points
+and computes each normal. A polygon it would discard or reshape (too few distinct
+points, collinear points, a 17th vertex) rejects the file, with the operation id
+and polygon index. Split larger faces yourself. Closing and convexity of each brush
+are not checked; CSG needs closed, convex brushes. CSG brushes take `CsgOper`
+(default `CSG_Add`) and `PolyFlags` as properties. Rebuild geometry after import.
+
+### Texture BSP surfaces
+
+```json
+{"op": "surface", "surfaces": [0, 1, 17], "texture": "CisternHR.Walls.Brick"}
+```
+
+Applies a material to BSP surfaces by index, as **Apply Texture** does, which also
+updates the brush polygons that own them. The indices are those of the map's
+current BSP, so rebuild geometry first; a file that also creates brushes changes
+the BSP only after its own rebuild. Up to 2,000,000 unique indices per operation.
+
+### Example
+
+A generated map usually uses two files: the first loads packages, imports and
+saves its textures, and creates the brushes and actors; then rebuild geometry and
+optionally apply a second file with `surface` operations; then save the map.
+
+## Version 2 verification
+
+Validation on 2026-09-28: Release/Win32 build and `MapAuthoringModelTests` passed.
+A headless editor run on a disposable game copy (Packages\Textures copied, not
+linked) applied a version 2 file to a new map (`"map": "*"`): loaded `Bunker`,
+imported a 2048x1024 TGA as DXT5, a 512x512 BMP as DXT1 and as RGBA8 with and
+without mips, and a 256x256 DXT1 DDS with its mips, saved the package, pasted a
+subtractive room and an additive pillar from textured polygons plus a light and a
+player start, rebuilt, textured two BSP surfaces, then reloaded and re-saved the
+package with `overwrite` (backup written). The saved package held every texture
+at full size with a complete mip chain (12 levels for 2048x1024), decoded within
+1.5/255 mean error of the source images; the map export showed the polygon textures
+and the two retextured faces.
+
+This run also found that pasting a plain `Engine.Brush` without a CSG operation
+created no actor (the paste treats a `CSG_Active` brush as the builder brush), so
+version 1 `"box"` brushes of class `Engine.Brush` failed. The paste now carries
+`CsgOper` (default `CSG_Add`) for CSG brushes; volumes are unchanged.
 
 ## Ordering, validation and failure
 

@@ -9,6 +9,7 @@
 #include "MagicEventWorkbench.h"
 #include "CameraNetworkPanel.h"
 #include "MapAuthoringDialog.h"
+#include "MapAuthoringModel.h"
 #include "MapPackageDialog.h"
 #include "MapRecovery.h"
 #include "MemoryWriter.h"
@@ -923,8 +924,8 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="design.play"){Editor::DesignPlay(q.at("start"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()},q.value("launch",false));result=true;}
         else if(op=="package.preview") {MapPackageDialog::Preview(GetActiveWindow(),q.at("map").get<std::string>());result=true;}
         else if(op=="authoring.export") result=Editor::ExportMapAuthoring();
-        else if(op=="authoring.preview") result=Editor::PreviewMapAuthoring(q.at("document"));
-        else if(op=="authoring.apply") result=Editor::ApplyMapAuthoring(q.at("document"));
+        else if(op=="authoring.preview"){auto document=q.at("document");Authoring::Rebase(document,Authoring::Utf8Path(q.value("baseDirectory",std::string{})));result=Editor::PreviewMapAuthoring(document);}
+        else if(op=="authoring.apply"){auto document=q.at("document");Authoring::Rebase(document,Authoring::Utf8Path(q.value("baseDirectory",std::string{})));result=Editor::ApplyMapAuthoring(document);}
         else if(op=="magic.classes") result=Editor::EventClasses();
         else if(op=="camera.snapshot") result=Editor::CameraNetworks();
         else if(op=="camera.order") {Editor::OrderCameras(q.at("snapshot"),q.at("paths"),q.value("loop",false),q.value("detach",std::string{}));result=true;}

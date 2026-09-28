@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "MapAuthoringDialog.h"
 #include "WorkflowEditor.h"
+#include "MapAuthoringModel.h"
 #include <commdlg.h>
 #include <fstream>
 #include <stdexcept>
@@ -42,7 +43,7 @@ namespace
     }
     bool Confirm(HWND owner,const Workflow::Json& preview,const Workflow::Json& document)
     {
-        auto map=document.at("map").get<std::string>();if(map.rfind("unsaved:",0)==0)map="Unsaved map (current editor session)";
+        auto map=document.at("map").get<std::string>();if(map.rfind("unsaved:",0)==0)map="Unsaved map (current editor session)";else if(map=="*")map="The map that is open";
         std::string text="Map: "+map+"\r\n"+document.value("description",std::string{})+"\r\n\r\n"+preview.at("note").get<std::string>()+"\r\n\r\n";
         for(const auto& line:preview.at("changes"))text+=line.get<std::string>()+"\r\n";
         Preview state{Wide(text)};
@@ -76,6 +77,7 @@ void Open(HWND owner,bool exporting)
         if(std::filesystem::file_size(path)>128*1024*1024)throw std::runtime_error("Change file exceeds 128 MiB.");
         std::ifstream input(std::filesystem::path(path),std::ios::binary);if(!input)throw std::runtime_error("Cannot read the change file.");
         auto document=Workflow::Json::parse(input,[](int depth,Workflow::Json::parse_event_t,Workflow::Json&){if(depth>64)throw std::runtime_error("Change file is nested too deeply.");return true;});
+        Workflow::Authoring::Rebase(document,std::filesystem::path(path).parent_path()); // Texture files beside the change file.
         auto preview=Workflow::Editor::PreviewMapAuthoring(document);
         const auto level=Workflow::Editor::LevelIdentity();const auto generation=Workflow::Editor::MapGeneration();const auto revision=Workflow::Editor::Revision();
         if(!Confirm(owner,preview,document))return;
