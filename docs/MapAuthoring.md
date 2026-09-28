@@ -236,8 +236,10 @@ and sounds available to later operations.
 - `group` is optional. The texture's path is `Package.Group.Name` (or
   `Package.Name`). Importing over an existing texture is rejected.
 
-The import is checked after it runs: the texture must exist with the file's size
-and the requested format.
+The preview reads each image's header and lists its size, so a missing file or a
+size that is not a power of two is refused before anything changes. The import is
+checked after it runs: the texture must exist with the file's size and the
+requested format.
 
 ### Save a package
 
@@ -311,6 +313,14 @@ package with `overwrite` (backup written). The saved package held every texture
 at full size with a complete mip chain (12 levels for 2048x1024), decoded within
 1.5/255 mean error of the source images; the map export showed the polygon textures
 and the two retextured faces.
+
+The same run drove **View > Import Map from JSON...** through its real file dialog
+and preview with version 2 files whose texture paths are relative to the change
+file. It checked four things. A cancelled preview left the map and packages
+unchanged. A missing image was refused with an error before any change. An applied
+file imported the textures, saved the package and created the four actors. A
+second file textured two BSP surfaces. The preview showed "The map that is open",
+the note about package changes, and each texture's size.
 
 This run also found that pasting a plain `Engine.Brush` without a CSG operation
 created no actor (the paste treats a `CSG_Active` brush as the builder brush), so

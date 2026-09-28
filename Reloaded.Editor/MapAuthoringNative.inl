@@ -63,6 +63,16 @@ namespace
         auto at=object+Read<int>(p+0x3c);
         return IsA(p,"ByteProperty")?Read<unsigned char>(at):Read<int>(at);
     }
+    // The image a texture operation names, checked the way the editor's importer will (readable, powers of two).
+    std::pair<uint32_t,uint32_t> AuthoringImage(const Json& op)
+    {
+        const std::filesystem::path file=Authoring::Utf8Path(op.at("file").get<std::string>());
+        if(file.is_relative())throw std::runtime_error("Texture files need an absolute path, or a path relative to the change file: "+file.string());
+        std::ifstream input(file,std::ios::binary);if(!input)throw std::runtime_error("Cannot read "+file.string());
+        std::string header(64,'\0');input.read(header.data(),header.size());header.resize(static_cast<size_t>(input.gcount()));
+        try{return Authoring::ImageSize(header,Authoring::Extension(file.string()));}
+        catch(const std::exception& e){throw std::runtime_error(file.string()+": "+e.what());}
+    }
     // Asset operations run first, in file order. They are not part of the map's Undo.
     Json RunAuthoringAssets(const Json& document)
     {
@@ -83,10 +93,7 @@ namespace
             else if(kind=="texture")
             {
                 const std::filesystem::path file=Authoring::Utf8Path(op.at("file").get<std::string>());
-                if(file.is_relative())throw std::runtime_error("Texture files need an absolute path, or a path relative to the change file: "+file.string());
-                std::ifstream input(file,std::ios::binary);if(!input)throw std::runtime_error("Cannot read "+file.string());
-                std::string header(64,'\0');input.read(header.data(),header.size());header.resize(static_cast<size_t>(input.gcount()));
-                const auto extension=Authoring::Extension(file.string());const auto size=Authoring::ImageSize(header,extension);
+                const auto extension=Authoring::Extension(file.string());const auto size=AuthoringImage(op);
                 const auto path=Authoring::TexturePath(op),package=op.at("package").get<std::string>();
                 if(Find(path))throw std::runtime_error("A texture already exists at "+path+". Import under a new name.");
                 std::string command="TEXTURE IMPORT FILE=\""+file.string()+"\" NAME=\""+op.at("name").get<std::string>()+"\" PACKAGE=\""+package+"\"";
@@ -202,7 +209,8 @@ namespace
             if(kind=="load"){plan.summary.push_back("load package "+op.at("package").get<std::string>());continue;}
             if(kind=="texture")
             {
-                plan.summary.push_back("import texture "+Authoring::TexturePath(op)+" from "+op.at("file").get<std::string>()+" ("+op.value("format",std::string("file's own format"))+(op.value("mips",true)?", mips":", no mips")+")");continue;
+                const auto size=AuthoringImage(op);
+                plan.summary.push_back("import texture "+Authoring::TexturePath(op)+" "+std::to_string(size.first)+"x"+std::to_string(size.second)+" from "+op.at("file").get<std::string>()+" ("+op.value("format",std::string("file's own format"))+(op.value("mips",true)?", mips":", no mips")+")");continue;
             }
             if(kind=="save"){plan.summary.push_back("save package "+op.at("package").get<std::string>()+" to Packages\\Textures"+(op.value("overwrite",false)?" (replacing the file, backed up)":""));continue;}
             if(kind=="surface")
