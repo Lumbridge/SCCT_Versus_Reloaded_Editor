@@ -432,6 +432,43 @@ JMP_HOOK(0x10F10B84, BeforeCreateDevice) {
     }
 }
 
+// Same StretchRect + GetRenderTargetData route as QuickPopHit: the back buffer
+// may be multisampled, which GetRenderTargetData cannot read directly.
+bool Rendering::ReadBackBuffer(int width, int height, std::vector<uint32_t>& pixels, std::string& error)
+{
+    if (!pDevice9) { error = "The Direct3D device is not available."; return false; }
+    if (width <= 0 || height <= 0) { error = "The preview has no visible area."; return false; }
+    IDirect3DSurface9* back = nullptr;
+    if (FAILED(pDevice9->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &back)) || !back) { error = "The back buffer is not available."; return false; }
+    D3DSURFACE_DESC desc{};
+    back->GetDesc(&desc);
+    if (desc.Format != D3DFMT_X8R8G8B8 && desc.Format != D3DFMT_A8R8G8B8) { back->Release(); error = "The back buffer is not 32-bit."; return false; }
+    const int w = (std::min)(width, static_cast<int>(desc.Width)), h = (std::min)(height, static_cast<int>(desc.Height));
+    IDirect3DSurface9* copy = nullptr;
+    IDirect3DSurface9* system = nullptr;
+    bool ok = SUCCEEDED(pDevice9->CreateRenderTarget(w, h, desc.Format, D3DMULTISAMPLE_NONE, 0, FALSE, &copy, nullptr))
+        && SUCCEEDED(pDevice9->CreateOffscreenPlainSurface(w, h, desc.Format, D3DPOOL_SYSTEMMEM, &system, nullptr));
+    const RECT source = { 0, 0, w, h };
+    ok = ok && SUCCEEDED(pDevice9->StretchRect(back, &source, copy, nullptr, D3DTEXF_NONE))
+        && SUCCEEDED(pDevice9->GetRenderTargetData(copy, system));
+    D3DLOCKED_RECT locked{};
+    if (ok && SUCCEEDED(system->LockRect(&locked, nullptr, D3DLOCK_READONLY))) {
+        // Rows beyond a back buffer smaller than the viewport stay black.
+        pixels.assign(static_cast<size_t>(width) * height, 0xff000000u);
+        for (int y = 0; y < h; ++y) {
+            auto row = reinterpret_cast<const uint32_t*>(static_cast<const BYTE*>(locked.pBits) + static_cast<size_t>(y) * locked.Pitch);
+            for (int x = 0; x < w; ++x) pixels[static_cast<size_t>(y) * width + x] = row[x] | 0xff000000u;
+        }
+        system->UnlockRect();
+    }
+    else if (ok) ok = false;
+    if (!ok) error = "The preview frame could not be read back.";
+    if (system) system->Release();
+    if (copy) copy->Release();
+    back->Release();
+    return ok;
+}
+
 void Rendering::Initialize()
 {
     INSTALL_HOOKS;

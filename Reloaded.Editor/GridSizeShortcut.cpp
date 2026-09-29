@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "GridSizeShortcut.h"
 #include "StoreyFilter.h"
+#include "EmitterPreview.h"
 #include "GridSizeShortcutState.h"
 #include "MemoryWriter.h"
 #include <windowsx.h>
@@ -102,6 +103,10 @@ namespace
     bool __cdecl HandleViewportMessage(void* viewport, UINT message,
                                        WPARAM wParam, LPARAM lParam)
     {
+        // The emitter preview's own viewport takes all its mouse and keyboard input,
+        // so nothing done in the preview reaches the map or its selection.
+        if (EmitterPreview::ViewportMessage(viewport, message, wParam, lParam))
+            return true;
         const auto target = reinterpret_cast<uintptr_t>(viewport);
         if ((message == WM_KEYUP || message == WM_SYSKEYUP)
             && (wParam == VK_CONTROL || wParam == VK_LCONTROL || wParam == VK_RCONTROL))

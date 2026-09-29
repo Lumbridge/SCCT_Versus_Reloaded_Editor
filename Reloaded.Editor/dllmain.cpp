@@ -40,6 +40,7 @@
 #include "MapCheckLog.h"
 #include "WorkflowTools.h"
 #include "PasteFix.h"
+#include "EmitterPreview.h"
 
 INIT_ONCE g_InitOnce = INIT_ONCE_STATIC_INIT;
 HINSTANCE g_hReloadedDll = nullptr;
@@ -156,6 +157,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     EngineLog::Initialize();
     MapCheckLog::Initialize();
     WorkflowTools::Initialize();
+    EmitterPreview::Initialize();
     BspDiagnostics::Initialize(dllPath);
     PasteFix::Initialize();
 
