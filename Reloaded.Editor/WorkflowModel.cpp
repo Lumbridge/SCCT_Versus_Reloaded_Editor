@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <random>
 #include <regex>
@@ -254,6 +255,78 @@ std::string RenameObjects(const std::string& text,const std::string& prefix)
     }
     return out;
 }
+std::vector<std::string> InlineObjectNames(const std::string& text)
+{
+    std::vector<std::string> names; std::istringstream input(text); std::string line;
+    while(std::getline(input,line))
+    {
+        auto l=Fold(Trim(line));
+        if(l.rfind("begin object ",0)==0 || l.rfind("begin brush ",0)==0) { auto name=Token(line,"Name"); if(!name.empty()) names.push_back(name); }
+    }
+    return names;
+}
+namespace
+{
+    // Native paste creates every inline sub-object with the map package as its
+    // outer (ImportProperties InParent, passed by the level factory at
+    // 0x110577f9), whatever outer it had when exported. A reference names it
+    // under that package (stock particle emitters, brush models) or under its
+    // owning actor (components the workbench creates with the actor as outer),
+    // so both spellings map to the object's new name. rename is called once
+    // per object, in actor order.
+    struct InlinePlan { std::vector<std::map<std::string,std::string>> names; std::map<std::string,std::string> references; };
+    InlinePlan PlanInline(const Json& actors,const std::function<std::string(const std::string&)>& rename)
+    {
+        InlinePlan plan; std::set<std::string> actorPaths;
+        for(const auto& actor:actors) actorPaths.insert(Fold(actor.at("path").get<std::string>()));
+        for(const auto& actor:actors)
+        {
+            const auto path=actor.at("path").get<std::string>(); const auto package=path.substr(0,path.find_last_of('.')+1);
+            auto& names=plan.names.emplace_back();
+            for(const auto& name:InlineObjectNames(actor.at("text").get<std::string>()))
+            {
+                if(names.count(Fold(name))) continue;
+                const auto renamed=rename(name); names[Fold(name)]=renamed;
+                plan.references[Fold(path+"."+name)]=renamed;
+                // A shared object is exported once, inline in the first actor using it.
+                if(!actorPaths.count(Fold(package+name))) plan.references.emplace(Fold(package+name),renamed);
+            }
+        }
+        return plan;
+    }
+    // A particle emitter's Name string that spells its object's name follows
+    // the rename: native import resets it to the object's name (a pasted
+    // RE_x_SpriteEmitter6 reads back Name="RE_x_SpriteEmitter6"), so leaving
+    // it would carry the last placement prefix into the next save.
+    std::string RenameInline(const std::string& text,const std::map<std::string,std::string>& names)
+    {
+        std::istringstream input(text); std::string line,out; std::vector<std::pair<std::string,std::string>> blocks;
+        const std::regex name("(\\bName=)(\"[^\"]*\"|[^\\s]+)",std::regex::icase),label("(\\s*Name=\")([^\"]*)(\"[\\s\\S]*)",std::regex::icase);
+        while(std::getline(input,line))
+        {
+            auto l=Fold(Trim(line)); std::smatch match;
+            if(l.rfind("begin ",0)==0)
+            {
+                std::pair<std::string,std::string> block;
+                if((l.rfind("begin object ",0)==0 || l.rfind("begin brush ",0)==0) && std::regex_search(line,match,name))
+                {
+                    auto n=match[2].str(); if(n.front()=='"') n=n.substr(1,n.size()-2);
+                    if(auto found=names.find(Fold(n));found!=names.end())
+                    {
+                        block={Fold(n),found->second};
+                        line.replace(static_cast<size_t>(match.position(2)),static_cast<size_t>(match.length(2)),found->second);
+                    }
+                }
+                blocks.push_back(block);
+            }
+            else if(l.rfind("end ",0)==0) { if(!blocks.empty()) blocks.pop_back(); }
+            else if(!blocks.empty() && !blocks.back().first.empty() && std::regex_match(line,match,label) && Fold(match[2].str())==blocks.back().first)
+                line=match[1].str()+blocks.back().second+match[3].str();
+            out+=line+"\n";
+        }
+        return out;
+    }
+}
 Json CanonicalizeAssembly(Json definition,const std::map<std::string,std::string>& memberNames)
 {
     // Instance prefixes are insertion details, not part of a library identity.
@@ -271,6 +344,16 @@ Json CanonicalizeAssembly(Json definition,const std::map<std::string,std::string
         auto base=name;int suffix=1;while(!used.insert(Fold(name)).second) name=base+"_"+std::to_string(suffix++);
         names[source]=name; paths[source]="Assembly."+name;
     }
+    // Inline sub-objects get the same treatment, and stay unique across the
+    // definition (components of different actors may share a name) and short
+    // enough that a 16-character placement prefix still fits the 64-byte
+    // Name= buffer of native import (push 0x40 at 0x1104c469).
+    auto plan=PlanInline(definition.at("actors"),[&](const std::string& original) {
+        auto base=unprefix(original); if(base.size()>40) base.resize(40);
+        auto name=base;int suffix=1;while(!used.insert(Fold(name)).second) name=base+"_"+std::to_string(suffix++);
+        return name;
+    });
+    auto references=paths; for(const auto& [path,name]:plan.references) references[path]="Assembly."+name;
     const std::regex actorName("(Begin Actor[^\\r\\n]*\\bName=)(\"[^\"]*\"|[^\\s]+)",std::regex::icase);
     std::map<std::string,std::string> tags; std::set<std::string> usedTags;
     for(const auto& actor:definition.at("actors"))
@@ -283,6 +366,7 @@ Json CanonicalizeAssembly(Json definition,const std::map<std::string,std::string
             tags[Fold(tag)]=value;
         }
     }
+    size_t index=0;
     for(auto& actor:definition.at("actors"))
     {
         auto path=actor.at("path").get<std::string>();auto name=names.at(path);auto text=actor.at("text").get<std::string>();
@@ -294,7 +378,8 @@ Json CanonicalizeAssembly(Json definition,const std::map<std::string,std::string
             auto key=Fold(property);auto value=actor.value(key,std::string{});auto tag=tags.find(Fold(value));
             if(tag!=tags.end()) {actor[key]=tag->second;text=SetProperty(text,property,tag->second);}
         }
-        actor["sourcePath"]=path;actor["name"]=name;actor["path"]=paths.at(path);actor["text"]=RewriteReferences(text,paths);
+        text=RenameInline(text,plan.names[index++]);
+        actor["sourcePath"]=path;actor["name"]=name;actor["path"]=paths.at(path);actor["text"]=RewriteReferences(text,references);
     }
     return definition;
 }
@@ -336,28 +421,30 @@ Json PreparePlacement(const Json& definition,const Pose& frame,const std::string
         if(binding.at("kind")=="object") paths[binding.at("path").get<std::string>()]=found->second;
         else tags[Fold(binding.at("path").get<std::string>())]=found->second.empty()?"None":found->second;
     }
-    std::string t3d="Begin Map\n";
+    // Nested object identities get the prefix too, and every reference to one
+    // names it where paste creates it: directly in the map package. A
+    // component exported under its actor keeps no actor segment.
+    std::set<std::string> used;
+    for(const auto& actor:definition.at("actors")) used.insert(Fold(prefix+actor.at("name").get<std::string>()));
+    auto plan=PlanInline(definition.at("actors"),[&](const std::string& original) {
+        auto base=prefix+original,name=base;int suffix=1;
+        while(!used.insert(Fold(name)).second) name=base+"_"+std::to_string(suffix++);
+        return name;
+    });
+    std::map<std::string,std::string> owned; for(const auto& [path,name]:plan.references) owned[path]=levelPath+"."+name;
+    const std::regex actorName("(Begin Actor[^\\r\\n]*\\bName=)(\"[^\"]*\"|[^\\s]+)",std::regex::icase);
+    std::string t3d="Begin Map\n"; size_t index=0;
     for(auto& actor:result.at("actors"))
     {
         auto text=actor.at("text").get<std::string>();
-        // Rename only nested object identities, with exact typed reference rewrites.
-        std::map<std::string,std::string> owned;
-        std::istringstream lines(text); std::string line;
-        while(std::getline(lines,line))
+        text=RewriteReferences(text,owned); text=RenameInline(text,plan.names[index++]);
+        std::smatch match;
+        if(std::regex_search(text,match,actorName))
         {
-            auto l=Fold(Trim(line));
-            if(l.rfind("begin object ",0)==0 || l.rfind("begin brush ",0)==0)
-            {
-                auto name=Token(line,"Name"); if(name.empty()) continue;
-                for(const auto& ref:References(text)) if(Fold(ref.path)==Fold(name) || (ref.path.size()>name.size() && Fold(ref.path.substr(ref.path.size()-name.size()-1))=="."+Fold(name)))
-                {
-                    bool underActor=false;
-                    for(const auto& entry:paths) if(Fold(ref.path).rfind(Fold(entry.first)+".",0)==0) underActor=true;
-                    owned[ref.path]=(underActor?ref.path.substr(0,ref.path.size()-name.size()):levelPath+".")+prefix+name;
-                }
-            }
+            auto name=match[2].str(); if(name.front()=='"') name=name.substr(1,name.size()-2);
+            text.replace(static_cast<size_t>(match.position(2)),static_cast<size_t>(match.length(2)),prefix+name);
         }
-        text=RewriteReferences(text,owned); text=RenameObjects(text,prefix); text=RewriteReferences(text,paths);
+        text=RewriteReferences(text,paths);
         for(const auto& prop:{"Tag","Event"})
         {
             auto old=actor.value(Fold(prop),std::string{}); auto found=tags.find(Fold(old));

@@ -366,6 +366,16 @@ namespace
             else if(pivot[0].value=="First selected actor")frame.position=snapshot.at("actors")[0].at("position").get<Vector>();
         }
         Json captured=Editor::CaptureAssembly(members,frame);
+        if(captured.contains("local"))
+        {
+            // Assets stored in this map exist only here; say so now rather
+            // than with a missing-package error when placing in another map.
+            std::string text="This selection uses assets stored inside this map:\n";
+            for(const auto& path:captured.at("local")) text+="  "+path.get<std::string>()+"\n";
+            text+="\nThe assembly will place correctly only in this map. Save it anyway?";
+            if(MessageBoxA(s.window,text.c_str(),"Map-local assets",MB_OKCANCEL|MB_ICONWARNING)!=IDOK) return;
+            captured.erase("local");
+        }
         auto names=session && s.instance.contains("names")?s.instance.at("names").get<std::map<std::string,std::string>>():std::map<std::string,std::string>{};
         if(update && !session)
         {
