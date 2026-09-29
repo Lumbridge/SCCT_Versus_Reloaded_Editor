@@ -2,6 +2,7 @@
 #include "../Reloaded.Editor/Include/nlohmann/json.hpp"
 #include <stdexcept>
 #include <map>
+#include <set>
 #include <filesystem>
 #include <commctrl.h>
 #include <commdlg.h>
@@ -258,7 +259,12 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
     try
     {
         auto oldLibrary=directory/"ReloadedEditor"/"library.json";
-        if(!restart && std::filesystem::exists(oldLibrary)) std::filesystem::rename(oldLibrary,directory/"ReloadedEditor"/("library-before-"+std::to_string(GetTickCount64())+".json"));
+        // A copied install's own libraries (hidden built-ins, a damaged file) must not change the counts.
+        for(const auto* file:{"library","emitter_library"})
+        {
+            auto old=directory/"ReloadedEditor"/(std::string(file)+".json");
+            if(!restart && std::filesystem::exists(old)) std::filesystem::rename(old,directory/"ReloadedEditor"/(std::string(file)+"-before-"+std::to_string(GetTickCount64())+".json"));
+        }
         using Request=int(__cdecl*)(const char*,char*,unsigned);
         auto request=reinterpret_cast<Request>(GetProcAddress(editorDll,"ReloadedWorkflowRequest"));
         if(!request) request=reinterpret_cast<Request>(GetProcAddress(editorDll,"_ReloadedWorkflowRequest"));
@@ -2074,8 +2080,10 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
         {
             // Built-in Emitter Library (tools/emitter_library): every bundled entry
             // places with each Emitters(i) a live sub-emitter in the map package,
-            // loads the textures and sounds it names and reaches them from the
-            // placed actor, and undoes in one step.
+            // loads the textures and sounds it names, and undoes in one step. The
+            // placed actors' own export names each dependency and capture resolves
+            // every exported reference (FindUsages does not follow particle
+            // emitters: DependsOn reads only materials and meshes).
             auto builtinActors=call({{"op","actors"}}).size();size_t builtins=0;
             for(const auto& entry:call({{"op","emitterlib.list"}}))
             {
@@ -2089,13 +2097,11 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                     bool live=!emitters.empty();for(const auto& e:emitters)live=live && e.get<std::string>().find("'MyLevel.RE_")!=std::string::npos;
                     require(live,("built-in "+id+" references live sub-emitters in the map").c_str());
                 }
+                auto fold=[](std::string text){for(auto& c:text)c=static_cast<char>(::tolower(static_cast<unsigned char>(c)));return text;};
+                std::set<std::string> reached;
+                for(const auto& dependency:call({{"op","assembly.capture"},{"members",placed},{"position",{0,-1536,256}},{"rotation",{0,0,0}}}).at("dependencies"))reached.insert(fold(dependency.get<std::string>()));
                 for(const auto& dependency:entry.at("dependencies"))
-                {
-                    if(dependency=="Engine.Emitter")continue;
-                    bool reached=false;
-                    for(const auto& row:call({{"op","usages"},{"asset",dependency}}))for(const auto& actor:placed)reached=reached || row.at("actor")==actor;
-                    require(reached,("built-in "+id+" loads and uses "+dependency.get<std::string>()).c_str());
-                }
+                    require(reached.count(fold(dependency.get<std::string>()))!=0,("built-in "+id+" loads and uses "+dependency.get<std::string>()).c_str());
                 Exec("TRANSACTION UNDO");++builtins;
             }
             require(builtins>=30 && call({{"op","actors"}}).size()==builtinActors,"every built-in emitter places and undoes");

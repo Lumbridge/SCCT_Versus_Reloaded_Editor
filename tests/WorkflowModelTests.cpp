@@ -100,6 +100,25 @@ int main()
         auto pair=PreparePlacement(emitterDefinition(Json::array({emitterActor(component,"Emitter_Magic_1"),emitterActor(std::regex_replace(component,std::regex("Emitter_Magic_1"),"Emitter_Magic_2"),"Emitter_Magic_2")})),Pose{},"I_","Other",{});
         const std::string pairText=pair["t3d"];
         Check(pairText.find("Name=I_SpriteEmitter6\r\n")!=npos && pairText.find("Name=I_SpriteEmitter6_1\r\n")!=npos && pairText.find("'\"Other.I_SpriteEmitter6_1\"'")!=npos,"raw components sharing a name get distinct placed names");
+        // A definition saved before sub-objects were canonicalized keeps actor
+        // paths Assembly.X but package-level references as captured.
+        std::string oldBrush="Begin Actor Class=Brush Name=Brush1436\r\n    Begin Brush Name=Model1438\r\n       Begin PolyList\r\n       End PolyList\r\n    End Brush\r\n    Brush=Model'MyLevel.Model1438'\r\nEnd Actor\r\n";
+        std::string oldEmitter="Begin Actor Class=Emitter Name=Emitter5\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter6\r\n        Name=\"SpriteEmitter6\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'MyLevel.SpriteEmitter6'\r\nEnd Actor\r\n";
+        auto savedActor=[&](const std::string& text,const std::string& name){auto actor=emitterActor(text,name);actor["path"]="Assembly."+name;actor["sourcePath"]="MyLevel."+name;return actor;};
+        auto legacy=emitterDefinition(Json::array({savedActor(oldBrush,"Brush1436"),savedActor(oldEmitter,"Emitter5")}));
+        for(const std::string level:{"MyLevel","Other"})
+        {
+            const std::string t3d=PreparePlacement(legacy,Pose{},"RE_aaaaaaaaaaaa_",level,{})["t3d"];
+            Check(t3d.find("Begin Brush Name=RE_aaaaaaaaaaaa_Model1438\r\n")!=npos && t3d.find("Brush=Model'\""+level+".RE_aaaaaaaaaaaa_Model1438\"'")!=npos,"an older saved brush references its own placed model");
+            Check(t3d.find("Name=RE_aaaaaaaaaaaa_SpriteEmitter6\r\n")!=npos && t3d.find("Emitters(0)=SpriteEmitter'\""+level+".RE_aaaaaaaaaaaa_SpriteEmitter6\"'")!=npos && t3d.find("'MyLevel.Model1438'")==npos && t3d.find("'MyLevel.SpriteEmitter6'")==npos,"an older saved stock emitter references its own placed sub-emitter");
+        }
+        const std::string migrated=CanonicalizeAssembly(legacy,{})["actors"][0]["text"];
+        Check(migrated.find("Brush=Model'\"Assembly.Model1438\"'")!=npos,"saving an older definition again names its sub-objects under Assembly");
+        // Older captures also listed a stock sub-emitter as a dependency.
+        legacy["dependencies"]=Json::array({"Engine.Brush","Engine.Emitter","GAR_TXT.BSP.GAR_beton","MyLevel.SpriteEmitter6","MyLevel.Trigger3"});
+        Check(PlacementDependencies(legacy)==Json::array({"Engine.Brush","Engine.Emitter","GAR_TXT.BSP.GAR_beton","MyLevel.Trigger3"}),"an older definition's own sub-emitter is not a placement dependency");
+        auto current=fx;current["dependencies"]=Json::array({"Engine.Emitter","sfx.Emitter.smoke_grenade"});
+        Check(PlacementDependencies(current)==current["dependencies"],"a current definition places with every listed dependency");
         auto longName=emitterDefinition(Json::array({emitterActor("Begin Actor Class=Emitter Name=E\r\nBegin Object Class=SpriteEmitter Name=RE_0123456789ab_"+std::string(55,'x')+"\r\nEnd Object\r\nEnd Actor\r\n","E")}));
         Check(InlineObjectNames(CanonicalizeAssembly(longName,{})["actors"][0]["text"]).at(0).size()==40,"long sub-object names are shortened to leave room for a prefix");
         Json entries=Json::array({{{"id","view1"},{"name","Roof"},{"cameras",Json::array()}}});
