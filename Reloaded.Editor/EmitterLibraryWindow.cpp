@@ -229,9 +229,10 @@ void Fill(State& s)
     // A new search starts at the top of its results.
     const bool searched=filter!=s.filter;s.filter=filter;
     s.filtered=!filter.empty();
+    // Categories group ignoring case (packs and user entries may spell one differently); the first spelling names the group.
     std::vector<std::string> order;std::map<std::string,size_t> category;
-    for(const auto& c:*s.library.categories)if(category.emplace(c.get<std::string>(),order.size()).second)order.push_back(c.get<std::string>());
-    for(const auto& entry:entries)if(category.emplace(entry.at("category").get<std::string>(),order.size()).second)order.push_back(entry.at("category").get<std::string>());
+    for(const auto& c:*s.library.categories)if(category.emplace(Fold(c.get<std::string>()),order.size()).second)order.push_back(c.get<std::string>());
+    for(const auto& entry:entries)if(category.emplace(Fold(entry.at("category").get<std::string>()),order.size()).second)order.push_back(entry.at("category").get<std::string>());
     struct Source{std::string key,label;};std::vector<Source> sources;
     const bool bySource=!s.library.packs->empty();
     if(bySource)
@@ -247,7 +248,7 @@ void Fill(State& s)
     {
         if(!Matches(s,i,filter))continue;
         auto from=bySource?source.find(SourceKey(entries[i])):source.begin();if(from==source.end())continue;
-        rows[from->second][category.at(entries[i].at("category").get<std::string>())].push_back(i);
+        rows[from->second][category.at(Fold(entries[i].at("category").get<std::string>()))].push_back(i);
     }
     // Without a selection the tree does not select each next item while deleting (much faster with packs).
     s.filling=true;SendMessage(s.tree,WM_SETREDRAW,FALSE,0);TreeView_SelectItem(s.tree,nullptr);TreeView_DeleteAllItems(s.tree);s.groups.clear();s.pending.clear();s.bySource=bySource;

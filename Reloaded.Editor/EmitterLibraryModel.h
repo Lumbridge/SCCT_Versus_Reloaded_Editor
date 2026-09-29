@@ -310,8 +310,12 @@ inline Json ReadPack(Json document,const std::string& file)
             Detail::Unflag(entry);
             auto field=[&](const char* key){return entry.is_object() && entry.contains(key) && entry.at(key).is_string()?entry.at(key).get<std::string>():std::string{};};
             const auto entryId=field("id"),entryName=field("name");
-            if(PackOfId(entryId)!=id)throw std::runtime_error("Emitter Library entry '"+entryName+"' is invalid: its id "+(entryId.empty()?std::string("is missing."):entryId+" does not start with pack."+id+"."));
+            const auto prefix="pack."+id+".";
+            if(entryId.empty() || entryId.rfind(prefix,0)!=0)throw std::runtime_error("Emitter Library entry '"+entryName+"' is invalid: its id "+(entryId.empty()?std::string("is missing."):entryId+" does not start with "+prefix));
+            if(!IsPackEntryId(entryId))throw std::runtime_error("Emitter Library entry '"+entryName+"' is invalid: its id "+entryId+(entryId.size()>64?" is longer than 64 characters.":" may only use a-z, 0-9, '_', '.' and '-' after "+prefix));
             Validate(entry);
+            // One spelling per category: a default's, else the first this pack uses.
+            entry["category"]=CleanCategory(entry.at("category").get<std::string>(),entries);
             if(!ids.insert(entryId).second)throw std::runtime_error("Emitter Library entry '"+entryName+"' repeats the id of an earlier entry ("+entryId+").");
             entry["builtin"]=false;entry["readonly"]=true;entry["pack"]=id;entries.push_back(std::move(entry));
         }

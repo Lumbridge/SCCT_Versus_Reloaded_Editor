@@ -149,3 +149,28 @@ reject {"op":"emitterlib.delete","id":"pack.testbig.e1_burning_barrel"}
 workflow@pk3 {"op":"emitterlib.packs"}
 expect pk3 | /1/hidden | == | 0
 mem@m3
+# A pack file another program holds open is tried again on its own, at most every 500 ms; the list is rebuilt only once it reads.
+workflow@r0 {"op":"emitterlib.cache"}
+copyfile {PACKS}\retry.json | {ROOT}\System\ReloadedEditor\EmitterPacks\retry.json
+lock {ROOT}\System\ReloadedEditor\EmitterPacks\retry.json
+workflow@r1 {"op":"emitterlib.cache"}
+expect r1 | /packReads | > | {"$from":"r0","pointer":"/packReads"}
+workflow@pr4 {"op":"emitterlib.problems"}
+expect pr4 | / | has | "Effect pack retry.json is not listed: it cannot be read"
+workflow@r2 {"op":"emitterlib.cache"}
+expect r2 | /revision | == | {"$from":"r1","pointer":"/revision"}
+wait 700
+workflow@r3 {"op":"emitterlib.cache"}
+expect r3 | /revision | == | {"$from":"r1","pointer":"/revision"}
+expect r3 | /packReads | > | {"$from":"r1","pointer":"/packReads"}
+unlock {ROOT}\System\ReloadedEditor\EmitterPacks\retry.json
+wait 700
+workflow@r4 {"op":"emitterlib.cache"}
+expect r4 | /revision | > | {"$from":"r1","pointer":"/revision"}
+workflow@pk4 {"op":"emitterlib.packs"}
+expect pk4 | / | has | "testretry"
+workflow@pr5 {"op":"emitterlib.problems"}
+expect pr5 | / | lacks | "cannot be read"
+workflow@r5 {"op":"emitterlib.cache"}
+expect r5 | /packReads | == | {"$from":"r4","pointer":"/packReads"}
+expect r5 | /revision | == | {"$from":"r4","pointer":"/revision"}

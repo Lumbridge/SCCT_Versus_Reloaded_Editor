@@ -207,6 +207,12 @@ int main()
         for(const auto& e:swrc["emitters"])Check(e["builtin"]==false && e["readonly"]==true && e["pack"]=="swrc" && !e.contains("modified"),"pack entries are flagged read-only in memory and need no modified time");
         const Json skipped=swrc["problems"];Check(Has(skipped[0].get<std::string>(),"'Test swrc' (swrc.json)") && Has(skipped[0].get<std::string>(),"does not start with pack.swrc.") && Has(skipped[1].get<std::string>(),"does not start with pack.swrc.")
             && Has(skipped[2].get<std::string>(),"repeats the id") && Has(skipped[3].get<std::string>(),"no actors"),"skipped pack entries are named with their pack and file");
+        auto cased=Library::ReadPack(packDocument("cased",{packEntry("pack.cased.a","A","fire"),packEntry("pack.cased.b","B","Blasters"),packEntry("pack.cased.c","C","blasters"),packEntry("pack.cased.d","D","dust & DEBRIS")}),"cased.json");
+        Check(cased["emitters"].size()==4 && cased["emitters"][0]["category"]=="Fire" && cased["emitters"][1]["category"]=="Blasters" && cased["emitters"][2]["category"]=="Blasters" && cased["emitters"][3]["category"]=="Dust & Debris",
+            "pack categories take a default's spelling, else the first spelling in the pack");
+        auto badIds=Library::ReadPack(packDocument("swrc",{packEntry("pack.swrc."+std::string(55,'a'),"Long"),packEntry("pack.swrc.Bad","Upper"),packEntry("pack.swrcx.a","Other")}),"ids.json");
+        Check(badIds["emitters"].empty() && badIds["problems"].size()==3 && Has(badIds["problems"][0].get<std::string>(),"is longer than 64 characters") && !Has(badIds["problems"][0].get<std::string>(),"does not start")
+            && Has(badIds["problems"][1].get<std::string>(),"may only use a-z, 0-9") && Has(badIds["problems"][2].get<std::string>(),"does not start with pack.swrc."),"a bad pack entry id gets the reason it is bad");
         auto packFails=[&](const Json& document){return Reject([&]{Library::ReadPack(document,"bad.json");});};
         Check(Has(packFails(Json::array()),"Effect pack bad.json is not listed"),"a pack that is not an object is refused by file name");
         const auto emptyPack=packDocument("swrc",Json::array());
