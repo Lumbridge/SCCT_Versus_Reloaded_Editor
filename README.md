@@ -60,7 +60,7 @@ Recovered maps keep their original baked lighting through ordinary builds. Recov
 | **Select Brush** | Select the source brush from a BSP surface. |
 | **Grid snapping** | Right-click a brush face or vertices to snap them to the grid per axis; **Ctrl + mouse wheel** changes the grid size. |
 | **Fit builder brush** | Right-click selected meshes or brushes to enclose them in the builder brush, including rotated brushes. |
-| **Quick portal** | In Vertex Editing, select four coplanar corners and right-click **Add portal (1 unit thick)**. Creates an invisible, non-solid zone portal centred on their plane, with Undo/Redo. |
+| **Quick portal** | In Vertex Editing, select four coplanar corners and right-click **Add portal sheet**. Creates a single invisible, non-solid zone portal polygon whose corners are the selected corners, like the stock Add Special zone portal on a sheet brush, with Undo/Redo. |
 | **Reloaded Shortcuts** | **Help > Reloaded Shortcuts...** lists every key, mouse gesture and menu the patch adds, with the Geometric Event keys as configured. |
 | **Fixes** | Playtests launch at the monitor's resolution, off-screen property windows come back, a missing builder brush is repaired, larger BSP point counts are supported, and crashes are logged. |
 

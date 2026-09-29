@@ -133,8 +133,14 @@ Use `-BrushGridSnapOnly -GenerateFixture` for the focused native snapping run.
 This run also checks builder fitting against the displayed vertices of a brush
 rotated on all three axes, and four-corner portal creation, native portal flags,
 source vertex selection preservation, menu availability and one-step Undo/Redo.
-The model suite checks one-unit portal thickness on rotated planes, unordered
-corners and repeated polygon copies, and rejects non-planar or concave selections.
+The portal is one sheet polygon whose world corners are the selected corners,
+with the sheet flags on actor and polygon and no rotation or pivot.
+A thin sliver of corners disables the menu item and adds nothing, and a failed
+property edit rolls back without leaving a Redo step that would replay it.
+The model suite checks that the portal sheet's corners are the selected corners
+on vertical, horizontal and slanted planes, with unordered corners and repeated
+polygon copies, and rejects non-planar, concave, non-four selections and ones
+with an edge under one unit or under one square unit of area.
 This also checks the vertex right-click popup, selection preservation on cancel,
 world-space selected-corner alignment, exact preservation of unselected vertices,
 shared polygon corners, and vertex Undo/Redo.

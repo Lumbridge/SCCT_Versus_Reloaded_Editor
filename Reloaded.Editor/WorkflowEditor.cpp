@@ -320,7 +320,17 @@ namespace
         void Commit() { if(!ended) { Call(buffer,0x68); ended=true; } }
         ~Transaction()
         {
-            if(!ended) { Call(buffer,0x68); Call<int>(buffer,0x78); }
+            if(ended) return;
+            Call(buffer,0x68);
+            // Undo (0x11059990) keeps the rolled-back record for Redo, which
+            // would replay the half-done operation. Drop it the way native Begin
+            // (0x1105ad61) cancels the redo queue: TArray<FTransaction>::Remove
+            // (0x110590e0) on UndoBuffer (+0x28, Num +0x2c), UndoCount (+0x34)=0.
+            if(Call<int>(buffer,0x78) && Read<int>(buffer+0x34)==1)
+            {
+                reinterpret_cast<void(__thiscall*)(void*,int,int)>(0x110590e0)(reinterpret_cast<void*>(buffer+0x28),Read<int>(buffer+0x2c)-1,1);
+                Write(buffer+0x34,0);
+            }
         }
     };
     thread_local const char* insertionText=nullptr;
@@ -834,9 +844,15 @@ bool CanAddVertexPortal()
 }
 Json AddVertexPortal()
 {
-    auto solid=SelectedPortalGeometry();Vector center{};
-    for(const auto& face:solid.faces)for(const auto& p:face)for(int a=0;a<3;++a)center[a]+=p[a]/24;
-    for(auto& face:solid.faces)for(auto& p:face)for(int a=0;a<3;++a)p[a]-=center[a];
+    // The sheet's corners are the selected corners. The brush sits at their
+    // centre, rounded to the float Location stores first, so Location plus each
+    // relative corner lands back on the selected corner. PrePivot stays zero and
+    // so does Rotation, which the geometry build's brush coordinates
+    // (0x10eb2eb0) ignore.
+    auto solid=SelectedPortalGeometry();auto& sheet=solid.faces.at(0);Vector center{};
+    for(const auto& p:sheet)for(int a=0;a<3;++a)center[a]+=p[a]/4;
+    for(auto& c:center)c=static_cast<float>(c);
+    for(auto& p:sheet)for(int a=0;a<3;++a)p[a]-=center[a];
     auto definition=Design::SolidDefinition({solid});
     auto prepared=PreparePlacement(definition,{center,{}},"Portal_"+Id().substr(0,12)+"_",LevelPath(),{});
     if(!pasteHookReady || insertionText)throw std::runtime_error("Native brush insertion is unavailable or busy.");
@@ -860,9 +876,15 @@ Json AddVertexPortal()
             if(!actor)throw std::runtime_error("Could not create the portal brush.");
             Modify(actor);
             Write(Field(actor,"PrePivot"),std::array<float,3>{});
-            Write(Field(actor,"PolyFlags"),Design::kPortalPolyFlags);
+            // The build skips cutting world surfaces only for a non-solid
+            // actor (0x1108652e), so the flags go on the actor too.
+            Write(Field(actor,"PolyFlags"),Design::kPortalSheetFlags);
             SetPosition(actor,item.at("position").get<Vector>());
             Write(Field(actor,"Rotation"),Rotation{});Call(actor,0x44);members.push_back(Identity(actor));
+            // The polygon importer drops a polygon that fails its check
+            // (0x110554c3), which would leave an empty brush.
+            auto model=Read<Address>(actor+0x238),polys=model?Read<Address>(model+0x50):0;
+            if(!polys || Read<int>(polys+0x2c)!=1)throw std::runtime_error("The portal sheet could not be made from these corners.");
         }
         if(SelectedIdentities().size()!=1)throw std::runtime_error("Unexpected number of portal brushes.");
         Select(before);transaction.Commit();
