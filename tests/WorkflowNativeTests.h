@@ -2293,8 +2293,18 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             require(rejected && call({{"op","preview.state"}})["particles"].get<int>()>0,"an entry with a missing texture package is refused and the previous preview stays");
             Exec("OBJ GARBAGE");auto collected=call({{"op","preview.state"}});
             require(collected["level"]==true && collected["viewport"]==true && collected["faulted"]==false,"emitter preview survives garbage collection");
-            call({{"op","preview.close"}});auto reattached=call({{"op","preview.open"}});
-            require(reattached["attached"]==true && reattached["parentIsHost"]==true && reattached["viewport"]==true,"emitter preview reattaches to a new host after its window closed");
+            // A viewport never moves between windows: closing deletes it through the engine
+            // (with its camera) and opening again creates a new one in the new host.
+            auto liveOf=[](const J& state,const char* cls){return state.contains("liveActorClasses")?state["liveActorClasses"].value(cls,0):-1;};
+            auto beforeClose=call({{"op","preview.state"}});
+            call({{"op","preview.close"}});auto closed=call({{"op","preview.state"}});
+            require(closed["viewport"]==false && closed["attached"]==false && closed["clientViewports"].get<int>()==beforeClose["clientViewports"].get<int>()-1
+                && liveOf(beforeClose,"Camera")==1 && liveOf(closed,"Camera")==0 && closed["viewportsClosed"].get<int>()==beforeClose["viewportsClosed"].get<int>()+1,"closing the emitter preview deletes its viewport and camera");
+            auto previewReopened=call({{"op","preview.open"}});
+            require(previewReopened["attached"]==true && previewReopened["parentIsHost"]==true && previewReopened["parentWindow"]==true && previewReopened["viewport"]==true && previewReopened["renDev"]==true
+                && previewReopened["clientViewports"]==beforeClose["clientViewports"] && liveOf(previewReopened,"Camera")==1 && previewReopened["viewportsOpened"].get<int>()==beforeClose["viewportsOpened"].get<int>()+1,"reopening the emitter preview opens a new viewport in its new host");
+            auto openAgain=call({{"op","preview.open"}});
+            require(openAgain["hwnd"]==previewReopened["hwnd"] && openAgain["viewportsOpened"]==previewReopened["viewportsOpened"],"opening the open preview again keeps its viewport");
             call({{"op","preview.clear"}});call({{"op","preview.close"}});
         }
         require(reinterpret_cast<Save>(0x10E0416B)(*reinterpret_cast<void**>(kEditor),destination)!=0,"save final workflow map for restart test");
