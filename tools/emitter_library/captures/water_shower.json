@@ -1,0 +1,37 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter10844",
+   "path": "Assembly.Emitter10844",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    15668,
+    -21048,
+    -26492
+   ],
+   "sourcePath": "MyLevel.Emitter10844",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter10844\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter10845\r\n        UseDirectionAs=PTDU_Up\r\n        Acceleration=(Z=-150.000000)\r\n        UseRotationFrom=PTRS_Actor\r\n        DrawStyle=PTDS_Brighten\r\n        MaxParticles=200\r\n        FadeOut=True\r\n        SpinParticles=True\r\n        UniformSize=True\r\n        AutomaticInitialSpawning=False\r\n        UseRandomSubdivision=True\r\n        SpinsPerSecondRange=(X=(Min=-0.200000,Max=0.200000))\r\n        StartSizeRange=(X=(Min=1.000000,Max=2.000000))\r\n        InitialParticlesPerSecond=70.000000\r\n        Texture=Texture'sfx.Rain.fx_gouttes'\r\n        TextureUSubdivisions=4\r\n        TextureVSubdivisions=4\r\n        LifetimeRange=(Min=2.000000,Max=2.000000)\r\n        StartVelocityRange=(X=(Min=30.000000,Max=50.000000))\r\n        Name=\"SpriteEmitter10845\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter10845\"'\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=15668,Yaw=-21048,Roll=-26492)\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Water",
+ "dependencies": [
+  "Engine.Emitter",
+  "sfx.Rain.fx_gouttes"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  -2964.857666015625,
+  2135.2431640625,
+  -521.5662841796875
+ ],
+ "source": "PrisD.Emitter10844"
+}

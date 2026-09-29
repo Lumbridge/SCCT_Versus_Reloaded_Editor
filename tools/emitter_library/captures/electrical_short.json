@@ -1,0 +1,39 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter3234",
+   "path": "Assembly.Emitter3234",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    -15856,
+    848,
+    -32768
+   ],
+   "sourcePath": "MyLevel.Emitter3234",
+   "tag": "electro_box_4",
+   "text": "Begin Actor Class=Emitter Name=Emitter3234\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter3235\r\n        Acceleration=(Z=-600.000000)\r\n        StartLocationOffset=(Z=-5.000000)\r\n        UseRotationFrom=PTRS_Actor\r\n        FadeOutStartTime=0.400000\r\n        MaxParticles=20\r\n        AutoResetTimeRange=(Min=3.000000,Max=5.000000)\r\n        FadeOut=True\r\n        ResetAfterChange=True\r\n        RespawnDeadParticles=False\r\n        Disabled=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        AutomaticInitialSpawning=False\r\n        SizeScale(0)=(RelativeTime=0.100000,RelativeSize=30.000000)\r\n        SizeScale(1)=(RelativeTime=1.000000,RelativeSize=1.000000)\r\n        StartSizeRange=(X=(Min=3.000000,Max=4.000000))\r\n        InitialParticlesPerSecond=150.000000\r\n        Texture=Texture'sfx.Impacts.spark_metal'\r\n        LifetimeRange=(Min=0.150000,Max=0.200000)\r\n        StartVelocityRange=(X=(Min=300.000000,Max=500.000000),Y=(Min=-100.000000,Max=100.000000),Z=(Min=-300.000000,Max=300.000000))\r\n        Name=\"SpriteEmitter3235\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter3235\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter3236\r\n        Acceleration=(Z=10.000000)\r\n        UseRotationFrom=PTRS_Actor\r\n        DrawStyle=PTDS_Brighten\r\n        ColorScale(0)=(RelativeTime=0.100000,Color=(A=255))\r\n        ColorScale(1)=(RelativeTime=0.500000,Color=(A=102))\r\n        ColorMultiplierRange=(X=(Min=0.500000,Max=0.500000),Y=(Min=0.500000,Max=0.500000),Z=(Min=0.500000,Max=0.500000))\r\n        MaxParticles=20\r\n        FadeOut=True\r\n        RespawnDeadParticles=False\r\n        Disabled=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        AutomaticInitialSpawning=False\r\n        UseRandomSubdivision=True\r\n        SizeScale(0)=(RelativeSize=5.000000)\r\n        SizeScale(1)=(RelativeTime=1.000000,RelativeSize=2.000000)\r\n        SizeScaleRepeats=0.000000\r\n        StartSizeRange=(X=(Min=5.000000,Max=10.000000))\r\n        InitialParticlesPerSecond=10000.000000\r\n        Texture=Texture'sfx.Flare.flare_fixe'\r\n        TextureUSubdivisions=1\r\n        TextureVSubdivisions=1\r\n        LifetimeRange=(Min=1.000000,Max=1.500000)\r\n        StartVelocityRange=(X=(Min=1000.000000,Max=1200.000000),Y=(Min=-100.000000,Max=100.000000),Z=(Min=-50.000000,Max=50.000000))\r\n        StartVelocityRadialRange=(Min=100.000000,Max=150.000000)\r\n        VelocityLossRange=(X=(Min=4.000000,Max=6.000000),Y=(Min=5.000000,Max=5.000000))\r\n        VelocityScale(0)=(RelativeVelocity=(X=500.000000))\r\n        VelocityScale(1)=(RelativeTime=1.000000,RelativeVelocity=(X=400.000000))\r\n        VelocityScale(2)=(RelativeTime=3.000000,RelativeVelocity=(X=50.000000))\r\n        Name=\"SpriteEmitter3236\"\r\n    End Object\r\n    Emitters(1)=SpriteEmitter'\"Assembly.SpriteEmitter3236\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter3237\r\n        Acceleration=(Z=-300.000000)\r\n        UseRotationFrom=PTRS_Actor\r\n        DrawStyle=PTDS_AlphaBlend\r\n        ColorScale(0)=(Color=(B=51,G=51,R=51,A=255))\r\n        ColorScale(1)=(RelativeTime=1.000000,Color=(B=204,G=153,R=102,A=153))\r\n        FadeOutStartTime=0.500000\r\n        StartLocationRange=(Y=(Min=-20.000000,Max=20.000000))\r\n        FadeOut=True\r\n        RespawnDeadParticles=False\r\n        Disabled=True\r\n        SpinParticles=True\r\n        UniformSize=True\r\n        AutomaticInitialSpawning=False\r\n        UseRandomSubdivision=True\r\n        SpinsPerSecondRange=(X=(Min=-1.000000,Max=1.000000),Z=(Min=-1.000000))\r\n        StartSpinRange=(X=(Min=-1.000000,Max=1.000000),Y=(Max=3.000000),Z=(Max=3.000000))\r\n        StartSizeRange=(X=(Min=6.000000,Max=10.000000))\r\n        InitialParticlesPerSecond=10000.000000\r\n        Texture=Texture'sfx.Emitter.glassbreaking3'\r\n        TextureUSubdivisions=4\r\n        TextureVSubdivisions=4\r\n        LifetimeRange=(Min=1.500000,Max=1.500000)\r\n        StartVelocityRange=(X=(Min=100.000000,Max=200.000000),Y=(Min=-30.000000,Max=30.000000),Z=(Min=-10.000000,Max=40.000000))\r\n        VelocityLossRange=(Y=(Min=1.000000,Max=1.000000))\r\n        Name=\"SpriteEmitter3237\"\r\n    End Object\r\n    Emitters(2)=SpriteEmitter'\"Assembly.SpriteEmitter3237\"'\r\n    bNetworkTrigger=True\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=-15856,Yaw=848,Roll=-32768)\n    Tag=electro_box_4\n    bDirectional=True\r\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Fire",
+ "dependencies": [
+  "Engine.Emitter",
+  "sfx.Emitter.glassbreaking3",
+  "sfx.Flare.flare_fixe",
+  "sfx.Impacts.spark_metal"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  1695.848876953125,
+  -489.5124206542969,
+  555.6520385742188
+ ],
+ "source": "ClubD.Emitter3234"
+}

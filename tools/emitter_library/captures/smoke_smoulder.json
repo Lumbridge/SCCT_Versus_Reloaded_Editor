@@ -1,0 +1,37 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter4538",
+   "path": "Assembly.Emitter4538",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter4538",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter4538\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter4539\r\n        Acceleration=(Z=20.000000)\r\n        DrawStyle=PTDS_AlphaBlend\r\n        FadeOutStartTime=2.000000\r\n        FadeInEndTime=2.000000\r\n        MaxParticles=15\r\n        StartLocationRange=(Y=(Min=-20.000000,Max=20.000000),Z=(Min=-20.000000,Max=20.000000))\r\n        FadeOut=True\r\n        FadeIn=True\r\n        SpinParticles=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        UseRandomSubdivision=True\r\n        SpinsPerSecondRange=(X=(Min=0.100000,Max=0.100000))\r\n        SizeScale(0)=(RelativeTime=3.000000,RelativeSize=8.000000)\r\n        StartSizeRange=(X=(Min=30.000000,Max=30.000000))\r\n        Texture=Texture'sfx.Emitter.smoke_grenade'\r\n        TextureUSubdivisions=4\r\n        TextureVSubdivisions=4\r\n        LifetimeRange=(Min=6.000000,Max=6.000000)\r\n        StartVelocityRange=(X=(Min=-10.000000,Max=-10.000000))\r\n        Name=\"SpriteEmitter4539\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter4539\"'\r\n    Location=(X=0,Y=0,Z=0)\n    HeatOpacity=0.980000\r\n    HeatIntensity=1.000000\r\n    Rotation=(Pitch=0,Yaw=0,Roll=0)\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Smoke",
+ "dependencies": [
+  "Engine.Emitter",
+  "sfx.Emitter.smoke_grenade"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  500.43170166015625,
+  -1022.6356201171875,
+  295.0
+ ],
+ "source": "BankD.Emitter4538"
+}

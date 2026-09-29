@@ -1,0 +1,38 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter257",
+   "path": "Assembly.Emitter257",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    -780,
+    -8132,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter257",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter257\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter259\r\n        Acceleration=(Z=30.000000)\r\n        UseRotationFrom=PTRS_Actor\r\n        DrawStyle=PTDS_AlphaBlend\r\n        FadeOut=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        UseRandomSubdivision=True\r\n        SizeScale(0)=(RelativeTime=1.000000,RelativeSize=2.500000)\r\n        SizeScaleRepeats=0.000000\r\n        StartSizeRange=(X=(Min=5.000000,Max=10.000000))\r\n        Texture=Texture'sfx.Emitter.smoke_grenade'\r\n        TextureUSubdivisions=4\r\n        TextureVSubdivisions=4\r\n        LifetimeRange=(Min=1.000000,Max=1.000000)\r\n        StartVelocityRange=(X=(Min=150.000000,Max=200.000000))\r\n        VelocityLossRange=(X=(Min=3.000000,Max=3.000000),Y=(Min=3.000000,Max=3.000000))\r\n        Name=\"SpriteEmitter259\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter259\"'\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=-780,Yaw=-8132,Roll=0)\n    HeatOpacity=0.980000\r\n    HeatIntensity=1.000000\r\n    AmbientSound=Sound'Amb_Gare.Ambiances.gar_moteurLoop'\r\n    SoundRadius=44.000000\r\n    SoundVolume=254\r\n    bDirectional=True\r\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Smoke",
+ "dependencies": [
+  "Amb_Gare.Ambiances.gar_moteurLoop",
+  "Engine.Emitter",
+  "sfx.Emitter.smoke_grenade"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  4572.8779296875,
+  1776.1707763671875,
+  19.2073974609375
+ ],
+ "source": "StatD.Emitter257"
+}

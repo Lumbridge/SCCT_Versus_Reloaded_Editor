@@ -1,0 +1,37 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter277",
+   "path": "Assembly.Emitter277",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter277",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter277\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter278\r\n        Acceleration=(Z=-180.000000)\r\n        DrawStyle=PTDS_AlphaBlend\r\n        FadeInEndTime=0.200000\r\n        MaxParticles=15\r\n        AutoResetTimeRange=(Min=1.000000,Max=1.000000)\r\n        FadeOut=True\r\n        FadeIn=True\r\n        RespawnDeadParticles=False\r\n        AutoReset=True\r\n        SpinParticles=True\r\n        UniformSize=True\r\n        AutomaticInitialSpawning=False\r\n        SpinsPerSecondRange=(X=(Min=-0.250000,Max=0.250000))\r\n        StartSizeRange=(X=(Min=50.000000,Max=150.000000))\r\n        InitialParticlesPerSecond=600.000000\r\n        Texture=Texture'Aquarium_TXT.Mer.FX_embrun'\r\n        LifetimeRange=(Min=2.000000,Max=3.000000)\r\n        InitialDelayRange=(Min=5.000000,Max=15.000000)\r\n        StartVelocityRange=(X=(Min=-50.000000,Max=50.000000),Y=(Min=-300.000000,Max=-400.000000),Z=(Min=300.000000,Max=700.000000))\r\n        VelocityLossRange=(Y=(Min=0.700000,Max=0.700000),Z=(Min=0.500000,Max=1.000000))\r\n        Name=\"SpriteEmitter278\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter278\"'\r\n    bNetworkTrigger=True\r\n    Location=(X=0,Y=0,Z=0)\n    HeatOpacity=0.980000\r\n    HeatIntensity=0.050000\r\n    EMFIntensity=0.050000\r\n    EMFOpacity=0.980000\r\n    DrawScale=3.000000\r\n    bIgnoreEchelonLighting=True\r\n    bIgnoreDynamicEchelonLighting=True\r\n    Rotation=(Pitch=0,Yaw=0,Roll=0)\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Water",
+ "dependencies": [
+  "Aquarium_TXT.Mer.FX_embrun",
+  "Engine.Emitter"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  4399.9306640625,
+  5091.00732421875,
+  -190.4168701171875
+ ],
+ "source": "AquaD.Emitter277"
+}
