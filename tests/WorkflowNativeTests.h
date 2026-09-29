@@ -2264,7 +2264,35 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             for(const auto& actor:applied["created"])states.push_back(call({{"op","magic.inspect"},{"actor",actor}}));
             std::ofstream(directory/"map_authoring_saved.json")<<states.dump(2);
         }
+        {
+            // Emitter Library live preview: a private level and viewport that never reach the map.
+            const std::string burst="Begin Actor Class=Emitter Name=Emitter602\n Begin Object Class=SpriteEmitter Name=SpriteEmitter604\n  Acceleration=(Z=20.000000)\n  DrawStyle=PTDS_Translucent\n  MaxParticles=15\n"
+                "  StartLocationRange=(Y=(Min=-20.000000,Max=20.000000))\n  RespawnDeadParticles=False\n  Disabled=True\n  AutomaticInitialSpawning=False\n  InitialParticlesPerSecond=1000.000000\n"
+                "  StartSizeRange=(X=(Min=30.000000,Max=30.000000))\n  Texture=Texture'sfx.Emitter.smoke_grenade'\n  MeshSpawningStaticMesh=StaticMesh'MyLevel.LocalMesh'\n  LifetimeRange=(Min=1.000000,Max=1.000000)\n  StartVelocityRange=(X=(Min=-10.000000,Max=-10.000000))\n"
+                "  Name=\"SpriteEmitter604\"\n End Object\n Emitters(0)=SpriteEmitter'MyLevel.SpriteEmitter604'\n AmbientSound=Sound'MyLevel.Hum'\n Location=(X=100,Y=200,Z=300)\n Tag=\"Smoke\"\nEnd Actor\n";
+            auto beforeActors=call({{"op","actors"}});auto undoBefore=call({{"op","preview.state"}})["undo"];
+            auto opened=call({{"op","preview.open"}});
+            require(opened["parentIsHost"]==true && opened["fillsHost"]==true,"emitter preview viewport is parented into and fills its host panel");
+            require(opened["renDev"]==true && opened["rendMap"]==5 && opened["cameraInPreviewLevel"]==true && (opened["showFlags"].get<unsigned>()&0x4800u)==0,"emitter preview draws its private level without realtime flags");
+            auto shown=call({{"op","preview.show"},{"entry",{{"actors",J::array({{{"text",burst},{"rotation",J::array({0,16384,0})}}})}}}});
+            require(shown["actors"].size()==1 && shown["actors"][0]["outer"]=="ReloadedEmitterPreview" && shown["actors"][0]["emitters"][0]["outer"]=="ReloadedEmitterPreview","previewed emitter and sub-emitter are created in the preview package");
+            require(shown["warnings"].size()==1,"map-owned assets in an entry are dropped with a warning");
+            call({{"op","preview.step"},{"seconds",0.4}});
+            auto frame=call({{"op","preview.capture"},{"path",(directory/"emitter_preview.bmp").string()}});
+            require(frame["particles"].get<int>()>0 && frame["nonBlackPixels"].get<int>()>50,"triggered one-shot burst plays and draws in the preview");
+            auto looped=call({{"op","preview.step"},{"seconds",2.0}});
+            require(looped["loops"].get<int>()>=1 && looped["particles"].get<int>()>0,"one-shot burst loops in the preview");
+            require(call({{"op","actors"}})==beforeActors && call({{"op","preview.state"}})["undo"]==undoBefore,"emitter preview leaves map actors and Undo history untouched");
+            bool rejected=false;try{call({{"op","preview.show"},{"entry",{{"actors",J::array({{{"text",std::string("Begin Actor Class=Emitter Name=E\n Begin Object Class=SpriteEmitter Name=S\n  Texture=Texture'NoSuchPackage.Missing'\n End Object\n Emitters(0)=SpriteEmitter'MyLevel.S'\nEnd Actor\n")}}})}}}});}catch(const std::exception&){rejected=true;}
+            require(rejected && call({{"op","preview.state"}})["particles"].get<int>()>0,"an entry with a missing texture package is refused and the previous preview stays");
+            Exec("OBJ GARBAGE");auto collected=call({{"op","preview.state"}});
+            require(collected["level"]==true && collected["viewport"]==true && collected["faulted"]==false,"emitter preview survives garbage collection");
+            call({{"op","preview.close"}});auto reattached=call({{"op","preview.open"}});
+            require(reattached["attached"]==true && reattached["parentIsHost"]==true && reattached["viewport"]==true,"emitter preview reattaches to a new host after its window closed");
+            call({{"op","preview.clear"}});call({{"op","preview.close"}});
+        }
         require(reinterpret_cast<Save>(0x10E0416B)(*reinterpret_cast<void**>(kEditor),destination)!=0,"save final workflow map for restart test");
+        {std::ifstream savedMap(destination,std::ios::binary);std::string bytes(std::istreambuf_iterator<char>(savedMap),{});require(!bytes.empty() && bytes.find("ReloadedEmitterPreview")==std::string::npos,"saved map holds no emitter preview objects");}
         auto playable=directory.parent_path()/"Packages"/"Maps"/std::filesystem::path(destination).filename();
         WorkflowProbe::previewScreenshot=directory/"map_package_preview.bmp";WorkflowProbe::packagePreviewChecked=false;
         auto packageTimer=SetTimer(nullptr,0,50,WorkflowProbe::Answer);
