@@ -1023,6 +1023,8 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="assembly.capture") result=Editor::CaptureAssembly(q.at("members"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()});
         else if(op=="assembly.place") result=Editor::PlaceAssembly(q.at("definition"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()},q.at("bindings").get<std::map<std::string,std::string>>());
         else if(op=="emitterlib.list") result=Editor::EmitterLibrary();
+        else if(op=="emitterlib.packs") result=Editor::EmitterPacks();
+        else if(op=="emitterlib.cache") result=Editor::EmitterLibraryCacheState();
         else if(op=="emitterlib.problems") result=Editor::EmitterLibraryProblems();
         else if(op=="emitterlib.categories") result=Editor::EmitterCategories();
         else if(op=="emitterlib.selected") result=Editor::SelectedEmitters();
@@ -1037,7 +1039,7 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         }
         else if(op=="emitterlib.place")
         {
-            Json entry=q.contains("entry")?q.at("entry"):EmitterLibrary::Find(Editor::EmitterLibrary(),q.contains("id")?q.at("id").get<std::string>():q.at("name").get<std::string>());
+            Json entry=q.contains("entry")?q.at("entry"):EmitterLibrary::Find(*Editor::EmitterLibraryState().entries,q.contains("id")?q.at("id").get<std::string>():q.at("name").get<std::string>());
             Pose pose{q.contains("position")?q.at("position").get<Vector>():Editor::BuilderPose().position,q.value("rotation",Rotation{})};
             result=Editor::PlaceEmitterEntry(entry,pose);
         }

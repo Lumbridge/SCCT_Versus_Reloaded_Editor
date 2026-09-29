@@ -113,3 +113,72 @@ In each job's `report.txt` there must be no `STEPFAIL` or `workflow_error` lines
 - Continuous entries have no Tag.
 - Triggered entries keep `Disabled=True` sub-emitters and a readable Tag, such as `GasExplosion`. Placement prefixes the Tag with `RE_<id>_`, so every copy has its own Tag.
 - `preview` is a camera hint for the explorer: a target relative to the pivot, plus radius, distance, pitch and yaw. The target and distance come from each effect's particle extent. The manifest overrides them for effects covering thousands of units.
+
+## Effect packs
+
+Effect packs are read-only sets of entries that sit between the built-ins and the user's own entries, such as a converted game's effects. The SCCT Map Manager installs a pack's JSON file together with the packages it uses. The editor never writes a pack.
+
+**Where:** `<Editor::Directory()>\EmitterPacks\*.json`, i.e. `System\ReloadedEditor\EmitterPacks\`.
+
+**Format** (the full contract is at the top of `Reloaded.Editor/EmitterLibraryModel.h`):
+```
+{"version": 1,
+ "pack": {"id": "swrc", "name": "Republic Commando effects", "description": "...",
+          "requires": ["SWRC_effecttex.utx", "SWRC_GlobalProps_SM.usx"]},
+ "emitters": [entries as for built-ins, with ids "pack.swrc.<slug>"]}
+```
+- `pack.id` is 1 to 32 characters from `a-z 0-9 _ -`. Entry ids are `pack.<pack id>.<slug>`, where the slug uses `a-z 0-9 _ . -`, and the whole id is at most 64 characters.
+- `name` is 1 to 120 characters. `description` and `requires` are optional, and unknown keys are ignored.
+- Each `requires` item is a package file name. `.utx` installs to `Packages\Textures`, `.usx` to `StaticMeshes`, `.uax` to `Sounds` and `.ukx` to `Animations`.
+- Entries follow the entry schema. They need no `modified` time, and they list their packages in `dependencies`, as `emitterlib.capture` records them.
+- Files larger than 64 MB are refused. A 900-entry, 7 MB pack reads in about 0.2 s.
+
+**Listing:**
+- The order is: built-ins, then each pack's entries (packs sorted by name, then by id), then the user's entries.
+- In memory, pack entries carry `"builtin": false`, `"readonly": true` and `"pack": "<id>"`. These flags are never written.
+- **A pack is not listed** when its file is unreadable, not JSON, of another version, or has a bad header. The same happens when its pack id is already used by a file whose name sorts earlier.
+- **An entry is skipped** when it is damaged, uses another pack's prefix, or repeats an id. Each skipped entry is reported in `emitterlib.problems`, after the user file's problems.
+
+**Editing:**
+- Pack entries behave like built-ins. Edit refuses and offers "Save a copy to edit...", which saves a user entry with a new id.
+- Delete hides the entry. Hidden pack ids go to the user file's `hiddenPacks` list. Files without that list read as an empty list, and older editors keep the key when they save.
+- "Restore hidden" (`emitterlib.restore`) lists every hidden built-in and pack entry again.
+
+**Missing packages:**
+- When a `requires` file used by an entry's dependencies is missing from `Packages`, the explorer shows "Needs X.utx (install the pack with the SCCT Map Manager)". It skips the preview.
+- Placing that entry refuses with `MissingPackagesMessage`.
+
+**Caching:**
+- `Workflow::Editor::EmitterLibraryState()` builds one snapshot per revision. The snapshot holds the entries, categories, problems and pack summaries.
+- A new revision starts only when:
+  - `emitter_library.json` changes size or time,
+  - a pack file is added, removed, or changes size or time, or
+  - the editor writes the user file.
+- Unchanged pack files are never parsed again. A file that another program holds open is retried on the next ten calls.
+- The explorer fills its tree from that one snapshot.
+
+**Ops:**
+- `emitterlib.list` includes pack entries.
+- `emitterlib.packs` lists each pack as `{id, name, description, requires, entries, problems, file, hidden, missing}`. `missing` lists the `requires` files that are not in `Packages`.
+- `emitterlib.cache` returns `{revision, packReads, entries, packs, problems}`, for tests.
+
+**Explorer:**
+- With packs installed, the tree has one top level per source:
+  - "Chaos Theory (built-in)",
+  - each pack by name,
+  - "Your effects".
+- Categories sit under each source. A pack's categories start closed, and their rows are only created when a category is first opened.
+- The search covers every source, and pack names too.
+- A refill keeps open groups open and keeps the scroll position.
+
+**Tests:**
+- `tests/EmitterLibraryModelTests.cpp` covers parsing, merging, hiding, copying and restoring, older files, and a 900-entry pack.
+- The headless jobs are in `pack_jobs/`:
+  - `ops`: the workflow ops, cache counters, placing, and a damaged user file.
+  - `ui`: the explorer's tree levels, fill time and memory, search, missing packages, place, hide/restore, save a copy, close and reopen with one preview viewport.
+  - `scroll`: the scroll position across refills.
+- The jobs run with the `out\tools` harness and `probe_emitterpacks.cpp`. Besides the verbs above, that probe needs `mkdir`, `touch`, `filejson`, `mem`, `tree` (with `firstVisible`), `expand`, `key`, `settext`, `texthas`, `textlacks`, `pick`, `click`, `close` and `shot`.
+- To write the test packs and the jobs and print each run command:
+  ```
+  python tools/emitter_library/make_test_pack.py jobs --out out\tools\packs_test
+  ```

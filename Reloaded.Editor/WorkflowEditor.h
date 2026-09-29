@@ -1,5 +1,6 @@
 #pragma once
 #include "WorkflowModel.h"
+#include <memory>
 
 namespace Workflow::Editor
 {
@@ -116,15 +117,38 @@ namespace Workflow::Editor
     // unsaved draft (no id) around the members' centre; map names its source
     // when the frame's file name is not the open map. PlaceEmitterEntry is one
     // Undo step and selects the new actors. Storage calls do not need a map.
-    // A damaged emitter_library.json leaves the built-ins listed, reports
-    // EmitterLibrary::DamagedFile() as the only problem and refuses writes.
+    // A damaged emitter_library.json leaves the built-ins and packs listed,
+    // reports EmitterLibrary::DamagedFile() as its only problem and refuses writes.
+    // Effect packs are read from Directory()/EmitterPacks/*.json; a pack entry
+    // whose required packages are not installed refuses to place with
+    // EmitterLibrary::MissingPackagesMessage.
     Json SelectedEmitters();
     Json CaptureEmitters(const Json& members, const std::string& map = "");
     Json PlaceEmitterEntry(const Json& entry, const Pose& pose);
+    // The library as one snapshot, rebuilt only when emitter_library.json or a file
+    // in EmitterPacks changes (size or time) or this editor writes the user file;
+    // each rebuild has a new revision. Unchanged pack files are not read again.
+    // Hold the shared lists instead of copying them.
+    struct EmitterLibraryView
+    {
+        std::shared_ptr<const Json> entries;    // built-ins, pack entries, your entries (EmitterLibrary())
+        std::shared_ptr<const Json> categories; // EmitterCategories()
+        std::shared_ptr<const Json> problems;   // EmitterLibraryProblems(): the user file's first, then the packs'
+        std::shared_ptr<const Json> packs;      // listed packs: {id,name,description,requires,entries,problems,file,hidden}
+        size_t userProblems = 0;                // how many problems are the user file's
+        unsigned revision = 0;
+    };
+    EmitterLibraryView EmitterLibraryState();
     Json EmitterLibrary();
     Json EmitterLibraryProblems();
     Json EmitterCategories();
     unsigned EmitterLibraryRevision();
+    // The listed packs with "missing": their required package files not in Packages.
+    Json EmitterPacks();
+    // A pack entry's required package files (that its dependencies use) that are not installed.
+    Json MissingEmitterPackages(const Json& entry);
+    // For tests: {"revision","packReads" (pack files parsed so far),"entries","packs","problems"}.
+    Json EmitterLibraryCacheState();
     Json SaveEmitterEntry(const Json& entry);
     Json UpdateEmitterEntry(const std::string& id, const Json& changes);
     void DeleteEmitterEntry(const std::string& id);

@@ -11,6 +11,7 @@
 #include <uxtheme.h>
 #include <algorithm>
 #include <ctime>
+#include <map>
 #include <set>
 #pragma comment(lib,"uxtheme.lib")
 
@@ -24,8 +25,18 @@ enum Id { Search=100,Tree,Preview,Hint,Name,Category,Description,Details,Place,S
 struct State
 {
     HWND window{},tree{},preview{};HFONT font{},heading{};HBRUSH background{},panel{},stage{};
-    Json entries=Json::array();std::string selected,message="Select an effect to preview it.";
-    unsigned revision=~0u;UINT dpi=96;int left=300,right=330,split=0;bool filling=false,attached=false;
+    // One shared snapshot of the library per revision (never copied), with each
+    // entry's lower-case search text and the pack names by id.
+    Editor::EmitterLibraryView library;std::vector<std::string> haystack;std::map<std::string,std::string> packNames;
+    // Tree groups: item lParam -2-i names groups[i] ("source" or "source/category");
+    // expanded keeps what the user opened or closed, read back before each refill
+    // of an unfiltered tree (a search opens every group). A closed category gets
+    // its effects when it is first opened: pending[i] are the entries of groups[i].
+    std::vector<std::string> groups;std::map<std::string,bool> expanded;std::map<size_t,std::vector<size_t>> pending;bool filtered=false,bySource=false;
+    std::string filter; // the search the tree shows
+    bool reveal=false;  // the next fill scrolls the selection into view (Select)
+    std::string selected,message="Select an effect to preview it.";
+    UINT dpi=96;int left=300,right=330,split=0;bool filling=false,attached=false;
 };
 HWND window=nullptr;
 int Px(const State& s,int n){return MulDiv(n,s.dpi,96);}
@@ -51,11 +62,17 @@ HWND Add(State& s,const char* type,const char* text,int id,DWORD style=0,DWORD e
 }
 void Button(State& s,const char* text,int id){Add(s,"BUTTON",text,id,BS_PUSHBUTTON|WS_TABSTOP);}
 void Bounds(State& s,int id,int x,int y,int w,int h){MoveWindow(Item(s,id),Px(s,x),Px(s,y),Px(s,std::max(1,w)),Px(s,std::max(1,h)),TRUE);}
+const Json& Entries(const State& s){static const Json empty=Json::array();return s.library.entries?*s.library.entries:empty;}
 const Json* Current(const State& s)
 {
-    for(const auto& entry:s.entries)if(entry.at("id").get<std::string>()==s.selected)return &entry;
+    for(const auto& entry:Entries(s))if(entry.at("id").get<std::string>()==s.selected)return &entry;
     return nullptr;
 }
+bool ReadOnly(const Json& entry){return entry.value("readonly",entry.value("builtin",false));}
+std::string PackId(const Json& entry){return entry.contains("pack") && entry.at("pack").is_string()?entry.at("pack").get<std::string>():std::string{};}
+std::string PackName(const State& s,const Json& entry){auto found=s.packNames.find(PackId(entry));return found==s.packNames.end()?PackId(entry):found->second;}
+// Where an entry comes from: "builtin", "pack:<id>" or "user".
+std::string SourceKey(const Json& entry){return entry.value("builtin",false)?"builtin":!PackId(entry).empty()?"pack:"+PackId(entry):"user";}
 void Layout(State& s)
 {
     RECT r{};GetClientRect(s.window,&r);int w=MulDiv(r.right,96,s.dpi),h=MulDiv(r.bottom,96,s.dpi);
@@ -77,7 +94,7 @@ std::string Date(const Json& entry)
     char text[64]{};std::strftime(text,sizeof(text),"%d %b %Y %H:%M",&local);return text;
 }
 // A short, factual summary of what placing the entry adds to the map.
-std::string DetailText(const Json& entry)
+std::string DetailText(const State& s,const Json& entry,const Json& missing)
 {
     size_t actors=entry.at("actors").size(),systems=0;bool triggered=false;std::set<std::string> classes;
     for(const auto& actor:entry.at("actors"))
@@ -87,8 +104,9 @@ std::string DetailText(const Json& entry)
         if(text.find("Disabled=True")!=std::string::npos)triggered=true;
         classes.insert(actor.value("class",std::string("Emitter")));
     }
-    std::string out=entry.value("builtin",false)?"Built-in effect":"Your effect";
-    if(!entry.value("builtin",false)){auto date=Date(entry);if(!date.empty())out+=", saved "+date;}
+    std::string out=entry.value("builtin",false)?"Built-in effect":!PackId(entry).empty()?"Effect pack: "+PackName(s,entry):"Your effect";
+    if(!ReadOnly(entry)){auto date=Date(entry);if(!date.empty())out+=", saved "+date;}
+    if(!missing.empty())out+="\r\n"+EmitterLibrary::MissingPackagesText(missing);
     out+="\r\n"+std::to_string(actors)+(actors==1?" emitter actor, ":" emitter actors, ")+std::to_string(systems)+(systems==1?" particle system":" particle systems");
     if(triggered)out+="\r\nTriggered: it plays when an event matching its Tag fires. The preview loops it.";
     std::set<std::string> packages;
@@ -114,9 +132,17 @@ void ShowEntry(State& s)
     Set(s,Name,Ansi(entry->at("name").get<std::string>()));Set(s,Category,Ansi(entry->at("category").get<std::string>()));
     auto description=Ansi(entry->value("description",std::string{}));
     for(size_t at=description.find('\n');at!=std::string::npos;at=description.find('\n',at+2))if(!at || description[at-1]!='\r')description.insert(at,"\r");
-    Set(s,Description,description.empty()?"No description.":description);Set(s,Details,DetailText(*entry));
-    SetWindowTextA(Item(s,Edit),entry->value("builtin",false)?"Save a copy to edit...":"Edit name, category, description...");
-    SetWindowTextA(Item(s,Delete),entry->value("builtin",false)?"Hide":"Delete...");
+    const auto missing=Editor::MissingEmitterPackages(*entry);
+    Set(s,Description,description.empty()?"No description.":description);Set(s,Details,DetailText(s,*entry,missing));
+    SetWindowTextA(Item(s,Edit),ReadOnly(*entry)?"Save a copy to edit...":"Edit name, category, description...");
+    SetWindowTextA(Item(s,Delete),ReadOnly(*entry)?"Hide":"Delete...");
+    // Without its pack's packages the preview could only fail on the first missing texture.
+    if(!missing.empty())
+    {
+        EmitterPreview::Clear();
+        const auto text="No preview: this effect needs "+EmitterLibrary::PackageList(missing)+". Install the pack with the SCCT Map Manager.";
+        Paint(s,text);StatusText(s,text);return;
+    }
     // Showing may load texture packages, which can take a moment.
     StatusText(s,"Loading the preview of "+Ansi(entry->at("name").get<std::string>())+"...");UpdateWindow(Item(s,Status));
     try
@@ -130,48 +156,165 @@ void ShowEntry(State& s)
     }
     catch(const std::exception& e){EmitterPreview::Clear();Paint(s,std::string("No preview: ")+e.what());StatusText(s,std::string("No preview: ")+e.what());}
 }
-bool Matches(const Json& entry,const std::string& filter)
+// Takes the current snapshot when the library has a new revision.
+void Refresh(State& s)
 {
-    if(filter.empty())return true;
-    for(const char* key:{"name","category","description","source"})if(Lower(Ansi(entry.value(key,std::string{}))).find(filter)!=std::string::npos)return true;
-    return false;
+    auto view=Editor::EmitterLibraryState();
+    if(s.library.entries && view.revision==s.library.revision)return;
+    s.library=std::move(view);s.packNames.clear();s.haystack.clear();
+    for(const auto& pack:*s.library.packs)s.packNames[pack.at("id").get<std::string>()]=pack.at("name").get<std::string>();
+    s.haystack.reserve(Entries(s).size());
+    for(const auto& entry:Entries(s))
+    {
+        std::string text;for(const char* key:{"name","category","description","source"})text+=entry.value(key,std::string{})+"\n";
+        if(!PackId(entry).empty())text+=PackName(s,entry);
+        s.haystack.push_back(Lower(Ansi(text)));
+    }
 }
+bool Matches(const State& s,size_t i,const std::string& filter){return filter.empty() || s.haystack[i].find(filter)!=std::string::npos;}
+LPARAM Group(State& s,const std::string& key){s.groups.push_back(key);return -2-static_cast<LPARAM>(s.groups.size()-1);}
+const std::string* GroupKey(const State& s,LPARAM param){return param<=-2 && static_cast<size_t>(-2-param)<s.groups.size()?&s.groups[static_cast<size_t>(-2-param)]:nullptr;}
+// A row of the current tree: "g:" and its group key, or "e:" and its entry's id.
+std::string RowKey(const State& s,HTREEITEM item)
+{
+    if(!item)return {};
+    TVITEMA row{};row.mask=TVIF_PARAM;row.hItem=item;if(!TreeView_GetItem(s.tree,&row))return {};
+    if(const auto* key=GroupKey(s,row.lParam))return "g:"+*key;
+    return row.lParam>=0 && static_cast<size_t>(row.lParam)<Entries(s).size()?"e:"+Entries(s)[row.lParam].at("id").get<std::string>():std::string{};
+}
+// Reads which groups of the current tree are open.
+void Remember(State& s,HTREEITEM item)
+{
+    for(;item;item=TreeView_GetNextSibling(s.tree,item))
+    {
+        TVITEMA row{};row.mask=TVIF_PARAM|TVIF_STATE;row.stateMask=TVIS_EXPANDED;row.hItem=item;TreeView_GetItem(s.tree,&row);
+        if(const auto* key=GroupKey(s,row.lParam)){s.expanded[*key]=(row.state&TVIS_EXPANDED)!=0;Remember(s,TreeView_GetChild(s.tree,item));}
+    }
+}
+// after: the previous sibling, so a long category does not walk its list for each item.
+HTREEITEM Insert(State& s,HTREEITEM parent,HTREEITEM after,std::string label,LPARAM param,bool bold)
+{
+    // Groups always show their button, also while their effects are not inserted yet.
+    TVINSERTSTRUCTA item{};item.hParent=parent;item.hInsertAfter=after?after:TVI_LAST;item.item.mask=TVIF_TEXT|TVIF_PARAM|(bold?TVIF_STATE:0)|(param<0?TVIF_CHILDREN:0);
+    item.item.pszText=label.data();item.item.lParam=param;item.item.cChildren=1;if(bold)item.item.state=item.item.stateMask=TVIS_BOLD;
+    return reinterpret_cast<HTREEITEM>(SendMessageA(s.tree,TVM_INSERTITEMA,0,reinterpret_cast<LPARAM>(&item)));
+}
+std::string Label(const State& s,size_t i)
+{
+    const auto& entry=Entries(s)[i];auto name=Ansi(entry.at("name").get<std::string>());
+    if(!s.bySource && !ReadOnly(entry))name+="  (yours)";
+    return name;
+}
+// Inserts the effects of a category left empty while it was closed; returns its first effect.
+HTREEITEM Populate(State& s,HTREEITEM group)
+{
+    TVITEMA row{};row.mask=TVIF_PARAM;row.hItem=group;TreeView_GetItem(s.tree,&row);
+    auto found=row.lParam<=-2?s.pending.find(static_cast<size_t>(-2-row.lParam)):s.pending.end();
+    if(found==s.pending.end())return TreeView_GetChild(s.tree,group);
+    const auto list=std::move(found->second);s.pending.erase(found);
+    HTREEITEM item=nullptr,first=nullptr;
+    for(auto i:list){item=Insert(s,group,item,Label(s,i),static_cast<LPARAM>(i),false);if(!first)first=item;}
+    return first;
+}
+// The tree: categories, or with effect packs installed one top level per source
+// (built-ins, each pack, your effects) with its categories below. The search
+// spans every source; a source or category without a match is left out.
 void Fill(State& s)
 {
-    s.entries=Editor::EmitterLibrary();s.revision=Editor::EmitterLibraryRevision();
+    // The top row before the snapshot changes: a refill keeps the list where it was.
+    const auto topKey=RowKey(s,TreeView_GetFirstVisible(s.tree));
+    Refresh(s);const auto& entries=Entries(s);
     const auto filter=Lower(Text(Item(s,Search)));
-    std::vector<std::string> order;for(const auto& c:Editor::EmitterCategories())order.push_back(c.get<std::string>());
-    for(const auto& entry:s.entries)if(std::find(order.begin(),order.end(),entry.at("category").get<std::string>())==order.end())order.push_back(entry.at("category"));
-    s.filling=true;SendMessage(s.tree,WM_SETREDRAW,FALSE,0);TreeView_DeleteAllItems(s.tree);
-    HTREEITEM select=nullptr,first=nullptr;size_t shown=0;
-    for(const auto& category:order)
+    if(!s.filtered)Remember(s,TreeView_GetRoot(s.tree));
+    // A new search starts at the top of its results.
+    const bool searched=filter!=s.filter;s.filter=filter;
+    s.filtered=!filter.empty();
+    std::vector<std::string> order;std::map<std::string,size_t> category;
+    for(const auto& c:*s.library.categories)if(category.emplace(c.get<std::string>(),order.size()).second)order.push_back(c.get<std::string>());
+    for(const auto& entry:entries)if(category.emplace(entry.at("category").get<std::string>(),order.size()).second)order.push_back(entry.at("category").get<std::string>());
+    struct Source{std::string key,label;};std::vector<Source> sources;
+    const bool bySource=!s.library.packs->empty();
+    if(bySource)
     {
-        std::vector<size_t> rows;for(size_t i=0;i<s.entries.size();++i)if(s.entries[i].at("category").get<std::string>()==category && Matches(s.entries[i],filter))rows.push_back(i);
-        if(rows.empty())continue;
-        auto label=Ansi(category)+" ("+std::to_string(rows.size())+")";
-        TVINSERTSTRUCTA parent{};parent.hInsertAfter=TVI_LAST;parent.item.mask=TVIF_TEXT|TVIF_PARAM|TVIF_STATE;parent.item.pszText=label.data();parent.item.lParam=-1;parent.item.state=parent.item.stateMask=TVIS_BOLD;
-        auto group=reinterpret_cast<HTREEITEM>(SendMessageA(s.tree,TVM_INSERTITEMA,0,reinterpret_cast<LPARAM>(&parent)));
-        for(auto i:rows)
+        sources.push_back({"builtin","Chaos Theory (built-in)"});
+        for(const auto& pack:*s.library.packs)sources.push_back({"pack:"+pack.at("id").get<std::string>(),Ansi(pack.at("name").get<std::string>())});
+        sources.push_back({"user","Your effects"});
+    }
+    else sources.push_back({"",""});
+    std::map<std::string,size_t> source;for(size_t i=0;i<sources.size();++i)source[sources[i].key]=i;
+    std::vector<std::vector<std::vector<size_t>>> rows(sources.size(),std::vector<std::vector<size_t>>(order.size()));
+    for(size_t i=0;i<entries.size();++i)
+    {
+        if(!Matches(s,i,filter))continue;
+        auto from=bySource?source.find(SourceKey(entries[i])):source.begin();if(from==source.end())continue;
+        rows[from->second][category.at(entries[i].at("category").get<std::string>())].push_back(i);
+    }
+    // Without a selection the tree does not select each next item while deleting (much faster with packs).
+    s.filling=true;SendMessage(s.tree,WM_SETREDRAW,FALSE,0);TreeView_SelectItem(s.tree,nullptr);TreeView_DeleteAllItems(s.tree);s.groups.clear();s.pending.clear();s.bySource=bySource;
+    HTREEITEM select=nullptr,first=nullptr,firstClosed=nullptr,previousTop=nullptr,topRow=nullptr;size_t shown=0;
+    auto open=[&](const std::string& key,bool fallback){if(s.filtered)return true;auto found=s.expanded.find(key);return found==s.expanded.end()?fallback:found->second;};
+    auto isTop=[&](HTREEITEM item,const std::string& key){if(!topRow && !searched && !topKey.empty() && key==topKey)topRow=item;};
+    const auto topEntry=!searched && topKey.rfind("e:",0)==0?topKey.substr(2):std::string{};
+    for(size_t from=0;from<sources.size();++from)
+    {
+        size_t count=0;for(const auto& list:rows[from])count+=list.size();
+        if(!count)continue;
+        HTREEITEM top=nullptr,previousGroup=nullptr;
+        if(bySource){top=previousTop=Insert(s,nullptr,previousTop,sources[from].label+" ("+std::to_string(count)+")",Group(s,sources[from].key),true);isTop(top,"g:"+sources[from].key);}
+        for(size_t c=0;c<order.size();++c)
         {
-            auto name=Ansi(s.entries[i].at("name").get<std::string>());if(!s.entries[i].value("builtin",false))name+="  (yours)";
-            TVINSERTSTRUCTA child{};child.hParent=group;child.hInsertAfter=TVI_LAST;child.item.mask=TVIF_TEXT|TVIF_PARAM;child.item.pszText=name.data();child.item.lParam=static_cast<LPARAM>(i);
-            auto item=reinterpret_cast<HTREEITEM>(SendMessageA(s.tree,TVM_INSERTITEMA,0,reinterpret_cast<LPARAM>(&child)));
-            if(!first)first=item;if(s.entries[i].at("id").get<std::string>()==s.selected)select=item;++shown;
+            const auto& list=rows[from][c];if(list.empty())continue;
+            const auto key=sources[from].key+"/"+order[c];
+            const auto param=Group(s,key);
+            auto group=Insert(s,top,previousGroup,Ansi(order[c])+" ("+std::to_string(list.size())+")",param,!bySource);previousGroup=group;shown+=list.size();isTop(group,"g:"+key);
+            // A pack's categories start closed: a pack can hold hundreds of effects. A closed
+            // category without the selection gets its effects when opened (TVN_ITEMEXPANDING).
+            const bool opened=open(key,sources[from].key.rfind("pack:",0)!=0);
+            if(!opened && std::none_of(list.begin(),list.end(),[&](size_t i){return entries[i].at("id").get_ref<const std::string&>()==s.selected;}))
+            {
+                s.pending[static_cast<size_t>(-2-param)]=list;if(!firstClosed)firstClosed=group;continue;
+            }
+            HTREEITEM item=nullptr;
+            for(auto i:list)
+            {
+                item=Insert(s,group,item,Label(s,i),static_cast<LPARAM>(i),false);
+                const auto& id=entries[i].at("id").get_ref<const std::string&>();
+                if(!first)first=item;if(id==s.selected)select=item;
+                if(!topRow && !topEntry.empty() && id==topEntry)topRow=item;
+            }
+            if(opened)TreeView_Expand(s.tree,group,TVE_EXPAND);
         }
-        TreeView_Expand(s.tree,group,TVE_EXPAND);
+        if(top && open(sources[from].key,true))TreeView_Expand(s.tree,top,TVE_EXPAND);
     }
     SendMessage(s.tree,WM_SETREDRAW,TRUE,0);s.filling=false;
     const auto previous=s.selected;
-    if(!select)select=first;
-    if(select){TreeView_SelectItem(s.tree,select);TreeView_EnsureVisible(s.tree,select);TVITEMA item{};item.mask=TVIF_PARAM;item.hItem=select;TreeView_GetItem(s.tree,&item);s.selected=s.entries[item.lParam].at("id");}
+    if(!select)select=first?first:firstClosed?Populate(s,firstClosed):nullptr;
+    if(select){TreeView_SelectItem(s.tree,select);TVITEMA item{};item.mask=TVIF_PARAM;item.hItem=select;TreeView_GetItem(s.tree,&item);s.selected=entries[item.lParam].at("id");}
     else s.selected.clear();
+    // The rows stay where they were, as after a refresh in Explorer; a first fill or a new
+    // search starts at the top. A new selection is scrolled into view.
+    if(auto top=topRow?topRow:TreeView_GetRoot(s.tree))TreeView_Select(s.tree,top,TVGN_FIRSTVISIBLE);
+    // Revealed, it comes with its source and category rows when they fit on the page.
+    auto inView=[&](HTREEITEM item){RECT row{},page{};GetClientRect(s.tree,&page);return TreeView_GetItemRect(s.tree,item,&row,FALSE) && row.top>=page.top && row.bottom<=page.bottom;};
+    if(select && (s.reveal || !topRow || s.selected!=previous) && !inView(select))
+    {
+        HTREEITEM outer=select;for(HTREEITEM parent;(parent=TreeView_GetParent(s.tree,outer))!=nullptr;)outer=parent;
+        TreeView_EnsureVisible(s.tree,outer);TreeView_EnsureVisible(s.tree,select);
+    }
+    s.reveal=false;
     // A hidden window leaves the preview empty; Open shows the selection again.
     if((s.selected!=previous || !EmitterPreview::Active()) && IsWindowVisible(s.window))ShowEntry(s);
-    if(!shown)StatusText(s,filter.empty()?"The library is empty. Restore built-ins, or select emitters in the map and save them.":"No effect matches the search.");
-    auto problems=Editor::EmitterLibraryProblems();
-    if(!problems.empty())StatusText(s,std::to_string(problems.size())+" saved entr"+(problems.size()==1?"y":"ies")+" in emitter_library.json could not be read and "+(problems.size()==1?"is":"are")+" not listed.");
+    // A search without a match says so; otherwise a problem with the user file or a pack does.
+    const auto& problems=*s.library.problems;const size_t user=s.library.userProblems,packs=problems.size()-user;std::string problem;
+    if(user && problems[0]==Json(EmitterLibrary::DamagedFile()))problem=Ansi(problems[0].get<std::string>());
+    else if(user)problem=std::to_string(user)+" saved entr"+(user==1?"y":"ies")+" in emitter_library.json could not be read and "+(user==1?"is":"are")+" not listed.";
+    else if(packs==1)problem=Ansi(problems[user].get<std::string>());
+    else if(packs)problem=std::to_string(packs)+" effect pack problems, the first: "+Ansi(problems[user].get<std::string>());
+    if(!shown && !filter.empty())StatusText(s,"No effect matches the search.");
+    else if(!problem.empty())StatusText(s,problem);
+    else if(!shown)StatusText(s,"The library is empty. Restore hidden effects, or select emitters in the map and save them.");
 }
-void Select(State& s,const std::string& id){s.selected=id;Fill(s);}
+void Select(State& s,const std::string& id){s.selected=id;s.reveal=true;Fill(s);}
 void PlaceCurrent(State& s)
 {
     const auto* entry=Current(s);if(!entry)throw std::runtime_error("Select an effect to place.");
@@ -182,9 +325,9 @@ void EditCurrent(State& s)
 {
     const auto* found=Current(s);if(!found)throw std::runtime_error("Select an effect first.");
     const auto entry=*found;
-    if(entry.value("builtin",false))
+    if(ReadOnly(entry))
     {
-        auto changes=WorkflowTools::AskEmitterDetails(s.window,entry,"Save a copy of this built-in effect");if(changes.is_null())return;
+        auto changes=WorkflowTools::AskEmitterDetails(s.window,entry,entry.value("builtin",false)?"Save a copy of this built-in effect":"Save a copy of this pack effect");if(changes.is_null())return;
         auto copy=entry;for(auto& [key,value]:changes.items())copy[key]=value;
         auto saved=Editor::SaveEmitterEntry(copy);Select(s,saved.at("id"));StatusText(s,"Saved "+Ansi(saved.at("name").get<std::string>())+" as your own effect.");
         return;
@@ -196,14 +339,15 @@ void DeleteCurrent(State& s)
 {
     const auto* found=Current(s);if(!found)throw std::runtime_error("Select an effect first.");
     const auto entry=*found;const auto name=Ansi(entry.at("name").get<std::string>());
-    const bool builtin=entry.value("builtin",false);
-    auto question=builtin?"Hide the built-in effect '"+name+"'? Restore Built-ins brings it back.":"Delete '"+name+"' from your Emitter Library? This cannot be undone.";
+    const bool hide=ReadOnly(entry);
+    auto question=entry.value("builtin",false)?"Hide the built-in effect '"+name+"'? Restore hidden brings it back."
+        :hide?"Hide '"+name+"' from the effect pack '"+Ansi(PackName(s,entry))+"'? Restore hidden brings it back.":"Delete '"+name+"' from your Emitter Library? This cannot be undone.";
     if(MessageBoxA(s.window,question.c_str(),"Emitter Library",MB_OKCANCEL|MB_ICONQUESTION)!=IDOK)return;
     // Keep the neighbour selected so the list does not jump to the top.
     std::string next;
     if(auto item=TreeView_GetSelection(s.tree))for(auto other:{TreeView_GetNextSibling(s.tree,item),TreeView_GetPrevSibling(s.tree,item)})
-        if(other && next.empty()){TVITEMA row{};row.mask=TVIF_PARAM;row.hItem=other;TreeView_GetItem(s.tree,&row);if(row.lParam>=0)next=s.entries[row.lParam].at("id");}
-    Editor::DeleteEmitterEntry(entry.at("id"));Select(s,next);StatusText(s,(builtin?"Hid ":"Deleted ")+name+".");
+        if(other && next.empty()){TVITEMA row{};row.mask=TVIF_PARAM;row.hItem=other;TreeView_GetItem(s.tree,&row);if(row.lParam>=0)next=Entries(s)[row.lParam].at("id");}
+    Editor::DeleteEmitterEntry(entry.at("id"));Select(s,next);StatusText(s,(hide?"Hid ":"Deleted ")+name+".");
 }
 void Command(State& s,int id)
 {
@@ -215,7 +359,7 @@ void Command(State& s,int id)
     }
     else if(id==Edit)EditCurrent(s);
     else if(id==Delete)DeleteCurrent(s);
-    else if(id==Restore){Editor::RestoreBuiltinEmitters();Fill(s);StatusText(s,"Hidden built-in effects are listed again.");}
+    else if(id==Restore){Editor::RestoreBuiltinEmitters();Fill(s);StatusText(s,"Hidden effects are listed again.");}
 }
 LRESULT CALLBACK PreviewProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
 {
@@ -256,14 +400,16 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
         {
             s->dpi=GetDpiForWindow(w);Fonts(*s);s->background=CreateSolidBrush(Background);s->panel=CreateSolidBrush(Panel);
             Add(*s,"EDIT","",Search,ES_AUTOHSCROLL|WS_TABSTOP,WS_EX_CLIENTEDGE);SetWindowSubclass(Item(*s,Search),SearchProc,1,0);
-            s->tree=Add(*s,WC_TREEVIEWA,"",Tree,TVS_HASBUTTONS|TVS_LINESATROOT|TVS_SHOWSELALWAYS|TVS_FULLROWSELECT|WS_TABSTOP|WS_BORDER);TreeView_SetItemHeight(s->tree,Px(*s,24));
+            // No horizontal scroll bar: with packs the tree has three levels, and a name too long
+            // for the panel shows in full in its tooltip (or drag the divider).
+            s->tree=Add(*s,WC_TREEVIEWA,"",Tree,TVS_HASBUTTONS|TVS_LINESATROOT|TVS_SHOWSELALWAYS|TVS_FULLROWSELECT|TVS_NOHSCROLL|WS_TABSTOP|WS_BORDER);TreeView_SetItemHeight(s->tree,Px(*s,24));
             WNDCLASSA wc{};wc.lpfnWndProc=PreviewProc;wc.hInstance=GetModuleHandle(nullptr);wc.lpszClassName="ReloadedEmitterLibraryPreview";wc.hCursor=LoadCursor(nullptr,IDC_SIZEALL);RegisterClassA(&wc);
             s->preview=CreateWindowExA(0,wc.lpszClassName,"",WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN,0,0,10,10,w,reinterpret_cast<HMENU>(Preview),wc.hInstance,nullptr);
             Add(*s,"STATIC","Drag to orbit, right-drag or wheel to zoom, double-click to reset the view.",Hint,SS_CENTER);
             Add(*s,"STATIC","",Name,SS_ENDELLIPSIS|SS_NOPREFIX);SendMessage(Item(*s,Name),WM_SETFONT,reinterpret_cast<WPARAM>(s->heading),TRUE);
             Add(*s,"STATIC","",Category,SS_ENDELLIPSIS|SS_NOPREFIX);
             Add(*s,"EDIT","",Description,ES_MULTILINE|ES_READONLY|WS_VSCROLL|ES_AUTOVSCROLL);Add(*s,"EDIT","",Details,ES_MULTILINE|ES_READONLY|WS_VSCROLL|ES_AUTOVSCROLL);
-            Button(*s,"Place at builder brush",Place);Button(*s,"Save selected emitters as new effect...",SaveSelection);Button(*s,"Edit name, category, description...",Edit);Button(*s,"Delete...",Delete);Button(*s,"Restore built-ins",Restore);
+            Button(*s,"Place at builder brush",Place);Button(*s,"Save selected emitters as new effect...",SaveSelection);Button(*s,"Edit name, category, description...",Edit);Button(*s,"Delete...",Delete);Button(*s,"Restore hidden",Restore);
             Add(*s,"STATIC","",Status,SS_ENDELLIPSIS|SS_NOPREFIX);
             Layout(*s);Fill(*s);SetTimer(w,1,500,nullptr);SetFocus(s->tree);return 0;
         }
@@ -289,10 +435,16 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
         if(message==WM_NOTIFY)
         {
             auto header=reinterpret_cast<NMHDR*>(lp);
+            if(header->idFrom==Tree && header->code==TVN_ITEMEXPANDINGA)
+            {
+                auto change=reinterpret_cast<NMTREEVIEWA*>(lp);
+                if(change->action==TVE_EXPAND)Populate(*s,change->itemNew.hItem);
+                return 0;
+            }
             if(header->idFrom==Tree && header->code==TVN_SELCHANGEDA && !s->filling)
             {
                 auto change=reinterpret_cast<NMTREEVIEWA*>(lp);
-                if(change->itemNew.lParam>=0 && change->itemNew.lParam<static_cast<LPARAM>(s->entries.size())){s->selected=s->entries[change->itemNew.lParam].at("id");ShowEntry(*s);}
+                if(change->itemNew.lParam>=0 && change->itemNew.lParam<static_cast<LPARAM>(Entries(*s).size())){s->selected=Entries(*s)[change->itemNew.lParam].at("id");ShowEntry(*s);}
                 return 0;
             }
             if(header->idFrom==Tree && (header->code==NM_DBLCLK || header->code==NM_RCLICK))
@@ -302,9 +454,9 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
                 TVITEMA row{};row.mask=TVIF_PARAM;row.hItem=item;TreeView_GetItem(s->tree,&row);if(row.lParam<0)return 0;
                 TreeView_SelectItem(s->tree,item);
                 if(header->code==NM_DBLCLK){Command(*s,Place);return 1;}
-                const bool builtin=s->entries[row.lParam].value("builtin",false);
+                const bool readOnly=ReadOnly(Entries(*s)[row.lParam]);
                 auto menu=CreatePopupMenu();AppendMenuA(menu,MF_STRING,MenuPlace,"&Place at builder brush");AppendMenuA(menu,MF_SEPARATOR,0,nullptr);
-                AppendMenuA(menu,MF_STRING,MenuEdit,builtin?"Save a &copy to edit...":"&Edit name, category, description...");AppendMenuA(menu,MF_STRING,MenuDelete,builtin?"&Hide":"&Delete...");
+                AppendMenuA(menu,MF_STRING,MenuEdit,readOnly?"Save a &copy to edit...":"&Edit name, category, description...");AppendMenuA(menu,MF_STRING,MenuDelete,readOnly?"&Hide":"&Delete...");
                 auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,w,nullptr);DestroyMenu(menu);
                 if(command)SendMessage(w,WM_COMMAND,command,0);return 1;
             }
@@ -317,7 +469,8 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
             }
             return 0;
         }
-        if(message==WM_TIMER){if(IsWindowVisible(w) && s->revision!=Editor::EmitterLibraryRevision())Fill(*s);return 0;}
+        // Also notices packs installed or removed and a user file written by another program.
+        if(message==WM_TIMER){if(IsWindowVisible(w) && s->library.revision!=Editor::EmitterLibraryRevision())Fill(*s);return 0;}
         if(message==WM_CTLCOLORSTATIC || message==WM_CTLCOLOREDIT)
         {
             const bool readOnly=message==WM_CTLCOLORSTATIC && (reinterpret_cast<HWND>(lp)==Item(*s,Description) || reinterpret_cast<HWND>(lp)==Item(*s,Details));

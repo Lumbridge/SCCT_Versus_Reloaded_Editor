@@ -1,5 +1,6 @@
 #include "../Reloaded.Editor/EmitterLibraryModel.h"
 #include "../Reloaded.Editor/EmitterLibraryDefaults.gen.h"
+#include <chrono>
 #include <functional>
 #include <iostream>
 #include <source_location>
@@ -188,6 +189,80 @@ int main()
         Check(Library::Merge(builtins,Json{{"version",1}}).size()==2,"a file without lists is an empty library");
         Check(Reject([]{Library::Document(Json{{"version",1},{"emitters",Json::object()}});})==Library::DamagedFile(),"a damaged file refuses with the user-facing sentence");
         Check(Reject([]{Library::Document(Json{{"version",1},{"hiddenBuiltins",Json::array({1})}});})==Library::DamagedFile() && Reject([]{Library::Merge({},Json::array());})==Library::DamagedFile(),"every damaged shape gives the same sentence");
+
+        // Effect packs: read-only entry sets from <Directory>/EmitterPacks/*.json.
+        Check(Library::IsPackName("swrc") && Library::IsPackName("my-pack_2") && !Library::IsPackName("SWRC") && !Library::IsPackName("") && !Library::IsPackName(std::string(33,'a')) && !Library::IsPackName("a.b"),"pack id form");
+        Check(Library::IsPackEntryId("pack.swrc.fire_1") && Library::IsPackEntryId("pack.my-pack_2.fx.torch-2") && !Library::IsPackEntryId("pack.swrc.") && !Library::IsPackEntryId("pack..fire")
+            && !Library::IsPackEntryId("pack.SWRC.fire") && !Library::IsPackEntryId("pack.swrc.Fire") && Library::IsPackEntryId("pack.swrc._fire") && Library::IsPackEntryId("pack.swrc..fire") && !Library::IsPackEntryId("pack.swrc.fire!")
+            && Library::IsPackEntryId("pack.swrc."+std::string(54,'f')) && !Library::IsPackEntryId("pack.swrc."+std::string(55,'f')) && !Library::IsPackEntryId("builtin.fire"),"pack entry id form, at most 64 characters");
+        Check(Library::PackOfId("pack.my-pack_2.fx.torch")=="my-pack_2" && Library::PackOfId("builtin.fire").empty() && Library::IsReadOnlyId("pack.swrc.a") && Library::IsReadOnlyId("builtin.a") && !Library::IsReadOnlyId(Id()),"the pack of an entry id");
+        auto packEntry=[&](const std::string& id,const std::string& name,const std::string& category="Smoke"){auto e=draft;e["id"]=id;e["name"]=name;e["category"]=category;return e;};
+        auto packDocument=[&](const std::string& id,Json entries,Json packages=Json::array()){return Json{{"version",1},{"pack",{{"id",id},{"name","Test "+id},{"description","Synthetic pack."},{"requires",packages}}},{"emitters",entries}};};
+        auto damagedEntry=packEntry("pack.swrc.damaged","Damaged");damagedEntry["actors"]=Json::array();
+        auto flagged=packEntry("pack.swrc.flagged","Flagged");flagged["builtin"]=false;flagged["readonly"]=true;flagged["pack"]="swrc";
+        auto swrc=Library::ReadPack(packDocument("swrc",{packEntry("pack.swrc.steam_a","Steam A"),packEntry("pack.swrc.steam_b","Steam B","Fire"),packEntry("pack.other.steam","Other pack"),
+            packEntry(Id(),"User id"),packEntry("pack.swrc.steam_a","Repeated"),damagedEntry,flagged},{"SWRC_effecttex.utx","swrc_effecttex.UTX","SWRC_GlobalProps_SM.usx"}),"swrc.json");
+        Check(swrc["id"]=="swrc" && swrc["name"]=="Test swrc" && swrc["description"]=="Synthetic pack." && swrc["emitters"].size()==3 && swrc["problems"].size()==4,"a pack lists its valid entries and reports the others");
+        Check(swrc["requires"]==Json::array({"SWRC_effecttex.utx","SWRC_GlobalProps_SM.usx"}),"required packages are listed once");
+        for(const auto& e:swrc["emitters"])Check(e["builtin"]==false && e["readonly"]==true && e["pack"]=="swrc" && !e.contains("modified"),"pack entries are flagged read-only in memory and need no modified time");
+        const Json skipped=swrc["problems"];Check(Has(skipped[0].get<std::string>(),"'Test swrc' (swrc.json)") && Has(skipped[0].get<std::string>(),"does not start with pack.swrc.") && Has(skipped[1].get<std::string>(),"does not start with pack.swrc.")
+            && Has(skipped[2].get<std::string>(),"repeats the id") && Has(skipped[3].get<std::string>(),"no actors"),"skipped pack entries are named with their pack and file");
+        auto packFails=[&](const Json& document){return Reject([&]{Library::ReadPack(document,"bad.json");});};
+        Check(Has(packFails(Json::array()),"Effect pack bad.json is not listed"),"a pack that is not an object is refused by file name");
+        const auto emptyPack=packDocument("swrc",Json::array());
+        auto packChange=[&](const std::function<void(Json&)>& change){auto copy=emptyPack;change(copy);return packFails(copy);};
+        Check(Has(packChange([](Json& d){d["version"]=2;}),"newer version"),"a newer pack version is not listed");
+        Check(Has(packChange([](Json& d){d["pack"]["id"]="SWRC";}),"pack id"),"an upper-case pack id is refused");
+        packChange([](Json& d){d.erase("pack");});packChange([](Json& d){d["pack"]["id"]=std::string(33,'a');});packChange([](Json& d){d["pack"]["id"]=7;});
+        packChange([](Json& d){d["pack"]["name"]="  ";});packChange([](Json& d){d["pack"].erase("name");});packChange([](Json& d){d["pack"]["description"]=std::string(2001,'d');});
+        Check(Has(packChange([](Json& d){d["pack"]["requires"]={"textures.png"};}),"textures.png"),"a required file that is not a package is refused");
+        packChange([](Json& d){d["pack"]["requires"]="SWRC_effecttex.utx";});packChange([](Json& d){d.erase("emitters");});packChange([](Json& d){d["version"]="1";});
+        Check(Library::ReadPack(emptyPack,"empty.json")["emitters"].empty(),"an empty pack is valid");
+        auto extraKeys=emptyPack;extraKeys["license"]="own copy";extraKeys["pack"]["version"]="v1.0.0";extraKeys["pack"].erase("requires");extraKeys["pack"].erase("description");
+        Check(Library::ReadPack(extraKeys,"extra.json")["requires"].empty(),"unknown keys are ignored and requires and description are optional");
+        auto listedPackEntry=swrc["emitters"][0];Library::Validate(listedPackEntry);
+        auto packInvalid=[&](const std::function<void(Json&)>& change){auto copy=listedPackEntry;change(copy);return Reject([&]{Library::Validate(copy);});};
+        packInvalid([](Json& e){e["pack"]="other";});packInvalid([](Json& e){e["builtin"]=true;});packInvalid([](Json& e){e["readonly"]=false;});packInvalid([](Json& e){e["id"]="pack.swrc.";});
+        Reject([&]{auto user=valid;user["readonly"]=true;Library::Validate(user);});Reject([&]{auto user=valid;user["pack"]="swrc";Library::Validate(user);});
+        Check(Library::PackSummary(swrc)==Json({{"id","swrc"},{"name","Test swrc"},{"description","Synthetic pack."},{"requires",swrc["requires"]},{"entries",3},{"problems",4}}),"a pack summary counts entries and problems");
+        auto needing=packEntry("pack.swrc.needs","Needs");needing["dependencies"]=Json::array({"Engine.Emitter","swrc_EFFECTTEX.Smoke.Puff"});
+        Check(Library::PackNeeds(needing,swrc["requires"])==Json::array({"SWRC_effecttex.utx"}) && Library::PackNeeds(listedPackEntry,swrc["requires"]).empty(),"an entry needs the required packages it uses");
+        Check(Library::MissingPackagesText(Json::array({"SWRC_effecttex.utx"}))=="Needs SWRC_effecttex.utx (install the pack with the SCCT Map Manager)","the details line for missing packages");
+        Check(Library::PackageList(Json::array({"A.utx","B.usx","C.utx"}))=="A.utx, B.usx and C.utx" && Has(Library::MissingPackagesMessage("SWRC effects",Json::array({"A.utx","B.usx"})),"A.utx and B.usx, which are not installed. Install the effect pack 'SWRC effects' with the SCCT Map Manager"),"the placement refusal names the packages and the pack");
+        Check(Library::PackageFolder("X.UTX")=="Textures" && Library::PackageFolder("X.usx")=="StaticMeshes" && Library::PackageFolder("x.uax")=="Sounds" && Library::PackageFolder("x.ukx")=="Animations" && Library::PackageFolder("x.u").empty(),"required packages install by extension");
+        auto abc=Library::ReadPack(packDocument("abc",Json::array({packEntry("pack.abc.dust","Dust","Dust & Debris")})),"abc.json");
+        const Json packs=Json::array({swrc,abc});
+        Json packFile=Library::EmptyDocument();auto mine=Library::Save(packFile,fresh);
+        auto all=Library::Merge(builtins,packs,packFile);
+        Check(all.size()==7 && all[0]["builtin"]==true && all[1]["readonly"]==true && all[2]["id"]=="pack.swrc.steam_a" && all[4]["id"]=="pack.swrc.flagged" && all[5]["pack"]=="abc" && all[5]["builtin"]==false
+            && all[6]["id"]==mine["id"] && all[6]["readonly"]==false && !all[6].contains("pack"),"built-ins, then each pack in order, then user entries");
+        Check(Library::Find(all,"pack.abc.dust")["name"]=="Dust" && Library::Find(all,"steam b")["id"]=="pack.swrc.steam_b","pack entries are found by id or name");
+        Library::Delete(packFile,builtins,packs,"pack.swrc.steam_b");Library::Delete(packFile,builtins,packs,"pack.swrc.steam_b");
+        Check(packFile["hiddenPacks"]==Json::array({"pack.swrc.steam_b"}) && packFile["hiddenBuiltins"].empty(),"deleting a pack entry hides it once");
+        Reject([&]{Library::Delete(packFile,builtins,packs,"pack.swrc.unknown");});Reject([&]{Library::Delete(packFile,builtins,packs,"pack.nope.steam_a");});Reject([&]{Library::Delete(packFile,builtins,"pack.swrc.steam_a");});
+        Library::Delete(packFile,builtins,packs,"builtin.pipe_steam");
+        auto hiddenList=Library::Merge(builtins,packs,packFile);
+        Check(hiddenList.size()==5 && std::none_of(hiddenList.begin(),hiddenList.end(),[](const Json& e){return e["id"]=="pack.swrc.steam_b" || e["id"]=="builtin.pipe_steam";}),"hidden built-in and pack entries are not listed");
+        Check(Has(Reject([&]{Library::Update(packFile,"pack.swrc.steam_a",{{"name","Mine"}});}),"effect pack"),"pack entries cannot be renamed");
+        auto packCopy=Library::Save(packFile,all[2]);
+        Check(Library::IsUserId(packCopy["id"]) && !packCopy.contains("pack") && !packCopy.contains("readonly") && !packCopy.contains("builtin") && packFile["emitters"].back()["name"]=="Steam A"
+            && !packFile["emitters"].back().contains("pack"),"saving a pack entry makes a user copy without the in-memory flags");
+        Library::RestoreBuiltins(packFile);
+        Check(packFile["hiddenPacks"].empty() && packFile["hiddenBuiltins"].empty() && Library::Merge(builtins,packs,packFile).size()==8,"restore lists hidden built-in and pack entries again");
+        const Json older={{"version",1},{"emitters",Json::array()},{"hiddenBuiltins",{"builtin.steam_vent"}}};
+        Check(Library::Merge(builtins,packs,older).size()==5 && Library::Document(older)["hiddenPacks"].empty(),"a file written before packs reads with no hidden pack entries");
+        Check(Reject([]{Library::Document(Json{{"version",1},{"hiddenPacks",Json::object()}});})==Library::DamagedFile() && Reject([]{Library::Document(Json{{"version",1},{"hiddenPacks",{2}}});})==Library::DamagedFile(),"a damaged hidden pack list refuses edits");
+        auto sneaky=packFile;sneaky["emitters"].push_back(all[2]);
+        Check(Library::Merge(builtins,packs,sneaky).size()==Library::Merge(builtins,packs,packFile).size() && Has(Library::Problems(sneaky).back().get<std::string>(),"effect pack id in the user file"),"a pack entry in the user file is reported, not listed twice");
+        // A large pack: 900 entries made from the embedded defaults.
+        Json large=packDocument("big",Json::array());
+        for(size_t i=0;i<900;++i){auto e=embedded[i%embedded.size()];e["id"]="pack.big.e"+std::to_string(i);e["name"]=e["name"].get<std::string>()+" "+std::to_string(i);large["emitters"].push_back(e);}
+        const auto largeBytes=large.dump().size();const auto started=std::chrono::steady_clock::now();
+        auto big=Library::ReadPack(large,"big.json");auto bigList=Library::Merge(embedded,std::vector<const Json*>{&big},Library::EmptyDocument());
+        const auto elapsed=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
+        Check(big["emitters"].size()==900 && big["problems"].empty() && bigList.size()==embedded.size()+900 && bigList.back()["pack"]=="big","a 900-entry pack reads and merges");
+        std::cout<<"900-entry pack ("<<largeBytes<<" bytes of JSON) read and merged in "<<elapsed<<" ms\n";
+
         auto dir=std::filesystem::temp_directory_path()/("emitter-library-test-"+Id());auto path=dir/"emitter_library.json";
         WriteDocument(path,file);
         Check(Library::Merge(builtins,ReadDocument(path,Library::EmptyDocument()))==Library::Merge(builtins,file),"the user file round-trips through the atomic writer");
