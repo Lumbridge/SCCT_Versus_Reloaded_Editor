@@ -15,6 +15,7 @@
 #include "MapDesignModel.h"
 #include "SecurityModel.h"
 #include "StageModel.h"
+#include "EmitterPreview.h"
 #include <commdlg.h>
 #include <windowsx.h>
 #include <objidl.h>
@@ -960,6 +961,16 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="tag.rename") {Editor::RenameTag(q.at("preview"));result=true;}
         else if(op=="assembly.capture") result=Editor::CaptureAssembly(q.at("members"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()});
         else if(op=="assembly.place") result=Editor::PlaceAssembly(q.at("definition"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()},q.at("bindings").get<std::map<std::string,std::string>>());
+        else if(op=="preview.open"){std::string error;if(!EmitterPreview::OpenTestWindow(error))throw std::runtime_error(error);result=EmitterPreview::State();}
+        else if(op=="preview.show"){EmitterPreview::Show(q.at("entry"));result=EmitterPreview::State();}
+        else if(op=="preview.capture") result=EmitterPreview::Capture(q.value("path",std::string()));
+        else if(op=="preview.clear"){EmitterPreview::Clear();result=EmitterPreview::State();}
+        else if(op=="preview.close"){EmitterPreview::CloseTestWindow();result=EmitterPreview::State();}
+        else if(op=="preview.state") result=EmitterPreview::State();
+        else if(op=="preview.attach"){std::string error;if(!EmitterPreview::Attach(reinterpret_cast<HWND>(static_cast<uintptr_t>(q.at("hwnd").get<uint64_t>())),error))throw std::runtime_error(error);result=EmitterPreview::State();}
+        else if(op=="preview.detach"){EmitterPreview::Detach();result=EmitterPreview::State();}
+        else if(op=="preview.step"){EmitterPreview::Step(q.value("seconds",1.0));result=EmitterPreview::State();}
+        else if(op=="preview.camera"){if(q.contains("camera"))EmitterPreview::SetCamera(q.at("camera"));result=EmitterPreview::Camera();}
         else if(op=="map") result={{"key",Editor::MapKey()},{"level",Editor::LevelPath()}};
         else throw std::runtime_error("Unknown workflow request.");
         auto text=Json({{"ok",true},{"result",result}}).dump(); if(text.size()+1>capacity) return -static_cast<int>(text.size()+1);

@@ -38,6 +38,10 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\WorkflowModelTests.cpp Reloade
 if errorlevel 1 goto failed
 "%TEMP%\WorkflowModelTests.exe"
 if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\EmitterPreviewModelTests.cpp Reloaded.Editor\WorkflowModel.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\EmitterPreviewModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\EmitterPreviewModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\WorkflowGraphTests.cpp Reloaded.Editor\WorkflowModel.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\WorkflowGraphTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\WorkflowGraphTests.exe"
