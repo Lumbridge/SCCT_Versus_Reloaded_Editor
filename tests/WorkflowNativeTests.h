@@ -581,26 +581,26 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             reinterpret_cast<void(__thiscall*)(void*,void*,void*)>(0x10e045e9)(nullptr,cause,nullptr);KillTimer(nullptr,timer);
             require(WorkflowProbe::vertexPortalEnabled,"right-click enables the portal action for four rotated corners");
             auto portals=call({{"op","vertex.portal"}});require(portals.size()==1 && call({{"op","actors"}}).size()==total+1,"four selected corners add exactly one portal");
-            auto portal=WorkflowProbe::MagicActor(portals[0]);require((*reinterpret_cast<unsigned*>(portal+0x344)&0x04000009u)==0x04000009u,"portal actor has invisible non-solid zone flags");
-            auto pm=*reinterpret_cast<unsigned char**>(portal+0x238),pp=*reinterpret_cast<unsigned char**>(pm+0x50);require(*reinterpret_cast<int*>(pp+0x2c)==6,"portal has six slab faces");
+            auto portal=WorkflowProbe::MagicActor(portals[0]);require((*reinterpret_cast<unsigned*>(portal+0x344)&0x04000109u)==0x04000109u,"portal actor has invisible non-solid two-sided zone portal flags");
+            auto pm=*reinterpret_cast<unsigned char**>(portal+0x238),pp=*reinterpret_cast<unsigned char**>(pm+0x50);require(*reinterpret_cast<int*>(pp+0x2c)==1,"portal is a single sheet polygon");
+            auto pd=*reinterpret_cast<unsigned char**>(pp+0x28);require(*reinterpret_cast<unsigned short*>(pd+0x148)==4,"portal sheet has four corners");
+            auto portalField=[&](const char* name){return portal+(field(name)-actor);};
+            const std::array<int,3> noRotation{};const std::array<float,3> noPivot{};
+            require(!memcmp(portalField("Rotation"),noRotation.data(),12) && !memcmp(portalField("PrePivot"),noPivot.data(),12),"portal brush carries no rotation or pivot for the build to ignore");
             const auto a=before[0]["world"].get<std::array<double,3>>(),b=before[1]["world"].get<std::array<double,3>>(),c=before[2]["world"].get<std::array<double,3>>();
             std::array<double,3> u{},v{},n{};for(int axis=0;axis<3;++axis){u[axis]=b[axis]-a[axis];v[axis]=c[axis]-a[axis];}
             n={u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0]};const auto length=std::sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
-            auto pd=*reinterpret_cast<unsigned char**>(pp+0x28);bool thickness=true,flags=true;
-            std::array<float,12> coords{};auto table=*reinterpret_cast<uintptr_t**>(portal);
-            reinterpret_cast<void*(__thiscall*)(void*,void*)>(table[0xac/4])(portal,coords.data());
-            for(int pi=0;pi<6;++pi)
+            bool onPlane=true;std::array<bool,4> matched{};const bool flags=(*reinterpret_cast<unsigned*>(pd+0x140)&0x04000109u)==0x04000109u;
+            for(int vi=0;vi<4;++vi)
             {
-                flags&=(*reinterpret_cast<unsigned*>(pd+pi*0x14c+0x140)&0x04000009u)==0x04000009u;
-                for(int vi=0;vi<4;++vi)
-                {
-                    std::array<float,3> world{};auto local=pd+pi*0x14c+0x18+vi*12;
-                    reinterpret_cast<void*(__thiscall*)(void*,void*,const void*)>(0x10eb2ba0)(local,world.data(),coords.data());
-                    double distance=0;for(int axis=0;axis<3;++axis)distance+=(world[axis]-a[axis])*n[axis]/length;
-                    thickness&=std::abs(std::abs(distance)-.5)<.002;
-                }
+                // The geometry build's own transform, local - PrePivot + Location, with no pivot.
+                std::array<double,3> world{};const auto local=reinterpret_cast<float*>(pd+0x18+vi*12),origin=reinterpret_cast<float*>(portal+0x80);
+                for(int axis=0;axis<3;++axis)world[axis]=static_cast<double>(local[axis])+origin[axis];
+                double distance=0;for(int axis=0;axis<3;++axis)distance+=(world[axis]-a[axis])*n[axis]/length;
+                onPlane&=std::abs(distance)<.002;
+                for(size_t k=0;k<4;++k){const auto corner=before[k]["world"].get<std::array<double,3>>();double d=0;for(int axis=0;axis<3;++axis)d+=(world[axis]-corner[axis])*(world[axis]-corner[axis]);if(std::sqrt(d)<.002)matched[k]=true;}
             }
-            require(thickness && flags,"native portal retains one-unit thickness and flags on every rotated face");
+            require(onPlane && flags && std::all_of(matched.begin(),matched.end(),[](bool m){return m;}),"native portal sheet corners are the selected rotated corners, with sheet portal flags");
             require(call({{"op","vertex.selection"}})==before,"adding a portal preserves the selected source vertices");
             Exec("TRANSACTION UNDO");require(call({{"op","actors"}}).size()==total,"portal creation undoes in one step");
             Exec("TRANSACTION REDO");require(call({{"op","actors"}}).size()==total+1,"portal creation redoes in one step");Exec("TRANSACTION UNDO");
