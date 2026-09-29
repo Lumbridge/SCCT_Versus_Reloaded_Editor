@@ -667,7 +667,7 @@ namespace
             const char* labels[]={"X axis","Y axis","Z axis","All axes"};
             for(unsigned i=0;i<4;++i)AppendMenuA(menu,MF_STRING|(available?0:MF_GRAYED),kVertexSnapX+i,labels[i]);
             AppendMenuA(menu,MF_SEPARATOR,0,nullptr);
-            AppendMenuA(menu,MF_STRING|(Editor::CanAddVertexPortal()?0:MF_GRAYED),kAddVertexPortal,"Add portal (1 unit thick)");
+            AppendMenuA(menu,MF_STRING|(Editor::CanAddVertexPortal()?0:MF_GRAYED),kAddVertexPortal,"Add portal sheet");
             POINT point{};GetCursorPos(&point);
             auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,point.x,point.y,0,GetActiveWindow(),nullptr);
             DestroyMenu(menu);if(command)HandleCommand(command);return;

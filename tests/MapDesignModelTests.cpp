@@ -66,27 +66,52 @@ int main()
     Check(corridor.size()==1 && std::abs(Volume(corridor[0])-128.0*(256+2*16)*64)<.01,"carved corridor must cut through both end walls");
     Check(!Design::Carved(spec) && Design::Carved(carve),"construction default must stay Shell for saved pieces");
 
-    // Doorways can carry a zone portal sheet.
+    // Four selected corners become one zone portal sheet: a single polygon
+    // whose corners are the selected ones, on vertical, horizontal and slanted
+    // planes.
     {
+        auto sub=[](const Vector& a,const Vector& b){return Vector{a[0]-b[0],a[1]-b[1],a[2]-b[2]};};
+        auto cross=[](const Vector& a,const Vector& b){return Vector{a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]};};
+        auto dot=[](const Vector& a,const Vector& b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];};
         std::vector<Vector> corners{{0,0,0},{128,0,0},{128,0,64},{0,0,64}};
-        for(const auto rotation:{Rotation{},Rotation{7000,11000,3000}})
+        for(const auto rotation:{Rotation{},Rotation{0,0,16384},Rotation{7000,11000,3000}})
         {
             auto points=corners;for(auto& p:points)p=TransformPoint(p,{{123,-321,456},rotation});
+            const auto selected=points;
             std::swap(points[1],points[2]);points.push_back(points[0]);points.push_back(points[2]);
             auto portal=Design::VertexPortal(points);
-            Check(portal.faces.size()==6 && portal.flags==Design::kPortalPolyFlags,"vertex portal is a flagged six-face slab");
-            Check(std::abs(Volume(portal)-128*64)<.001,"portal has outward winding and one-unit thickness under rotation");
-            const auto a=portal.faces[0][0],b=portal.faces[0][1],c=portal.faces[0][2];
-            Vector u{b[0]-a[0],b[1]-a[1],b[2]-a[2]},v{c[0]-a[0],c[1]-a[1],c[2]-a[2]};
-            Vector n{u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0]};
-            double length=std::sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
-            for(const auto& face:portal.faces)for(const auto& p:face){double d=0;for(int axis=0;axis<3;++axis)d+=(p[axis]-points[0][axis])*n[axis]/length;Check(std::abs(std::abs(d)-.5)<1e-8,"portal extends half a unit on each side of the selected plane");}
+            Check(portal.faces.size()==1 && portal.faces[0].size()==4 && portal.flags==Design::kPortalSheetFlags,"vertex portal is one four-corner sheet with sheet portal flags");
+            const auto& sheet=portal.faces[0];
+            for(const auto& corner:selected)Check(std::count_if(sheet.begin(),sheet.end(),[&](const Vector& p){return Design::Distance(p,corner)<1e-6;})==1,"portal sheet corners are the selected corners");
+            Vector area{};for(size_t i=0;i<4;++i){auto c=cross(sheet[i],sheet[(i+1)%4]);for(int axis=0;axis<3;++axis)area[axis]+=c[axis]/2;}
+            const double size=std::sqrt(dot(area,area));Check(std::abs(size-128*64)<1e-6,"portal sheet spans the selected quad");
+            Vector n=area;for(auto& x:n)x/=size;
+            for(size_t i=0;i<4;++i)
+            {
+                Check(std::abs(dot(sub(sheet[i],sheet[0]),n))<1e-9,"portal sheet corners lie in one plane");
+                Check(dot(cross(sub(sheet[(i+1)%4],sheet[i]),sub(sheet[(i+2)%4],sheet[(i+1)%4])),n)>0,"portal sheet is convex and consistently wound");
+            }
+            if(rotation==Rotation{})Check(std::abs(std::abs(n[1])-1)<1e-9,"the unrotated portal sheet is vertical");
+            if(rotation==Rotation{0,0,16384})Check(std::abs(std::abs(n[2])-1)<1e-9,"the rolled portal sheet is horizontal");
+            if(rotation==Rotation{7000,11000,3000})for(double x:n)Check(std::abs(x)>.05 && std::abs(x)<.95,"the turned portal sheet is slanted");
+        }
+        {
+            // Native float error off the plane is projected away.
+            auto points=corners;points[3][1]=.004;points[1][1]=-.003;
+            auto sheet=Design::VertexPortal(points).faces[0];
+            auto n=cross(sub(sheet[1],sheet[0]),sub(sheet[2],sheet[0]));const double length=std::sqrt(dot(n,n));for(auto& x:n)x/=length;
+            for(auto& p:sheet)Check(std::abs(dot(sub(p,sheet[0]),n))<1e-9 && std::abs(p[1])<.01,"nearly planar corners are projected onto one plane");
+            auto text=Design::SolidDefinition({Design::VertexPortal(corners)})["actors"][0]["text"].get<std::string>();
+            size_t polygons=0;for(size_t at=text.find("Begin Polygon");at!=std::string::npos;at=text.find("Begin Polygon",at+1))++polygons;
+            Check(polygons==1 && text.find("Begin Polygon Flags=67109129\n")!=std::string::npos && text.find("\nPolyFlags=67109129\n")!=std::string::npos && text.find("CsgOper=CSG_Add")!=std::string::npos,"portal sheet text is one added polygon with sheet portal flags");
         }
         Reject([&]{auto p=corners;p.pop_back();Design::VertexPortal(p);});
         Reject([&]{auto p=corners;p.push_back({64,0,32});Design::VertexPortal(p);});
         Reject([&]{auto p=corners;p[3][1]=2;Design::VertexPortal(p);});
         Reject([]{Design::VertexPortal({{0,0,0},{1,0,0},{2,0,0},{3,0,0}});});
         Reject([]{Design::VertexPortal({{0,0,0},{128,0,0},{128,0,64},{100,0,20}});});
+        Reject([]{Design::VertexPortal({{0,0,0},{.5,0,0},{.5,0,.5},{0,0,.5}});});
+        Reject([]{Design::VertexPortal({{0,0,0},{128,0,0},{128,0,64},{127.5,0,64}});});
     }
     auto door=carve;door["kind"]="Doorway";door["portal"]=true;
     auto doorway=Design::Geometry(door);

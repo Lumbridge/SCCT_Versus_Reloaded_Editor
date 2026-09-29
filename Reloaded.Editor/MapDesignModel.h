@@ -11,6 +11,9 @@ namespace Workflow::Design
 using Face = std::vector<Vector>;
 // Native Add Special's Zone Portal: Portal | Invisible | Non-solid.
 constexpr unsigned kPortalPolyFlags = 0x04000009u;
+// The same portal on a SheetBuilder polygon, which native Build() makes
+// two-sided (0x100): the surface flags of a native Add Special portal sheet.
+constexpr unsigned kPortalSheetFlags = kPortalPolyFlags|0x100u;
 struct Solid { std::vector<Face> faces; bool subtract=false; unsigned flags=0; };
 inline double Number(const std::string& text,double minimum=-100000,double maximum=100000)
 {
@@ -93,7 +96,7 @@ inline Solid GlideRamp(double x0,double x1,double y0,double y1,double z0,double 
     solid.flags=kGlideFlags;
     return solid;
 }
-// A single two-sided polygon across local Y, used for zone portals in doorways.
+// A single polygon across local Y, used for zone portals in doorways.
 inline Solid Sheet(double width,double height,unsigned flags)
 {
     if(!std::isfinite(width) || !std::isfinite(height) || width<1 || height<1)throw std::runtime_error("A portal needs positive dimensions.");
@@ -264,7 +267,10 @@ inline Json Definition(const Json& spec,const Rotation& rotation={},const std::s
 {return SolidDefinition(Geometry(spec),rotation,material);}
 
 // Vertex selection contains repeated polygon copies of each corner and has no
-// perimeter order. Resolve four distinct corners, then sort in their own plane.
+// perimeter order. Resolve four distinct corners, sort them in their own plane
+// and return one sheet through them, like a native Add Special zone portal on
+// a SheetBuilder brush: the build keeps a portal polygon in empty space, so the
+// sheet needs no thickness.
 inline Solid VertexPortal(const std::vector<Vector>& selected)
 {
     auto sub=[](const Vector& a,const Vector& b){return Vector{a[0]-b[0],a[1]-b[1],a[2]-b[2]};};
@@ -290,19 +296,19 @@ inline Solid VertexPortal(const std::vector<Vector>& selected)
     auto u=sub(points[0],center);auto v=cross(normal,u);
     std::sort(points.begin(),points.end(),[&](const Vector& a,const Vector& b){auto x=sub(a,center),y=sub(b,center);return std::atan2(dot(x,v),dot(x,u))<std::atan2(dot(y,v),dot(y,u));});
     for(size_t i=0;i<4;++i)
+    {
         if(dot(cross(sub(points[(i+1)%4],points[i]),sub(points[(i+2)%4],points[(i+1)%4])),normal)<=1e-4)
             throw std::runtime_error("Portal corners must form a convex quadrilateral.");
-    Face front,back;
-    for(auto p:points)
-    {
-        // Remove tiny native float error so all faces remain planar.
-        const auto offset=dot(sub(p,center),normal);Vector a=p,b=p;
-        for(int axis=0;axis<3;++axis){a[axis]+=(0.5-offset)*normal[axis];b[axis]+=(-0.5-offset)*normal[axis];}
-        front.push_back(a);back.push_back(b);
+        auto edge=sub(points[(i+1)%4],points[i]);if(dot(edge,edge)<1)throw std::runtime_error("Portal edges must be at least one unit long.");
     }
-    std::vector<Face> faces{front,back};
-    for(size_t i=0;i<4;++i){auto j=(i+1)%4;faces.push_back({front[i],back[i],back[j],front[j]});}
-    return Convex(std::move(faces),kPortalPolyFlags);
+    // Best-fit plane of the quad: through the centre, normal to both diagonals,
+    // so each corner is equally far off it. Projecting the corners onto it
+    // removes native float error, so the sheet is exactly planar.
+    normal=cross(sub(points[2],points[0]),sub(points[3],points[1]));
+    const double length=std::sqrt(dot(normal,normal));for(auto& n:normal)n/=length;
+    Solid sheet;sheet.flags=kPortalSheetFlags;sheet.faces.emplace_back();
+    for(auto p:points){const auto offset=dot(sub(p,center),normal);for(int axis=0;axis<3;++axis)p[axis]-=offset*normal[axis];sheet.faces[0].push_back(p);}
+    return sheet;
 }
 inline double Distance(const Vector& a,const Vector& b)
 {CheckVector(a);CheckVector(b);double d=0;for(int i=0;i<3;++i)d+=(a[i]-b[i])*(a[i]-b[i]);return std::sqrt(d);}
