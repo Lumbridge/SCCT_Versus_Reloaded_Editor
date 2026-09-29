@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "WorkflowTools.h"
+#include "EmitterLibraryWindow.h"
 #include "EditorExtras.h"
 #include "StoreyFilter.h"
 #include "WorkflowEditor.h"
@@ -809,6 +810,14 @@ Json SaveEmitterSelection(HWND owner,bool confirm)
     }
     return saved;
 }
+Json AskEmitterDetails(HWND owner,const Json& entry,const char* title)
+{
+    std::vector<std::string> categories; for(const auto& category:Editor::EmitterCategories()) categories.push_back(Recode(category.get<std::string>(),CP_UTF8,CP_ACP));
+    std::string description=Recode(entry.value("description",std::string{}),CP_UTF8,CP_ACP); std::replace(description.begin(),description.end(),'\n',' ');
+    std::vector<InputField> fields={{"Name",Recode(entry.value("name",std::string{}),CP_UTF8,CP_ACP),{}},{"Category (choose or type)",Recode(entry.value("category",std::string{}),CP_UTF8,CP_ACP),categories,true},{"Description (optional)",description,{}}};
+    if(!Ask(owner,title,fields)) return {};
+    return {{"name",Recode(fields[0].value,CP_ACP,CP_UTF8)},{"category",Recode(fields[1].value,CP_ACP,CP_UTF8)},{"description",Recode(fields[2].value,CP_ACP,CP_UTF8)}};
+}
 void RunObjectiveCommand(UINT command,const Json& snapshot)
 {
     if(command<kAddObjective || command>kAddFlagObjective)throw std::runtime_error("Invalid objective command.");
@@ -877,6 +886,7 @@ bool HandleCommand(UINT command)
     if(command==MapAuthoringDialog::Export || command==MapAuthoringDialog::Import){MapAuthoringDialog::Open(GetActiveWindow(),command==MapAuthoringDialog::Export);return true;}
     if(command==MagicEventWorkbench::Command){try{MagicEventWorkbench::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"SMagicEvent Workbench",MB_OK|MB_ICONERROR);}return true;}
     if(command==CameraNetworkPanel::Command){try{CameraNetworkPanel::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"SCamNetwork Manager",MB_OK|MB_ICONERROR);}return true;}
+    if(command==EmitterLibraryWindow::Command){try{EmitterLibraryWindow::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Emitter Library",MB_OK|MB_ICONERROR);}return true;}
     if(command==kSaveToEmitterLibrary){try{SaveEmitterSelection(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Save to Emitter Library",MB_OK|MB_ICONERROR);}return true;}
     if(command<kConnections || command>kSaveAssembly) return false;
     try

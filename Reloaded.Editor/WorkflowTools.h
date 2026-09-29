@@ -29,4 +29,7 @@ namespace WorkflowTools
     // name, category and description. Returns the saved entry, or null when
     // cancelled; errors are thrown for the caller to show.
     Workflow::Json SaveEmitterSelection(HWND owner, bool confirm = true);
+    // Asks for an entry's name, category and description, starting from the
+    // entry's own. Returns {name,category,description}, or null when cancelled.
+    Workflow::Json AskEmitterDetails(HWND owner, const Workflow::Json& entry, const char* title);
 }
