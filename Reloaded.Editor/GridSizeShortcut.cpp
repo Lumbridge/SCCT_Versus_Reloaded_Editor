@@ -100,13 +100,23 @@ namespace
         }
     }
 
+    // What ViewportWndProc returns for a message handled here (ViewportMessageHook).
+    LRESULT g_handledResult = 0;
+
     bool __cdecl HandleViewportMessage(void* viewport, UINT message,
                                        WPARAM wParam, LPARAM lParam)
     {
+        g_handledResult = 0;
         // The emitter preview's own viewport takes all its mouse and keyboard input,
-        // so nothing done in the preview reaches the map or its selection.
+        // so nothing done in the preview reaches the map or its selection. A click
+        // there never activates its (WS_POPUP-restyled) window: keyboard focus and
+        // activation stay with the window that hosts the preview.
         if (EmitterPreview::ViewportMessage(viewport, message, wParam, lParam))
+        {
+            if (message == WM_MOUSEACTIVATE)
+                g_handledResult = MA_NOACTIVATE;
             return true;
+        }
         const auto target = reinterpret_cast<uintptr_t>(viewport);
         if ((message == WM_KEYUP || message == WM_SYSKEYUP)
             && (wParam == VK_CONTROL || wParam == VK_LCONTROL || wParam == VK_RCONTROL))
@@ -172,7 +182,7 @@ namespace
         handled:
             popad
             popfd
-            xor eax, eax
+            mov eax, dword ptr [g_handledResult]
             ret 12
         }
     }

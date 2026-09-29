@@ -1,8 +1,10 @@
 #include "../Reloaded.Editor/EmitterPreviewModel.h"
+#include <cmath>
 #include <iostream>
 using namespace Workflow;
 using namespace Workflow::EmitterPreviewModel;
 static int checks=0;
+constexpr int kFitPitch=-2730;
 void Check(bool condition,const char* what) { ++checks; if(!condition) throw std::runtime_error(what); }
 template<class F> void Reject(F f,const char* what) { bool failed=false;try{f();}catch(const std::exception&){failed=true;}Check(failed,what); }
 // OffsD Emitter530 as the native exporter writes it: a triggered one-shot burst.
@@ -88,7 +90,47 @@ int main()
         Check(frame.target[2]>100 && frame.target[0]<0 && frame.radius>300 && frame.radius<1200,"frame centred on the plume");
         auto spray=Estimate({{kBurst,Rotation{0,16384,0}}});
         Check(spray.target[1]>100 && std::abs(spray.target[0])<200,"PTRS_Actor velocity follows the actor yaw");
-        Check(Estimate({}).radius==128,"empty entries get a default frame");
+        Check(Estimate({}).radius==128 && Estimate({}).box.valid,"empty entries get a default frame");
+        // Entry actors keep their own position: in the preview text and in the estimate.
+        auto placed=Prepare(kBurst,"PV9_",1,"Pkg",{"mylevel"},{0,0,0},{7.906982421875,-18.8984375,50});
+        Check(Property(placed.text,"Location")=="(X=7.906982,Y=-18.898438,Z=50.000000)","entry actor position written as its Location");
+        Reject([]{Prepare(kBurst,"P",0,"Pkg",{},{},{0,0,std::nan("")});},"non-finite position rejected");
+        auto raised=Estimate({{drift,Rotation{},Vector{0,0,500}}});
+        Check(std::abs(raised.target[2]-frame.target[2]-500)<1e-6 && std::abs(raised.box.max[2]-frame.box.max[2]-500)<1e-6,"estimate follows the actor position");
+
+        // Particle fit on the view axes: a 21x11x41 grid of points looked at along +X.
+        std::vector<Sample> cloud;
+        for(int x=-10;x<=10;++x)for(int y=-5;y<=5;++y)for(int z=0;z<=40;++z)cloud.push_back({{static_cast<double>(x),static_cast<double>(y),static_cast<double>(z)},1});
+        auto grid=Fit(cloud,0,0,90,1,1,0,0);
+        Check(grid.valid && std::abs(grid.target[1])<1e-9 && std::abs(grid.target[2]-20)<1e-9 && std::abs(grid.target[0])<1e-9,"target is the middle of the particles on the view axes");
+        Check(grid.distance>20 && grid.distance<32 && std::abs(grid.height-18.5)<0.6,"distance fits 96% of the particles, each with its size, into the view");
+        auto strays=cloud;strays.push_back({{9000,-9000,9000},1});strays.push_back({{0,4000,0},1});
+        for(int i=0;i<200;++i)strays.push_back({{0,0,5000.0+i},1,0.05});
+        auto kept=Fit(strays,0,0,90,1,1,0,0);
+        Check(std::abs(kept.distance-grid.distance)<2 && std::abs(kept.target[2]-grid.target[2])<2,"strays and faded particles leave the frame alone");
+        std::vector<Sample> faded;for(int i=0;i<5;++i)faded.push_back({{0,0,100.0*i},1,0});
+        Check(Fit(faded,0,0,90,1,1,0,0).valid && !Fit({{{0,0,0},1}},0,0,90,1,1,0,0).valid,"fully faded particles still frame; fewer than three do not");
+        Check(Fit(cloud,0,0,90,2,1,0,0).distance>grid.distance*1.5 && Fit(cloud,0,0,90,1,0.5,0,0).distance>grid.distance*1.5,"narrow views and a smaller fill pull back");
+        auto side=Fit(cloud,-16384,0,90,1,1,0,0);
+        Check(std::abs(side.target[2]-20)<1 && side.height<grid.height,"seen from above the tall cloud is framed by its footprint");
+        std::vector<Sample> snow;
+        for(int i=0;i<600;++i)snow.push_back({{std::fmod(i*37.0,2000)-1000,std::fmod(i*91.0,2000)-1000,std::fmod(i*53.0,1200)},2.5});
+        const double far=Fit(snow,kFitPitch,8192,75,4.0/3,0.9,0,0).distance,near=Fit(snow,kFitPitch,8192,75,4.0/3,0.9,480,6).distance;
+        Check(far>1500 && std::abs(near-2.5*480/(std::tan(75*3.14159265358979323846/360)*6))<1e-6,"tiny particles in a large volume are framed close enough to be seen");
+
+        // Fit on the view axes: a 100-unit cube straight ahead at 90 degrees fills the view
+        // from 100 units (its near face spans the frustum); narrow views and a smaller
+        // fill need more distance, and a wide flat sheet seen from above is framed by its width.
+        Box cube;Include(cube,{-50,-50,-50});Include(cube,{50,50,50});
+        Check(std::abs(FitDistance(cube,{0,0,0},0,0,90,1,1)-100)<1e-6,"cube fills a square 90 degree view from 100 units");
+        Check(std::abs(FitDistance(cube,{0,0,0},0,0,90,2,1)-150)<1e-6,"a wide view is limited by its vertical angle");
+        Check(std::abs(FitDistance(cube,{0,0,0},0,0,90,1,0.5)-150)<1e-6,"a smaller fill pulls back");
+        Box sheet;Include(sheet,{-400,-400,-5});Include(sheet,{400,400,5});
+        const double above=FitDistance(sheet,{0,0,0},-16384,0,90,1,1);
+        Check(std::abs(above-405)<1e-6 && above<Distance(std::sqrt(800.0*800+800*800+10*10)*0.5,90,1)*0.5,"a flat sheet seen from above is framed by its silhouette, not by a bounding sphere");
+        Box dot;Include(dot,{-1,-1,-1});Include(dot,{1,1,1});
+        Box huge;Include(huge,{-1e5,-1e5,-1e5});Include(huge,{1e5,1e5,1e5});
+        Check(FitDistance(dot,{0,0,0},kFitPitch,8192,75,4.0/3,0.85)==16 && FitDistance(huge,{0,0,0},kFitPitch,8192,75,4.0/3,0.85)==20000,"distance kept between 16 and 20000 units");
         Check(Distance(100,90,1)>Distance(100,90,0.5)*0.99 && Distance(100,90,4.0/3)>115 && Distance(200,90,1)>Distance(100,90,1),"distance grows with radius and narrow views");
         auto eye=Eye({10,20,30},100,0,0);Check(std::abs(eye[0]+90)<1e-9 && std::abs(eye[1]-20)<1e-9 && std::abs(eye[2]-30)<1e-9,"yaw 0 looks along +X");
         auto down=Eye({0,0,0},100,-16384,0);Check(std::abs(down[2]-100)<1e-6 && std::abs(down[0])<1e-6,"pitch -90 degrees looks straight down");
