@@ -32,6 +32,9 @@ namespace Workflow
     std::string SetProperty(std::string text, const std::string& key, const std::string& value);
     std::string RemoveProperty(const std::string& text, const std::string& key);
     std::string RenameObjects(const std::string& text, const std::string& prefix);
+    // Names of the Begin Object / Begin Brush blocks nested in actor text: the
+    // inline sub-objects (particle emitters, brush models) native copy exports.
+    std::vector<std::string> InlineObjectNames(const std::string& text);
     Json CanonicalizeAssembly(Json definition, const std::map<std::string,std::string>& memberNames);
     Vector TransformPoint(const Vector& point, const Pose& frame, bool inverse = false);
     Rotation TransformRotation(const Rotation& rotation, const Rotation& frame, bool inverse = false);

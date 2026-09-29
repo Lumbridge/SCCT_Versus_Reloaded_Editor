@@ -2036,6 +2036,41 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
         Exec("TRANSACTION REDO");require(call({{"op","actors"}}).size()==count+1,"assembly insertion supports redo");
         auto recaptured=call({{"op","assembly.capture"},{"members",instance.at("members")},{"position",{1200,0,0}},{"rotation",{0,16384,0}}});
         require(recaptured.at("actors").size()==1,"placed assembly can be edited again");
+        {
+            // Emitter Library: a workbench emitter, whose particle emitter is owned
+            // by the actor, is saved and placed with a live sub-emitter in one Undo
+            // step, and saving the placed copy again does not grow its names.
+            auto emitterActors=call({{"op","actors"}}).size();
+            auto emitter=call({{"op","magic.create"},{"class","Engine.Emitter"}});
+            auto particles=call({{"op","magic.component"},{"snapshot",call({{"op","magic.inspect"},{"actor",emitter}})},{"class","Engine.SpriteEmitter"}});
+            call({{"op","magic.edit"},{"snapshot",call({{"op","magic.inspect"},{"actor",particles}})},{"changes",{{"DrawStyle","PTDS_Brighten"}}}});
+            auto offersSave=[&]()
+            {
+                using Load=HMENU(WINAPI*)(HINSTANCE,LPCSTR);
+                auto menu=(*reinterpret_cast<Load*>(0x11af23f0))(GetModuleHandle(nullptr),MAKEINTRESOURCEA(107));
+                auto state=GetMenuState(GetSubMenu(menu,0),40968,MF_BYCOMMAND);DestroyMenu(menu);return state!=UINT(-1);
+            };
+            call({{"op","select"},{"actors",J::array()}});
+            require(!offersSave() && call({{"op","emitterlib.selected"}}).empty(),"actor menu hides Save to Emitter Library without a selected emitter");
+            call({{"op","select"},{"actors",J::array({emitter})}});
+            require(offersSave() && call({{"op","emitterlib.selected"}}).size()==1,"actor menu offers Save to Emitter Library for a selected emitter");
+            auto draft=call({{"op","emitterlib.capture"},{"members",J::array({emitter})}});
+            bool mapLocal=false;for(const auto& dependency:draft.at("dependencies"))mapLocal|=dependency.get<std::string>().rfind("MyLevel.",0)==0;
+            require(!mapLocal && draft.at("bindings").empty() && draft.at("actors").size()==1,"emitter capture records no map-local dependency or binding");
+            auto saved=call({{"op","emitterlib.save"},{"entry",draft},{"name","Native test emitter"},{"category","Test FX"}});
+            require(std::filesystem::exists(directory/"ReloadedEditor"/"emitter_library.json") && saved.at("category")=="Test FX","emitter entry is written to the user library");
+            auto placed=call({{"op","emitterlib.place"},{"id",saved.at("id")},{"position",{0,1536,0}},{"rotation",{0,0,0}}});
+            auto values=call({{"op","magic.inspect"},{"actor",placed.at(0)}}).at("values");
+            const auto sub=values.at("Emitters").size()==1?values.at("Emitters").at(0).get<std::string>():std::string();
+            require(sub.find("'MyLevel.RE_")!=std::string::npos && sub.find(emitter.at("path").get<std::string>().substr(8)+".")==std::string::npos,"placed emitter references its own sub-emitter in the map package");
+            auto resaved=call({{"op","emitterlib.capture"},{"members",placed}});
+            require(resaved.at("actors").at(0).at("name")==draft.at("actors").at(0).at("name") && resaved.at("actors").at(0).at("text").get<std::string>().find("RE_")==std::string::npos,"saving a placed emitter again does not grow its names");
+            Exec("TRANSACTION UNDO");require(call({{"op","actors"}}).size()==emitterActors+1,"emitter placement undoes in one step");
+            call({{"op","emitterlib.delete"},{"id",saved.at("id")}});
+            bool gone=true;for(const auto& entry:call({{"op","emitterlib.list"}}))gone=gone && entry.at("id")!=saved.at("id");require(gone,"deleting a user emitter removes it from the library");
+            for(int i=0;i<3;++i)Exec("TRANSACTION UNDO");
+            require(call({{"op","actors"}}).size()==emitterActors,"workbench emitter fixture is undone");
+        }
         require(Rebuild(),"ordinary geometry rebuild after insertion");
         checkSurfaceBrushSelection(2);
         using Save=int(__thiscall*)(void*,const char*);
