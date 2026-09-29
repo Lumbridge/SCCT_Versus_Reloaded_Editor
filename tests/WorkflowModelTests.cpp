@@ -2,6 +2,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <regex>
 #include <stdexcept>
 using namespace Workflow;
 static int checks=0;
@@ -62,6 +63,45 @@ int main()
         auto bound=definition;bound["bindings"].push_back({{"id","external"},{"label","External target"},{"kind","object"},{"path","Elsewhere.Actor"}});
         Reject([&]{PreparePlacement(bound,Pose{},"I_","Map",{});},"external binding must be explicitly resolved or unbound");
         Check(!PreparePlacement(bound,Pose{},"I_","Map",{{"external",""}}).empty(),"explicit optional unbound accepted");
+        // Particle emitters: stock sub-emitters are exported under the map
+        // package, workbench components under their actor, and paste creates
+        // both directly in the map package.
+        const auto npos=std::string::npos;
+        std::string stock="Begin Actor Class=Emitter Name=RE_0123456789ab_Emitter5\r\n    Begin Object Class=SpriteEmitter Name=RE_0123456789ab_SpriteEmitter6\r\n        Texture=Texture'sfx.Emitter.smoke_grenade'\r\n        Name=\"SpriteEmitter6\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'MyLevel.RE_0123456789ab_SpriteEmitter6'\r\n    Tag=\"Emitter\"\r\nEnd Actor\r\n";
+        std::string component="Begin Actor Class=Emitter Name=Emitter_Magic_1\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter6\r\n        Name=\"SpriteEmitter6\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'MyLevel.Emitter_Magic_1.SpriteEmitter6'\r\nEnd Actor\r\n";
+        Check(InlineObjectNames(stock)==std::vector<std::string>{"RE_0123456789ab_SpriteEmitter6"} && InlineObjectNames("Begin Actor Class=Brush Name=B\r\nBegin Brush Name=Model1\r\nBegin PolyList\r\nEnd PolyList\r\nEnd Brush\r\nEnd Actor\r\n")==std::vector<std::string>{"Model1"},"inline object names come from nested Begin Object/Brush lines only");
+        auto emitterActor=[](const std::string& text,const std::string& name){return Json{{"name",name},{"class","Engine.Emitter"},{"path","MyLevel."+name},{"text",text},{"tag","None"},{"event","None"},{"position",Vector{}},{"rotation",Rotation{}}};};
+        auto emitterDefinition=[&](Json actors){return Json{{"id","fx"},{"name","FX"},{"pivot",Vector{}},{"bindings",Json::array()},{"dependencies",Json::array()},{"actors",std::move(actors)}};};
+        auto fx=CanonicalizeAssembly(emitterDefinition(Json::array({emitterActor(stock,"RE_0123456789ab_Emitter5"),emitterActor(component,"Emitter_Magic_1")})),{});
+        auto fx0=fx["actors"][0]["text"].get<std::string>(),fx1=fx["actors"][1]["text"].get<std::string>();
+        Check(fx0.find("Begin Object Class=SpriteEmitter Name=SpriteEmitter6\r\n")!=npos && fx0.find("Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter6\"'")!=npos,"canonical sub-object drops its placement prefix with its reference");
+        Check(fx1.find("Name=SpriteEmitter6_1\r\n")!=npos && fx1.find("Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter6_1\"'")!=npos,"components of different actors sharing a name stay distinct");
+        Check(fx0.find("Name=\"SpriteEmitter6\"")!=npos && fx0.find("Texture=Texture'sfx.Emitter.smoke_grenade'")!=npos,"particle emitter Name string and asset references are untouched");
+        Check(fx1.find("Name=\"SpriteEmitter6_1\"")!=npos,"a particle emitter Name string spelling its object name follows the rename");
+        auto innerNames=[](const Json& definition){std::vector<std::string> names;for(const auto& actor:definition["actors"]){names.push_back(actor["name"]);for(auto& n:InlineObjectNames(actor["text"]))names.push_back(n);}return names;};
+        auto cycle=fx;Json first;
+        for(int round=0;round<3;++round)
+        {
+            // Place, read the pasted text back as native copy would, save again.
+            auto instance=PreparePlacement(cycle,{{64,0,0},{}},"RE_"+std::string(12,static_cast<char>('a'+round))+"_","MyLevel",{});
+            const std::string t3d=instance["t3d"];
+            Check(t3d.find("SpriteEmitter'\"MyLevel.RE_"+std::string(12,static_cast<char>('a'+round))+"_SpriteEmitter6_1\"'")!=npos && t3d.find("Emitter_Magic_1.")==npos,"placed references name sub-objects in the map package");
+            Json recaptured=Json::array();
+            for(const auto& actor:ParseActors(t3d)) recaptured.push_back(emitterActor(actor.text,actor.name));
+            cycle=CanonicalizeAssembly(emitterDefinition(recaptured),{});
+            Check(innerNames(cycle)==innerNames(fx),"actor and sub-object names do not grow across save and place cycles");
+            if(round==0)first=cycle;
+            for(size_t i=0;i<2;++i)Check(cycle["actors"][i]["text"]==first["actors"][i]["text"],"saved text is identical after every place and save cycle");
+            for(const auto& n:innerNames(cycle)) Check(n.size()+16<64,"names fit the native 64-byte Name= buffer after a prefix");
+        }
+        auto single=PreparePlacement(emitterDefinition(Json::array({emitterActor(component,"Emitter_Magic_1")})),Pose{},"I_","Other",{});
+        const std::string singleText=single["t3d"];
+        Check(singleText.find("Begin Object Class=SpriteEmitter Name=I_SpriteEmitter6\r\n")!=npos && singleText.find("Emitters(0)=SpriteEmitter'\"Other.I_SpriteEmitter6\"'")!=npos,"a component owned by its actor resolves where paste creates it");
+        auto pair=PreparePlacement(emitterDefinition(Json::array({emitterActor(component,"Emitter_Magic_1"),emitterActor(std::regex_replace(component,std::regex("Emitter_Magic_1"),"Emitter_Magic_2"),"Emitter_Magic_2")})),Pose{},"I_","Other",{});
+        const std::string pairText=pair["t3d"];
+        Check(pairText.find("Name=I_SpriteEmitter6\r\n")!=npos && pairText.find("Name=I_SpriteEmitter6_1\r\n")!=npos && pairText.find("'\"Other.I_SpriteEmitter6_1\"'")!=npos,"raw components sharing a name get distinct placed names");
+        auto longName=emitterDefinition(Json::array({emitterActor("Begin Actor Class=Emitter Name=E\r\nBegin Object Class=SpriteEmitter Name=RE_0123456789ab_"+std::string(55,'x')+"\r\nEnd Object\r\nEnd Actor\r\n","E")}));
+        Check(InlineObjectNames(CanonicalizeAssembly(longName,{})["actors"][0]["text"]).at(0).size()==40,"long sub-object names are shortened to leave room for a prefix");
         Json entries=Json::array({{{"id","view1"},{"name","Roof"},{"cameras",Json::array()}}});
         UpdateEntry(entries,"view1",{{"id","wrong"},{"name","wrong"},{"cameras",Json::array({1})}});
         Check(entries.size()==1 && entries[0]["id"]=="view1" && entries[0]["name"]=="Roof" && entries[0]["cameras"].size()==1,"view update retains identity without duplication");
