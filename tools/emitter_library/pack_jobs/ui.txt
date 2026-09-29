@@ -1,0 +1,178 @@
+# Effect packs in the Emitter Library explorer (window ids: 100 search, 101 tree, 107 details, 108 place, 110 edit,
+# 111 delete, 112 restore, 113 status). The preview attaches once, when the window first opens.
+new
+cmd 40967
+window Emitter Library
+wait 1500
+tree@t0 Emitter Library | 101
+expect t0 | /count | == | 47
+expect t0 | /items/0/label | has | "Fire ("
+key Emitter Library | 101 | 116
+key Emitter Library | 101 | 116
+mem@m0
+# Packs installed while the explorer is open: its timer notices them.
+mkdir {ROOT}\System\ReloadedEditor\EmitterPacks
+copyfile {PACKS}\big.json | {ROOT}\System\ReloadedEditor\EmitterPacks\big.json
+copyfile {PACKS}\small.json | {ROOT}\System\ReloadedEditor\EmitterPacks\small.json
+copyfile {PACKS}\broken.json | {ROOT}\System\ReloadedEditor\EmitterPacks\broken.json
+wait 1500
+tree@t1 Emitter Library | 101
+expect t1 | /items | == | 3
+expect t1 | /items/0/label | == | "Chaos Theory (built-in) (37)"
+expect t1 | /items/1/label | == | "Missing packages test (5)"
+expect t1 | /items/2/label | == | "Test effects (900)"
+expect t1 | /items/0/expanded | == | true
+expect t1 | /items/2/expanded | == | true
+expect t1 | /items/0/children/0/expanded | == | true
+expect t1 | /items/2/children/0/expanded | == | false
+expect t1 | /items/2/children/10/label | == | "Holograms (128)"
+expect t1 | /count | == | 62
+expect t1 | /items/2/children/0 | lacks | "\"children\""
+texthas Emitter Library | 113 | Effect pack broken.json is not listed
+mem@m1
+# Fill time: warm (nothing re-read), then cold after the big pack file changes. On an idle PC a warm fill
+# takes 15-30 ms and a cold one about 0.2 s; the limits leave room for other jobs running at the same time.
+key Emitter Library | 101 | 116
+expect _ms | / | < | 1000
+key Emitter Library | 101 | 116
+expect _ms | / | < | 1000
+# The explorer's fills and its 500 ms timer read each pack file once (big, small, broken).
+workflow@c1 {"op":"emitterlib.cache"}
+expect c1 | /packReads | == | 3
+touch {ROOT}\System\ReloadedEditor\EmitterPacks\big.json
+key Emitter Library | 101 | 116
+expect _ms | / | < | 3000
+workflow@c2 {"op":"emitterlib.cache"}
+expect c2 | /packReads | == | 4
+mem@m2
+# Search spans every source and opens every group.
+settext Emitter Library | 100 | smoke
+expect _ms | / | < | 1000
+tree@t2 Emitter Library | 101
+expect t2 | /items/0/label | has | "Chaos Theory (built-in) ("
+expect t2 | /items/2/label | has | "Test effects ("
+expect t2 | /items/2/children/0/expanded | == | true
+settext Emitter Library | 100 | missing packages test
+tree@t3 Emitter Library | 101
+expect t3 | /items | == | 1
+expect t3 | /items/0/label | == | "Missing packages test (5)"
+settext Emitter Library | 100 | zzzz no such effect
+texthas Emitter Library | 113 | No effect matches the search.
+settext Emitter Library | 100 |
+expect _ms | / | < | 1000
+tree@t4 Emitter Library | 101
+expect t4 | /count | == | 62
+expect t4 | /items/2/children/0/expanded | == | false
+# A pack category the user opens stays open across refills.
+expand Emitter Library | 101 | text:Holograms (128) | expand
+key Emitter Library | 101 | 116
+tree@t5 Emitter Library | 101
+expect t5 | /items/2/children/10/expanded | == | true
+expect t5 | /items/2/children/10/children | == | 128
+expect t5 | /count | == | 190
+expect t5 | /items/2/children/9/expanded | == | false
+# A refill keeps the rows where they were; a new search starts at the top of its results.
+pick Emitter Library | 101 | text:Test effects (900) > Holograms (128) > Smouldering smoke 895
+tree@t5a Emitter Library | 101
+expect t5a | /firstVisible | != | "Chaos Theory (built-in) (37)"
+expect t5a | /selected | == | "Smouldering smoke 895"
+key Emitter Library | 101 | 116
+tree@t5b Emitter Library | 101
+expect t5b | /firstVisible | == | {"$from":"t5a","pointer":"/firstVisible"}
+expect t5b | /selected | == | "Smouldering smoke 895"
+settext Emitter Library | 100 | chimney
+tree@t5c Emitter Library | 101
+expect t5c | /firstVisible | has | "Chaos Theory (built-in) ("
+expect t5c | /selected | != | "Smouldering smoke 895"
+settext Emitter Library | 100 |
+tree@t5d Emitter Library | 101
+expect t5d | /selected | == | {"$from":"t5c","pointer":"/selected"}
+expect t5d | /items/2/children/10/expanded | == | true
+# A pack entry: details name the pack, Edit copies, Delete hides.
+pick Emitter Library | 101 | text:Test effects (900) > Fire (107) > Burning barrel 1
+wait 1200
+texthas Emitter Library | 107 | Effect pack: Test effects
+textlacks Emitter Library | 107 | Needs
+texthas Emitter Library | 110 | Save a copy to edit...
+texthas Emitter Library | 111 | Hide
+texthas Emitter Library | 113 | Previewing Burning barrel 1.
+workflow@ps {"op":"preview.state"}
+expect ps | /viewportsOpened | == | 1
+expect ps | /active | == | true
+# Missing packages: the details say which, the preview is not tried and Place refuses.
+pick Emitter Library | 101 | text:Missing packages test (5) > Fire (5) > Needs test 0
+texthas Emitter Library | 107 | Effect pack: Missing packages test
+texthas Emitter Library | 107 | Needs SWRC_testmissing.utx (install the pack with the SCCT Map Manager)
+texthas Emitter Library | 113 | No preview: this effect needs SWRC_testmissing.utx. Install the pack with the SCCT Map Manager.
+workflow@a0 {"op":"actors"}
+click Emitter Library | 108
+workflow@a1 {"op":"actors"}
+expect a1 | / | == | {"$from":"a0"}
+pick Emitter Library | 101 | text:Needs test 2
+texthas Emitter Library | 107 | Needs SWRC_testmissing_SM.usx (install the pack with the SCCT Map Manager)
+pick Emitter Library | 101 | text:Needs test 3
+wait 1200
+textlacks Emitter Library | 107 | Needs
+texthas Emitter Library | 113 | Previewing Needs test 3.
+# Place a pack entry at the builder brush and undo it.
+pick Emitter Library | 101 | text:Test effects (900) > Fire (107) > Burning barrel 1
+wait 800
+click Emitter Library | 108
+texthas Emitter Library | 113 | Placed Burning barrel 1 at the builder brush (2 actors, selected)
+workflow@a2 {"op":"actors","selected":true}
+expect a2 | / | == | 2
+exec TRANSACTION UNDO
+workflow@a3 {"op":"actors"}
+expect a3 | / | == | {"$from":"a0"}
+# Hide, then Restore hidden.
+click Emitter Library | 111
+texthas Emitter Library | 113 | Hid Burning barrel 1.
+tree@t6 Emitter Library | 101
+expect t6 | /items/2/label | == | "Test effects (899)"
+expect t6 | / | lacks | "\"Burning barrel 1\""
+expect t6 | / | has | "\"Fire (106)\""
+filejson@u1 {ROOT}\System\ReloadedEditor\emitter_library.json
+expect u1 | /hiddenPacks | == | ["pack.testbig.e1_burning_barrel"]
+click Emitter Library | 112
+texthas Emitter Library | 113 | Hidden effects are listed again.
+tree@t7 Emitter Library | 101
+expect t7 | /items/2/label | == | "Test effects (900)"
+filejson@u2 {ROOT}\System\ReloadedEditor\emitter_library.json
+expect u2 | /hiddenPacks | == | []
+# Save a copy to edit: it lists under Your effects.
+pick Emitter Library | 101 | text:Test effects (900) > Fire (107) > Burning barrel 1
+click Emitter Library | 110 | My copy of Burning barrel 1
+texthas Emitter Library | 113 | Saved My copy of Burning barrel 1 as your own effect.
+tree@t8 Emitter Library | 101
+expect t8 | /items | == | 4
+expect t8 | /items/3/label | == | "Your effects (1)"
+expect t8 | /selected | == | "My copy of Burning barrel 1"
+texthas Emitter Library | 107 | Your effect, saved
+texthas Emitter Library | 110 | Edit name, category, description...
+texthas Emitter Library | 111 | Delete...
+click Emitter Library | 111
+tree@t9 Emitter Library | 101
+expect t9 | /items | == | 3
+# The selection fell back to the first effect: shown with its source and category rows.
+expect t9 | /firstVisible | == | "Chaos Theory (built-in) (37)"
+expect t9 | /selected | == | "Fire with smoke"
+# Close hides the window; reopening refills without a second preview viewport.
+close Emitter Library
+wait 500
+cmd 40967
+wait 1500
+tree@t10 Emitter Library | 101
+expect t10 | /items | == | 3
+workflow@ps2 {"op":"preview.state"}
+expect ps2 | /viewportsOpened | == | 1
+expect ps2 | /viewportsClosed | == | 0
+# A pack removed (replaced by an unreadable file) while the window is open.
+copyfile {PACKS}\newer.json | {ROOT}\System\ReloadedEditor\EmitterPacks\small.json
+wait 1500
+tree@t11 Emitter Library | 101
+expect t11 | /items | == | 2
+expect t11 | /items/1/label | == | "Test effects (900)"
+texthas Emitter Library | 113 | effect pack problems, the first:
+mem@m3
+shot Emitter Library | {OUT}/explorer_packs.bmp
+close Emitter Library

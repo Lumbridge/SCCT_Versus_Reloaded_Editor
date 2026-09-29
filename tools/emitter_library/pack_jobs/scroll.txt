@@ -1,0 +1,28 @@
+# A refill keeps the explorer's scroll position (first visible row) unless the selection is new; run with probe_emitterpacks.cpp.
+new
+mkdir {ROOT}\System\ReloadedEditor\EmitterPacks
+copyfile {PACKS}\big.json | {ROOT}\System\ReloadedEditor\EmitterPacks\big.json
+copyfile {PACKS}\small.json | {ROOT}\System\ReloadedEditor\EmitterPacks\small.json
+cmd 40967
+wait 1500
+tree@a Emitter Library | 101
+expect a | /firstVisible | == | "Chaos Theory (built-in) (37)"
+key Emitter Library | 101 | 116
+tree@b Emitter Library | 101
+expect b | /firstVisible | == | "Chaos Theory (built-in) (37)"
+expand Emitter Library | 101 | text:Holograms (128) | expand
+tree@c Emitter Library | 101
+expect c | /firstVisible | == | "Holograms (128)"
+key Emitter Library | 101 | 116
+tree@d Emitter Library | 101
+expect d | /firstVisible | == | "Holograms (128)"
+expect d | /selected | == | "Fire with smoke"
+key Emitter Library | 101 | 116
+tree@e Emitter Library | 101
+expect e | /firstVisible | == | "Holograms (128)"
+expand Emitter Library | 101 | text:Holograms (128) | collapse
+tree@f Emitter Library | 101
+key Emitter Library | 101 | 116
+tree@g Emitter Library | 101
+expect g | /firstVisible | == | {"$from":"f","pointer":"/firstVisible"}
+close Emitter Library

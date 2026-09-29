@@ -16,6 +16,7 @@
 #include "MemoryWriter.h"
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <functional>
 #include <iomanip>
 #include <limits>

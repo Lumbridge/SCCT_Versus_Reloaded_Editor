@@ -15,18 +15,33 @@
 // step, unique RE_ names, package auto-load. Engine-independent.
 //
 // Entry, the contract with the explorer and preview:
-//   {"id": "builtin.<slug>" for bundled entries | 32 lower-case hex for user entries,
+//   {"id": "builtin.<slug>" for bundled entries | "pack.<pack id>.<slug>" for effect pack
+//          entries | 32 lower-case hex for user entries,
 //    "name", "category", "description",
-//    "builtin": true|false (in memory only, never written),
-//    "modified": epoch milliseconds as a string,
+//    "builtin": true|false, "readonly": true for built-in and pack entries,
+//    "pack": "<pack id>" for pack entries (these three in memory only, never written),
+//    "modified": epoch milliseconds as a string (required for user entries),
 //    "source": "<Map>.<Actor>[,...]" (optional),
 //    "pivot": [x,y,z], "dependencies": [object paths], "bindings": [] (always empty),
 //    "actors": [canonical assembly actor records {name,class,path,sourcePath,text,position,rotation,tag,event}],
 //    "preview": {"distance","yaw","pitch","target":[x,y,z]} (optional camera hint)}
 // User file, <Editor::Directory()>/emitter_library.json:
-//   {"version":1,"emitters":[user entries],"hiddenBuiltins":[built-in ids the user deleted]}
+//   {"version":1,"emitters":[user entries],"hiddenBuiltins":[built-in ids the user deleted],
+//    "hiddenPacks":[pack entry ids the user deleted]}
+// Files without hiddenPacks (older editors) read as an empty list; older editors keep
+// the key when they rewrite the file.
 // Built-in entries are compiled into the DLL (EmitterLibraryDefaults.gen.h) and are
 // never written to disk; deleting one only hides it.
+// Effect packs are read-only entry sets installed (by the SCCT Map Manager, with the
+// packages they use) as <Editor::Directory()>/EmitterPacks/*.json:
+//   {"version":1,
+//    "pack":{"id":"<[a-z0-9_-]{1,32}>","name":"<1-120 characters>","description":"<optional>",
+//            "requires":["<Package>.utx"|".usx"|".uax"|".ukx", ...] (optional)},
+//    "emitters":[entries whose ids are "pack.<pack id>.<[a-z0-9_.-]+>", at most 64 characters]}
+// Unknown keys are ignored. A pack whose document or header is invalid is not listed;
+// a damaged entry is skipped and reported, as a damaged user entry is. Pack entries
+// list after the built-ins and before the user's; like built-ins they are never
+// written: saving one makes a user copy, editing refuses and deleting hides it.
 namespace Workflow::EmitterLibrary
 {
 inline const std::vector<std::string>& DefaultCategories()
@@ -34,8 +49,15 @@ inline const std::vector<std::string>& DefaultCategories()
     static const std::vector<std::string> categories={"Fire","Smoke","Steam","Water","Weather","Sparks & Electrical","Dust & Debris","Insects","Lights & Glows","Explosions & Bursts","Other"};
     return categories;
 }
-inline bool IsBuiltinId(const std::string& id){return std::regex_match(id,std::regex("builtin\\.[a-z0-9][a-z0-9_.-]{0,62}"));}
-inline bool IsUserId(const std::string& id){return std::regex_match(id,std::regex("[0-9a-f]{32}"));}
+inline bool IsBuiltinId(const std::string& id){static const std::regex form("builtin\\.[a-z0-9][a-z0-9_.-]{0,62}");return std::regex_match(id,form);}
+inline bool IsUserId(const std::string& id){static const std::regex form("[0-9a-f]{32}");return std::regex_match(id,form);}
+// An effect pack's own id, and the id of one of its entries.
+inline bool IsPackName(const std::string& id){static const std::regex form("[a-z0-9_-]{1,32}");return std::regex_match(id,form);}
+inline bool IsPackEntryId(const std::string& id){static const std::regex form("pack\\.[a-z0-9_-]{1,32}\\.[a-z0-9_.-]+");return id.size()<=64 && std::regex_match(id,form);}
+// The pack id inside a pack entry id; empty for any other id.
+inline std::string PackOfId(const std::string& id){return IsPackEntryId(id)?id.substr(5,id.find('.',5)-5):std::string{};}
+// Built-in and pack entries are never written: they are copied, hidden and restored.
+inline bool IsReadOnlyId(const std::string& id){return IsBuiltinId(id) || IsPackEntryId(id);}
 // A lower-case identifier for a built-in id: letters and digits, with any run
 // of other characters turned into one underscore.
 inline std::string Slug(const std::string& name)
@@ -146,21 +168,24 @@ inline void Validate(const Json& entry)
         if(!entry.at(key).is_string())fail(std::string("its ")+key+" is not text.");
         return entry.at(key).get<std::string>();
     };
-    const auto id=text("id");const bool builtin=IsBuiltinId(id);
-    if(!builtin && !IsUserId(id))fail("its id is neither a built-in nor a user id.");
+    const auto id=text("id");const bool builtin=IsBuiltinId(id),user=IsUserId(id);
+    if(!builtin && !user && !IsPackEntryId(id))fail("its id is not a built-in, effect pack or user id.");
     if(entry.contains("builtin") && (!entry.at("builtin").is_boolean() || entry.at("builtin").get<bool>()!=builtin))fail("its built-in flag does not match its id.");
+    if(entry.contains("readonly") && (!entry.at("readonly").is_boolean() || entry.at("readonly").get<bool>()==user))fail("its read-only flag does not match its id.");
+    if(entry.contains("pack") && (!entry.at("pack").is_string() || entry.at("pack").get<std::string>()!=PackOfId(id)))fail("its pack does not match its id.");
     try{CleanName(text("name"));CleanCategory(text("category"));CleanDescription(text("description",false));}
     catch(const std::exception& e){fail(e.what());}
-    const auto modified=text("modified",!builtin);
+    const auto modified=text("modified",user);
     if(!modified.empty() && (modified.size()>20 || modified.find_first_not_of("0123456789")!=std::string::npos))fail("its modified time is not a number of milliseconds.");
     if(!ValidUtf8(text("source",false)))fail("its source is not UTF-8.");
     if(!entry.contains("pivot") || !Detail::Point(entry.at("pivot")))fail("its pivot is not a finite position.");
     if(!entry.contains("bindings") || !entry.at("bindings").is_array())fail("its bindings are missing.");
     if(!entry.at("bindings").empty())fail("it links to actors outside the entry. Emitter Library entries cannot have external bindings.");
     if(!entry.contains("dependencies") || !entry.at("dependencies").is_array())fail("its dependencies are missing.");
+    static const std::regex dependencyPath("[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)+");
     for(const auto& dependency:entry.at("dependencies"))
     {
-        if(!dependency.is_string() || !std::regex_match(dependency.get<std::string>(),std::regex("[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)+")) || dependency.get<std::string>().size()>256)fail("it has an invalid dependency path.");
+        if(!dependency.is_string() || dependency.get<std::string>().size()>256 || !std::regex_match(dependency.get<std::string>(),dependencyPath))fail("it has an invalid dependency path.");
         if(Fold(dependency.get<std::string>()).rfind("mylevel.",0)==0)fail("it uses "+dependency.get<std::string>()+", which is stored inside a map.");
     }
     if(!entry.contains("actors") || !entry.at("actors").is_array() || entry.at("actors").empty())fail("it has no actors.");
@@ -191,7 +216,7 @@ inline void Validate(const Json& entry)
         if(preview.contains("target") && !Detail::Point(preview.at("target")))fail("its preview target is not a position.");
     }
 }
-inline Json EmptyDocument(){return {{"version",1},{"emitters",Json::array()},{"hiddenBuiltins",Json::array()}};}
+inline Json EmptyDocument(){return {{"version",1},{"emitters",Json::array()},{"hiddenBuiltins",Json::array()},{"hiddenPacks",Json::array()}};}
 // A user file that cannot be read, parsed or understood. Listing goes on with
 // the built-ins and reports this; editing refuses rather than overwrite it.
 inline const char* DamagedFile(){return "The Emitter Library file (emitter_library.json) is damaged or from a newer version, so your saved emitters are not listed. Restore a valid copy or move it aside before editing the library.";}
@@ -200,10 +225,9 @@ inline const char* DamagedFile(){return "The Emitter Library file (emitter_libra
 inline Json Document(Json document)
 {
     if(!document.is_object())throw std::runtime_error(DamagedFile());
-    if(!document.contains("emitters"))document["emitters"]=Json::array();
-    if(!document.contains("hiddenBuiltins"))document["hiddenBuiltins"]=Json::array();
-    bool valid=document.at("emitters").is_array() && document.at("hiddenBuiltins").is_array();
-    if(valid)for(const auto& id:document.at("hiddenBuiltins"))valid=valid && id.is_string();
+    for(const char* key:{"emitters","hiddenBuiltins","hiddenPacks"})if(!document.contains(key))document[key]=Json::array();
+    bool valid=document.at("emitters").is_array() && document.at("hiddenBuiltins").is_array() && document.at("hiddenPacks").is_array();
+    for(const char* key:{"hiddenBuiltins","hiddenPacks"})if(valid)for(const auto& id:document.at(key))valid=valid && id.is_string();
     if(!valid)throw std::runtime_error(DamagedFile());
     return document;
 }
@@ -220,32 +244,149 @@ inline Json Builtins(const std::string& text)
         const auto id=entry.at("id").get<std::string>();
         if(!IsBuiltinId(id))throw std::runtime_error("Built-in Emitter Library entry '"+entry.at("name").get<std::string>()+"' does not have a builtin. id.");
         if(!ids.insert(id).second)throw std::runtime_error("Built-in Emitter Library id "+id+" is used twice.");
-        entry["builtin"]=true;result.push_back(std::move(entry));
+        entry["builtin"]=true;entry["readonly"]=true;result.push_back(std::move(entry));
     }
     return result;
 }
-// Built-ins the user has not hidden, then the valid user entries in file
+namespace Detail
+{
+    // The flags an entry carries in memory only.
+    inline void Unflag(Json& entry){if(entry.is_object())for(const char* key:{"builtin","readonly","pack"})entry.erase(key);}
+}
+// The Packages folder a required package file installs into, by extension.
+inline std::string PackageFolder(const std::string& file)
+{
+    const auto dot=file.rfind('.');const auto extension=Fold(dot==std::string::npos?std::string{}:file.substr(dot));
+    if(extension==".utx")return "Textures";
+    if(extension==".usx")return "StaticMeshes";
+    if(extension==".uax")return "Sounds";
+    if(extension==".ukx")return "Animations";
+    return {};
+}
+inline bool IsPackageFile(const std::string& file)
+{
+    static const std::regex form("[A-Za-z0-9_-]{1,64}\\.[A-Za-z]{3}");
+    return std::regex_match(file,form) && !PackageFolder(file).empty();
+}
+// An effect pack document (see the top of this file) read from file, a name for
+// messages. Returns {"id","name","description","requires","emitters":[valid entries
+// flagged "builtin":false,"readonly":true,"pack":id],"problems":[one sentence per
+// skipped entry]}. Throws a sentence naming file when the pack cannot be listed.
+inline Json ReadPack(Json document,const std::string& file)
+{
+    auto fail=[&](const std::string& why){throw std::runtime_error("Effect pack "+file+" is not listed: "+why);};
+    if(!document.is_object())fail("it is not an effect pack document.");
+    if(!document.contains("version") || !document.at("version").is_number_integer() || document.at("version").get<int64_t>()!=1)fail("it is from a newer version or is not an effect pack (version 1 expected).");
+    if(!document.contains("pack") || !document.at("pack").is_object())fail("its pack header is missing.");
+    const auto& header=document.at("pack");
+    auto text=[&](const char* key,bool required)->std::string
+    {
+        if(!header.contains(key)){if(required)fail(std::string("its pack ")+key+" is missing.");return {};}
+        if(!header.at(key).is_string())fail(std::string("its pack ")+key+" is not text.");
+        return header.at(key).get<std::string>();
+    };
+    const auto id=text("id",true);
+    if(!IsPackName(id))fail("its pack id must be 1 to 32 lower-case letters, digits, '_' or '-'.");
+    const auto rawName=text("name",true),rawDescription=text("description",false);std::string name,description;
+    try{name=CleanName(rawName);description=CleanDescription(rawDescription);}
+    catch(const std::exception& e){fail(std::string("its pack name or description is invalid: ")+e.what());}
+    Json packages=Json::array();std::set<std::string> seen;
+    if(header.contains("requires"))
+    {
+        if(!header.at("requires").is_array())fail("its requires list is not a list.");
+        for(const auto& package:header.at("requires"))
+        {
+            if(!package.is_string() || !IsPackageFile(package.get<std::string>()))fail("its requires list has "+package.dump()+", which is not a package file name such as SWRC_effecttex.utx.");
+            if(seen.insert(Fold(package.get<std::string>())).second)packages.push_back(package);
+        }
+    }
+    if(!document.contains("emitters") || !document.at("emitters").is_array())fail("its emitters list is missing.");
+    Json entries=Json::array(),problems=Json::array();std::set<std::string> ids;
+    for(auto& entry:document.at("emitters"))
+    {
+        try
+        {
+            // The id first: an entry of another pack or a user entry gets that reason rather than another.
+            Detail::Unflag(entry);
+            auto field=[&](const char* key){return entry.is_object() && entry.contains(key) && entry.at(key).is_string()?entry.at(key).get<std::string>():std::string{};};
+            const auto entryId=field("id"),entryName=field("name");
+            if(PackOfId(entryId)!=id)throw std::runtime_error("Emitter Library entry '"+entryName+"' is invalid: its id "+(entryId.empty()?std::string("is missing."):entryId+" does not start with pack."+id+"."));
+            Validate(entry);
+            if(!ids.insert(entryId).second)throw std::runtime_error("Emitter Library entry '"+entryName+"' repeats the id of an earlier entry ("+entryId+").");
+            entry["builtin"]=false;entry["readonly"]=true;entry["pack"]=id;entries.push_back(std::move(entry));
+        }
+        catch(const std::exception& e){problems.push_back("Effect pack '"+name+"' ("+file+"): "+e.what());}
+    }
+    return {{"id",id},{"name",name},{"description",description},{"requires",packages},{"emitters",std::move(entries)},{"problems",std::move(problems)}};
+}
+// A read pack without its entries: {"id","name","description","requires","entries":count,"problems":count}.
+inline Json PackSummary(const Json& pack)
+{
+    return {{"id",pack.at("id")},{"name",pack.at("name")},{"description",pack.at("description")},{"requires",pack.at("requires")},
+            {"entries",pack.at("emitters").size()},{"problems",pack.at("problems").size()}};
+}
+// The files of a pack's requires list that an entry uses: those whose package
+// is the package of one of the entry's dependencies.
+inline Json PackNeeds(const Json& entry,const Json& packages)
+{
+    std::set<std::string> used;
+    if(entry.is_object() && entry.contains("dependencies") && entry.at("dependencies").is_array())
+        for(const auto& dependency:entry.at("dependencies"))if(dependency.is_string())used.insert(Fold(dependency.get<std::string>().substr(0,dependency.get<std::string>().find('.'))));
+    Json result=Json::array();
+    if(packages.is_array())for(const auto& file:packages)
+        if(file.is_string() && used.count(Fold(file.get<std::string>().substr(0,file.get<std::string>().rfind('.')))))result.push_back(file);
+    return result;
+}
+// "A.utx", "A.utx and B.usx", "A.utx, B.usx and C.utx".
+inline std::string PackageList(const Json& files)
+{
+    std::string out;
+    for(size_t i=0;i<files.size();++i)out+=(i==0?"":i+1==files.size()?" and ":", ")+files[i].get<std::string>();
+    return out;
+}
+// The explorer's details line and the placement refusal for a pack entry whose
+// required packages are not installed.
+inline std::string MissingPackagesText(const Json& missing){return "Needs "+PackageList(missing)+" (install the pack with the SCCT Map Manager)";}
+inline std::string MissingPackagesMessage(const std::string& pack,const Json& missing)
+{
+    return "This effect needs "+PackageList(missing)+", which "+(missing.size()==1?"is":"are")+" not installed. Install the effect pack '"+pack+"' with the SCCT Map Manager, then try again.";
+}
+// Built-ins the user has not hidden, then the packs' entries the user has not
+// hidden (pack by pack, in the order given), then the valid user entries in file
 // order. A damaged user entry stays in the file untouched but is not listed;
-// Problems explains it.
-inline Json Merge(const Json& builtins,const Json& file)
+// Problems explains it. packs are ReadPack results.
+inline Json Merge(const Json& builtins,const std::vector<const Json*>& packs,const Json& file)
 {
     const auto document=Document(file);Json result=Json::array();std::set<std::string> hidden,ids;
-    for(const auto& id:document.at("hiddenBuiltins"))hidden.insert(id.get<std::string>());
+    for(const char* key:{"hiddenBuiltins","hiddenPacks"})for(const auto& id:document.at(key))hidden.insert(id.get<std::string>());
     for(auto entry:builtins)
     {
         const auto id=entry.at("id").get<std::string>();
         if(hidden.count(id) || !ids.insert(id).second)continue;
-        entry["builtin"]=true;result.push_back(std::move(entry));
+        entry["builtin"]=true;entry["readonly"]=true;result.push_back(std::move(entry));
+    }
+    for(const auto* pack:packs)for(const auto& listed:pack->at("emitters"))
+    {
+        const auto id=listed.at("id").get<std::string>();
+        if(hidden.count(id) || !ids.insert(id).second)continue;
+        auto entry=listed;entry["builtin"]=false;entry["readonly"]=true;entry["pack"]=pack->at("id");result.push_back(std::move(entry));
     }
     for(auto entry:document.at("emitters"))
     {
-        try{entry.erase("builtin");Validate(entry);}catch(const std::exception&){continue;}
+        try{Detail::Unflag(entry);Validate(entry);}catch(const std::exception&){continue;}
         const auto id=entry.at("id").get<std::string>();
         if(!IsUserId(id) || !ids.insert(id).second)continue;
-        entry["builtin"]=false;result.push_back(std::move(entry));
+        entry["builtin"]=false;entry["readonly"]=false;result.push_back(std::move(entry));
     }
     return result;
 }
+inline std::vector<const Json*> PackList(const Json& packs)
+{
+    std::vector<const Json*> list;if(packs.is_array())for(const auto& pack:packs)list.push_back(&pack);
+    return list;
+}
+inline Json Merge(const Json& builtins,const Json& packs,const Json& file){return Merge(builtins,PackList(packs),file);}
+inline Json Merge(const Json& builtins,const Json& file){return Merge(builtins,std::vector<const Json*>{},file);}
 inline Json Problems(const Json& file)
 {
     const auto document=Document(file);Json result=Json::array();std::set<std::string> ids;
@@ -253,8 +394,8 @@ inline Json Problems(const Json& file)
     {
         try
         {
-            entry.erase("builtin");Validate(entry);
-            if(!IsUserId(entry.at("id").get<std::string>()))throw std::runtime_error("Emitter Library entry '"+entry.at("name").get<std::string>()+"' has a built-in id in the user file.");
+            Detail::Unflag(entry);Validate(entry);
+            if(!IsUserId(entry.at("id").get<std::string>()))throw std::runtime_error("Emitter Library entry '"+entry.at("name").get<std::string>()+"' has a built-in or effect pack id in the user file.");
             if(!ids.insert(entry.at("id").get<std::string>()).second)throw std::runtime_error("Emitter Library entry '"+entry.at("name").get<std::string>()+"' repeats the id of an earlier entry.");
         }
         catch(const std::exception& e){result.push_back(e.what());}
@@ -269,14 +410,14 @@ inline const Json& Find(const Json& entries,const std::string& key)
     throw std::runtime_error("The Emitter Library has no entry called '"+key+"'. Refresh the list.");
 }
 // Replaces the user entry with the same id, or adds the entry keeping its user
-// id (an entry copied from another library keeps its identity). A draft or a
-// built-in is saved as a new user copy with a fresh id. Returns the entry as
-// stored.
+// id (an entry copied from another library keeps its identity). A draft, a
+// built-in or a pack entry is saved as a new user copy with a fresh id. Returns
+// the entry as stored.
 inline Json Save(Json& file,Json entry)
 {
     file=Document(std::move(file));
     if(!entry.is_object())throw std::runtime_error("Nothing to save to the Emitter Library.");
-    entry.erase("builtin");auto& list=file["emitters"];
+    Detail::Unflag(entry);auto& list=file["emitters"];
     entry["name"]=CleanName(entry.value("name",std::string{}));
     entry["category"]=CleanCategory(entry.value("category",std::string("Other")),list);
     entry["description"]=CleanDescription(entry.value("description",std::string{}));
@@ -292,6 +433,7 @@ inline Json Update(Json& file,const std::string& id,const Json& changes)
 {
     file=Document(std::move(file));
     if(IsBuiltinId(id))throw std::runtime_error("Built-in emitters cannot be renamed or edited. Place one and save it as your own entry to change it.");
+    if(IsPackEntryId(id))throw std::runtime_error("Effects from an effect pack cannot be renamed or edited. Save a copy of one as your own entry to change it.");
     if(!changes.is_object())throw std::runtime_error("Choose what to change.");
     auto& list=file["emitters"];
     auto existing=std::find_if(list.begin(),list.end(),[&](const Json& e){return e.is_object() && e.value("id",std::string{})==id;});
@@ -308,22 +450,24 @@ inline Json Update(Json& file,const std::string& id,const Json& changes)
     }
     entry["modified"]=Timestamp();Validate(entry);*existing=entry;return entry;
 }
-// A user entry is removed; a built-in one is hidden until RestoreBuiltins.
-inline void Delete(Json& file,const Json& builtins,const std::string& id)
+// A user entry is removed; a built-in or pack entry is hidden until
+// RestoreBuiltins. packs are ReadPack results.
+inline void Delete(Json& file,const Json& builtins,const std::vector<const Json*>& packs,const std::string& id)
 {
     file=Document(std::move(file));
     auto& list=file["emitters"];
     auto existing=std::find_if(list.begin(),list.end(),[&](const Json& e){return e.is_object() && e.value("id",std::string{})==id;});
     if(IsUserId(id) && existing!=list.end()){list.erase(existing);return;}
-    if(IsBuiltinId(id) && std::any_of(builtins.begin(),builtins.end(),[&](const Json& e){return e.at("id")==id;}))
-    {
-        auto& hidden=file["hiddenBuiltins"];
-        if(std::find(hidden.begin(),hidden.end(),Json(id))==hidden.end())hidden.push_back(id);
-        return;
-    }
+    auto hide=[&](const char* key){auto& hidden=file[key];if(std::find(hidden.begin(),hidden.end(),Json(id))==hidden.end())hidden.push_back(id);};
+    auto listed=[&](const Json& entries){return std::any_of(entries.begin(),entries.end(),[&](const Json& e){return e.at("id")==id;});};
+    if(IsBuiltinId(id) && listed(builtins)){hide("hiddenBuiltins");return;}
+    if(IsPackEntryId(id) && std::any_of(packs.begin(),packs.end(),[&](const Json* pack){return pack->at("id")==PackOfId(id) && listed(pack->at("emitters"));})){hide("hiddenPacks");return;}
     throw std::runtime_error("The selected emitter no longer exists. Refresh the list.");
 }
-inline void RestoreBuiltins(Json& file){file=Document(std::move(file));file["hiddenBuiltins"]=Json::array();}
+inline void Delete(Json& file,const Json& builtins,const Json& packs,const std::string& id){Delete(file,builtins,PackList(packs),id);}
+inline void Delete(Json& file,const Json& builtins,const std::string& id){Delete(file,builtins,std::vector<const Json*>{},id);}
+// Lists every hidden built-in and pack entry again.
+inline void RestoreBuiltins(Json& file){file=Document(std::move(file));file["hiddenBuiltins"]=Json::array();file["hiddenPacks"]=Json::array();}
 // Placement-specific actor lines that misbehave in another map: the editor
 // group, the platform filter (258 stock emitters are Platform=2, XBOX_Only),
 // attachment and zone links by Tag, references to other actors, and the

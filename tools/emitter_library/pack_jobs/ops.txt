@@ -1,0 +1,151 @@
+# Effect packs through the workflow ops only (no window, no preview). Run with probe_emitterpacks.cpp.
+# Packs from {PACKS}, written with this job by make_test_pack.py jobs: big.json (testbig, 900 entries, ~7 MB),
+# small.json (testmissing: 5 entries, 3 damaged), broken.json (not JSON), newer.json (version 2), dupe.json (testbig again).
+new
+mem@m0
+workflow@l0 {"op":"emitterlib.list"}
+expect l0 | / | == | 37
+workflow@pk0 {"op":"emitterlib.packs"}
+expect pk0 | / | == | 0
+mkdir {ROOT}\System\ReloadedEditor\EmitterPacks
+copyfile {PACKS}\older_user.json | {ROOT}\System\ReloadedEditor\emitter_library.json
+copyfile {PACKS}\big.json | {ROOT}\System\ReloadedEditor\EmitterPacks\big.json
+copyfile {PACKS}\small.json | {ROOT}\System\ReloadedEditor\EmitterPacks\small.json
+copyfile {PACKS}\broken.json | {ROOT}\System\ReloadedEditor\EmitterPacks\broken.json
+copyfile {PACKS}\newer.json | {ROOT}\System\ReloadedEditor\EmitterPacks\newer.json
+copyfile {PACKS}\dupe.json | {ROOT}\System\ReloadedEditor\EmitterPacks\dupe.json
+# Cold: reads the five pack files, validates 900+8 entries, merges. Then warm: only file stamps.
+workflow@pk {"op":"emitterlib.packs"}
+expect _ms | / | < | 3000
+workflow@pkw {"op":"emitterlib.packs"}
+expect _ms | / | < | 100
+workflow@c1 {"op":"emitterlib.cache"}
+expect c1 | /packReads | == | 5
+expect c1 | /entries | == | 942
+expect c1 | /packs | == | 2
+mem@m1
+expect pk | / | == | 2
+expect pk | /0/id | == | "testmissing"
+expect pk | /0/name | == | "Missing packages test"
+expect pk | /0/entries | == | 5
+expect pk | /0/problems | == | 3
+expect pk | /0/requires | == | ["SWRC_testmissing.utx","SWRC_testmissing_SM.usx","sfx.utx"]
+expect pk | /0/missing | == | ["SWRC_testmissing.utx","SWRC_testmissing_SM.usx"]
+expect pk | /1/id | == | "testbig"
+expect pk | /1/entries | == | 900
+expect pk | /1/missing | == | []
+expect pk | /1/hidden | == | 0
+expect pk | /1/file | has | "EmitterPacks\\big.json"
+workflow@l1 {"op":"emitterlib.list"}
+expect _ms | / | < | 3000
+workflow@l1w {"op":"emitterlib.list"}
+workflow@pr0 {"op":"emitterlib.problems"}
+workflow@cat0 {"op":"emitterlib.categories"}
+# Repeated calls share one merged list per revision and never re-read the packs.
+workflow@c2 {"op":"emitterlib.cache"}
+expect c2 | /packReads | == | 5
+expect c2 | /revision | == | {"$from":"c1","pointer":"/revision"}
+mem@m2
+expect l1 | / | == | 942
+expect l1 | /0/readonly | == | true
+expect l1 | /0/id | != | "builtin.fire_with_smoke"
+expect l1 | /36/id | == | "pack.testmissing.m0_fire_with_smoke"
+expect l1 | /36/pack | == | "testmissing"
+expect l1 | /41/id | == | "pack.testbig.e0_fire_with_smoke"
+expect l1 | /41/readonly | == | true
+expect l1 | /41/builtin | == | false
+expect l1 | /940/id | == | "pack.testbig.e899_steam_jet_hissing"
+expect l1 | /941/name | == | "Older user entry"
+expect l1 | /941/readonly | == | false
+workflow@pr {"op":"emitterlib.problems"}
+expect pr | / | == | 6
+expect pr | / | has | "Effect pack broken.json is not listed: it is not valid JSON"
+expect pr | / | has | "Effect pack newer.json is not listed: it is from a newer version"
+expect pr | / | has | "Effect pack dupe.json is not listed: its pack id 'testbig' is already used by big.json."
+expect pr | / | has | "Emitter Library entry 'Wrong pack id' is invalid: its id pack.otherpack.wrong does not start with pack.testmissing."
+expect pr | / | has | "'Repeated id' repeats the id"
+expect pr | / | has | "'No actors' is invalid: it has no actors."
+workflow@cat {"op":"emitterlib.categories"}
+expect cat | / | has | "Holograms"
+# Hide a pack entry: listed no more, kept in hiddenPacks; hiding again is harmless.
+workflow {"op":"emitterlib.delete","id":"pack.testbig.e0_fire_with_smoke"}
+workflow {"op":"emitterlib.delete","id":"pack.testbig.e0_fire_with_smoke"}
+workflow@l2 {"op":"emitterlib.list"}
+expect l2 | / | == | 941
+expect l2 | /41/id | == | "pack.testbig.e1_burning_barrel"
+filejson@u1 {ROOT}\System\ReloadedEditor\emitter_library.json
+expect u1 | /hiddenPacks | == | ["pack.testbig.e0_fire_with_smoke"]
+expect u1 | /hiddenBuiltins | == | ["builtin.fire_with_smoke"]
+workflow@pk2 {"op":"emitterlib.packs"}
+expect pk2 | /1/hidden | == | 1
+# Writing the user file starts a new revision without reading the packs again.
+workflow@c3 {"op":"emitterlib.cache"}
+expect c3 | /packReads | == | 5
+expect c3 | /revision | != | {"$from":"c1","pointer":"/revision"}
+reject {"op":"emitterlib.delete","id":"pack.testbig.nope"}
+reject {"op":"emitterlib.delete","id":"pack.otherpack.wrong"}
+# Edits refuse; saving makes a user copy without the in-memory flags.
+reject {"op":"emitterlib.update","id":"pack.testbig.e1_burning_barrel","name":"Mine"}
+workflow@one {"op":"emitterlib.place","id":"pack.testbig.e1_burning_barrel","position":[0,0,0]}
+exec TRANSACTION UNDO
+workflow@copy {"op":"emitterlib.save","entry":{"$from":"l2","pointer":"/41"},"name":"My copy of a pack effect"}
+expect copy | /readonly | == | false
+expect copy | / | lacks | "\"pack\":"
+expect copy | /dependencies | == | {"$from":"l2","pointer":"/41/dependencies"}
+filejson@u2 {ROOT}\System\ReloadedEditor\emitter_library.json
+expect u2 | /emitters | == | 2
+expect u2 | /emitters/1 | lacks | "\"readonly\""
+workflow {"op":"emitterlib.restore"}
+workflow@l3 {"op":"emitterlib.list"}
+expect l3 | / | == | 944
+expect l3 | /0/id | == | "builtin.fire_with_smoke"
+expect l3 | /42/id | == | "pack.testbig.e0_fire_with_smoke"
+filejson@u3 {ROOT}\System\ReloadedEditor\emitter_library.json
+expect u3 | /hiddenPacks | == | []
+# Placing: a pack entry whose packages are installed places and undoes; one whose packages are missing refuses with the pack sentence.
+workflow@a0 {"op":"actors"}
+workflow@pl {"op":"emitterlib.place","id":"pack.testbig.e4_hot_coals_embers_and_steam","position":[0,0,128]}
+expect pl | / | == | 5
+workflow@a1 {"op":"actors"}
+exec TRANSACTION UNDO
+workflow@a2 {"op":"actors"}
+expect a2 | / | == | {"$from":"a0"}
+reject {"op":"emitterlib.place","id":"pack.testmissing.m0_fire_with_smoke"}
+reject {"op":"emitterlib.place","id":"pack.testmissing.m2_wall_torch_flame"}
+workflow@pl3 {"op":"emitterlib.place","id":"pack.testmissing.m3_gas_flare_jet","position":[0,256,0]}
+exec TRANSACTION UNDO
+workflow@a3 {"op":"actors"}
+expect a3 | / | == | {"$from":"a0"}
+# The cache: an unchanged library is not read again; a touched pack file is; a removed pack leaves the list.
+workflow@c4 {"op":"emitterlib.cache"}
+expect c4 | /packReads | == | 5
+touch {ROOT}\System\ReloadedEditor\EmitterPacks\big.json
+workflow@pkt {"op":"emitterlib.packs"}
+expect _ms | / | < | 3000
+workflow@c5 {"op":"emitterlib.cache"}
+expect c5 | /packReads | == | 6
+workflow@c6 {"op":"emitterlib.cache"}
+expect c6 | /packReads | == | 6
+expect c6 | /revision | == | {"$from":"c5","pointer":"/revision"}
+copyfile {PACKS}\newer.json | {ROOT}\System\ReloadedEditor\EmitterPacks\big.json
+workflow@pkr {"op":"emitterlib.packs"}
+expect pkr | / | == | 2
+expect pkr | /0/id | == | "testbig"
+expect pkr | /0/name | == | "Duplicate id"
+expect pkr | /0/entries | == | 1
+expect pkr | /1/id | == | "testmissing"
+workflow@pr2 {"op":"emitterlib.problems"}
+expect pr2 | / | has | "Effect pack big.json is not listed: it is from a newer version"
+copyfile {PACKS}\big.json | {ROOT}\System\ReloadedEditor\EmitterPacks\big.json
+workflow@l4 {"op":"emitterlib.list"}
+expect l4 | / | == | 944
+# A damaged user file: built-ins and packs stay listed, writes refuse.
+copyfile {PACKS}\broken.json | {ROOT}\System\ReloadedEditor\emitter_library.json
+workflow@l5 {"op":"emitterlib.list"}
+expect l5 | / | == | 942
+workflow@pr3 {"op":"emitterlib.problems"}
+expect pr3 | /0 | has | "emitter_library.json) is damaged"
+reject {"op":"emitterlib.delete","id":"pack.testbig.e1_burning_barrel"}
+workflow@pk3 {"op":"emitterlib.packs"}
+expect pk3 | /1/hidden | == | 0
+mem@m3
