@@ -3,6 +3,8 @@
 #undef max
 #include "WorkflowEditor.h"
 #include "BrushGridSnapModel.h"
+#include "EmitterLibraryModel.h"
+#include "EmitterLibraryDefaults.h"
 #include "MagicEventModel.h"
 #include "MapAuthoringModel.h"
 #include "CameraNetworkModel.h"
@@ -1300,4 +1302,5 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "MapDesignNative.inl"
 #include "SecurityNative.inl"
 #include "StageNative.inl"
+#include "EmitterLibraryNative.inl"
 }
