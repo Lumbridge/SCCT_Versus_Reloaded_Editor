@@ -165,6 +165,8 @@
     <ClInclude Include="LevelSnapshotModel.h" />
     <ClInclude Include="WorkflowEditor.h" />
     <ClInclude Include="WorkflowTools.h" />
+    <ClInclude Include="EmitterPreview.h" />
+    <ClInclude Include="EmitterPreviewModel.h" />
     <ClInclude Include="MagicEventWorkbench.h" />
     <ClInclude Include="CameraNetworkPanel.h" />
     <ClInclude Include="CameraNetworkModel.h" />
@@ -244,6 +246,7 @@
     <ClCompile Include="WorkflowEditor.cpp" />
     <ClCompile Include="WorkflowGraph.cpp" />
     <ClCompile Include="WorkflowTools.cpp" />
+    <ClCompile Include="EmitterPreview.cpp" />
     <ClCompile Include="MapAuthoringDialog.cpp" />
     <ClCompile Include="MagicEventWorkbench.cpp" />
     <ClCompile Include="CameraNetworkPanel.cpp" />
