@@ -15,6 +15,7 @@ namespace WorkflowTools
     constexpr UINT kFitBuilderBrush = 40933;
     constexpr UINT kFitBuilderBrushToBrush = 40980;
     constexpr UINT kAddVertexPortal = 40981;
+    constexpr UINT kSaveToEmitterLibrary = 40968;
     constexpr UINT kBrushSnapX = 40936, kBrushSnapY = 40937, kBrushSnapZ = 40938, kBrushSnapAll = 40939;
     constexpr UINT kSurfaceSnapX = 40940, kSurfaceSnapY = 40941, kSurfaceSnapZ = 40942, kSurfaceSnapAll = 40943;
     constexpr UINT kVertexSnapX = 40944, kVertexSnapY = 40945, kVertexSnapZ = 40946, kVertexSnapAll = 40947;
@@ -24,4 +25,8 @@ namespace WorkflowTools
     void Initialize();
     void FindUsages(HWND owner, void* asset, bool mesh);
     void RenameActorTag(HWND owner,std::string path,std::string type);
+    // Save the selected emitters as a new Emitter Library entry: asks for the
+    // name, category and description. Returns the saved entry, or null when
+    // cancelled; errors are thrown for the caller to show.
+    Workflow::Json SaveEmitterSelection(HWND owner, bool confirm = true);
 }

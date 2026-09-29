@@ -3,6 +3,8 @@
 #undef max
 #include "WorkflowEditor.h"
 #include "BrushGridSnapModel.h"
+#include "EmitterLibraryModel.h"
+#include "EmitterLibraryDefaults.h"
 #include "MagicEventModel.h"
 #include "MapAuthoringModel.h"
 #include "CameraNetworkModel.h"
@@ -1142,8 +1144,17 @@ Json CaptureAssembly(const Json& members,const Pose& frame)
     auto texts=ParseActors(CopySelectedText());
     if(texts.size()!=included.size()) throw std::runtime_error("Native copy omitted a selected actor; the assembly was not saved.");
     Json result={{"actors",Json::array()},{"bindings",Json::array()},{"pivot",frame.position},{"dependencies",Json::array()}};
-    std::set<std::string> bindingPaths,dependencies; std::map<std::string,std::vector<Address>> tags;
+    std::set<std::string> bindingPaths,dependencies,local; std::map<std::string,std::vector<Address>> tags;
     for(auto a:live) tags[Fold(NameField(a,"Tag"))].push_back(a);
+    // Inline sub-objects (Begin Object/Brush blocks) are recreated by paste
+    // wherever the definition is placed, so they are not dependencies. Stock
+    // particle emitters are exported this way with the map package as their
+    // outer, and a dependency on MyLevel.SpriteEmitterN would name a package
+    // no other map has.
+    const auto package=Read<Address>(Level()+0x18);
+    auto outermost=[](Address object){std::set<Address> seen;while(Read<Address>(object+0x18) && seen.insert(object).second && seen.size()<64)object=Read<Address>(object+0x18);return object;};
+    std::set<std::string> inlineNames;
+    for(const auto& actor:texts) for(const auto& name:InlineObjectNames(actor.text)) inlineNames.insert(Fold(name));
     for(const auto& actor:texts)
     {
         auto found=std::find_if(included.begin(),included.end(),[&](const auto& pair){return Fold(NameOf(pair.second))==Fold(actor.name);});
@@ -1161,13 +1172,19 @@ Json CaptureAssembly(const Json& members,const Pose& frame)
         while(std::getline(lines,line)) if(Fold(line).find("begin polygon")!=std::string::npos)
         {
             std::smatch match;if(std::regex_search(line,match,polygonMaterial))
-            { auto material=match[2].matched?match[2].str():match[3].str();if(Fold(material)!="none")dependencies.insert(material); }
+            {
+                auto material=match[2].matched?match[2].str():match[3].str();
+                if(Fold(material)=="none") continue;
+                dependencies.insert(material);
+                if(Fold(material).rfind(Fold(NameOf(package))+".",0)==0) local.insert(material);
+            }
         }
         for(const auto& ref:Workflow::References(text))
         {
             auto target=Find(ref.path);
             if(!target) throw std::runtime_error("Unresolved exported dependency: "+ref.path);
             if(IsA(a,"Brush") && target==Read<Address>(a+0x238)) continue;
+            if(auto outer=Read<Address>(target+0x18);inlineNames.count(Fold(NameOf(target))) && (outer==package || IsA(outer,"Actor"))) continue;
             Address root=target;
             while(root && root!=Level() && !IsA(root,"Actor")) root=Read<Address>(root+0x18);
             if(root && IsA(root,"Actor"))
@@ -1178,7 +1195,14 @@ Json CaptureAssembly(const Json& members,const Pose& frame)
                     result["bindings"].push_back({{"id","object:"+Fold(ref.path)},{"label",NameOf(a)+" -> "+NameOf(target)},{"kind","object"},{"path",ref.path},{"type",Path(Read<Address>(target+0x24))}});
             }
             else if(root==Level()) throw std::runtime_error("Unsupported map-owned dependency: "+ref.path);
-            else dependencies.insert(ref.path);
+            else
+            {
+                // An asset stored in the map itself (a texture imported into
+                // MyLevel) exists only here. Recorded so callers can refuse or
+                // warn; placing elsewhere names it instead of a missing package.
+                dependencies.insert(ref.path);
+                if(outermost(target)==package) local.insert(ref.path);
+            }
         }
         if(Fold(event)!="none" && !event.empty())
         {
@@ -1190,6 +1214,7 @@ Json CaptureAssembly(const Json& members,const Pose& frame)
         }
     }
     for(const auto& dependency:dependencies) result["dependencies"].push_back(dependency);
+    if(!local.empty()) result["local"]=local;
     return result;
 }
 Json PlaceAssembly(const Json& definition,const Pose& frame,const std::map<std::string,std::string>& bindings)
@@ -1202,10 +1227,12 @@ Json PlaceAssembly(const Json& definition,const Pose& frame,const std::map<std::
         {
             auto package=path.substr(0,path.find('.'));
             if(package.find_first_of("\"\r\n/\\")!=std::string::npos) throw std::runtime_error("Invalid dependency package.");
+            if(Fold(package)==Fold(LevelPath())) throw std::runtime_error(path+" was stored inside the map this entry was saved from, so this map does not have it. Move the asset into a shared package and save the entry again.");
             // Loading the class/object by package leaves existing assets untouched.
-            for(const char* directory:{"Textures","StaticMeshes","Sounds","Animations"})
+            // Ambient sounds are .uax packages; map sound banks are .uas.
+            const std::pair<const char*,const char*> folders[]={{"Textures",".utx"},{"StaticMeshes",".usx"},{"Sounds",".uax"},{"Sounds",".uas"},{"Animations",".ukx"}};
+            for(const auto& [directory,extension]:folders)
             {
-                auto extension=std::string(directory)=="Textures"?".utx":std::string(directory)=="StaticMeshes"?".usx":std::string(directory)=="Sounds"?".uas":".ukx";
                 auto file=Directory().parent_path().parent_path()/"Packages"/directory/(package+extension);
                 if(std::filesystem::exists(file)) Exec("OBJ LOAD FILE=\""+file.string()+"\"");
             }
@@ -1297,4 +1324,5 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "MapDesignNative.inl"
 #include "SecurityNative.inl"
 #include "StageNative.inl"
+#include "EmitterLibraryNative.inl"
 }
