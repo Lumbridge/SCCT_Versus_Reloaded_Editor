@@ -273,15 +273,19 @@ namespace
     // under that package (stock particle emitters, brush models) or under its
     // owning actor (components the workbench creates with the actor as outer),
     // so both spellings map to the object's new name. rename is called once
-    // per object, in actor order.
+    // per object, in actor order. A definition saved before sub-objects were
+    // canonicalized still names package-level ones under the package its
+    // actor was captured from (sourcePath MyLevel.Brush1436 with
+    // Brush=Model'MyLevel.Model1438'), so that spelling maps too.
     struct InlinePlan { std::vector<std::map<std::string,std::string>> names; std::map<std::string,std::string> references; };
     InlinePlan PlanInline(const Json& actors,const std::function<std::string(const std::string&)>& rename)
     {
         InlinePlan plan; std::set<std::string> actorPaths;
-        for(const auto& actor:actors) actorPaths.insert(Fold(actor.at("path").get<std::string>()));
+        for(const auto& actor:actors) for(const auto& key:{"path","sourcePath"}) if(actor.contains(key)) actorPaths.insert(Fold(actor.at(key).get<std::string>()));
         for(const auto& actor:actors)
         {
-            const auto path=actor.at("path").get<std::string>(); const auto package=path.substr(0,path.find_last_of('.')+1);
+            const auto path=actor.at("path").get<std::string>(),source=actor.value("sourcePath",std::string{});
+            const auto package=path.substr(0,path.find_last_of('.')+1),captured=source.substr(0,source.find_last_of('.')+1);
             auto& names=plan.names.emplace_back();
             for(const auto& name:InlineObjectNames(actor.at("text").get<std::string>()))
             {
@@ -289,7 +293,7 @@ namespace
                 const auto renamed=rename(name); names[Fold(name)]=renamed;
                 plan.references[Fold(path+"."+name)]=renamed;
                 // A shared object is exported once, inline in the first actor using it.
-                if(!actorPaths.count(Fold(package+name))) plan.references.emplace(Fold(package+name),renamed);
+                for(const auto& owner:{package,captured}) if(!owner.empty() && !actorPaths.count(Fold(owner+name))) plan.references.emplace(Fold(owner+name),renamed);
             }
         }
         return plan;
@@ -457,6 +461,17 @@ Json PreparePlacement(const Json& definition,const Pose& frame,const std::string
         actor["text"]=text; t3d+=text;
     }
     result["t3d"]=t3d+"End Map\n"; return result;
+}
+Json PlacementDependencies(const Json& definition)
+{
+    // Captures made before inline sub-objects were left out listed a stock
+    // particle emitter's sub-emitter (outer: the map package) as a dependency,
+    // spelled MyLevel.SpriteEmitterN. Paste recreates it from the actor text,
+    // so any map can place the definition; only a real asset is required.
+    const auto plan=PlanInline(definition.at("actors"),[](const std::string& name) { return name; });
+    Json result=Json::array();
+    for(const auto& dependency:definition.at("dependencies")) if(!plan.references.count(Fold(dependency.get<std::string>()))) result.push_back(dependency);
+    return result;
 }
 Json SelectedTagChanges(const Json& preview)
 {

@@ -44,4 +44,7 @@ namespace Workflow
     Json PreparePlacement(const Json& definition, const Pose& frame,
                           const std::string& prefix, const std::string& levelPath,
                           const std::map<std::string, std::string>& bindings);
+    // The definition's dependencies that placement must find or load: its own
+    // inline sub-objects, which older captures listed, are recreated by paste.
+    Json PlacementDependencies(const Json& definition);
 }

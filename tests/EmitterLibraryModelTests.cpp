@@ -186,8 +186,8 @@ int main()
         Library::RestoreBuiltins(file);
         Check(Library::Merge(builtins,file).size()==4,"restore brings hidden built-ins back");
         Check(Library::Merge(builtins,Json{{"version",1}}).size()==2,"a file without lists is an empty library");
-        Reject([]{Library::Document(Json{{"version",1},{"emitters",Json::object()}});});
-        Reject([]{Library::Document(Json{{"version",1},{"hiddenBuiltins",Json::array({1})}});});
+        Check(Reject([]{Library::Document(Json{{"version",1},{"emitters",Json::object()}});})==Library::DamagedFile(),"a damaged file refuses with the user-facing sentence");
+        Check(Reject([]{Library::Document(Json{{"version",1},{"hiddenBuiltins",Json::array({1})}});})==Library::DamagedFile() && Reject([]{Library::Merge({},Json::array());})==Library::DamagedFile(),"every damaged shape gives the same sentence");
         auto dir=std::filesystem::temp_directory_path()/("emitter-library-test-"+Id());auto path=dir/"emitter_library.json";
         WriteDocument(path,file);
         Check(Library::Merge(builtins,ReadDocument(path,Library::EmptyDocument()))==Library::Merge(builtins,file),"the user file round-trips through the atomic writer");

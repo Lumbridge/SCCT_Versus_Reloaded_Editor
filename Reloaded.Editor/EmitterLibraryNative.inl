@@ -6,7 +6,19 @@ namespace
 {
     unsigned emitterLibraryRevision=0;
     std::filesystem::path EmitterLibraryFile() { return Directory()/"emitter_library.json"; }
-    Json EmitterFile() { return Workflow::EmitterLibrary::Document(ReadDocument(EmitterLibraryFile(),Workflow::EmitterLibrary::EmptyDocument())); }
+    // The user file for editing. One that cannot be read or parsed refuses
+    // with the model's sentence rather than the parser's message.
+    Json EmitterFile()
+    {
+        try { return Workflow::EmitterLibrary::Document(ReadDocument(EmitterLibraryFile(),Workflow::EmitterLibrary::EmptyDocument())); }
+        catch(const std::exception&) { throw std::runtime_error(Workflow::EmitterLibrary::DamagedFile()); }
+    }
+    // For listing, a damaged user file hides only its own entries: the
+    // built-ins stay listed and placeable, and EmitterLibraryProblems says why.
+    Json ListedEmitterFile(bool& damaged)
+    {
+        damaged=false; try { return EmitterFile(); } catch(const std::exception&) { damaged=true; return Workflow::EmitterLibrary::EmptyDocument(); }
+    }
     void WriteEmitterFile(const Json& file) { WriteDocument(EmitterLibraryFile(),file);++emitterLibraryRevision; }
     const Json& BuiltinEmitters() { static const Json builtins=Workflow::EmitterLibrary::Builtins(Workflow::EmitterLibrary::DefaultsText()); return builtins; }
     // The open map's file name for an entry's source. A raw MAP LOAD leaves
@@ -51,8 +63,12 @@ Json PlaceEmitterEntry(const Json& entry,const Pose& pose)
     Workflow::EmitterLibrary::Validate(checked);
     return PlaceAssembly(checked,pose,{}).at("members");
 }
-Json EmitterLibrary() { return Workflow::EmitterLibrary::Merge(BuiltinEmitters(),EmitterFile()); }
-Json EmitterLibraryProblems() { return Workflow::EmitterLibrary::Problems(EmitterFile()); }
+Json EmitterLibrary() { bool damaged; return Workflow::EmitterLibrary::Merge(BuiltinEmitters(),ListedEmitterFile(damaged)); }
+Json EmitterLibraryProblems()
+{
+    bool damaged; auto file=ListedEmitterFile(damaged);
+    return damaged?Json::array({Workflow::EmitterLibrary::DamagedFile()}):Workflow::EmitterLibrary::Problems(file);
+}
 Json EmitterCategories() { return Workflow::EmitterLibrary::Categories(EmitterLibrary()); }
 unsigned EmitterLibraryRevision() { return emitterLibraryRevision; }
 Json SaveEmitterEntry(const Json& entry)
