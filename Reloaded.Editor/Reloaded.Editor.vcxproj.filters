@@ -26,6 +26,7 @@
     <ClInclude Include="WorkflowEditor.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="WorkflowTools.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="EmitterPreview.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="EmitterLibraryWindow.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="EmitterPreviewModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MagicEventWorkbench.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CameraNetworkPanel.h"><Filter>Header Files</Filter></ClInclude>
@@ -354,6 +355,7 @@
     <ClCompile Include="WorkflowGraph.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="WorkflowTools.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="EmitterPreview.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="EmitterLibraryWindow.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MapAuthoringDialog.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MagicEventWorkbench.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="CameraNetworkPanel.cpp"><Filter>Source Files</Filter></ClCompile>
