@@ -116,6 +116,8 @@ namespace Workflow::Editor
     // unsaved draft (no id) around the members' centre; map names its source
     // when the frame's file name is not the open map. PlaceEmitterEntry is one
     // Undo step and selects the new actors. Storage calls do not need a map.
+    // A damaged emitter_library.json leaves the built-ins listed, reports
+    // EmitterLibrary::DamagedFile() as the only problem and refuses writes.
     Json SelectedEmitters();
     Json CaptureEmitters(const Json& members, const std::string& map = "");
     Json PlaceEmitterEntry(const Json& entry, const Pose& pose);

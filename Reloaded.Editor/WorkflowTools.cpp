@@ -797,6 +797,8 @@ Json SaveEmitterSelection(HWND owner,bool confirm)
     if(members.empty()) throw std::runtime_error("Select one or more emitters first.");
     // Capture first: a map-local asset or an outside link is refused before any typing.
     auto entry=Editor::CaptureEmitters(members);
+    // A damaged library file refuses too, rather than after the form.
+    for(const auto& problem:Editor::EmitterLibraryProblems()) if(problem==Json(Workflow::EmitterLibrary::DamagedFile())) throw std::runtime_error(problem.get<std::string>());
     std::vector<std::string> categories; for(const auto& category:Editor::EmitterCategories()) categories.push_back(Recode(category.get<std::string>(),CP_UTF8,CP_ACP));
     std::vector<InputField> fields={{"Name",Recode(entry.at("name").get<std::string>(),CP_UTF8,CP_ACP),{}},{"Category (choose or type)",Recode(entry.at("category").get<std::string>(),CP_UTF8,CP_ACP),categories,true},{"Description (optional)","",{}}};
     if(!Ask(owner,"Save to Emitter Library",fields)) return {};
