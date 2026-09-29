@@ -10,8 +10,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <set>
 #include <stdexcept>
 
@@ -32,6 +35,10 @@ namespace
     constexpr Address kTransient=0x11697b20;       // transient package: edactPasteSelected's factory outer
     constexpr Address kObjects=0x11697B70;         // GObjObjects {data,count}
     constexpr Address kNames=0x1169CFBC;           // FName table {data,count}; entry text at +12
+    constexpr Address kCriticalError=0x11692eb0;   // GIsCriticalError: set by appUnwindThrow (0x10f9c04c) and the error device (0x10e31443)
+    constexpr Address kErrorHistory=0x11691d88;    // GErrorHist, char[0x1000]; appUnwindThrow appends " <- Function" (0x10f9c090)
+    constexpr Address kUnwindCount=0x116913c0;     // appUnwindThrow's call count, which adds the " <- " separator (0x10f9c05b)
+    constexpr Address kShutDown=0x116987d0;        // set once UObject::StaticShutdownAfterError ran (0x10fa6237); the error device calls it on the first appError (0x10e3148a)
     constexpr Address kPackageClass=0x11698488,kLevelClass=0x118235f8,kWindowsViewportClass=0x1168d898;
     constexpr Address kEditorTick=0x1104b1f0;      // UEditorEngine::Tick(float), thiscall
     constexpr unsigned kTransactional=0x1,kTransientFlag=0x4000,kStandalone=0x80000;
@@ -45,9 +52,14 @@ namespace
     // sparks stay bright on it and dark AlphaBlend smoke stays visible.
     constexpr uint32_t kBackground=0xff404040;     // FColor for the perspective clear (GEditor+0xfc/+0x118)
     constexpr int kPitch=-2730,kYaw=8192;          // 15 degrees down, 45 degrees round
+    // Framing: Show runs the effect kWarm seconds before its first frame so that frame is
+    // measured, the camera frames the particles of the last kWindow seconds so they span
+    // kFill of the view, and never so far that a typical particle is under kMinPixels wide.
+    constexpr double kWarm=1.0,kWindow=3.0,kFill=0.9,kMinPixels=6;
     const char* const kPackage="ReloadedEmitterPreview";
     const char* const kLevelName="ReloadedEmitterPreviewLevel";
     const char* const kViewportName="ReloadedEmitterPreview";
+    const char* const kShutDownText="The editor has shut its engine down after an internal error. Save your map under a new name now, then restart the editor.";
 
     using FindFn=Address(__cdecl*)(Address cls,Address outer,const char* name,int exact);                                        // StaticFindObject 0x10face00
     using AllocateFn=Address(__cdecl*)(Address cls,Address outer,int name,unsigned flags,Address from,Address error,Address at,Address root); // StaticAllocateObject 0x10fad900
@@ -61,7 +73,7 @@ namespace
     using FactoryFn=Address(__thiscall*)(Address self);                                                                          // ULevelFactory::ULevelFactory 0x110559f0
     using CreateTextFn=Address(__thiscall*)(Address self,Address level,Address cls,Address parent,int name,unsigned flags,Address context,const char* type,const char** buffer,const char* end,Address warn); // vtable +0x60
     using NewViewportFn=Address(__thiscall*)(Address client,int name);                                                           // UWindowsClient::NewViewport, vtable +0x80
-    using OpenWindowFn=void(__thiscall*)(Address viewport,HWND parent,int temporary,int width,int height,int x,int y);         // UWindowsViewport::OpenWindow, vtable +0xb0
+    using OpenWindowFn=void(__thiscall*)(Address viewport,HWND parent,int temporary,int width,int height,int x,int y);         // UWindowsViewport::OpenWindow 0x10f7db70, vtable +0xb0
     using RepaintFn=void(__thiscall*)(Address viewport,int blit);                                                                // UWindowsViewport::Repaint, vtable +0xc8
     using InitFn=void(__thiscall*)(Address input,Address viewport);                                                             // UInput::Init, vtable +0x64
     using ResetFn=void(__thiscall*)(Address emitter);                                                                            // UParticleEmitter::Reset, vtable +0x68 (0x110eb480)
@@ -81,21 +93,92 @@ namespace
     {
         if(!address || !Copy(reinterpret_cast<void*>(address),&value,sizeof(T)))throw std::runtime_error("The emitter preview lost its editor objects. Close and reopen the preview.");
     }
+
+    struct Shown { Address actor;std::string name;float dead=0;int resets=0; };
+    struct State
+    {
+        Address package=0,level=0,viewport=0;
+        HWND host=nullptr,test=nullptr,testHost=nullptr;
+        std::vector<Shown> actors;std::vector<std::string> warnings;
+        int serial=0,viewportsOpened=0,viewportsClosed=0;bool faulted=false;std::string fault;
+        // Camera: orbits target at distance, easing to goal/goalDistance. home* is the entry's
+        // starting view (its preview hint, else the estimate from its ranges); extent is the
+        // framed half width/height, measured once it comes from particles.
+        Vector target{},goal{},homeTarget{};double distance=256,goalDistance=256,homeDistance=256;int pitch=kPitch,yaw=kYaw,homePitch=kPitch,homeYaw=kYaw;
+        bool user=false,measured=false;double extent[2]{};
+        // Particles of the last kWindow seconds of preview time, one snapshot each 0.1 s.
+        double age=0,sampledAt=-1e9,fittedAt=-1e9,shrinkSince=-1;std::deque<std::pair<double,std::vector<Model::Sample>>> samples;
+        // Input
+        int drag=0;POINT last{};DWORD click=0;POINT clickAt{};
+        // Timing
+        LARGE_INTEGER frequency{},previous{},second{};unsigned long long ticks=0,frames=0,loops=0,framesAtSecond=0;double frameRate=0;float idle=0;
+    } state;
+    Address wireExempt=0;   // the preview viewport, read by IsWireHook and SelectionInfoHook
+
+    HWND Window()
+    {
+        if(!state.viewport)return nullptr;
+        Address window=0;if(!Copy(&window,reinterpret_cast<void*>(state.viewport+0x1b4),4) || !window)return nullptr;
+        HWND hwnd=nullptr;return Copy(&hwnd,reinterpret_cast<void*>(window+4),4)?hwnd:nullptr;
+    }
     // Native sequences run under SEH: an access violation, or an engine error thrown
     // through its guard/unguard chain, becomes a message instead of a crash. The
     // callables hold only native calls and plain values.
-    template<class F> DWORD Native(F& f)
+    template<class F> DWORD Guarded(F& f)
     {
         __try { f(); return 0; }
         __except(EXCEPTION_EXECUTE_HANDLER) { return GetExceptionCode(); }
     }
+    bool ShutDown(){int done=0;return Copy(&done,reinterpret_cast<void*>(kShutDown),4) && done;}
+    // Every native unguard an exception passes runs appUnwindThrow (0x10f9c030), which sets
+    // GIsCriticalError and appends to GErrorHist. An appError has also run
+    // UObject::StaticShutdownAfterError (0x10fa61e0) on every object, and the engine cannot
+    // go on; otherwise the trail is undone, so a later real crash reports its own history.
+    template<class F> DWORD Native(F& f)
+    {
+        int critical=0,count=0;Copy(&critical,reinterpret_cast<void*>(kCriticalError),4);Copy(&count,reinterpret_cast<void*>(kUnwindCount),4);
+        const size_t history=strnlen(reinterpret_cast<const char*>(kErrorHistory),0x1000);
+        const DWORD code=Guarded(f);
+        if(code && !critical && !ShutDown())
+        {
+            const char end=0;
+            Copy(reinterpret_cast<void*>(kCriticalError),&critical,4);Copy(reinterpret_cast<void*>(kUnwindCount),&count,4);
+            if(history<0x1000)Copy(reinterpret_cast<void*>(kErrorHistory+history),&end,1);
+        }
+        return code;
+    }
+    std::string Failure(const char* what,DWORD code)
+    {
+        char text[400];
+        if(ShutDown())sprintf_s(text,"The editor hit an internal error while %s and has shut its engine down. Save your map under a new name now, then restart the editor.",what);
+        else sprintf_s(text,"The emitter preview stopped after an error while %s (exception 0x%08lX). Save your map, then restart the editor to use the preview again.",what,code);
+        return text;
+    }
+    // A native failure leaves engine state unknown: the preview stops for the session.
+    void Fault(const char* what,DWORD code)
+    {
+        state.faulted=true;state.fault=Failure(what,code);Logger::log("Emitter preview: "+state.fault);
+        if(HWND window=Window())ShowWindow(window,SW_HIDE);
+    }
     template<class F> void Run(const char* what,F f)
     {
-        if(DWORD code=Native(f))
-        {
-            char text[200];sprintf_s(text,"%s failed inside the editor (exception 0x%08lX).",what,code);
-            Logger::log(std::string("Emitter preview: ")+text);throw std::runtime_error(text);
-        }
+        if(DWORD code=Native(f)){Fault(what,code);throw std::runtime_error(state.fault);}
+    }
+    // ULevel::DestroyActor saves the level's Actors into GUndo whenever a transaction records,
+    // transactional or not (0x110bafc8..0x110baff5). Preview objects never belong in the map's
+    // Undo history, so GUndo is held at null around the native call.
+    template<class F> DWORD Unrecorded(F& f)
+    {
+        Address undo=0;Copy(&undo,reinterpret_cast<void*>(kUndo),4);
+        if(undo){const Address none=0;Copy(reinterpret_cast<void*>(kUndo),&none,4);}
+        const DWORD code=Native(f);
+        if(undo)Copy(reinterpret_cast<void*>(kUndo),&undo,4);
+        return code;
+    }
+    void CheckEngine()
+    {
+        if(!state.faulted && ShutDown()){state.faulted=true;state.fault=kShutDownText;Logger::log(std::string("Emitter preview: ")+kShutDownText);if(HWND window=Window())ShowWindow(window,SW_HIDE);}
+        if(state.faulted)throw std::runtime_error(state.fault.empty()?"The emitter preview stopped after an editor error. Restart the editor to use it again.":state.fault);
     }
     // Still registered in GObjObjects at its own index (UObject::Index +4) and, when given,
     // still of its class (+0x24), so a recycled slot and address cannot pass for it.
@@ -131,51 +214,31 @@ namespace
         return editor;
     }
 
-    struct Shown { Address actor;std::string name;float dead=0;int resets=0; };
-    struct State
-    {
-        Address package=0,level=0,viewport=0;
-        HWND host=nullptr,park=nullptr,test=nullptr,testHost=nullptr;
-        std::vector<Shown> actors;std::vector<std::string> warnings;
-        int serial=0;bool faulted=false;std::string fault;
-        // Camera: orbit round target at distance; radius is the automatic frame.
-        Vector target{},goal{};double distance=256,goalDistance=256,radius=128;int pitch=kPitch,yaw=kYaw;
-        bool user=false,hinted=false;Vector autoTarget{};double autoRadius=128;
-        double age=0;int refits=0;bool fitted=false;Model::Box seen;
-        // Input
-        int drag=0;POINT last{};DWORD click=0;POINT clickAt{};
-        // Timing
-        LARGE_INTEGER frequency{},previous{},second{};unsigned long long ticks=0,frames=0,loops=0,framesAtSecond=0;double frameRate=0;float idle=0;
-    } state;
-    Address wireExempt=0;   // the preview viewport, read by IsWireHook
-
     Address CameraActor(){return Read<Address>(state.viewport+0x30);}
-    HWND Window()
+    // UWindowsClient::Viewports {+0x2c data,+0x30 num}, the list ViewportWndProc checks (0x10f7e391).
+    std::vector<Address> ClientViewports()
     {
-        if(!state.viewport)return nullptr;
-        Address window=0;if(!Copy(&window,reinterpret_cast<void*>(state.viewport+0x1b4),4) || !window)return nullptr;
-        HWND hwnd=nullptr;return Copy(&hwnd,reinterpret_cast<void*>(window+4),4)?hwnd:nullptr;
+        std::vector<Address> out;Address editor=0,client=0,data=0;int count=0;
+        if(!Copy(&editor,reinterpret_cast<void*>(kEditor),4) || !editor || !Copy(&client,reinterpret_cast<void*>(editor+0x30),4) || !client)return out;
+        if(!Copy(&data,reinterpret_cast<void*>(client+0x2c),4) || !Copy(&count,reinterpret_cast<void*>(client+0x30),4) || count<0 || count>256)return out;
+        for(int i=0;i<count;++i){Address v=0;if(Copy(&v,reinterpret_cast<void*>(data+i*4),4))out.push_back(v);}
+        return out;
     }
-    // UWindowsViewport::ViewportWndProc checks the same Client->Viewports membership (0x10f7e391).
     bool ViewportAlive()
     {
         if(!Alive(state.viewport,kWindowsViewportClass) || !Alive(state.level,kLevelClass))return false;
-        Address editor=0,client=0,data=0,camera=0,level=0;int count=0;
-        if(!Copy(&editor,reinterpret_cast<void*>(kEditor),4) || !editor || !Copy(&client,reinterpret_cast<void*>(editor+0x30),4) || !client)return false;
-        if(!Copy(&data,reinterpret_cast<void*>(client+0x2c),4) || !Copy(&count,reinterpret_cast<void*>(client+0x30),4) || count<0 || count>256)return false;
-        bool member=false;
-        for(int i=0;i<count && !member;++i){Address v=0;member=Copy(&v,reinterpret_cast<void*>(data+i*4),4) && v==state.viewport;}
-        return member && Copy(&camera,reinterpret_cast<void*>(state.viewport+0x30),4) && Alive(camera)
+        auto viewports=ClientViewports();Address camera=0,level=0;
+        return std::find(viewports.begin(),viewports.end(),state.viewport)!=viewports.end() && Copy(&camera,reinterpret_cast<void*>(state.viewport+0x30),4) && Alive(camera)
             && Copy(&level,reinterpret_cast<void*>(camera+0x1a4),4) && level==state.level;
     }
     // A host destroyed without Detach takes the viewport window with it, and
-    // UWindowsClient::Tick then deletes the viewport (0x10f7b325) and its camera. Forget it
+    // UWindowsClient::Tick then deletes the viewport (0x10f7b339) and its camera. Forget it
     // so the next Attach opens a new one.
     bool ViewportLost()
     {
         if(!state.viewport || Alive(state.viewport,kWindowsViewportClass))return false;
         Logger::log("Emitter preview: the viewport closed with its host window; the next Attach opens a new one");
-        state.viewport=0;wireExempt=0;state.host=nullptr;state.drag=0;return true;
+        state.viewport=0;wireExempt=0;state.host=nullptr;state.drag=0;++state.viewportsClosed;return true;
     }
     void Mark(Address object,unsigned set,unsigned clear)
     {
@@ -223,10 +286,11 @@ namespace
     // Private level in a transient, standalone package: UEditorEngine::Cleanse keeps
     // RF_Standalone|RF_Native objects (0x11049413), map saves only walk the map's own
     // package, and ULevel::RememberActors/ReconcileActors only visit viewports whose
-    // camera is in the map (0x1111ee39), so map changes never reach it.
+    // camera is in the map (0x1111ee39), so map changes never reach it. It lives for the
+    // session; viewports come and go with their hosts.
     void EnsureLevel()
     {
-        if(state.faulted)throw std::runtime_error(state.fault.empty()?"The emitter preview stopped after an editor error. Restart the editor to use it again.":state.fault);
+        CheckEngine();
         if(Alive(state.level,kLevelClass) && Alive(state.package,kPackageClass))return;
         if(state.viewport)
         {
@@ -235,7 +299,7 @@ namespace
         }
         Editor();
         Address package=0,level=0;
-        Run("Creating the preview level",[&]{
+        Run("creating the preview level",[&]{
             package=Find(kPackageClass,0,kPackage);
             if(!package)package=reinterpret_cast<ConstructFn>(0x10fadf80)(kPackageClass,0,Name(kPackage),kTransientFlag|kStandalone,0,*reinterpret_cast<Address*>(kLog),0);
             if(!package)return;
@@ -253,49 +317,109 @@ namespace
         state.package=package;state.level=level;
         Logger::log("Emitter preview: level created");
     }
+    int Pixels(){int w=0;return state.viewport && Copy(&w,reinterpret_cast<void*>(state.viewport+0xa0),4) && w>0?w:480;}
+    double Aspect()
+    {
+        int w=0,h=0;
+        if(!state.viewport || !Copy(&w,reinterpret_cast<void*>(state.viewport+0xa0),4) || !Copy(&h,reinterpret_cast<void*>(state.viewport+0xa4),4) || w<=0 || h<=0)return 4.0/3;
+        return static_cast<double>(w)/h;
+    }
     void ApplyCamera()
     {
+        if(!state.viewport)return;
         Address camera=CameraActor();
         auto eye=Model::Eye(state.target,state.distance,state.pitch,state.yaw);
         Write(camera+0x80,std::array<float,3>{static_cast<float>(eye[0]),static_cast<float>(eye[1]),static_cast<float>(eye[2])});
         Write(camera+0xe0,std::array<int,3>{state.pitch,state.yaw,0});
         Write(camera+0x308,kFov);
     }
-    double Aspect(){int w=Read<int>(state.viewport+0xa0),h=Read<int>(state.viewport+0xa4);return w>0 && h>0?static_cast<double>(w)/h:4.0/3;}
-    void Frame(const Vector& target,double radius,bool jump)
+    // One snapshot of up to 256 live particles (evenly strided) in world space.
+    // CoordinateSystem (+0xd8) PTCS_Relative (1) keeps particles relative to the owner's
+    // Location (+0x80); Independent and Absolute ones are stored in world space
+    // (SpawnParticle 0x110ebc10). A mesh particle's Size scales its mesh, taken as 64
+    // units as Model::Reach does. Visibility is the faded FParticle Color (+168, BGRA):
+    // alpha for AlphaBlend, Modulated and AlphaModulate (DrawStyle +0xde 1, 2, 4), which fade
+    // alpha only; the brightest channel for the additive styles, which fade the colour.
+    void Collect()
     {
-        state.goal=target;state.radius=radius;state.goalDistance=Model::Distance(radius,kFov,state.viewport?Aspect():4.0/3);
-        if(jump){state.target=state.goal;state.distance=state.goalDistance;}
-    }
-    HWND Park()
-    {
-        if(state.park && IsWindow(state.park))return state.park;
-        WNDCLASSA wc{};wc.lpfnWndProc=DefWindowProcA;wc.hInstance=GetModuleHandle(nullptr);wc.lpszClassName="ReloadedEmitterPreviewPark";RegisterClassA(&wc);
-        // Hidden for the whole session: the viewport window waits here between hosts,
-        // so UWindowsClient::Tick never deletes the viewport for a destroyed HWND (0x10f7b325).
-        state.park=CreateWindowExA(WS_EX_TOOLWINDOW,"ReloadedEmitterPreviewPark","",WS_POPUP,0,0,64,64,nullptr,nullptr,GetModuleHandle(nullptr),nullptr);
-        return state.park;
-    }
-    void EnsureViewport(HWND host)
-    {
-        RECT r{};GetClientRect(host,&r);const int w=std::max<int>(r.right,16),h=std::max<int>(r.bottom,16);
-        ViewportLost();
-        if(state.viewport)
+        std::vector<Model::Sample> all;
+        for(auto a:LiveActors())
         {
-            if(!ViewportAlive())
+            const auto origin=Read<std::array<float,3>>(a+0x80);
+            for(auto e:Emitters(a))
             {
-                state.faulted=true;state.fault="The editor closed the preview viewport. Restart the editor to use the emitter preview again.";
-                Logger::log("Emitter preview: "+state.fault);throw std::runtime_error(state.fault);
+                const bool relative=Read<unsigned char>(e+0xd8)==1,mesh=NameOf(Read<Address>(e+0x24))=="MeshEmitter";
+                const unsigned char style=Read<unsigned char>(e+0xde);const bool alpha=style==1 || style==2 || style==4;
+                EachParticle(e,[&](Address p){
+                    const auto at=Read<std::array<float,3>>(p);const double size=std::abs(static_cast<double>(Read<float>(p+108)))*(mesh?64:1);
+                    if(!std::isfinite(at[0]) || !std::isfinite(at[1]) || !std::isfinite(at[2]) || !std::isfinite(size))return;
+                    const unsigned color=Read<unsigned>(p+168);
+                    const unsigned level=alpha?color>>24:std::max({color&0xff,(color>>8)&0xff,(color>>16)&0xff});
+                    all.push_back({{at[0]+(relative?origin[0]:0.0f),at[1]+(relative?origin[1]:0.0f),at[2]+(relative?origin[2]:0.0f)},std::min(size,2048.0),level/255.0});
+                });
             }
-            HWND window=Window();if(!window)throw std::runtime_error("The preview viewport has no window.");
-            SetParent(window,host);SetWindowPos(window,HWND_TOP,0,0,w,h,SWP_NOACTIVATE|SWP_SHOWWINDOW);
+        }
+        if(all.size()>256){std::vector<Model::Sample> kept(256);for(size_t i=0;i<256;++i)kept[i]=all[i*all.size()/256];all.swap(kept);}
+        state.samples.emplace_back(state.age,std::move(all));
+        while(!state.samples.empty() && state.age-state.samples.front().first>kWindow)state.samples.pop_front();
+    }
+    // Frames what the visible particles of the last kWindow seconds cover (Model::Fit), on
+    // the view axes. The first measured frame replaces the starting view, closer or
+    // further; after that the camera pulls back at once for a growing plume but only
+    // closes in once the effect has stayed clearly smaller for 1.5 s, so looping bursts do
+    // not pump the view. Nothing moves once the user has moved the camera.
+    void Reframe(bool jump)
+    {
+        if(state.user)return;
+        std::vector<Model::Sample> all;for(const auto& snapshot:state.samples)all.insert(all.end(),snapshot.second.begin(),snapshot.second.end());
+        if(all.size()<3)return;
+        const auto view=Model::Fit(all,state.pitch,state.yaw,kFov,Aspect(),kFill,Pixels(),kMinPixels);
+        if(!view.valid)return;
+        const auto& center=view.target;const double want=view.distance;
+        if(jump || !state.measured)
+        {
+            state.goal=center;state.goalDistance=want;state.extent[0]=view.width;state.extent[1]=view.height;state.measured=true;state.shrinkSince=-1;
+            if(jump){state.target=state.goal;state.distance=state.goalDistance;}
             return;
         }
+        bool changed=false;
+        if(want>state.goalDistance*1.08){state.goalDistance=want;state.shrinkSince=-1;changed=true;}
+        else if(want<state.goalDistance*0.8)
+        {
+            if(state.shrinkSince<0)state.shrinkSince=state.age;
+            else if(state.age-state.shrinkSince>=1.5){state.goalDistance=want;state.shrinkSince=-1;changed=true;}
+        }
+        else state.shrinkSince=-1;
+        double offset=0;for(int i=0;i<3;++i)offset+=(center[i]-state.goal[i])*(center[i]-state.goal[i]);
+        if(changed || std::sqrt(offset)>state.goalDistance*0.06){state.goal=center;state.extent[0]=view.width;state.extent[1]=view.height;}
+    }
+    void Refit(float delta)
+    {
+        state.age+=delta;
+        if(state.age-state.sampledAt>=0.1){state.sampledAt=state.age;Collect();}
+        if(state.age-state.fittedAt>=0.25){state.fittedAt=state.age;Reframe(false);}
+        const double k=std::min(1.0,delta*3.0);
+        for(int i=0;i<3;++i)state.target[i]+=(state.goal[i]-state.target[i])*k;
+        state.distance+=(state.goalDistance-state.distance)*k;
+    }
+    // The entry's own view again (double-click): its starting orientation, framed on what
+    // the particles cover now.
+    void Home()
+    {
+        state.user=false;state.pitch=state.homePitch;state.yaw=state.homeYaw;state.goal=state.homeTarget;state.goalDistance=state.homeDistance;
+        state.measured=false;state.shrinkSince=-1;
+        try{Reframe(false);}catch(const std::exception&){}
+    }
+    // A new viewport for host, the sequence of WBrowserStaticMesh::OnCreate (0x10e8516d..
+    // 0x10e852e6) with the camera spawned in the preview level instead of GEditor->Level.
+    // OpenWindow creates the window as host's child (0x10f7dd45) and keeps host as
+    // ParentWindow (0x10f7ddb5), so the viewport lives and dies in this one host.
+    void OpenViewport(HWND host)
+    {
+        RECT r{};GetClientRect(host,&r);const int w=std::max<int>(r.right,16),h=std::max<int>(r.bottom,16);
         Address viewport=0;const Address level=state.level;
-        Run("Opening the preview viewport",[&]{
+        auto open=[&]{
             Address editor=*reinterpret_cast<Address*>(kEditor),client=*reinterpret_cast<Address*>(editor+0x30);
-            // Same sequence as WBrowserStaticMesh::OnCreate (0x10e8516d..0x10e852e6), with the
-            // camera spawned in the preview level instead of GEditor->Level.
             viewport=reinterpret_cast<NewViewportFn>(*reinterpret_cast<Address*>(*reinterpret_cast<Address*>(client)+0x80))(client,Name(kViewportName));
             if(!viewport)return;
             reinterpret_cast<SpawnViewFn>(0x110bf650)(level,viewport);
@@ -310,13 +434,41 @@ namespace
             reinterpret_cast<OpenWindowFn>(*reinterpret_cast<Address*>(*reinterpret_cast<Address*>(viewport)+0xb0))(viewport,host,0,w,h,0,0);
             Address canvas=*reinterpret_cast<Address*>(viewport+0x68);
             for(int i=0;i<3;++i)*reinterpret_cast<Address*>(canvas+0x60+i*4)=*reinterpret_cast<Address*>(editor+0x250+i*4);
-        });
-        if(!viewport)throw std::runtime_error("The editor could not open the preview viewport.");
-        state.viewport=viewport;wireExempt=viewport;
+        };
+        const DWORD code=Native(open);
+        if(viewport){state.viewport=viewport;wireExempt=viewport;state.host=host;++state.viewportsOpened;}
+        if(code){Fault("opening the preview viewport",code);throw std::runtime_error(state.fault);}
+        if(!viewport || !Read<Address>(viewport+0x30))throw std::runtime_error("The editor could not open the preview viewport.");
         Mark(CameraActor(),kTransientFlag,kTransactional);
         if(!Read<Address>(viewport+0x70))Logger::log("Emitter preview: viewport opened without a render device");
         ApplyCamera();
         Logger::log("Emitter preview: viewport opened");
+    }
+    // Deletes the viewport the way WBrowserStaticMesh::OnDestroy does (0x10e6b49f: scalar
+    // deleting destructor, vtable +0xc), while its window still exists. UWindowsViewport::
+    // Destroy (0x10f7b680) runs UViewport::Destroy (0x1109d3c0): CloseWindow destroys the
+    // window (0x10f7b8b1); Input, Console and Canvas are deleted; RenDev->Exit(this) only
+    // flushes the shared device's caches (0x10f0bb27) and GRenDev is kept (0x1109d485); the
+    // viewport leaves Client->Viewports (0x1109d4a8); UPlayer::Destroy destroys the camera in
+    // its XLevel, the preview level (0x1112d987).
+    void DeleteViewport()
+    {
+        const Address viewport=state.viewport;
+        if(!viewport)return;
+        if(HWND window=Window();window && GetCapture()==window)ReleaseCapture();
+        state.drag=0;
+        if(Alive(viewport,kWindowsViewportClass) && !ShutDown())
+        {
+            // UPlayer::Destroy skips a null Actor (0x1112d961): a camera that is not alive in
+            // the preview level is left alone.
+            Address camera=0,level=0;
+            if(Copy(&camera,reinterpret_cast<void*>(viewport+0x30),4) && camera && !(Alive(camera) && Alive(state.level,kLevelClass) && Copy(&level,reinterpret_cast<void*>(camera+0x1a4),4) && level==state.level))
+                {const Address none=0;Copy(reinterpret_cast<void*>(viewport+0x30),&none,4);}
+            auto remove=[&]{reinterpret_cast<DeleteFn>(*reinterpret_cast<Address*>(*reinterpret_cast<Address*>(viewport)+0xc))(viewport,1);};
+            if(DWORD code=Unrecorded(remove))Fault("closing the preview viewport",code);
+        }
+        state.viewport=0;wireExempt=0;state.host=nullptr;++state.viewportsClosed;
+        Logger::log("Emitter preview: viewport closed");
     }
     DWORD Draw(int blit)
     {
@@ -337,80 +489,53 @@ namespace
         Copy(reinterpret_cast<void*>(editor+0xfc),saved,4);Copy(reinterpret_cast<void*>(editor+0x118),saved+1,4);
         return code;
     }
-    void Fault(const char* what,DWORD code)
+    // Sub-emitters that end on their own: one-shots (RespawnDeadParticles off, +0x1e0 bit
+    // 0x100) and trigger spawners (SpawnOnTriggerRange +0x320/+0x324). dead: every one of
+    // them has AllParticlesDead (+0x1e4 bit 0x10) or is Disabled (+0x1e0 bit 0x800).
+    std::vector<Address> Bursts(Address actor,bool& dead)
     {
-        char text[200];sprintf_s(text,"The emitter preview stopped: %s failed inside the editor (exception 0x%08lX).",what,code);
-        state.faulted=true;state.fault=text;Logger::log(std::string("Emitter preview: ")+text);
-        if(HWND window=Window())ShowWindow(window,SW_HIDE);
+        std::vector<Address> bursts;dead=true;
+        for(auto e:Emitters(actor))
+        {
+            const bool trigger=std::max(Read<float>(e+0x320),Read<float>(e+0x324))>=1;
+            if((Read<unsigned>(e+0x1e0)&0x100) && !trigger)continue;
+            bursts.push_back(e);
+            if(!(Read<unsigned>(e+0x1e4)&0x10) && !(Read<unsigned>(e+0x1e0)&0x800))dead=false;
+        }
+        return bursts;
     }
-    // One-shot sub-emitters (RespawnDeadParticles off, +0x1e0 bit 0x100) and trigger
-    // spawners (SpawnOnTriggerRange +0x320/+0x324) end with AllParticlesDead (+0x1e4 bit
-    // 0x10). Once every such sub-emitter of an actor is dead for 0.6 s they are Reset
-    // together, as AEmitter::Tick's AutoReset does (0x110dbc82), and trigger spawners are
-    // re-armed the way execTrigger does (CurrentSpawnOnTrigger +0x3e4, 0x110eb378).
+    // Starts bursts again together, as AEmitter::Tick's AutoReset does (0x110dbc82), with
+    // trigger spawners re-armed the way execTrigger does (CurrentSpawnOnTrigger +0x3e4,
+    // 0x110eb378).
+    bool Restart(const std::vector<Address>& bursts)
+    {
+        for(auto e:bursts)
+        {
+            Write(e+0x1e0,Read<unsigned>(e+0x1e0)&~0x800u);
+            auto reset=[&]{reinterpret_cast<ResetFn>(*reinterpret_cast<Address*>(*reinterpret_cast<Address*>(e)+0x68))(e);};
+            if(DWORD code=Native(reset)){Fault("resetting a burst",code);return false;}
+            const float lo=Read<float>(e+0x320),hi=Read<float>(e+0x324);
+            if(std::max(lo,hi)>=1)
+            {
+                Write(e+0x3e4,std::max(1,static_cast<int>(std::lround((lo+hi)*0.5))));
+                Write(e+0x1e4,Read<unsigned>(e+0x1e4)&~0x18u);
+            }
+        }
+        return true;
+    }
+    // Once every burst of an actor has been dead for 0.6 s they start again, so one-shot
+    // and triggered effects loop as in-game triggers would fire them.
     void Loop(float delta)
     {
         for(auto& p:state.actors)
         {
             if(!Alive(p.actor) || (Read<unsigned>(p.actor+0x2e8)&0x8000))continue;
-            std::vector<Address> bursts;bool dead=true;
-            for(auto e:Emitters(p.actor))
-            {
-                const bool trigger=std::max(Read<float>(e+0x320),Read<float>(e+0x324))>=1;
-                if((Read<unsigned>(e+0x1e0)&0x100) && !trigger)continue;
-                bursts.push_back(e);
-                if(!(Read<unsigned>(e+0x1e4)&0x10) && !(Read<unsigned>(e+0x1e0)&0x800))dead=false;
-            }
+            bool dead=true;auto bursts=Bursts(p.actor,dead);
             if(bursts.empty() || !dead){p.dead=0;continue;}
             if((p.dead+=delta)<0.6f)continue;
             p.dead=0;++p.resets;++state.loops;
-            for(auto e:bursts)
-            {
-                Write(e+0x1e0,Read<unsigned>(e+0x1e0)&~0x800u);
-                auto reset=[&]{reinterpret_cast<ResetFn>(*reinterpret_cast<Address*>(*reinterpret_cast<Address*>(e)+0x68))(e);};
-                if(DWORD code=Native(reset)){Fault("resetting a burst",code);return;}
-                const float lo=Read<float>(e+0x320),hi=Read<float>(e+0x324);
-                if(std::max(lo,hi)>=1)
-                {
-                    Write(e+0x3e4,std::max(1,static_cast<int>(std::lround((lo+hi)*0.5))));
-                    Write(e+0x1e4,Read<unsigned>(e+0x1e4)&~0x18u);
-                }
-            }
+            if(!Restart(bursts))return;
         }
-    }
-    // Frames what the particles actually reach: the union of every live particle seen
-    // since Show (location +- size), fitted at 1, 2.5, 5 and 9 s. After the first fit the
-    // camera only pulls back, so growing plumes and looping bursts stay in view. Skipped
-    // once the user moves the camera or when the entry carries its own camera.
-    void Refit(float delta)
-    {
-        state.age+=delta;
-        if(!state.user && !state.hinted && state.refits<4)
-        {
-            for(auto a:LiveActors())for(auto e:Emitters(a))EachParticle(e,[&](Address p){
-                auto at=Read<std::array<float,3>>(p);auto size=std::abs(Read<float>(p+108));
-                if(!std::isfinite(at[0]) || !std::isfinite(at[1]) || !std::isfinite(at[2]) || !std::isfinite(size))return;
-                size=std::min(size,2048.0f);
-                Model::Include(state.seen,{at[0]-size,at[1]-size,at[2]-size});Model::Include(state.seen,{at[0]+size,at[1]+size,at[2]+size});
-            });
-            constexpr double stages[]={1.0,2.5,5.0,9.0};
-            if(state.seen.valid && state.age>=stages[state.refits])
-            {
-                ++state.refits;
-                Vector center{};double squared=0;
-                for(int i=0;i<3;++i){center[i]=(state.seen.min[i]+state.seen.max[i])*0.5;squared+=(state.seen.max[i]-state.seen.min[i])*(state.seen.max[i]-state.seen.min[i]);}
-                const double radius=std::clamp(std::sqrt(squared)*0.5,24.0,4096.0);
-                double moved=0;for(int i=0;i<3;++i)moved+=(center[i]-state.autoTarget[i])*(center[i]-state.autoTarget[i]);
-                if(!state.fitted || radius>state.autoRadius*1.1 || std::sqrt(moved)>state.autoRadius*0.25)
-                {
-                    state.autoTarget=center;state.autoRadius=state.fitted?std::max(radius,state.autoRadius):radius;state.fitted=true;
-                    Frame(state.autoTarget,state.autoRadius,false);
-                }
-            }
-        }
-        const double k=std::min(1.0,delta*4.0);
-        for(int i=0;i<3;++i)state.target[i]+=(state.goal[i]-state.target[i])*k;
-        state.distance+=(state.goalDistance-state.distance)*k;
     }
     // One preview frame: the preview level ticks in ViewportsOnly mode (1), as
     // UEditorEngine::Tick ticks a realtime map (0x1104b279): emitters update and no game
@@ -432,6 +557,7 @@ namespace
     void Tick()
     {
         if(state.faulted || !state.viewport || !state.host)return;
+        if(ShutDown()){try{CheckEngine();}catch(const std::exception&){}return;}
         LARGE_INTEGER now{};QueryPerformanceCounter(&now);
         if(!state.frequency.QuadPart){QueryPerformanceFrequency(&state.frequency);state.previous=state.second=now;return;}
         const double elapsed=static_cast<double>(now.QuadPart-state.previous.QuadPart)/state.frequency.QuadPart;
@@ -515,7 +641,7 @@ namespace
         for(auto actor:actors)
         {
             auto destroy=[&]{reinterpret_cast<DestroyFn>(0x110baf10)(level,actor,0);};
-            if(DWORD code=Native(destroy)){Fault("removing a preview emitter",code);return;}
+            if(DWORD code=Unrecorded(destroy)){Fault("removing a preview emitter",code);return;}
         }
     }
     // Emitter class test on the T3D Class= token (short or Package.Class), resolved
@@ -524,7 +650,7 @@ namespace
     {
         const Address classClass=Read<Address>(kLevelClass+0x24);
         Address cls=0,emitter=0;
-        Run("Finding the emitter class",[&]{
+        Run("finding the emitter class",[&]{
             cls=Find(classClass,type.find('.')==std::string::npos?static_cast<Address>(-1):0,type.c_str());
             emitter=Find(classClass,static_cast<Address>(-1),"Emitter");
         });
@@ -540,13 +666,13 @@ namespace
     int Exec(const std::string& command)
     {
         Address exec=Editor()+0x28;int result=0;const char* text=command.c_str();
-        Run("Loading a package",[&]{result=reinterpret_cast<ExecFn>(*reinterpret_cast<Address*>(*reinterpret_cast<Address*>(exec)))(exec,text,*reinterpret_cast<Address*>(kLog));});
+        Run("loading a package",[&]{result=reinterpret_cast<ExecFn>(*reinterpret_cast<Address*>(*reinterpret_cast<Address*>(exec)))(exec,text,*reinterpret_cast<Address*>(kLog));});
         return result;
     }
     Address FindPath(const std::string& path)
     {
         Address found=0;const char* text=path.c_str();
-        Run("Finding an emitter asset",[&]{found=Find(0,0,text);});
+        Run("finding an emitter asset",[&]{found=Find(0,0,text);});
         return found;
     }
     // Loads a missing asset's package the way PlaceAssembly does (OBJ LOAD from Packages\<kind>).
@@ -568,19 +694,31 @@ namespace
     {
         const Address level=state.level,package=state.package;const int levelName=Read<int>(level+0x20);
         const std::string text=Convert(t3d,CP_UTF8,CP_ACP);const char* begin=text.c_str();const char* end=begin+text.size();
-        Address factory=0;
         // The factory half of edactPasteSelected (0x10eb838a..0x10eb849d) without its
         // Remember/ReconcileActors, selection and redraw: InParent is the preview package,
         // so inline objects and actors are created there. Flags 0: not transactional.
-        Run("Importing the emitter",[&]{
+        Address factory=0;
+        Run("creating the emitter importer",[&]{
             factory=reinterpret_cast<FactoryNewFn>(0x10e05a84)(0x68,*reinterpret_cast<Address*>(kTransient),0,0);
-            if(!factory)return;
-            reinterpret_cast<FactoryFn>(0x110559f0)(factory);
-            const char* cursor=begin;
-            reinterpret_cast<CreateTextFn>(*reinterpret_cast<Address*>(*reinterpret_cast<Address*>(factory)+0x60))(factory,level,kLevelClass,package,levelName,0,0,"paste",&cursor,end,*reinterpret_cast<Address*>(kWarn));
-            reinterpret_cast<DeleteFn>(*reinterpret_cast<Address*>(*reinterpret_cast<Address*>(factory)+0xc))(factory,1);
+            if(factory)reinterpret_cast<FactoryFn>(0x110559f0)(factory);
         });
         if(!factory)throw std::runtime_error("The editor could not create the emitter importer.");
+        const char* cursor=begin;
+        auto create=[&]{reinterpret_cast<CreateTextFn>(*reinterpret_cast<Address*>(*reinterpret_cast<Address*>(factory)+0x60))(factory,level,kLevelClass,package,levelName,0,0,"paste",&cursor,end,*reinterpret_cast<Address*>(kWarn));};
+        const DWORD failed=Native(create);
+        // Deleted after a failed import too (edactPasteSelected deletes it after CreateText,
+        // 0x10eb849d), unless the engine has shut down.
+        auto remove=[&]{reinterpret_cast<DeleteFn>(*reinterpret_cast<Address*>(*reinterpret_cast<Address*>(factory)+0xc))(factory,1);};
+        const DWORD removed=ShutDown()?0:Native(remove);
+        if(failed){Fault("importing the emitter",failed);throw std::runtime_error(state.fault);}
+        if(removed){Fault("releasing the emitter importer",removed);throw std::runtime_error(state.fault);}
+    }
+    // Where the entry item puts its actor, relative to the entry's pivot.
+    Vector Position(const Json& item)
+    {
+        if(!item.contains("position"))return {};
+        try{return item.at("position").get<Vector>();}
+        catch(const std::exception&){throw std::runtime_error("An entry actor has an invalid position.");}
     }
 }
 
@@ -599,7 +737,14 @@ bool Attach(HWND host,std::string& error)
     try
     {
         if(!host || !IsWindow(host))throw std::runtime_error("The preview panel is not available.");
-        EnsureLevel();EnsureViewport(host);state.host=host;
+        EnsureLevel();ViewportLost();
+        HWND window=Window();
+        if(state.viewport && state.host==host && window && IsWindow(window) && GetAncestor(window,GA_PARENT)==host && ViewportAlive()){Resize();return true;}
+        // A viewport never moves between windows: one shown elsewhere is deleted and host
+        // gets its own.
+        if(state.viewport)DeleteViewport();
+        CheckEngine();
+        OpenViewport(host);
         Resize();
         return true;
     }
@@ -608,19 +753,18 @@ bool Attach(HWND host,std::string& error)
 void Resize()
 {
     if(!state.host || !state.viewport || state.faulted)return;
-    HWND window=Window();if(!window)return;
+    HWND window=Window();if(!window || !IsWindow(window))return;
     RECT r{};GetClientRect(state.host,&r);
     SetWindowPos(window,HWND_TOP,0,0,std::max<int>(r.right,16),std::max<int>(r.bottom,16),SWP_NOACTIVATE|SWP_SHOWWINDOW);
-    try{if(!state.user && !state.hinted)Frame(state.goal,state.radius,false);}catch(const std::exception&){}
+    try{Reframe(false);}catch(const std::exception&){}
     state.idle=1;
 }
 void Detach()
 {
-    if(HWND window=Window())
-    {
-        if(GetCapture()==window)ReleaseCapture();
-        ShowWindow(window,SW_HIDE);SetParent(window,Park());
-    }
+    // Called from the host's WM_DESTROY, while the viewport window still exists: the
+    // viewport is deleted through the engine and a later Attach opens a new one.
+    try{ViewportLost();DeleteViewport();}
+    catch(const std::exception& e){Logger::log(std::string("Emitter preview: ")+e.what());state.viewport=0;wireExempt=0;}
     state.host=nullptr;state.drag=0;
 }
 void Show(const Json& entry)
@@ -630,14 +774,15 @@ void Show(const Json& entry)
     EnsureLevel();
     const auto prefix="PV"+std::to_string(++state.serial)+"_";
     std::set<std::string> roots{"mylevel","assembly"};if(auto map=MapPackage();!map.empty())roots.insert(map);
-    std::vector<Model::Actor> prepared;std::vector<std::pair<std::string,Rotation>> framing;std::vector<std::string> warnings;int index=0,skipped=0;
+    std::vector<Model::Actor> prepared;std::vector<Model::Placed> framing;std::vector<std::string> warnings;int index=0,skipped=0;
     for(const auto& item:entry.at("actors"))
     {
         if(!item.is_object() || !item.contains("text") || !item.at("text").is_string())throw std::runtime_error("An entry actor has no T3D text.");
         Rotation rotation{};if(item.contains("rotation"))rotation=item.at("rotation").get<Rotation>();
-        auto actor=Model::Prepare(item.at("text").get<std::string>(),prefix,index,kPackage,roots,rotation);
+        const Vector position=Position(item);
+        auto actor=Model::Prepare(item.at("text").get<std::string>(),prefix,index,kPackage,roots,rotation,position);
         if(!IsEmitterClass(actor.type)){++skipped;continue;}
-        ++index;framing.push_back({actor.text,rotation});
+        ++index;framing.push_back({actor.text,rotation,position});
         for(const auto& d:actor.dropped)warnings.push_back("Not shown in the preview (belongs to a map): "+d);
         prepared.push_back(std::move(actor));
     }
@@ -648,6 +793,7 @@ void Show(const Json& entry)
     if(!missing.empty())
         throw std::runtime_error("The emitter preview needs "+missing[0]+(missing.size()>1?" and "+std::to_string(missing.size()-1)+" more asset(s)":std::string())+". Load the package that holds it, then select the entry again.");
     Clear();
+    CheckEngine();
     std::string t3d="Begin Map\n";for(const auto& actor:prepared)t3d+=actor.text;t3d+="End Map\n";
     Import(t3d);
     auto actors=LevelActors();std::vector<Address> made;std::string lost;
@@ -667,36 +813,61 @@ void Show(const Json& entry)
         // Not selected (+0x2f4 bit 0x40, SelectActor 0x10eb9a64), no editor sprite
         // (Texture +0x228, AEmitter::RenderEditorInfo 0x110a411b), not transactional.
         Write(a+0x2f4,Read<unsigned>(a+0x2f4)&~0x40u);Write<Address>(a+0x228,0);Mark(a,kTransientFlag,kTransactional);
-        for(auto e:Emitters(a))Mark(e,kTransientFlag,kTransactional);
+        // SecondsBeforeInactive 0 keeps every sub-emitter updating while unseen, as AEmitter::Tick
+        // skips the InactiveTime test for it (0x110dbb6f..0x110dbb80): the warm-up and Step run
+        // without drawing, and rain's 0.01 s would freeze it after one tick.
+        for(auto e:Emitters(a)){Mark(e,kTransientFlag,kTransactional);Write(e+0x300,0.0f);}
         state.actors.push_back({a,actor.name});
     }
-    state.warnings=warnings;state.age=0;state.refits=0;state.fitted=false;state.seen=Model::Box();state.user=false;state.pitch=kPitch;state.yaw=kYaw;
-    auto hint=entry.value("preview",Json::object());
-    state.hinted=hint.is_object() && hint.contains("target");
-    if(state.hinted)
+    state.warnings=warnings;
+    // Starting view: the entry's preview hint gives the orientation and, for an effect with
+    // nothing to measure yet, a frame; otherwise the estimate from the emitters' ranges.
+    state.age=0;state.samples.clear();state.sampledAt=state.fittedAt=-1e9;state.shrinkSince=-1;state.measured=false;state.user=false;
+    const auto estimate=Model::Estimate(framing);
+    state.homePitch=kPitch;state.homeYaw=kYaw;state.homeTarget=estimate.target;state.extent[0]=state.extent[1]=0;
+    state.homeDistance=Model::FitDistance(estimate.box,estimate.target,kPitch,kYaw,kFov,Aspect(),kFill);
+    if(auto hint=entry.value("preview",Json::object());hint.is_object())
     {
-        auto target=hint.at("target").get<Vector>();double radius=hint.value("radius",0.0);
-        state.pitch=hint.value("pitch",kPitch);state.yaw=hint.value("yaw",kYaw);
-        state.autoTarget=target;state.autoRadius=radius>0?radius:128;Frame(target,state.autoRadius,true);
-        if(hint.contains("distance")){state.distance=state.goalDistance=std::clamp(hint.at("distance").get<double>(),8.0,20000.0);}
+        try
+        {
+            state.homePitch=std::clamp(hint.value("pitch",kPitch),-16000,16000);state.homeYaw=hint.value("yaw",kYaw)&0xffff;
+            if(hint.contains("target"))
+            {
+                state.homeTarget=hint.at("target").get<Vector>();
+                state.homeDistance=hint.contains("distance")?hint.at("distance").get<double>():Model::Distance(std::max(hint.value("radius",128.0),8.0),kFov,Aspect());
+            }
+            else state.homeDistance=Model::FitDistance(estimate.box,estimate.target,state.homePitch,state.homeYaw,kFov,Aspect(),kFill);
+        }
+        catch(const std::exception&){Logger::log("Emitter preview: the entry's preview hint is malformed and was ignored");}
+        state.homeDistance=std::clamp(state.homeDistance,8.0,20000.0);
     }
-    else
-    {
-        auto frame=Model::Estimate(framing);
-        state.autoTarget=frame.target;state.autoRadius=frame.radius;Frame(frame.target,frame.radius,true);
-    }
+    state.pitch=state.homePitch;state.yaw=state.homeYaw;state.target=state.goal=state.homeTarget;state.distance=state.goalDistance=state.homeDistance;
+    // Run the effect before its first frame, so that frame is framed on where its particles
+    // actually are rather than on the estimate or hint.
+    for(double left=kWarm;left>1e-6 && !state.faulted;left-=1.0/30)Advance(static_cast<float>(std::min(left,1.0/30)),false);
+    // One-shot bursts then start again for the first frame, framed on where that run took
+    // them; continuous emitters stay warmed up.
+    for(auto& p:state.actors)if(!state.faulted && Alive(p.actor)){bool dead=true;p.dead=0;Restart(Bursts(p.actor,dead));}
+    if(state.faulted)throw std::runtime_error(state.fault);
+    Reframe(true);
     if(state.viewport && ViewportAlive())ApplyCamera();
+    state.idle=1;
 }
 void Clear()
 {
-    if(!state.level || !Alive(state.level,kLevelClass)){state.actors.clear();return;}
-    std::vector<Address> actors;for(auto a:LiveActors())actors.push_back(a);
-    Destroy(actors);state.actors.clear();state.warnings.clear();state.idle=1;
+    try
+    {
+        if(!state.level || !Alive(state.level,kLevelClass) || ShutDown()){state.actors.clear();return;}
+        std::vector<Address> actors;for(auto a:LiveActors())actors.push_back(a);
+        Destroy(actors);
+    }
+    catch(const std::exception& e){Logger::log(std::string("Emitter preview: ")+e.what());}
+    state.actors.clear();state.warnings.clear();state.samples.clear();state.idle=1;
 }
 bool Active(){return !state.faulted && state.host && state.viewport && !state.actors.empty();}
 void Step(double seconds)
 {
-    if(state.faulted)throw std::runtime_error(state.fault);
+    CheckEngine();
     if(!state.viewport || !ViewportAlive())throw std::runtime_error("Open the emitter preview first.");
     if(Read<Address>(kUndo))throw std::runtime_error("Finish the current editor operation before stepping the preview.");
     for(double left=std::clamp(seconds,0.0,30.0);left>1e-6 && !state.faulted;left-=1.0/30)Advance(static_cast<float>(std::min(left,1.0/30)),false);
@@ -704,7 +875,7 @@ void Step(double seconds)
 }
 Json Capture(const std::string& bmpPath)
 {
-    if(state.faulted)throw std::runtime_error(state.fault);
+    CheckEngine();
     ViewportLost();
     if(!state.viewport || !ViewportAlive())throw std::runtime_error("Open the emitter preview first.");
     const int width=Read<int>(state.viewport+0xa0),height=Read<int>(state.viewport+0xa4);
@@ -733,8 +904,10 @@ Json Capture(const std::string& bmpPath)
 Json State()
 {
     ViewportLost();
+    int critical=0;Copy(&critical,reinterpret_cast<void*>(kCriticalError),4);
     Json out={{"faulted",state.faulted},{"fault",state.fault},{"level",Alive(state.level,kLevelClass)},{"package",Alive(state.package,kPackageClass)},{"viewport",state.viewport!=0 && ViewportAlive()},
-        {"attached",state.host!=nullptr},{"active",Active()},{"serial",state.serial},{"ticks",state.ticks},{"frames",state.frames},{"frameRate",state.frameRate},{"loops",state.loops},{"warnings",state.warnings}};
+        {"attached",state.host!=nullptr},{"active",Active()},{"serial",state.serial},{"ticks",state.ticks},{"frames",state.frames},{"frameRate",state.frameRate},{"loops",state.loops},{"warnings",state.warnings},
+        {"viewportsOpened",state.viewportsOpened},{"viewportsClosed",state.viewportsClosed},{"clientViewports",ClientViewports().size()},{"criticalError",critical!=0},{"engineShutDown",ShutDown()}};
     try
     {
         // UTransBuffer (GEditor+0x148): UndoBuffer {+0x28 data,+0x2c num}, UndoCount +0x34.
@@ -747,6 +920,10 @@ Json State()
         {
             out["levelPath"]=NameOf(state.package)+"."+NameOf(state.level);
             out["levelFlags"]=Read<unsigned>(state.level+0x1c);out["levelActors"]=LevelActors().size();
+            // Actors still alive in the preview level by class: the camera leaves with its viewport.
+            std::map<std::string,int> classes;
+            for(auto a:LevelActors())if(a && Alive(a) && !(Read<unsigned>(a+0x2e8)&0x8000))++classes[NameOf(Read<Address>(a+0x24))];
+            out["liveActorClasses"]=classes;
             Json actors=Json::array();int particles=0;
             for(auto a:LiveActors())
             {
@@ -758,7 +935,7 @@ Json State()
                     subs.push_back({{"name",NameOf(e)},{"outer",NameOf(Read<Address>(e+0x18))},{"particles",live},{"flags",Read<unsigned>(e+0x1e0)},{"state",Read<unsigned>(e+0x1e4)},{"objectFlags",Read<unsigned>(e+0x1c)},{"texture",Read<Address>(e+0x2e0)?NameOf(Read<Address>(e+0x2e0)):std::string("None")},{"sample",sample}});
                 }
                 auto loop=std::find_if(state.actors.begin(),state.actors.end(),[&](const Shown& p){return p.actor==a;});
-                actors.push_back({{"name",NameOf(a)},{"class",NameOf(Read<Address>(a+0x24))},{"outer",NameOf(Read<Address>(a+0x18))},{"objectFlags",Read<unsigned>(a+0x1c)},{"selected",(Read<unsigned>(a+0x2f4)&0x40)!=0},{"resets",loop==state.actors.end()?0:loop->resets},{"emitters",subs}});
+                actors.push_back({{"name",NameOf(a)},{"class",NameOf(Read<Address>(a+0x24))},{"outer",NameOf(Read<Address>(a+0x18))},{"location",Read<std::array<float,3>>(a+0x80)},{"objectFlags",Read<unsigned>(a+0x1c)},{"selected",(Read<unsigned>(a+0x2f4)&0x40)!=0},{"resets",loop==state.actors.end()?0:loop->resets},{"emitters",subs}});
             }
             out["actors"]=actors;out["particles"]=particles;
         }
@@ -769,6 +946,7 @@ Json State()
             // OpenWindow restyles child viewports to WS_POPUP|WS_VISIBLE (0x10f7de15), so IsChild
             // is false although the window is parented, clipped and moved by the host.
             out["parent"]=reinterpret_cast<uintptr_t>(GetAncestor(window,GA_PARENT));out["parentIsHost"]=state.host && GetAncestor(window,GA_PARENT)==state.host;
+            out["parentWindow"]=Read<Address>(state.viewport+0x1bc)==reinterpret_cast<Address>(state.host);   // OpenWindow's ParentWindow (0x10f7ddb5)
             out["style"]=static_cast<unsigned>(GetWindowLongA(window,GWL_STYLE));out["visible"]=IsWindowVisible(window)!=0;
             out["renDev"]=Read<Address>(state.viewport+0x70)!=0;out["sizeX"]=Read<int>(state.viewport+0xa0);out["sizeY"]=Read<int>(state.viewport+0xa4);
             out["cameraInPreviewLevel"]=Read<Address>(camera+0x1a4)==state.level;out["showFlags"]=Read<unsigned>(camera+0x4f0);out["rendMap"]=Read<int>(camera+0x4fc);
@@ -782,7 +960,8 @@ Json State()
 }
 Json Camera()
 {
-    return {{"target",state.target},{"distance",state.distance},{"pitch",state.pitch},{"yaw",state.yaw},{"user",state.user},{"radius",state.radius}};
+    return {{"target",state.target},{"distance",state.distance},{"pitch",state.pitch},{"yaw",state.yaw},{"user",state.user},{"radius",std::hypot(state.extent[0],state.extent[1])},{"extent",state.extent},{"measured",state.measured},
+        {"goal",state.goal},{"goalDistance",state.goalDistance},{"home",{{"target",state.homeTarget},{"distance",state.homeDistance},{"pitch",state.homePitch},{"yaw",state.homeYaw}}}};
 }
 void SetCamera(const Json& camera)
 {
@@ -796,7 +975,6 @@ bool ViewportMessage(void* viewport,UINT message,WPARAM wParam,LPARAM lParam)
     if(!state.viewport || reinterpret_cast<Address>(viewport)!=state.viewport)return false;
     HWND window=Window();
     const POINT at{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};
-    auto reset=[&]{state.user=false;state.pitch=kPitch;state.yaw=kYaw;try{Frame(state.autoTarget,state.autoRadius,false);}catch(const std::exception&){}};
     switch(message)
     {
     case WM_LBUTTONDOWN:case WM_RBUTTONDOWN:case WM_MBUTTONDOWN:
@@ -805,12 +983,12 @@ bool ViewportMessage(void* viewport,UINT message,WPARAM wParam,LPARAM lParam)
         // (the viewport window class may not have CS_DBLCLKS).
         const DWORD time=GetMessageTime();
         if(message==WM_LBUTTONDOWN && state.click && time-state.click<=GetDoubleClickTime()
-            && std::abs(at.x-state.clickAt.x)<=GetSystemMetrics(SM_CXDOUBLECLK) && std::abs(at.y-state.clickAt.y)<=GetSystemMetrics(SM_CYDOUBLECLK)){state.click=0;reset();return true;}
+            && std::abs(at.x-state.clickAt.x)<=GetSystemMetrics(SM_CXDOUBLECLK) && std::abs(at.y-state.clickAt.y)<=GetSystemMetrics(SM_CYDOUBLECLK)){state.click=0;Home();return true;}
         if(message==WM_LBUTTONDOWN){state.click=time;state.clickAt=at;}
         state.drag=message==WM_LBUTTONDOWN?1:2;state.last=at;if(window)SetCapture(window);
         return true;
     }
-    case WM_LBUTTONDBLCLK:state.click=0;reset();return true;
+    case WM_LBUTTONDBLCLK:state.click=0;Home();return true;
     case WM_RBUTTONDBLCLK:case WM_MBUTTONDBLCLK:return true;
     case WM_MOUSEMOVE:
         if(state.drag && window && GetCapture()==window)
@@ -831,6 +1009,10 @@ bool ViewportMessage(void* viewport,UINT message,WPARAM wParam,LPARAM lParam)
         state.user=true;state.distance=state.goalDistance=std::clamp(state.distance*std::pow(0.85,GET_WHEEL_DELTA_WPARAM(wParam)/120.0),8.0,20000.0);
         return true;
     case WM_CAPTURECHANGED:state.drag=0;return true;
+    // The native handler answers MA_ACTIVATE (0x10f7ed0f) and OpenWindow's WS_POPUP restyle
+    // (0x10f7de15) makes the window activatable, so a click would take activation and the
+    // keyboard from the host. The hook (GridSizeShortcut.cpp) answers MA_NOACTIVATE instead.
+    case WM_MOUSEACTIVATE:return true;
     // The native focus handlers make this the current viewport (Client vtable +0x84 at
     // 0x10f7e831) and re-acquire input; editor commands must keep acting on the map views.
     case WM_SETFOCUS:case WM_KILLFOCUS:return true;
@@ -840,14 +1022,17 @@ bool ViewportMessage(void* viewport,UINT message,WPARAM wParam,LPARAM lParam)
 HWND OpenTestWindow(std::string& error)
 {
     ViewportLost();
-    if(state.test && IsWindow(state.test)){if(!state.host && !Attach(state.testHost,error))return nullptr;return state.test;}
+    // One test window at a time, never attached a second time: preview.close deletes its
+    // viewport and the next preview.open opens a new window and viewport.
+    if(state.test && IsWindow(state.test))return state.test;
+    if(state.viewport && state.host && IsWindow(state.host)){error="The emitter preview is already shown in another window. Close that window first.";return nullptr;}
     static bool registered=false;
     if(!registered)
     {
         WNDCLASSA wc{};wc.hInstance=GetModuleHandle(nullptr);wc.hCursor=LoadCursor(nullptr,IDC_ARROW);
         wc.lpfnWndProc=[](HWND w,UINT m,WPARAM wp,LPARAM lp)->LRESULT{
             if(m==WM_SIZE){if(HWND host=GetDlgItem(w,100)){MoveWindow(host,0,0,LOWORD(lp),HIWORD(lp),TRUE);Resize();}return 0;}
-            if(m==WM_DESTROY){if(state.host==GetDlgItem(w,100))Detach();if(state.test==w){state.test=nullptr;state.testHost=nullptr;}return 0;}
+            if(m==WM_DESTROY){if(state.host && state.host==GetDlgItem(w,100))Detach();if(state.test==w){state.test=nullptr;state.testHost=nullptr;}return 0;}
             return DefWindowProcA(w,m,wp,lp);
         };
         wc.lpszClassName="ReloadedEmitterPreviewTest";RegisterClassA(&wc);
