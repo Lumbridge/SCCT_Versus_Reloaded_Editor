@@ -59,13 +59,24 @@ namespace
     // One read of every pack file (kept while its stamp is unchanged) and one merged
     // list per revision: a revision starts when emitter_library.json or a file in
     // EmitterPacks changes, or this editor writes the user file. A file that could
-    // not be read (another program writing it) is tried again on the next few calls.
-    struct PackFile { std::filesystem::path path; std::string name,stamp,error; Json pack; int retries=0; };
+    // not be read (another program writing it) is tried again on its own, at most
+    // every 500 ms and 10 times; the merged list is rebuilt only once it reads. After
+    // that it is tried again when its stamp changes or the next revision starts.
+    struct PackFile { std::filesystem::path path; std::string name,stamp,error; Json pack; int retries=0; bool unreadable=false; };
     struct LibraryCache
     {
         std::string signature; std::vector<PackFile> files; std::vector<const Json*> packs;
-        EmitterLibraryView view; unsigned revision=0,attempt=0; bool retry=false;
+        EmitterLibraryView view; unsigned revision=0; bool retry=false; unsigned long long retryAt=0;
     };
+    // Reads a pack file into file; true unless it could not be read (which may pass when tried again).
+    bool ReadInto(PackFile& file,int tried)
+    {
+        file.pack=Json(); file.error.clear(); file.retries=0; file.unreadable=false;
+        try { file.pack=ReadPackFile(file.path,file.name); }
+        catch(const PackReadError& e) { file.error=e.what(); file.unreadable=true; file.retries=tried<10?tried+1:0; return false; }
+        catch(const std::exception& e) { file.error=e.what(); }
+        return true;
+    }
     LibraryCache& Cache() { static LibraryCache cache; return cache; }
     const LibraryCache& Library()
     {
@@ -82,26 +93,28 @@ namespace
         std::string signature=Stamp(EmitterLibraryFile())+"#"+std::to_string(emitterLibraryWrites);
         std::vector<std::string> stamps;
         for(const auto& [key,path]:found) {stamps.push_back(Stamp(path));signature+="|"+key+"="+stamps.back();}
-        if(cache.retry) signature+="#retry"+std::to_string(++cache.attempt);
-        if(cache.view.entries && signature==cache.signature) return cache;
+        if(cache.view.entries && signature==cache.signature)
+        {
+            if(!cache.retry || GetTickCount64()<cache.retryAt) return cache;
+            bool read=false;
+            for(auto& file:cache.files) if(file.retries>0) read|=ReadInto(file,file.retries);
+            cache.retry=std::any_of(cache.files.begin(),cache.files.end(),[](const PackFile& f){return f.retries>0;});
+            cache.retryAt=GetTickCount64()+500;
+            if(!read) return cache;
+        }
 
         std::vector<PackFile> files;
         for(size_t i=0;i<found.size();++i)
         {
             PackFile file{found[i].second,PathText(found[i].second.filename()),stamps[i]};
             auto kept=std::find_if(cache.files.begin(),cache.files.end(),[&](const PackFile& f){return f.path==file.path && f.stamp==file.stamp && file.stamp!="-";});
-            if(kept!=cache.files.end() && !kept->retries) {file.error=std::move(kept->error);file.pack=std::move(kept->pack);}
-            else
-            {
-                const int tried=kept!=cache.files.end()?kept->retries:0;
-                try { file.pack=ReadPackFile(file.path,file.name); }
-                catch(const PackReadError& e) { file.error=e.what(); file.retries=tried<10?tried+1:0; }
-                catch(const std::exception& e) { file.error=e.what(); }
-            }
+            if(kept!=cache.files.end() && !kept->retries && !kept->unreadable) {file.error=std::move(kept->error);file.pack=std::move(kept->pack);}
+            else ReadInto(file,kept!=cache.files.end()?kept->retries:0);
             files.push_back(std::move(file));
         }
         cache.files=std::move(files); cache.packs.clear();
         cache.retry=std::any_of(cache.files.begin(),cache.files.end(),[](const PackFile& f){return f.retries>0;});
+        cache.retryAt=GetTickCount64()+500;
         // Two files with one pack id: the first by file name is listed.
         Json packProblems=Json::array(); std::map<std::string,std::string> owners; std::vector<const PackFile*> listed;
         for(const auto& file:cache.files)

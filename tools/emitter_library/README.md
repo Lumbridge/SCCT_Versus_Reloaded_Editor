@@ -177,7 +177,7 @@ Effect packs are read-only sets of entries that sit between the built-ins and th
   - `ops`: the workflow ops, cache counters, placing, and a damaged user file.
   - `ui`: the explorer's tree levels, fill time and memory, search, missing packages, place, hide/restore, save a copy, close and reopen with one preview viewport.
   - `scroll`: the scroll position across refills.
-- The jobs run with the `out\tools` harness and `probe_emitterpacks.cpp`. Besides the verbs above, that probe needs `mkdir`, `touch`, `filejson`, `mem`, `tree` (with `firstVisible`), `expand`, `key`, `settext`, `texthas`, `textlacks`, `pick`, `click`, `close` and `shot`.
+- The jobs run with the harness and probe committed in `tools/emitter_library/headless/` (`Run-EmitterLibHeadless.ps1`, `probe_emitterpacks.cpp`; the harness compiles the probe and needs `tests/NativeMapRecoveryDriver.cpp`, Visual Studio and the UE Upgrade test copy). Reports go to `out\tools\run_packs_<job>`. Besides the verbs above, that probe needs `mkdir`, `touch`, `filejson`, `mem`, `tree` (with `firstVisible`), `expand`, `key`, `settext`, `texthas`, `textlacks`, `pick`, `click`, `close` and `shot`.
 - To write the test packs and the jobs and print each run command:
   ```
   python tools/emitter_library/make_test_pack.py jobs --out out\tools\packs_test

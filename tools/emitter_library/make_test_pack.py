@@ -134,15 +134,17 @@ def jobs(folder):
     """Every test file the headless jobs use, and the jobs (pack_jobs/*.txt with {PACKS} filled in)."""
     folder.mkdir(parents=True, exist_ok=True)
     for kind, file, pack_id in [('big', 'big.json', None), ('missing', 'small.json', None), ('broken', 'broken.json', None),
-                                ('newer', 'newer.json', None), ('duplicate', 'dupe.json', 'testbig'), ('olduser', 'older_user.json', None)]:
+                                ('newer', 'newer.json', None), ('duplicate', 'dupe.json', 'testbig'), ('olduser', 'older_user.json', None),
+                                ('missing', 'retry.json', 'testretry')]:
         write(kind, folder / file, pack_id)
-    tools = ROOT / 'out' / 'tools'
+    tools = Path(__file__).resolve().parent / 'headless'
+    runs = ROOT / 'out' / 'tools'
     for template in sorted((Path(__file__).resolve().parent / 'pack_jobs').glob('*.txt')):
         job = folder / ('job_packs_%s.txt' % template.stem)
         job.write_text(template.read_text(encoding='utf-8').replace('{PACKS}', str(folder.resolve())), encoding='utf-8')
         print('pwsh -NoProfile -ExecutionPolicy Bypass -File %s -EditorDll %s -Job %s -EditorRepo %s -Probe %s -OutDir %s -Clean'
               % (tools / 'Run-EmitterLibHeadless.ps1', ROOT / 'out' / 'bin' / 'Reloaded.Editor.dll', job.resolve(), ROOT,
-                 tools / 'probe_emitterpacks.cpp', tools / ('run_packs_' + template.stem)))
+                 tools / 'probe_emitterpacks.cpp', runs / ('run_packs_' + template.stem)))
 
 
 def main():
