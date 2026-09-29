@@ -1,0 +1,38 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter269",
+   "path": "Assembly.Emitter269",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter269",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter269\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter270\r\n        Acceleration=(Z=15.000000)\r\n        FadeOutStartTime=1.000000\r\n        MaxParticles=60\r\n        FadeOut=True\r\n        UniformSize=True\r\n        SizeScale(0)=(RelativeTime=1.000000,RelativeSize=2.000000)\r\n        SizeScaleRepeats=0.000000\r\n        StartSizeRange=(X=(Min=1.000000,Max=5.000000))\r\n        Texture=Texture'Aquarium_TXT.Aquarium.bubulles'\r\n        TextureUSubdivisions=4\r\n        TextureVSubdivisions=4\r\n        LifetimeRange=(Min=3.000000)\r\n        StartVelocityRange=(X=(Min=-2.000000,Max=2.000000),Y=(Min=-2.000000,Max=2.000000))\r\n        Name=\"SpriteEmitter270\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter270\"'\r\n    bNetworkTrigger=True\r\n    Location=(X=0,Y=0,Z=0)\n    AmbientSound=Sound'Amb_Aqua.Ambiances.Aqua_bulle'\r\n    SoundRadius=12.000000\r\n    SoundVolume=248\r\n    bIgnoreEchelonLighting=True\r\n    bIgnoreDynamicEchelonLighting=True\r\n    Rotation=(Pitch=0,Yaw=0,Roll=0)\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Water",
+ "dependencies": [
+  "Amb_Aqua.Ambiances.Aqua_bulle",
+  "Aquarium_TXT.Aquarium.bubulles",
+  "Engine.Emitter"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  2079.1357421875,
+  1136.92822265625,
+  86.41082763671875
+ ],
+ "source": "AquaD.Emitter269"
+}

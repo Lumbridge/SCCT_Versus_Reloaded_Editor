@@ -1,0 +1,37 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter5204",
+   "path": "Assembly.Emitter5204",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    0,
+    -64,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter5204",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter5204\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter5210\r\n        FadeOutFactor=(W=2.000000,X=2.000000,Y=2.000000,Z=2.000000)\r\n        MaxCollisions=(Min=1.000000,Max=1.000000)\r\n        FadeOutStartTime=1.000000\r\n        FadeInEndTime=1.000000\r\n        MaxParticles=1200\r\n        StartLocationRange=(X=(Min=-1500.000000,Max=1500.000000),Y=(Min=-2500.000000,Max=2500.000000),Z=(Min=-150.000000,Max=2000.000000))\r\n        UseCollision=True\r\n        UseMaxCollisions=True\r\n        FadeOut=True\r\n        FadeIn=True\r\n        UniformSize=True\r\n        AutomaticInitialSpawning=False\r\n        StartSizeRange=(X=(Min=2.000000,Max=3.000000),Y=(Min=2.000000,Max=3.000000),Z=(Min=2.000000,Max=3.000000))\r\n        ParticlesPerSecond=300.000000\r\n        InitialParticlesPerSecond=300.000000\r\n        Texture=Texture'ShadowMoses_T.sfx.schneeflocke'\r\n        SecondsBeforeInactive=2678400.000000\r\n        StartVelocityRange=(X=(Min=-300.000000,Max=-500.000000),Y=(Min=-100.000000,Max=100.000000),Z=(Min=-200.000000,Max=-400.000000))\r\n        WarmupTicksPerSecond=300.000000\r\n        Name=\"SpriteEmitter5210\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter5210\"'\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=0,Yaw=-64,Roll=0)\n    HeatOpacity=0.000000\r\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Weather",
+ "dependencies": [
+  "Engine.Emitter",
+  "ShadowMoses_T.sfx.schneeflocke"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  -2130.705810546875,
+  -4082.619873046875,
+  3163.1796875
+ ],
+ "source": "ShadD.Emitter5204"
+}

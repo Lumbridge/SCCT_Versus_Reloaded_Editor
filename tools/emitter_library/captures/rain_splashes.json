@@ -1,0 +1,37 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter17978",
+   "path": "Assembly.Emitter17978",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter17978",
+   "tag": "weather",
+   "text": "Begin Actor Class=Emitter Name=Emitter17978\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter17979\r\n        DrawStyle=PTDS_Brighten\r\n        FadeOutStartTime=0.300000\r\n        FadeInEndTime=0.300000\r\n        MaxParticles=80\r\n        StartLocationRange=(X=(Min=-608.000000,Max=608.000000),Y=(Min=-192.000000,Max=192.000000))\r\n        FadeOut=True\r\n        FadeIn=True\r\n        UseSizeScale=True\r\n        UniformSize=True\r\n        UseRandomSubdivision=True\r\n        StartSizeRange=(X=(Min=2.000000,Max=15.000000),Y=(Min=2.000000,Max=15.000000),Z=(Min=15.000000,Max=15.000000))\r\n        Texture=Texture'SFX_SCH_xbox.FX.water_drops_giclure'\r\n        TextureUSubdivisions=2\r\n        TextureVSubdivisions=2\r\n        SecondsBeforeInactive=0.100000\r\n        LifetimeRange=(Min=0.100000,Max=0.500000)\r\n        StartVelocityRange=(Z=(Min=-1.000000,Max=-1.000000))\r\n        Name=\"SpriteEmitter17979\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter17979\"'\r\n    Location=(X=0,Y=0,Z=0)\n    DrawScale=4.000000\r\n    CullDistance=1000.000000\r\n    Tag=weather\n    Rotation=(Pitch=0,Yaw=0,Roll=0)\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Water",
+ "dependencies": [
+  "Engine.Emitter",
+  "SFX_SCH_xbox.FX.water_drops_giclure"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  6005.90576171875,
+  3501.4501953125,
+  -446.260498046875
+ ],
+ "source": "ClarD.Emitter17978"
+}

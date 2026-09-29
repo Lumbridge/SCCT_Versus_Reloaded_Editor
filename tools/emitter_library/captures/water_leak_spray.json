@@ -1,0 +1,37 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter345",
+   "path": "Assembly.Emitter345",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    -8588,
+    772,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter345",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter345\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter365\r\n        Acceleration=(Z=-40.000000)\r\n        UseRotationFrom=PTRS_Actor\r\n        DrawStyle=PTDS_AlphaBlend\r\n        ColorScale(0)=(Color=(B=92,G=92,R=92))\r\n        FadeOutStartTime=0.100000\r\n        FadeInEndTime=0.100000\r\n        MaxParticles=15\r\n        UseColorScale=True\r\n        FadeOut=True\r\n        FadeIn=True\r\n        SpinParticles=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        SpinsPerSecondRange=(X=(Min=-1.000000,Max=1.000000))\r\n        SizeScale(0)=(RelativeTime=0.100000,RelativeSize=1.000000)\r\n        SizeScale(1)=(RelativeTime=1.000000,RelativeSize=6.000000)\r\n        StartSizeRange=(X=(Min=0.500000,Max=1.000000))\r\n        Texture=Texture'SFX_SCH_xbox.FX.Water_spray'\r\n        LifetimeRange=(Min=0.600000,Max=0.600000)\r\n        StartVelocityRange=(X=(Min=50.000000,Max=50.000000))\r\n        Name=\"SpriteEmitter365\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter365\"'\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=-8588,Yaw=772,Roll=0)\n    DrawScale=0.200000\r\n    bDirectional=True\r\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Water",
+ "dependencies": [
+  "Engine.Emitter",
+  "SFX_SCH_xbox.FX.Water_spray"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  4025.4384765625,
+  61.278289794921875,
+  449.79779052734375
+ ],
+ "source": "ScheE.Emitter345"
+}

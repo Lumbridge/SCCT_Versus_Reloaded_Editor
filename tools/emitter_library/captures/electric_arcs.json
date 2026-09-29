@@ -1,0 +1,37 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter312",
+   "path": "Assembly.Emitter312",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    -264,
+    16392,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter312",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter312\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter313\r\n        ProjectionNormal=(Y=1.000000,Z=0.000000)\r\n        UseDirectionAs=PTDU_UpAndNormal\r\n        UseRotationFrom=PTRS_Actor\r\n        MaxParticles=2\r\n        FadeOut=True\r\n        UseRegularSizeScale=False\r\n        StartSizeRange=(X=(Min=80.000000,Max=80.000000),Y=(Min=10.000000,Max=40.000000))\r\n        Texture=Texture'FAC_TXT.sfx.FX_electricfence_0'\r\n        TextureUSubdivisions=2\r\n        TextureVSubdivisions=4\r\n        LifetimeRange=(Min=1.000000,Max=1.500000)\r\n        StartVelocityRange=(Z=(Min=100.000000,Max=250.000000))\r\n        VelocityLossRange=(Z=(Min=1.000000,Max=1.000000))\r\n        Name=\"SpriteEmitter313\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter313\"'\r\n    bNetworkTrigger=True\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=-264,Yaw=16392,Roll=0)\n    bIgnoreEchelonLighting=True\r\n    bDirectional=True\r\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Sparks & Electrical",
+ "dependencies": [
+  "Engine.Emitter",
+  "FAC_TXT.sfx.FX_electricfence_0"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  -5191.771484375,
+  -7741.2373046875,
+  177.0
+ ],
+ "source": "FactD.Emitter312"
+}

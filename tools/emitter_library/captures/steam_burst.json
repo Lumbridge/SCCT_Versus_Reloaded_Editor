@@ -1,0 +1,37 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter359",
+   "path": "Assembly.Emitter359",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    856,
+    0,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter359",
+   "tag": "pression05",
+   "text": "Begin Actor Class=Emitter Name=Emitter359\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter361\r\n        UseRotationFrom=PTRS_Actor\r\n        DrawStyle=PTDS_AlphaBlend\r\n        ColorScale(0)=(Color=(B=255,G=255,R=255,A=200))\r\n        ColorScale(1)=(RelativeTime=1.000000,Color=(B=150,G=150,R=150,A=150))\r\n        MaxParticles=15\r\n        UseColorScale=True\r\n        FadeOut=True\r\n        FadeIn=True\r\n        RespawnDeadParticles=False\r\n        Disabled=True\r\n        SpinParticles=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        AutomaticInitialSpawning=False\r\n        UseRandomSubdivision=True\r\n        SpinsPerSecondRange=(X=(Min=-0.300000,Max=0.300000))\r\n        SizeScale(0)=(RelativeTime=1.000000,RelativeSize=4.000000)\r\n        SizeScaleRepeats=0.000000\r\n        StartSizeRange=(X=(Min=10.000000,Max=10.000000))\r\n        InitialParticlesPerSecond=50.000000\r\n        Texture=Texture'sfx.Emitter.smoke_grenade'\r\n        TextureUSubdivisions=4\r\n        TextureVSubdivisions=4\r\n        LifetimeRange=(Min=1.000000,Max=1.000000)\r\n        StartVelocityRange=(X=(Min=600.000000,Max=600.000000))\r\n        VelocityLossRange=(X=(Min=3.000000,Max=3.000000),Y=(Min=3.000000,Max=3.000000),Z=(Min=3.000000,Max=3.000000))\r\n        Name=\"SpriteEmitter361\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter361\"'\r\n    bNetworkTrigger=True\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=856,Yaw=0,Roll=0)\n    Tag=pression05\n    bDirectional=True\r\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Smoke",
+ "dependencies": [
+  "Engine.Emitter",
+  "sfx.Emitter.smoke_grenade"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  -6737.36474609375,
+  2216.22802734375,
+  -1514.206298828125
+ ],
+ "source": "MissD.Emitter359"
+}

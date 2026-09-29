@@ -1,0 +1,38 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter400",
+   "path": "Assembly.Emitter400",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    16160,
+    -31744,
+    -32768
+   ],
+   "sourcePath": "MyLevel.Emitter400",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter400\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter402\r\n        Acceleration=(Z=5.000000)\r\n        SpinCCWorCW=(X=0.000000,Y=0.000000,Z=0.000000)\r\n        DrawStyle=PTDS_AlphaBlend\r\n        ColorScale(0)=(RelativeTime=1.000000,Color=(B=128,G=128,R=128,A=255))\r\n        FadeOutStartTime=1.200000\r\n        FadeInEndTime=1.000000\r\n        MaxParticles=3\r\n        UseColorScale=True\r\n        FadeOut=True\r\n        FadeIn=True\r\n        SpinParticles=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        UseRandomSubdivision=True\r\n        StartSizeRange=(X=(Max=140.000000),Y=(Min=140.000000,Max=140.000000),Z=(Min=5.000000,Max=5.000000))\r\n        Texture=Texture'CLU04_TXT.FX.FX_steam_occlude2'\r\n        TextureUSubdivisions=2\r\n        TextureVSubdivisions=2\r\n        LifetimeRange=(Min=3.000000,Max=3.000000)\r\n        AddVelocityMultiplierRange=(X=(Min=0.000000,Max=0.000000),Y=(Min=0.000000,Max=0.000000),Z=(Min=0.000000,Max=0.000000))\r\n        Name=\"SpriteEmitter402\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter402\"'\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=16160,Yaw=-31744,Roll=-32768)\n    AmbientSound=Sound'Amb_Club.Ambiances.clu_saunaFum'\r\n    SoundRadius=25.000000\r\n    SoundVolume=254\r\n    SoundPitch=54\r\n    bDirectional=True\r\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Steam",
+ "dependencies": [
+  "Amb_Club.Ambiances.clu_saunaFum",
+  "CLU04_TXT.FX.FX_steam_occlude2",
+  "Engine.Emitter"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  -3691.35009765625,
+  98.342529296875,
+  -1090.4029541015625
+ ],
+ "source": "ClubD.Emitter400"
+}

@@ -4,7 +4,7 @@
 #include "WorkflowEditor.h"
 #include "BrushGridSnapModel.h"
 #include "EmitterLibraryModel.h"
-#include "EmitterLibraryDefaults.h"
+#include "EmitterLibraryDefaults.gen.h"
 #include "MagicEventModel.h"
 #include "MapAuthoringModel.h"
 #include "CameraNetworkModel.h"
