@@ -111,4 +111,20 @@ namespace Workflow::Editor
     void EditActor(const Json& snapshot, const Json& changes);
     Json CreateEventActor(const std::string& type, const Json& event = Json{}, bool trigger = false, const std::string& geometry = "point", int group = 0);
     void LinkEventActor(const Json& event, const Json& target, bool trigger, int group = 0);
+    // Emitter Library (entry schema in EmitterLibraryModel.h). SelectedEmitters
+    // is cheap enough for building a context menu. CaptureEmitters returns an
+    // unsaved draft (no id) around the members' centre; map names its source
+    // when the frame's file name is not the open map. PlaceEmitterEntry is one
+    // Undo step and selects the new actors. Storage calls do not need a map.
+    Json SelectedEmitters();
+    Json CaptureEmitters(const Json& members, const std::string& map = "");
+    Json PlaceEmitterEntry(const Json& entry, const Pose& pose);
+    Json EmitterLibrary();
+    Json EmitterLibraryProblems();
+    Json EmitterCategories();
+    unsigned EmitterLibraryRevision();
+    Json SaveEmitterEntry(const Json& entry);
+    Json UpdateEmitterEntry(const std::string& id, const Json& changes);
+    void DeleteEmitterEntry(const std::string& id);
+    void RestoreBuiltinEmitters();
 }

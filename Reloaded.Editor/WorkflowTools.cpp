@@ -5,6 +5,7 @@
 #include "EditorExtras.h"
 #include "StoreyFilter.h"
 #include "WorkflowEditor.h"
+#include "EmitterLibraryModel.h"
 #include "WorkflowGraph.h"
 #include "MagicEventWorkbench.h"
 #include "CameraNetworkPanel.h"
@@ -103,6 +104,15 @@ namespace
     {
         int count=GetWindowTextLengthA(control); std::string text(count+1,'\0'); GetWindowTextA(control,text.data(),count+1); text.resize(count); return text;
     }
+    // Form controls are ANSI; Emitter Library documents are UTF-8.
+    std::string Recode(const std::string& text,UINT from,UINT to)
+    {
+        if(text.empty()) return {};
+        int count=MultiByteToWideChar(from,0,text.data(),static_cast<int>(text.size()),nullptr,0);
+        std::wstring wide(count,L'\0'); MultiByteToWideChar(from,0,text.data(),static_cast<int>(text.size()),wide.data(),count);
+        count=WideCharToMultiByte(to,0,wide.data(),static_cast<int>(wide.size()),nullptr,0,nullptr,nullptr);
+        std::string out(count,'\0'); WideCharToMultiByte(to,0,wide.data(),static_cast<int>(wide.size()),out.data(),count,nullptr,nullptr); return out;
+    }
     HWND brushVisibilityWindow=nullptr;
     void RefreshBrushVisibility(HWND window)
     {
@@ -174,7 +184,8 @@ namespace
         if(!brushVisibilityWindow)throw std::runtime_error("Could not open Brush Visibility.");
         ShowWindow(brushVisibilityWindow,SW_SHOW);
     }
-    struct InputField { std::string label,value; std::vector<std::string> choices; };
+    // An editable field with choices is a combo the user may also type into.
+    struct InputField { std::string label,value; std::vector<std::string> choices; bool editable=false; };
     struct Form { std::vector<InputField> fields; std::vector<HWND> controls; bool done=false,accepted=false; };
     LRESULT CALLBACK FormProc(HWND window,UINT message,WPARAM w,LPARAM l)
     {
@@ -187,9 +198,14 @@ namespace
             for(size_t i=0;i<form->fields.size();++i)
             {
                 auto& f=form->fields[i]; Control(window,"STATIC",f.label,0,0,12,y,200,22);
-                HWND input=Control(window,f.choices.empty()?"EDIT":"COMBOBOX",f.choices.empty()?f.value:"",f.choices.empty()?ES_AUTOHSCROLL:CBS_DROPDOWNLIST|WS_VSCROLL,1000+static_cast<int>(i),215,y-3,340,f.choices.empty()?24:240);
+                HWND input=Control(window,f.choices.empty()?"EDIT":"COMBOBOX",f.choices.empty()?f.value:"",f.choices.empty()?ES_AUTOHSCROLL:(f.editable?CBS_DROPDOWN|CBS_AUTOHSCROLL:CBS_DROPDOWNLIST)|WS_VSCROLL,1000+static_cast<int>(i),215,y-3,340,f.choices.empty()?24:240);
                 for(auto& choice:f.choices) SendMessageA(input,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(choice.c_str()));
-                if(!f.choices.empty()){auto selected=std::find(f.choices.begin(),f.choices.end(),f.value);SendMessage(input,CB_SETCURSEL,selected==f.choices.end()?0:selected-f.choices.begin(),0);}
+                if(!f.choices.empty())
+                {
+                    auto selected=std::find(f.choices.begin(),f.choices.end(),f.value);
+                    if(f.editable && selected==f.choices.end()) SetWindowTextA(input,f.value.c_str());
+                    else SendMessage(input,CB_SETCURSEL,selected==f.choices.end()?0:selected-f.choices.begin(),0);
+                }
                 form->controls.push_back(input); y+=34;
             }
             Control(window,"BUTTON","OK",BS_DEFPUSHBUTTON,IDOK,365,y,90,28); Control(window,"BUTTON","Cancel",0,IDCANCEL,465,y,90,28);
@@ -738,7 +754,10 @@ namespace
             // Actor context resource 107 (verified native menu resource).
             if(reinterpret_cast<uintptr_t>(resource)==107) if(auto sub=GetSubMenu(menu,0))
             {
-                AppendMenuA(sub,MF_STRING,kSaveAssembly,"Save Selection as &Assembly...");AppendMenuA(sub,MF_STRING,MagicEventWorkbench::Command,"Edit SMagicEvent...");
+                AppendMenuA(sub,MF_STRING,kSaveAssembly,"Save Selection as &Assembly...");
+                try {if(!Editor::SelectedEmitters().empty())AppendMenuA(sub,MF_STRING,kSaveToEmitterLibrary,"Save to &Emitter Library...");}
+                catch(const std::exception&) { /* Only available with emitters selected in a source map. */ }
+                AppendMenuA(sub,MF_STRING,MagicEventWorkbench::Command,"Edit SMagicEvent...");
                 try {ObjectiveMenu(sub,ObjectiveOwner());}catch(const std::exception&){}
                 try
                 {
@@ -770,6 +789,25 @@ namespace
     }
 }
 bool AppendObjectiveMenu(HMENU menu,const Json& actor){return ObjectiveMenu(menu,actor);}
+Json SaveEmitterSelection(HWND owner,bool confirm)
+{
+    auto members=Editor::SelectedEmitters();
+    if(members.empty()) throw std::runtime_error("Select one or more emitters first.");
+    // Capture first: a map-local asset or an outside link is refused before any typing.
+    auto entry=Editor::CaptureEmitters(members);
+    std::vector<std::string> categories; for(const auto& category:Editor::EmitterCategories()) categories.push_back(Recode(category.get<std::string>(),CP_UTF8,CP_ACP));
+    std::vector<InputField> fields={{"Name",Recode(entry.at("name").get<std::string>(),CP_UTF8,CP_ACP),{}},{"Category (choose or type)",Recode(entry.at("category").get<std::string>(),CP_UTF8,CP_ACP),categories,true},{"Description (optional)","",{}}};
+    if(!Ask(owner,"Save to Emitter Library",fields)) return {};
+    entry["name"]=Recode(fields[0].value,CP_ACP,CP_UTF8); entry["category"]=Recode(fields[1].value,CP_ACP,CP_UTF8); entry["description"]=Recode(fields[2].value,CP_ACP,CP_UTF8);
+    auto saved=Editor::SaveEmitterEntry(entry);
+    if(confirm)
+    {
+        const auto count=saved.at("actors").size();
+        auto text="Saved '"+Recode(saved.at("name").get<std::string>(),CP_UTF8,CP_ACP)+"' to the Emitter Library under "+Recode(saved.at("category").get<std::string>(),CP_UTF8,CP_ACP)+" ("+std::to_string(count)+(count==1?" emitter).":" actors).");
+        MessageBoxA(owner,text.c_str(),"Emitter Library",MB_OK|MB_ICONINFORMATION);
+    }
+    return saved;
+}
 void RunObjectiveCommand(UINT command,const Json& snapshot)
 {
     if(command<kAddObjective || command>kAddFlagObjective)throw std::runtime_error("Invalid objective command.");
@@ -838,6 +876,7 @@ bool HandleCommand(UINT command)
     if(command==MapAuthoringDialog::Export || command==MapAuthoringDialog::Import){MapAuthoringDialog::Open(GetActiveWindow(),command==MapAuthoringDialog::Export);return true;}
     if(command==MagicEventWorkbench::Command){try{MagicEventWorkbench::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"SMagicEvent Workbench",MB_OK|MB_ICONERROR);}return true;}
     if(command==CameraNetworkPanel::Command){try{CameraNetworkPanel::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"SCamNetwork Manager",MB_OK|MB_ICONERROR);}return true;}
+    if(command==kSaveToEmitterLibrary){try{SaveEmitterSelection(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Save to Emitter Library",MB_OK|MB_ICONERROR);}return true;}
     if(command<kConnections || command>kSaveAssembly) return false;
     try
     {
@@ -970,6 +1009,32 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="tag.rename") {Editor::RenameTag(q.at("preview"));result=true;}
         else if(op=="assembly.capture") result=Editor::CaptureAssembly(q.at("members"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()});
         else if(op=="assembly.place") result=Editor::PlaceAssembly(q.at("definition"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()},q.at("bindings").get<std::map<std::string,std::string>>());
+        else if(op=="emitterlib.list") result=Editor::EmitterLibrary();
+        else if(op=="emitterlib.problems") result=Editor::EmitterLibraryProblems();
+        else if(op=="emitterlib.categories") result=Editor::EmitterCategories();
+        else if(op=="emitterlib.selected") result=Editor::SelectedEmitters();
+        else if(op=="emitterlib.capture") result=Editor::CaptureEmitters(q.contains("members")?q.at("members"):Editor::SelectedEmitters(),q.value("map",std::string{}));
+        else if(op=="emitterlib.save")
+        {
+            // An entry (a draft or a listed entry) or a fresh capture; the
+            // text fields given here override the entry's own.
+            Json entry=q.contains("entry")?q.at("entry"):Editor::CaptureEmitters(q.contains("members")?q.at("members"):Editor::SelectedEmitters(),q.value("map",std::string{}));
+            for(const char* key:{"name","category","description","preview"}) if(q.contains(key)) entry[key]=q.at(key);
+            result=Editor::SaveEmitterEntry(entry);
+        }
+        else if(op=="emitterlib.place")
+        {
+            Json entry=q.contains("entry")?q.at("entry"):EmitterLibrary::Find(Editor::EmitterLibrary(),q.contains("id")?q.at("id").get<std::string>():q.at("name").get<std::string>());
+            Pose pose{q.contains("position")?q.at("position").get<Vector>():Editor::BuilderPose().position,q.value("rotation",Rotation{})};
+            result=Editor::PlaceEmitterEntry(entry,pose);
+        }
+        else if(op=="emitterlib.delete") {Editor::DeleteEmitterEntry(q.at("id"));result=true;}
+        else if(op=="emitterlib.update")
+        {
+            Json changes=Json::object(); for(const char* key:{"name","category","description"}) if(q.contains(key)) changes[key]=q.at(key);
+            result=Editor::UpdateEmitterEntry(q.at("id"),changes);
+        }
+        else if(op=="emitterlib.restore") {Editor::RestoreBuiltinEmitters();result=true;}
         else if(op=="map") result={{"key",Editor::MapKey()},{"level",Editor::LevelPath()}};
         else throw std::runtime_error("Unknown workflow request.");
         auto text=Json({{"ok",true},{"result",result}}).dump(); if(text.size()+1>capacity) return -static_cast<int>(text.size()+1);

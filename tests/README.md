@@ -231,6 +231,16 @@ tools\test_workflow_tools.cmd
 The model suite covers nested native T3D, quoted reference paths, authored strings,
 canonical member names, internal reference/tag remapping, explicit external bindings,
 position/rotation composition, in-place updates, version rejection and atomic persistence.
+It also covers inline sub-objects: stock particle emitters exported under the map package
+and workbench components exported under their actor both place directly in the map package,
+components of different actors sharing a name stay distinct, and names and saved text stay
+the same across repeated save and place cycles. `EmitterLibraryModelTests.cpp` covers the
+Emitter Library entry schema and validation, categories, ids and text cleaning, drafts from a
+capture (placement lines, class-default Tags, stripped and rejected links, map-local assets),
+the built-in defaults compiled from `EmitterLibraryDefaults.json`, and the user file (save,
+update, delete, hide and restore built-ins, damaged entries). The native suite saves a
+workbench emitter from the actor menu's conditions, places it with a live sub-emitter in one
+Undo step and saves the placed copy again without its names growing.
 The graph suite checks separate islands, cyclic/self/parallel links, unresolved targets,
 relationship/class filters, bounded neighbourhood expansion, isolated actors, deterministic
 layout and a 600-actor fan-out without overlapping nodes. Radial layout checks cover
