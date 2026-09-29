@@ -122,8 +122,8 @@ void ShowEntry(State& s)
     try
     {
         std::string error;
-        // The viewport is attached to this panel once and stays in it: the window is
-        // hidden rather than destroyed on close, so it is never moved between windows.
+        // One viewport per panel: closing hides the window, so the viewport is only
+        // created again after the editor destroys the window on exit.
         if(!s.attached){if(!EmitterPreview::Attach(s.preview,error))throw std::runtime_error(error.empty()?"The preview is not available.":error);s.attached=true;}
         EmitterPreview::Show(*entry);
         StatusText(s,"Previewing "+Ansi(entry->at("name").get<std::string>())+". Place puts it at the builder brush; double-click an effect does the same.");
@@ -328,7 +328,7 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
         if(message==WM_ERASEBKGND){RECT r{};GetClientRect(w,&r);FillRect(reinterpret_cast<HDC>(wp),&r,s->background);return 1;}
         // Closing hides the window and empties the preview; the editor destroys it on exit.
         if(message==WM_CLOSE){try{WriteDocument(Editor::Directory()/"emitter-library-window.json",{{"version",1},{"left",s->left},{"right",s->right}});}catch(...){}EmitterPreview::Clear();ShowWindow(w,SW_HIDE);return 0;}
-        // Children are destroyed after this: park the preview viewport first.
+        // Children are destroyed after this: delete the preview viewport first.
         if(message==WM_DESTROY){KillTimer(w,1);EmitterPreview::Detach();return 0;}
         if(message==WM_NCDESTROY){window=nullptr;DeleteObject(s->font);DeleteObject(s->heading);DeleteObject(s->background);DeleteObject(s->panel);SetWindowLongPtr(w,GWLP_USERDATA,0);delete s;return DefWindowProcA(w,message,wp,lp);}
     }
