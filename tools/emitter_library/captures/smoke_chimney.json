@@ -1,0 +1,38 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter5461",
+   "path": "Assembly.Emitter5461",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    11352,
+    5996,
+    -32768
+   ],
+   "sourcePath": "MyLevel.Emitter5461",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter5461\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter5463\r\n        Acceleration=(X=40.000000,Z=20.000000)\r\n        UseRotationFrom=PTRS_Actor\r\n        DrawStyle=PTDS_AlphaBlend\r\n        ColorScale(0)=(Color=(B=160,G=160,R=160,A=255))\r\n        ColorScale(1)=(RelativeTime=1.000000,Color=(B=100,G=100,R=100,A=220))\r\n        FadeOutStartTime=2.000000\r\n        FadeInEndTime=1.000000\r\n        MaxParticles=4\r\n        UseColorScale=True\r\n        FadeOut=True\r\n        FadeIn=True\r\n        SpinParticles=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        UseRandomSubdivision=True\r\n        SpinsPerSecondRange=(X=(Min=-0.100000,Max=0.100000))\r\n        SizeScale(0)=(RelativeTime=0.100000,RelativeSize=2.000000)\r\n        SizeScale(1)=(RelativeTime=1.000000,RelativeSize=4.000000)\r\n        SizeScaleRepeats=0.000000\r\n        StartSizeRange=(X=(Min=40.000000,Max=20.000000),Y=(Min=40.000000,Max=20.000000),Z=(Min=40.000000,Max=20.000000))\r\n        Texture=Texture'drpoc_chantier_XBOX.FX.fumee_tuyau_light'\r\n        TextureUSubdivisions=1\r\n        TextureVSubdivisions=1\r\n        StartVelocityRange=(X=(Max=10.000000))\r\n        Name=\"SpriteEmitter5463\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter5463\"'\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=11352,Yaw=5996,Roll=-32768)\n    HeatOpacity=0.600000\r\n    AmbientSound=Sound'Amb_Museum.Ambiances.Mus_rumbBoutic1'\r\n    SoundRadius=10.000000\r\n    SoundPitch=84\r\n    bDirectional=True\r\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Smoke",
+ "dependencies": [
+  "Amb_Museum.Ambiances.Mus_rumbBoutic1",
+  "Engine.Emitter",
+  "drpoc_chantier_XBOX.FX.fumee_tuyau_light"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  -2533.6240234375,
+  990.2095947265625,
+  728.5736694335938
+ ],
+ "source": "MuseD.Emitter5461"
+}

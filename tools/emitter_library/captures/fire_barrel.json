@@ -1,0 +1,39 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter6332",
+   "path": "Assembly.Emitter6332",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter6332",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter6332\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter6333\r\n        UseRotationFrom=PTRS_Actor\r\n        ColorScale(1)=(RelativeTime=0.200000,Color=(B=200,G=200,R=200,A=200))\r\n        ColorScale(2)=(RelativeTime=0.300000,Color=(G=150,R=200,A=200))\r\n        ColorScale(3)=(RelativeTime=0.850000,Color=(R=100,A=100))\r\n        ColorScale(4)=(RelativeTime=1.000000)\r\n        MaxParticles=20\r\n        StartLocationRange=(X=(Min=-17.000000,Max=17.000000),Y=(Min=-17.000000,Max=17.000000),Z=(Min=-50.000000,Max=-50.000000))\r\n        UseColorScale=True\r\n        SpinParticles=True\r\n        UniformSize=True\r\n        UseRandomSubdivision=True\r\n        SpinsPerSecondRange=(X=(Min=-0.100000,Max=0.100000))\r\n        StartSpinRange=(X=(Min=0.500000,Max=0.500000))\r\n        StartSizeRange=(X=(Min=5.000000,Max=20.000000))\r\n        Texture=Texture'SQU13_txt.stm_na.flammes'\r\n        TextureUSubdivisions=3\r\n        TextureVSubdivisions=2\r\n        LifetimeRange=(Min=0.300000,Max=0.800000)\r\n        StartVelocityRange=(Z=(Min=30.000000,Max=60.000000))\r\n        StartVelocityRadialRange=(Min=30.000000,Max=50.000000)\r\n        GetVelocityDirectionFrom=PTVD_AddRadial\r\n        Name=\"SpriteEmitter6333\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter6333\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter6334\r\n        ColorScale(1)=(RelativeTime=0.300000,Color=(G=50,R=100,A=255))\r\n        ColorScale(2)=(RelativeTime=1.000000,Color=(A=200))\r\n        MaxParticles=4\r\n        StartLocationRange=(X=(Min=-5.000000,Max=5.000000),Y=(Min=-5.000000,Max=5.000000),Z=(Min=-50.000000,Max=-50.000000))\r\n        UseColorScale=True\r\n        UniformSize=True\r\n        StartSizeRange=(X=(Min=30.000000,Max=40.000000))\r\n        Texture=Texture'sfx.Flare.flare_fixe'\r\n        LifetimeRange=(Min=1.000000,Max=1.000000)\r\n        StartVelocityRange=(Z=(Min=10.000000,Max=20.000000))\r\n        Name=\"SpriteEmitter6334\"\r\n    End Object\r\n    Emitters(1)=SpriteEmitter'\"Assembly.SpriteEmitter6334\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter6335\r\n        ColorScale(1)=(RelativeTime=0.100000,Color=(B=200,G=255,R=150,A=200))\r\n        ColorScale(2)=(RelativeTime=1.000000,Color=(G=50))\r\n        MaxParticles=6\r\n        StartLocationRange=(Z=(Min=-50.000000,Max=-50.000000))\r\n        UseColorScale=True\r\n        UniformSize=True\r\n        StartSizeRange=(X=(Min=1.000000,Max=4.000000))\r\n        Texture=Texture'sfx.Flare.ATT_flare'\r\n        LifetimeRange=(Min=1.000000,Max=2.500000)\r\n        StartVelocityRange=(X=(Min=-20.000000,Max=20.000000),Y=(Min=-20.000000,Max=20.000000),Z=(Min=60.000000,Max=100.000000))\r\n        StartVelocityRadialRange=(Max=50.000000)\r\n        VelocityLossRange=(X=(Min=0.200000,Max=0.500000),Y=(Min=0.200000,Max=0.500000),Z=(Min=0.200000,Max=0.800000))\r\n        GetVelocityDirectionFrom=PTVD_AddRadial\r\n        Name=\"SpriteEmitter6335\"\r\n    End Object\r\n    Emitters(2)=SpriteEmitter'\"Assembly.SpriteEmitter6335\"'\r\n    bNetworkTrigger=True\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=0,Yaw=0,Roll=0)\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Fire",
+ "dependencies": [
+  "Engine.Emitter",
+  "SQU13_txt.stm_na.flammes",
+  "sfx.Flare.ATT_flare",
+  "sfx.Flare.flare_fixe"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  -1951.523193359375,
+  -909.9951171875,
+  -988.398193359375
+ ],
+ "source": "SteeD.Emitter6332"
+}

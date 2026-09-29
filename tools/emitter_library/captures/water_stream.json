@@ -1,0 +1,37 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter14240",
+   "path": "Assembly.Emitter14240",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter14240",
+   "tag": "weather",
+   "text": "Begin Actor Class=Emitter Name=Emitter14240\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter14241\r\n        UseDirectionAs=PTDU_Up\r\n        DrawStyle=PTDS_AlphaBlend\r\n        MaxParticles=2\r\n        StartLocationRange=(X=(Min=-48.000000,Max=48.000000),Y=(Min=-48.000000,Max=48.000000))\r\n        UseSizeScale=True\r\n        StartSizeRange=(X=(Min=0.500000,Max=1.000000),Y=(Max=500.000000),Z=(Min=1000.000000,Max=1000.000000))\r\n        Texture=Texture'claritysoft.FX.Rain'\r\n        SecondsBeforeInactive=0.010000\r\n        LifetimeRange=(Min=0.500000,Max=0.500000)\r\n        StartVelocityRange=(Z=(Min=-1400.000000,Max=-1400.000000))\r\n        Name=\"SpriteEmitter14241\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter14241\"'\r\n    Location=(X=0,Y=0,Z=0)\n    DrawScale=6.000000\r\n    CullDistance=2500.000000\r\n    Tag=weather\n    Rotation=(Pitch=0,Yaw=0,Roll=0)\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Weather",
+ "dependencies": [
+  "Engine.Emitter",
+  "claritysoft.FX.Rain"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  1402.8892822265625,
+  5015.79541015625,
+  1760.951171875
+ ],
+ "source": "ClarD.Emitter14240"
+}

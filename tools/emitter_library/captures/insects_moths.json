@@ -1,0 +1,37 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter42704",
+   "path": "Assembly.Emitter42704",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    0,
+    16096,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter42704",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter42704\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter42705\r\n        DrawStyle=PTDS_Brighten\r\n        FadeOutStartTime=0.500000\r\n        FadeInEndTime=0.200000\r\n        MaxParticles=3\r\n        StartLocationRange=(Y=(Min=-30.000000,Max=30.000000),Z=(Min=-30.000000,Max=30.000000))\r\n        FadeOut=True\r\n        FadeIn=True\r\n        UseRevolution=True\r\n        UniformSize=True\r\n        RevolutionsPerSecondRange=(X=(Min=-1.000000,Max=1.000000),Y=(Min=-1.000000,Max=1.000000))\r\n        StartSizeRange=(X=(Min=6.000000,Max=6.000000))\r\n        Texture=Texture'SFX_SCH_xbox.FX.butterfly'\r\n        TextureUSubdivisions=3\r\n        TextureVSubdivisions=3\r\n        LifetimeRange=(Min=0.700000,Max=0.700000)\r\n        StartVelocityRange=(X=(Min=-80.000000,Max=80.000000),Y=(Min=-80.000000,Max=80.000000),Z=(Min=-80.000000,Max=80.000000))\r\n        Name=\"SpriteEmitter42705\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter42705\"'\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=0,Yaw=16096,Roll=0)\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Insects",
+ "dependencies": [
+  "Engine.Emitter",
+  "SFX_SCH_xbox.FX.butterfly"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  -3797.736328125,
+  411.9002685546875,
+  -486.19683837890625
+ ],
+ "source": "PrisD.Emitter42704"
+}

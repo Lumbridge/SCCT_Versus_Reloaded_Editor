@@ -179,7 +179,7 @@
     <ClInclude Include="StageModel.h" />
     <ClInclude Include="StageNative.inl" />
     <ClInclude Include="EmitterLibraryModel.h" />
-    <ClInclude Include="EmitterLibraryDefaults.h" />
+    <ClInclude Include="EmitterLibraryDefaults.gen.h" />
     <ClInclude Include="EmitterLibraryNative.inl" />
     <ClInclude Include="StagePanel.inl" />
     <ClInclude Include="LightingPanel.inl" />

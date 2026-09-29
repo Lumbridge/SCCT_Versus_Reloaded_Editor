@@ -1,0 +1,37 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter417",
+   "path": "Assembly.Emitter417",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    664,
+    -140,
+    -32768
+   ],
+   "sourcePath": "MyLevel.Emitter417",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter417\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter418\r\n        Acceleration=(X=40.000000,Z=20.000000)\r\n        UseRotationFrom=PTRS_Actor\r\n        DrawStyle=PTDS_AlphaBlend\r\n        ColorScale(0)=(Color=(B=41,G=41,R=41,A=150))\r\n        ColorScale(1)=(RelativeTime=1.000000,Color=(B=106,G=106,R=106,A=120))\r\n        FadeOutStartTime=2.000000\r\n        FadeInEndTime=1.000000\r\n        MaxParticles=26\r\n        UseColorScale=True\r\n        FadeOut=True\r\n        FadeIn=True\r\n        SpinParticles=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        UseRandomSubdivision=True\r\n        SpinsPerSecondRange=(X=(Min=-0.200000,Max=0.200000))\r\n        SizeScale(0)=(RelativeTime=220.000000,RelativeSize=350.000000)\r\n        SizeScale(1)=(RelativeTime=450.000000,RelativeSize=500.000000)\r\n        StartSizeRange=(X=(Min=250.000000,Max=650.000000),Y=(Min=0.000000,Max=0.000000),Z=(Min=10.000000,Max=20.000000))\r\n        Texture=Texture'sfx.Emitter.smoke_grenade'\r\n        TextureUSubdivisions=4\r\n        TextureVSubdivisions=4\r\n        SecondsBeforeInactive=0.000000\r\n        LifetimeRange=(Min=15.000000,Max=20.000000)\r\n        StartVelocityRange=(X=(Min=250.000000,Max=450.000000),Y=(Min=-70.000000,Max=70.000000),Z=(Max=300.000000))\r\n        Name=\"SpriteEmitter418\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter418\"'\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=664,Yaw=-140,Roll=-32768)\n    HeatOpacity=0.600000\r\n    DrawScale=10.000000\r\n    bDirectional=True\r\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Smoke",
+ "dependencies": [
+  "Engine.Emitter",
+  "sfx.Emitter.smoke_grenade"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  -3029.0908203125,
+  6009.32568359375,
+  -239.6509246826172
+ ],
+ "source": "OrphD.Emitter417"
+}

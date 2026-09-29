@@ -1,0 +1,40 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter251",
+   "path": "Assembly.Emitter251",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    0,
+    28592,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter251",
+   "tag": "boomgaz3",
+   "text": "Begin Actor Class=Emitter Name=Emitter251\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter252\r\n        Acceleration=(Z=-900.000000)\r\n        UseRotationFrom=PTRS_Actor\r\n        DrawStyle=PTDS_AlphaBlend\r\n        StartLocationRange=(X=(Min=-5.000000,Max=5.000000),Y=(Min=-5.000000,Max=5.000000),Z=(Min=5.000000,Max=10.000000))\r\n        FadeOut=True\r\n        RespawnDeadParticles=False\r\n        Disabled=True\r\n        SpinParticles=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        AutomaticInitialSpawning=False\r\n        SpinsPerSecondRange=(X=(Min=-1.000000,Max=1.000000))\r\n        StartSpinRange=(X=(Min=-1.000000,Max=1.000000))\r\n        SizeScale(1)=(RelativeTime=1.000000,RelativeSize=0.500000)\r\n        StartSizeRange=(X=(Min=40.000000,Max=80.000000))\r\n        InitialParticlesPerSecond=100.000000\r\n        Texture=Texture'sfx.Frag.shrapnels'\r\n        LifetimeRange=(Min=0.500000,Max=0.800000)\r\n        StartVelocityRange=(X=(Min=-80.000000,Max=80.000000),Y=(Min=-80.000000,Max=80.000000),Z=(Min=-80.000000,Max=80.000000))\r\n        StartVelocityRadialRange=(Min=-600.000000,Max=-500.000000)\r\n        GetVelocityDirectionFrom=PTVD_AddRadial\r\n        Name=\"SpriteEmitter252\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter252\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter253\r\n        ColorScale(0)=(Color=(B=255,G=255,R=255,A=255))\r\n        ColorScale(1)=(RelativeTime=0.200000,Color=(G=200,R=255,A=255))\r\n        ColorScale(2)=(RelativeTime=0.500000,Color=(G=50,R=255,A=200))\r\n        ColorScale(3)=(RelativeTime=1.000000,Color=(A=100))\r\n        MaxParticles=11\r\n        StartLocationRange=(X=(Min=-50.000000,Max=50.000000),Y=(Min=-50.000000,Max=52.000000),Z=(Min=-30.000000,Max=80.000000))\r\n        UseColorScale=True\r\n        RespawnDeadParticles=False\r\n        Disabled=True\r\n        SpinParticles=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        AutomaticInitialSpawning=False\r\n        StartSpinRange=(X=(Min=-1.000000,Max=1.000000))\r\n        SizeScale(1)=(RelativeTime=0.100000,RelativeSize=1.500000)\r\n        StartSizeRange=(X=(Min=80.000000,Max=123.000000))\r\n        InitialParticlesPerSecond=50.000000\r\n        Texture=Texture'sfx.Frag.frag_grenade'\r\n        TextureUSubdivisions=4\r\n        TextureVSubdivisions=4\r\n        LifetimeRange=(Min=1.000000,Max=1.500000)\r\n        StartVelocityRadialRange=(Min=-20.000000,Max=-70.000000)\r\n        GetVelocityDirectionFrom=PTVD_AddRadial\r\n        Name=\"SpriteEmitter253\"\r\n    End Object\r\n    Emitters(1)=SpriteEmitter'\"Assembly.SpriteEmitter253\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter254\r\n        Acceleration=(Z=20.000000)\r\n        UseRotationFrom=PTRS_Actor\r\n        DrawStyle=PTDS_AlphaBlend\r\n        ColorScale(0)=(Color=(G=200,R=255,A=200))\r\n        ColorScale(1)=(RelativeTime=0.300000,Color=(B=150,G=150,R=150,A=150))\r\n        ColorScale(2)=(RelativeTime=1.000000,Color=(B=100,G=100,R=100))\r\n        MaxParticles=20\r\n        UseColorScale=True\r\n        RespawnDeadParticles=False\r\n        Disabled=True\r\n        SpinParticles=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        AutomaticInitialSpawning=False\r\n        UseRandomSubdivision=True\r\n        UseVelocityScale=True\r\n        SpinsPerSecondRange=(X=(Min=-0.100000,Max=0.100000))\r\n        StartSpinRange=(X=(Min=-1.000000,Max=1.000000))\r\n        SizeScale(0)=(RelativeSize=0.100000)\r\n        SizeScale(1)=(RelativeTime=0.100000,RelativeSize=1.000000)\r\n        SizeScale(2)=(RelativeTime=1.000000,RelativeSize=5.000000)\r\n        StartSizeRange=(X=(Min=50.000000,Max=50.000000))\r\n        InitialParticlesPerSecond=100.000000\r\n        Texture=Texture'sfx.Emitter.smoke_grenade2'\r\n        TextureUSubdivisions=2\r\n        TextureVSubdivisions=2\r\n        LifetimeRange=(Min=2.000000,Max=5.000000)\r\n        StartVelocityRange=(X=(Min=-300.000000,Max=300.000000),Y=(Min=-300.000000,Max=300.000000),Z=(Min=-200.000000,Max=95.000000))\r\n        VelocityLossRange=(X=(Min=2.000000,Max=2.000000),Y=(Min=2.000000,Max=2.000000),Z=(Min=1.000000,Max=1.000000))\r\n        GetVelocityDirectionFrom=PTVD_AddRadial\r\n        Name=\"SpriteEmitter254\"\r\n    End Object\r\n    Emitters(2)=SpriteEmitter'\"Assembly.SpriteEmitter254\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter255\r\n        Acceleration=(Z=-100.000000)\r\n        DrawStyle=PTDS_AlphaBlend\r\n        MaxParticles=6\r\n        RespawnDeadParticles=False\r\n        Disabled=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        AutomaticInitialSpawning=False\r\n        SizeScale(0)=(RelativeSize=30.000000)\r\n        SizeScale(1)=(RelativeTime=1.000000,RelativeSize=25.000000)\r\n        SizeScaleRepeats=0.000000\r\n        StartSizeRange=(X=(Min=4.000000,Max=10.000000))\r\n        InitialParticlesPerSecond=1000.000000\r\n        Texture=Texture'sfx.Frag.frag_grenade'\r\n        TextureUSubdivisions=4\r\n        TextureVSubdivisions=4\r\n        LifetimeRange=(Min=1.000000,Max=1.000000)\r\n        StartVelocityRange=(X=(Min=-30.000000,Max=30.000000),Y=(Min=-30.000000,Max=30.000000),Z=(Min=50.000000,Max=3000.000000))\r\n        VelocityLossRange=(Z=(Min=1.000000,Max=3.000000))\r\n        Name=\"SpriteEmitter255\"\r\n    End Object\r\n    Emitters(3)=SpriteEmitter'\"Assembly.SpriteEmitter255\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter256\r\n        Acceleration=(Z=-30.000000)\r\n        DrawStyle=PTDS_AlphaBlend\r\n        ColorScale(0)=(Color=(A=255))\r\n        ColorScale(1)=(RelativeTime=1.000000,Color=(B=172,G=172,R=172,A=128))\r\n        FadeOutStartTime=3.500000\r\n        MaxParticles=20\r\n        UseColorScale=True\r\n        FadeOut=True\r\n        RespawnDeadParticles=False\r\n        Disabled=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        AutomaticInitialSpawning=False\r\n        UseRandomSubdivision=True\r\n        SizeScale(0)=(RelativeSize=10.000000)\r\n        SizeScale(1)=(RelativeTime=1.000000,RelativeSize=35.000000)\r\n        SizeScaleRepeats=0.000000\r\n        StartSizeRange=(X=(Min=10.000000,Max=15.000000),Y=(Min=0.000000,Max=0.000000),Z=(Min=0.000000,Max=0.000000))\r\n        InitialParticlesPerSecond=1000.000000\r\n        Texture=Texture'sfx.Emitter.smoke_grenade'\r\n        TextureUSubdivisions=4\r\n        TextureVSubdivisions=4\r\n        LifetimeRange=(Min=7.000000,Max=7.000000)\r\n        StartVelocityRange=(Z=(Min=250.000000,Max=1800.000000))\r\n        VelocityLossRange=(X=(Min=-5.000000,Max=5.000000),Y=(Min=-5.000000,Max=5.000000),Z=(Min=3.000000,Max=3.000000))\r\n        Name=\"SpriteEmitter256\"\r\n    End Object\r\n    Emitters(4)=SpriteEmitter'\"Assembly.SpriteEmitter256\"'\r\n    bNetworkTrigger=True\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=0,Yaw=28592,Roll=0)\n    Tag=boomgaz3\n    bDirectional=True\r\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Smoke",
+ "dependencies": [
+  "Engine.Emitter",
+  "sfx.Emitter.smoke_grenade",
+  "sfx.Emitter.smoke_grenade2",
+  "sfx.Frag.frag_grenade",
+  "sfx.Frag.shrapnels"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  -1078.458740234375,
+  1033.88671875,
+  -1082.9434814453125
+ ],
+ "source": "SteeD.Emitter251"
+}

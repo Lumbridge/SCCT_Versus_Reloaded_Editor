@@ -25,7 +25,7 @@
 //    "preview": {"distance","yaw","pitch","target":[x,y,z]} (optional camera hint)}
 // User file, <Editor::Directory()>/emitter_library.json:
 //   {"version":1,"emitters":[user entries],"hiddenBuiltins":[built-in ids the user deleted]}
-// Built-in entries are compiled into the DLL (EmitterLibraryDefaults.h) and are
+// Built-in entries are compiled into the DLL (EmitterLibraryDefaults.gen.h) and are
 // never written to disk; deleting one only hides it.
 namespace Workflow::EmitterLibrary
 {
