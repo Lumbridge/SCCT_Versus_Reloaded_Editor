@@ -112,6 +112,14 @@ int main()
         Reject([]{Design::VertexPortal({{0,0,0},{128,0,0},{128,0,64},{100,0,20}});});
         Reject([]{Design::VertexPortal({{0,0,0},{.5,0,0},{.5,0,.5},{0,0,.5}});});
         Reject([]{Design::VertexPortal({{0,0,0},{128,0,0},{128,0,64},{127.5,0,64}});});
+        // Slivers pass the edge, convexity and planarity rules but enclose too
+        // little area; the smaller one is dropped by the native polygon importer.
+        for(const auto& sliver:{std::vector<Vector>{{0,0,0},{1,0,.001},{2,0,0},{1,0,-.001}},std::vector<Vector>{{0,0,0},{64,0,.001},{128,0,0},{64,0,-.001}}})
+        {
+            std::string refused;try{Design::VertexPortal(sliver);}catch(const std::exception& e){refused=e.what();}
+            Check(refused=="Portal corners must enclose at least one square unit.","a sliver of portal corners is refused for its area");
+        }
+        Check(Design::VertexPortal({{0,0,0},{1,0,.51},{2,0,0},{1,0,-.51}}).faces[0].size()==4,"a portal just over one square unit is accepted");
     }
     auto door=carve;door["kind"]="Doorway";door["portal"]=true;
     auto doorway=Design::Geometry(door);

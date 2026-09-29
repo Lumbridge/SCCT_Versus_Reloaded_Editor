@@ -303,9 +303,13 @@ inline Solid VertexPortal(const std::vector<Vector>& selected)
     }
     // Best-fit plane of the quad: through the centre, normal to both diagonals,
     // so each corner is equally far off it. Projecting the corners onto it
-    // removes native float error, so the sheet is exactly planar.
+    // removes native float error, so the sheet is exactly planar. The diagonals'
+    // cross product is twice the quad's area vector. FPoly::CalcNormal
+    // (0x110c0970) makes the polygon importer drop a polygon whose doubled area
+    // is under 0.01, so a thin quad with long edges would paste an empty brush.
     normal=cross(sub(points[2],points[0]),sub(points[3],points[1]));
-    const double length=std::sqrt(dot(normal,normal));for(auto& n:normal)n/=length;
+    const double length=std::sqrt(dot(normal,normal));if(length<2)throw std::runtime_error("Portal corners must enclose at least one square unit.");
+    for(auto& n:normal)n/=length;
     Solid sheet;sheet.flags=kPortalSheetFlags;sheet.faces.emplace_back();
     for(auto p:points){const auto offset=dot(sub(p,center),normal);for(int axis=0;axis<3;++axis)p[axis]-=offset*normal[axis];sheet.faces[0].push_back(p);}
     return sheet;

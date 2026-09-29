@@ -320,7 +320,17 @@ namespace
         void Commit() { if(!ended) { Call(buffer,0x68); ended=true; } }
         ~Transaction()
         {
-            if(!ended) { Call(buffer,0x68); Call<int>(buffer,0x78); }
+            if(ended) return;
+            Call(buffer,0x68);
+            // Undo (0x11059990) keeps the rolled-back record for Redo, which
+            // would replay the half-done operation. Drop it the way native Begin
+            // (0x1105ad61) cancels the redo queue: TArray<FTransaction>::Remove
+            // (0x110590e0) on UndoBuffer (+0x28, Num +0x2c), UndoCount (+0x34)=0.
+            if(Call<int>(buffer,0x78) && Read<int>(buffer+0x34)==1)
+            {
+                reinterpret_cast<void(__thiscall*)(void*,int,int)>(0x110590e0)(reinterpret_cast<void*>(buffer+0x28),Read<int>(buffer+0x2c)-1,1);
+                Write(buffer+0x34,0);
+            }
         }
     };
     thread_local const char* insertionText=nullptr;

@@ -604,6 +604,22 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             require(call({{"op","vertex.selection"}})==before,"adding a portal preserves the selected source vertices");
             Exec("TRANSACTION UNDO");require(call({{"op","actors"}}).size()==total,"portal creation undoes in one step");
             Exec("TRANSACTION REDO");require(call({{"op","actors"}}).size()==total+1,"portal creation redoes in one step");Exec("TRANSACTION UNDO");
+            // A sliver with long edges passes the corner rules, but the polygon
+            // importer (FPoly::CalcNormal 0x110c0970) needs area: refuse it up front.
+            auto quadData=*reinterpret_cast<unsigned char**>(polys+0x28);const std::vector<unsigned char> quad(quadData,quadData+0x14c);
+            const float sliver[4][3]={{0,0,0},{64,0,.001f},{128,0,0},{64,0,-.001f}};memcpy(quadData+0x18,sliver,sizeof(sliver));
+            timer=SetTimer(nullptr,0,50,WorkflowProbe::InspectVertexPopup);
+            reinterpret_cast<void(__thiscall*)(void*,void*,void*)>(0x10e045e9)(nullptr,cause,nullptr);KillTimer(nullptr,timer);
+            require(!WorkflowProbe::vertexPortalEnabled,"right-click disables the portal action for a sliver of corners");
+            bool refused=false;try{call({{"op","vertex.portal"}});}catch(const std::exception&){refused=true;}
+            require(refused && call({{"op","actors"}}).size()==total,"a sliver of corners adds no portal");
+            memcpy(quadData,quad.data(),quad.size());
+            // A failed edit rolls back without leaving a Redo step that replays it.
+            auto tagOf=[&](){for(const auto& item:call({{"op","actors"}}))if(item["path"]==brush["path"])return item["tag"].get<std::string>();throw std::runtime_error("portal fixture brush missing");};
+            const auto tag=tagOf();bool failed=false;
+            try{call({{"op","light.set"},{"actor",brush},{"properties",{{"Tag","WorkflowRolledBack"},{"ZzNotAProperty",1}}}});}catch(const std::exception&){failed=true;}
+            require(failed && tagOf()==tag,"a failed edit rolls back its earlier changes");
+            Exec("TRANSACTION REDO");require(tagOf()==tag && call({{"op","actors"}}).size()==total,"Redo after a rolled-back edit replays nothing");
             std::copy(saved.begin(),saved.end(),header);*reinterpret_cast<int*>(editor+0x1ac)=mode;memcpy(field("Rotation"),oldRotation.data(),12);
         }
         if(snapOnly){finish("native brush fitting, vertex portals, grid snap commands and transactions");return;}
