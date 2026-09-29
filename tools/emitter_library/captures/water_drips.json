@@ -1,0 +1,37 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter326",
+   "path": "Assembly.Emitter326",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter326",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter326\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter327\r\n        Acceleration=(Z=-1000.000000)\r\n        DrawStyle=PTDS_AlphaBlend\r\n        DampingFactorRange=(X=(Min=0.000000,Max=0.000000),Y=(Min=0.000000,Max=0.000000),Z=(Min=0.000000,Max=0.000000))\r\n        MaxCollisions=(Min=1.000000,Max=1.000000)\r\n        SpawnFromOtherEmitter=0\r\n        FadeOutStartTime=0.800000\r\n        MaxParticles=2\r\n        StartLocationRange=(X=(Min=-50.000000,Max=50.000000),Y=(Min=-50.000000,Max=50.000000))\r\n        UseCollision=True\r\n        FadeOut=True\r\n        UniformSize=True\r\n        AutomaticInitialSpawning=False\r\n        UseRandomSubdivision=True\r\n        StartSizeRange=(X=(Min=2.000000,Max=3.000000),Y=(Min=50.000000,Max=50.000000),Z=(Min=50.000000,Max=50.000000))\r\n        InitialParticlesPerSecond=2.000000\r\n        Texture=Texture'TXT_ORP.sfx.ORP_Gouttes'\r\n        TextureUSubdivisions=2\r\n        TextureVSubdivisions=1\r\n        LifetimeRange=(Min=1.000000,Max=1.000000)\r\n        Name=\"SpriteEmitter327\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter327\"'\r\n    bNetworkTrigger=True\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=0,Yaw=0,Roll=0)\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Water",
+ "dependencies": [
+  "Engine.Emitter",
+  "TXT_ORP.sfx.ORP_Gouttes"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  -11.10260009765625,
+  1424.3892822265625,
+  75.0
+ ],
+ "source": "OrphD.Emitter326"
+}

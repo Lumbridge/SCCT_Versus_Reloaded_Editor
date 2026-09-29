@@ -1,0 +1,37 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter296",
+   "path": "Assembly.Emitter296",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    -4096,
+    7968,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter296",
+   "tag": "spotlights_emitter",
+   "text": "Begin Actor Class=Emitter Name=Emitter296\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter297\r\n        CoordinateSystem=PTCS_Relative\r\n        DrawStyle=PTDS_Brighten\r\n        ColorScale(0)=(Color=(B=37,G=35,R=27))\r\n        ColorScale(1)=(RelativeTime=1.000000,Color=(B=37,G=35,R=27))\r\n        MaxParticles=1\r\n        AutoDestroy=True\r\n        UniformSize=True\r\n        SpinsPerSecondRange=(X=(Min=0.050000,Max=0.050000))\r\n        StartSizeRange=(Y=(Min=1.000000,Max=1.000000),Z=(Min=1.000000,Max=1.000000))\r\n        Texture=Texture'ShadowMoses_T.sfx.corona1'\r\n        SecondsBeforeInactive=0.000000\r\n        LifetimeRange=(Min=0.500000,Max=0.500000)\r\n        Name=\"SpriteEmitter297\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter297\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter298\r\n        CoordinateSystem=PTCS_Relative\r\n        DrawStyle=PTDS_Brighten\r\n        ColorScale(0)=(Color=(B=33,G=32,R=24))\r\n        ColorScale(1)=(RelativeTime=1.000000,Color=(B=33,G=32,R=24))\r\n        MaxParticles=1\r\n        StartLocationRange=(X=(Min=80.000000,Max=80.000000))\r\n        AutoDestroy=True\r\n        UniformSize=True\r\n        StartSizeRange=(X=(Min=120.000000,Max=120.000000),Y=(Min=1.000000,Max=1.000000),Z=(Min=1.000000,Max=1.000000))\r\n        Texture=Texture'ShadowMoses_T.sfx.corona1'\r\n        SecondsBeforeInactive=0.000000\r\n        LifetimeRange=(Min=0.500000,Max=0.500000)\r\n        Name=\"SpriteEmitter298\"\r\n    End Object\r\n    Emitters(1)=SpriteEmitter'\"Assembly.SpriteEmitter298\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter299\r\n        CoordinateSystem=PTCS_Relative\r\n        DrawStyle=PTDS_Brighten\r\n        ColorScale(0)=(Color=(B=30,G=28,R=21))\r\n        ColorScale(1)=(RelativeTime=1.000000,Color=(B=30,G=28,R=21))\r\n        MaxParticles=1\r\n        StartLocationRange=(X=(Min=160.000000,Max=160.000000))\r\n        AutoDestroy=True\r\n        UniformSize=True\r\n        StartSizeRange=(X=(Min=140.000000,Max=140.000000),Y=(Min=1.000000,Max=1.000000),Z=(Min=1.000000,Max=1.000000))\r\n        Texture=Texture'ShadowMoses_T.sfx.corona1'\r\n        SecondsBeforeInactive=0.000000\r\n        LifetimeRange=(Min=0.500000,Max=0.500000)\r\n        Name=\"SpriteEmitter299\"\r\n    End Object\r\n    Emitters(2)=SpriteEmitter'\"Assembly.SpriteEmitter299\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter300\r\n        CoordinateSystem=PTCS_Relative\r\n        DrawStyle=PTDS_Brighten\r\n        ColorScale(0)=(Color=(B=27,G=24,R=18))\r\n        ColorScale(1)=(RelativeTime=1.000000,Color=(B=27,G=24,R=18))\r\n        MaxParticles=1\r\n        StartLocationRange=(X=(Min=240.000000,Max=240.000000))\r\n        AutoDestroy=True\r\n        UniformSize=True\r\n        StartSizeRange=(X=(Min=160.000000,Max=160.000000),Y=(Min=1.000000,Max=1.000000),Z=(Min=1.000000,Max=1.000000))\r\n        Texture=Texture'ShadowMoses_T.sfx.corona1'\r\n        SecondsBeforeInactive=0.000000\r\n        LifetimeRange=(Min=0.500000,Max=0.500000)\r\n        Name=\"SpriteEmitter300\"\r\n    End Object\r\n    Emitters(3)=SpriteEmitter'\"Assembly.SpriteEmitter300\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter301\r\n        CoordinateSystem=PTCS_Relative\r\n        DrawStyle=PTDS_Brighten\r\n        ColorScale(0)=(Color=(B=22,G=21,R=16))\r\n        ColorScale(1)=(RelativeTime=1.000000,Color=(B=22,G=21,R=16))\r\n        MaxParticles=1\r\n        StartLocationRange=(X=(Min=320.000000,Max=320.000000))\r\n        AutoDestroy=True\r\n        UniformSize=True\r\n        StartSizeRange=(X=(Min=180.000000,Max=180.000000),Y=(Min=1.000000,Max=1.000000),Z=(Min=1.000000,Max=1.000000))\r\n        Texture=Texture'ShadowMoses_T.sfx.corona1'\r\n        SecondsBeforeInactive=0.000000\r\n        LifetimeRange=(Min=0.500000,Max=0.500000)\r\n        Name=\"SpriteEmitter301\"\r\n    End Object\r\n    Emitters(4)=SpriteEmitter'\"Assembly.SpriteEmitter301\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter302\r\n        CoordinateSystem=PTCS_Relative\r\n        DrawStyle=PTDS_Brighten\r\n        ColorScale(0)=(Color=(B=19,G=18,R=13))\r\n        ColorScale(1)=(RelativeTime=1.000000,Color=(B=19,G=18,R=13))\r\n        MaxParticles=1\r\n        StartLocationRange=(X=(Min=400.000000,Max=400.000000))\r\n        AutoDestroy=True\r\n        UniformSize=True\r\n        StartSizeRange=(X=(Min=200.000000,Max=200.000000),Y=(Min=1.000000,Max=1.000000),Z=(Min=1.000000,Max=1.000000))\r\n        Texture=Texture'ShadowMoses_T.sfx.corona1'\r\n        SecondsBeforeInactive=0.000000\r\n        LifetimeRange=(Min=0.500000,Max=0.500000)\r\n        Name=\"SpriteEmitter302\"\r\n    End Object\r\n    Emitters(5)=SpriteEmitter'\"Assembly.SpriteEmitter302\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter303\r\n        CoordinateSystem=PTCS_Relative\r\n        DrawStyle=PTDS_Brighten\r\n        ColorScale(0)=(Color=(B=15,G=14,R=11))\r\n        ColorScale(1)=(RelativeTime=1.000000,Color=(B=15,G=14,R=11))\r\n        MaxParticles=1\r\n        StartLocationRange=(X=(Min=480.000000,Max=480.000000))\r\n        AutoDestroy=True\r\n        UniformSize=True\r\n        StartSizeRange=(X=(Min=220.000000,Max=220.000000),Y=(Min=1.000000,Max=1.000000),Z=(Min=1.000000,Max=1.000000))\r\n        Texture=Texture'ShadowMoses_T.sfx.corona1'\r\n        SecondsBeforeInactive=0.000000\r\n        LifetimeRange=(Min=0.500000,Max=0.500000)\r\n        Name=\"SpriteEmitter303\"\r\n    End Object\r\n    Emitters(6)=SpriteEmitter'\"Assembly.SpriteEmitter303\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter304\r\n        CoordinateSystem=PTCS_Relative\r\n        DrawStyle=PTDS_Brighten\r\n        ColorScale(0)=(Color=(B=12,G=11,R=7))\r\n        ColorScale(1)=(RelativeTime=1.000000,Color=(B=12,G=11,R=7))\r\n        MaxParticles=1\r\n        StartLocationRange=(X=(Min=560.000000,Max=560.000000))\r\n        AutoDestroy=True\r\n        UniformSize=True\r\n        StartSizeRange=(X=(Min=240.000000,Max=240.000000),Y=(Min=1.000000,Max=1.000000),Z=(Min=1.000000,Max=1.000000))\r\n        Texture=Texture'ShadowMoses_T.sfx.corona1'\r\n        SecondsBeforeInactive=0.000000\r\n        LifetimeRange=(Min=0.500000,Max=0.500000)\r\n        Name=\"SpriteEmitter304\"\r\n    End Object\r\n    Emitters(7)=SpriteEmitter'\"Assembly.SpriteEmitter304\"'\r\n    bNetworkTrigger=True\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=-4096,Yaw=7968,Roll=0)\n    HeatOpacity=0.000000\r\n    EMFOpacity=0.000000\r\n    Tag=spotlights_emitter\n    bHardAttach=True\r\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Lights & Glows",
+ "dependencies": [
+  "Engine.Emitter",
+  "ShadowMoses_T.sfx.corona1"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  -2137.88818359375,
+  -6414.85693359375,
+  3585.607666015625
+ ],
+ "source": "ShadD.Emitter296"
+}

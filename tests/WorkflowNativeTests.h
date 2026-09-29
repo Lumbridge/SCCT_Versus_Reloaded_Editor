@@ -2055,6 +2055,35 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             for(int i=0;i<3;++i)Exec("TRANSACTION UNDO");
             require(call({{"op","actors"}}).size()==emitterActors,"workbench emitter fixture is undone");
         }
+        {
+            // Built-in Emitter Library (tools/emitter_library): every bundled entry
+            // places with each Emitters(i) a live sub-emitter in the map package,
+            // loads the textures and sounds it names and reaches them from the
+            // placed actor, and undoes in one step.
+            auto builtinActors=call({{"op","actors"}}).size();size_t builtins=0;
+            for(const auto& entry:call({{"op","emitterlib.list"}}))
+            {
+                if(!entry.at("builtin").get<bool>())continue;
+                const auto id=entry.at("id").get<std::string>();
+                auto placed=call({{"op","emitterlib.place"},{"id",id},{"position",{0,-1536,256}}});
+                require(placed.size()==entry.at("actors").size(),("built-in "+id+" places every emitter").c_str());
+                for(const auto& actor:placed)
+                {
+                    auto emitters=call({{"op","magic.inspect"},{"actor",actor}}).at("values").at("Emitters");
+                    bool live=!emitters.empty();for(const auto& e:emitters)live=live && e.get<std::string>().find("'MyLevel.RE_")!=std::string::npos;
+                    require(live,("built-in "+id+" references live sub-emitters in the map").c_str());
+                }
+                for(const auto& dependency:entry.at("dependencies"))
+                {
+                    if(dependency=="Engine.Emitter")continue;
+                    bool reached=false;
+                    for(const auto& row:call({{"op","usages"},{"asset",dependency}}))for(const auto& actor:placed)reached=reached || row.at("actor")==actor;
+                    require(reached,("built-in "+id+" loads and uses "+dependency.get<std::string>()).c_str());
+                }
+                Exec("TRANSACTION UNDO");++builtins;
+            }
+            require(builtins>=30 && call({{"op","actors"}}).size()==builtinActors,"every built-in emitter places and undoes");
+        }
         require(Rebuild(),"ordinary geometry rebuild after insertion");
         checkSurfaceBrushSelection(2);
         using Save=int(__thiscall*)(void*,const char*);

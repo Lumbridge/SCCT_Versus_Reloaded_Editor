@@ -1,0 +1,38 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter5490",
+   "path": "Assembly.Emitter5490",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter5490",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter5490\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter5491\r\n        Acceleration=(Z=-150.000000)\r\n        DrawStyle=PTDS_AlphaBlend\r\n        MaxParticles=5\r\n        UniformSize=True\r\n        StartSizeRange=(X=(Min=0.500000,Max=2.000000))\r\n        Texture=Texture'SFX_SCH_xbox.FX.water_drops'\r\n        TextureUSubdivisions=2\r\n        TextureVSubdivisions=2\r\n        LifetimeRange=(Min=1.800000,Max=1.800000)\r\n        Name=\"SpriteEmitter5491\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter5491\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter5492\r\n        Acceleration=(Z=-500.000000)\r\n        StartLocationOffset=(Z=-350.000000)\r\n        DrawStyle=PTDS_Brighten\r\n        FadeOutStartTime=0.100000\r\n        MaxParticles=5\r\n        FadeOut=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        UseRandomSubdivision=True\r\n        SpinsPerSecondRange=(X=(Min=-30.000000,Max=30.000000))\r\n        SizeScale(0)=(RelativeTime=0.100000,RelativeSize=2.000000)\r\n        SizeScale(1)=(RelativeTime=0.200000,RelativeSize=1.000000)\r\n        StartSizeRange=(X=(Min=0.500000,Max=2.000000))\r\n        Texture=Texture'SFX_SCH_xbox.FX.water_drops_giclure'\r\n        TextureUSubdivisions=2\r\n        TextureVSubdivisions=2\r\n        LifetimeRange=(Min=0.200000,Max=0.300000)\r\n        StartVelocityRange=(X=(Min=-50.000000,Max=50.000000),Y=(Min=-50.000000,Max=50.000000),Z=(Min=70.000000,Max=80.000000))\r\n        Name=\"SpriteEmitter5492\"\r\n    End Object\r\n    Emitters(1)=SpriteEmitter'\"Assembly.SpriteEmitter5492\"'\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=0,Yaw=0,Roll=0)\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Water",
+ "dependencies": [
+  "Engine.Emitter",
+  "SFX_SCH_xbox.FX.water_drops",
+  "SFX_SCH_xbox.FX.water_drops_giclure"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  2702.358642578125,
+  -947.93603515625,
+  480.59149169921875
+ ],
+ "source": "ScheE.Emitter5490"
+}

@@ -1,0 +1,37 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter16611",
+   "path": "Assembly.Emitter16611",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    16384,
+    -30976,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter16611",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter16611\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter16612\r\n        Acceleration=(Z=10.000000)\r\n        UseRotationFrom=PTRS_Actor\r\n        DrawStyle=PTDS_AlphaBlend\r\n        ColorScale(0)=(Color=(B=126,G=130,R=121,A=150))\r\n        ColorScale(1)=(RelativeTime=1.000000,Color=(B=75,G=80,R=80,A=80))\r\n        FadeOutStartTime=2.000000\r\n        FadeInEndTime=1.000000\r\n        MaxParticles=7\r\n        UseColorScale=True\r\n        FadeOut=True\r\n        FadeIn=True\r\n        SpinParticles=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        UseRandomSubdivision=True\r\n        SpinsPerSecondRange=(X=(Min=-0.100000,Max=0.100000))\r\n        SizeScale(0)=(RelativeTime=0.100000,RelativeSize=1.000000)\r\n        SizeScale(1)=(RelativeTime=1.000000,RelativeSize=6.000000)\r\n        StartSizeRange=(X=(Min=30.000000,Max=40.000000))\r\n        Texture=Texture'sfx.Emitter.smoke_grenade'\r\n        TextureUSubdivisions=4\r\n        TextureVSubdivisions=4\r\n        StartVelocityRange=(X=(Min=5.000000,Max=10.000000))\r\n        Name=\"SpriteEmitter16612\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter16612\"'\r\n    bNetworkTrigger=True\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=16384,Yaw=-30976,Roll=0)\n    HeatOpacity=0.950000\r\n    HeatIntensity=1.000000\r\n    bDirectional=True\r\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Smoke",
+ "dependencies": [
+  "Engine.Emitter",
+  "sfx.Emitter.smoke_grenade"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  -823.7979736328125,
+  1152.83984375,
+  -1258.3052978515625
+ ],
+ "source": "SteeD.Emitter16611"
+}

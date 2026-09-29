@@ -1,0 +1,37 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter5070",
+   "path": "Assembly.Emitter5070",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    6764,
+    -27936,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter5070",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter5070\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter28104\r\n        Acceleration=(X=40.000000,Z=20.000000)\r\n        DrawStyle=PTDS_AlphaBlend\r\n        ColorScale(0)=(Color=(B=89,G=253,R=240))\r\n        ColorScale(1)=(RelativeTime=2.000000,Color=(B=47,G=208,R=255))\r\n        MaxParticles=30\r\n        StartLocationRange=(X=(Min=-50.000000,Max=50.000000),Y=(Min=-50.000000,Max=50.000000))\r\n        UseColorScale=True\r\n        FadeOut=True\r\n        UniformSize=True\r\n        SizeScale(0)=(RelativeTime=1.000000)\r\n        SizeScaleRepeats=0.000000\r\n        StartSizeRange=(X=(Min=200.000000,Max=200.000000))\r\n        Texture=Texture'Oilrig_TXT.Top.flame'\r\n        LifetimeRange=(Min=1.500000,Max=1.500000)\r\n        StartVelocityRange=(X=(Min=100.000000,Max=100.000000),Y=(Min=50.000000,Max=100.000000),Z=(Min=400.000000,Max=400.000000))\r\n        Name=\"SpriteEmitter28104\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter28104\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter5071\r\n        Acceleration=(X=40.000000,Z=20.000000)\r\n        UseRotationFrom=PTRS_Actor\r\n        ColorScale(0)=(Color=(G=128,R=255))\r\n        ColorScale(1)=(RelativeTime=2.000000,Color=(G=128,R=255))\r\n        FadeOutStartTime=2.000000\r\n        FadeInEndTime=1.000000\r\n        MaxParticles=50\r\n        StartLocationRange=(X=(Min=-50.000000,Max=100.000000),Y=(Min=-50.000000,Max=100.000000))\r\n        UseColorScale=True\r\n        FadeOut=True\r\n        SpinParticles=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        SpinsPerSecondRange=(X=(Min=-0.200000,Max=0.200000))\r\n        SizeScale(0)=(RelativeTime=1.000000)\r\n        SizeScaleRepeats=0.000000\r\n        StartSizeRange=(X=(Min=200.000000,Max=200.000000),Y=(Min=0.000000,Max=0.000000),Z=(Min=0.000000,Max=0.000000))\r\n        Texture=Texture'Oilrig_TXT.Top.flame'\r\n        SecondsBeforeInactive=0.000000\r\n        LifetimeRange=(Min=1.500000,Max=1.500000)\r\n        StartVelocityRange=(X=(Min=100.000000,Max=100.000000),Y=(Min=50.000000,Max=100.000000),Z=(Min=400.000000,Max=400.000000))\r\n        Name=\"SpriteEmitter5071\"\r\n    End Object\r\n    Emitters(1)=SpriteEmitter'\"Assembly.SpriteEmitter5071\"'\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=6764,Yaw=-27936,Roll=0)\n    HeatRadius=10.000000\r\n    HeatIntensity=1.000000\r\n    DrawScale=10.000000\r\n    bSideFadeEffect=True\r\n    bHighDetail=True\r\n    bDirectional=True\r\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Fire",
+ "dependencies": [
+  "Engine.Emitter",
+  "Oilrig_TXT.Top.flame"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  -5885.5849609375,
+  -4681.07568359375,
+  1152.5
+ ],
+ "source": "OffsD.Emitter5070"
+}

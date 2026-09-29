@@ -1,7 +1,7 @@
 // Included inside Workflow::Editor. The Emitter Library: emitters saved as
 // canonical assembly definitions (schema in EmitterLibraryModel.h) in
 // emitter_library.json beside library.json, merged with the built-in entries
-// compiled into the DLL (EmitterLibraryDefaults.h), which are never written.
+// compiled into the DLL (EmitterLibraryDefaults.gen.h), which are never written.
 namespace
 {
     unsigned emitterLibraryRevision=0;

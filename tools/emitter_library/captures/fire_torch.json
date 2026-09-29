@@ -1,0 +1,39 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter23529",
+   "path": "Assembly.Emitter23529",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    -36,
+    -32755,
+    88
+   ],
+   "sourcePath": "MyLevel.Emitter23529",
+   "tag": "TorchFireGood",
+   "text": "Begin Actor Class=Emitter Name=Emitter23529\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter23532\r\n        TextureInThermicVisionPSX2=Texture'crypt_txt.FireSmallPart'\r\n        MaxAbsVelocity=(X=25600.000000,Y=10000.000000,Z=16000.000000)\r\n        CoordinateSystem=PTCS_Relative\r\n        DrawStyle=PTDS_AlphaBlend\r\n        ColorScale(0)=(Color=(G=90,R=90))\r\n        ColorScale(1)=(RelativeTime=0.300000,Color=(B=90,G=100,R=100))\r\n        ColorScale(2)=(RelativeTime=1.000000,Color=(B=100,G=100,R=150))\r\n        ColorMultiplierRange=(X=(Min=0.990000,Max=0.990000),Y=(Min=0.990000,Max=0.990000),Z=(Min=0.990000,Max=0.990000))\r\n        FadeOutStartTime=0.672000\r\n        FadeInEndTime=0.204000\r\n        StartLocationRange=(X=(Min=-2.000000,Max=2.000000),Y=(Min=-2.000000,Max=2.000000))\r\n        FadeOut=True\r\n        FadeIn=True\r\n        SpinParticles=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        UseRandomSubdivision=True\r\n        SpinsPerSecondRange=(X=(Min=-0.302000,Max=0.302000))\r\n        StartSpinRange=(X=(Min=-0.020000,Max=0.020000))\r\n        SizeScale(0)=(RelativeSize=0.385000)\r\n        SizeScale(1)=(RelativeTime=0.070000,RelativeSize=0.765000)\r\n        SizeScale(2)=(RelativeTime=0.170000,RelativeSize=0.830000)\r\n        SizeScale(3)=(RelativeTime=0.370000,RelativeSize=0.727000)\r\n        SizeScale(4)=(RelativeTime=0.620000,RelativeSize=0.463000)\r\n        SizeScale(5)=(RelativeTime=1.000000,RelativeSize=0.256000)\r\n        SizeScaleRepeats=0.000000\r\n        StartSizeRange=(X=(Min=24.420000,Max=40.000000),Y=(Min=1.000000,Max=1.000000),Z=(Min=1.000000,Max=1.000000))\r\n        Texture=Texture'crypt_txt.FireSmallPart'\r\n        TextureUSubdivisions=2\r\n        TextureVSubdivisions=1\r\n        LifetimeRange=(Min=1.100000,Max=1.100000)\r\n        StartVelocityRange=(X=(Min=-3.098000,Max=3.098000),Y=(Min=-3.098000,Max=3.098000),Z=(Min=80.000000,Max=96.000000))\r\n        Name=\"SpriteEmitter23532\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter23532\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter23533\r\n        StartLocationOffset=(Z=30.000000)\r\n        MaxAbsVelocity=(X=16900.000000,Y=10000.000000,Z=13000.000000)\r\n        ColorScale(0)=(Color=(B=255,G=255,R=255,A=255))\r\n        ColorScale(1)=(RelativeTime=0.300000,Color=(B=200,G=255,R=255))\r\n        ColorScale(2)=(RelativeTime=1.000000,Color=(G=150,R=200))\r\n        FadeOutStartTime=0.769000\r\n        FadeInEndTime=0.307600\r\n        MaxParticles=19\r\n        UseColorScale=True\r\n        FadeOut=True\r\n        FadeIn=True\r\n        SpinParticles=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        SpinsPerSecondRange=(X=(Min=-0.650000,Max=0.650000))\r\n        StartSpinRange=(X=(Min=-1.000000,Max=1.000000))\r\n        SizeScale(0)=(RelativeSize=0.169000)\r\n        SizeScale(1)=(RelativeTime=1.000000,RelativeSize=1.120000)\r\n        SizeScaleRepeats=0.000000\r\n        StartSizeRange=(X=(Min=9.350000,Max=26.160000))\r\n        Texture=Texture'crypt_txt.SparkOffSet'\r\n        LifetimeRange=(Min=0.968000,Max=1.538000)\r\n        StartVelocityRange=(Z=(Min=32.500000,Max=130.000000))\r\n        Name=\"SpriteEmitter23533\"\r\n    End Object\r\n    Emitters(1)=SpriteEmitter'\"Assembly.SpriteEmitter23533\"'\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter23534\r\n        MaxAbsVelocity=(X=57600.000000,Y=10000.000000,Z=24000.000000)\r\n        CoordinateSystem=PTCS_Relative\r\n        ColorScale(0)=(Color=(G=90,R=90))\r\n        ColorScale(1)=(RelativeTime=0.300000,Color=(B=90,G=100,R=100))\r\n        ColorScale(2)=(RelativeTime=1.000000,Color=(B=100,G=100,R=150))\r\n        ColorMultiplierRange=(X=(Min=0.990000,Max=0.990000),Y=(Min=0.990000,Max=0.990000),Z=(Min=0.990000,Max=0.990000))\r\n        FadeOutStartTime=0.493920\r\n        FadeInEndTime=0.054880\r\n        MaxParticles=7\r\n        StartLocationRange=(X=(Min=-1.440000,Max=1.440000),Y=(Min=-1.440000,Max=1.440000))\r\n        FadeOut=True\r\n        FadeIn=True\r\n        SpinParticles=True\r\n        UseSizeScale=True\r\n        UseRegularSizeScale=False\r\n        UniformSize=True\r\n        BlendBetweenSubdivisions=True\r\n        UseRandomSubdivision=True\r\n        SpinsPerSecondRange=(X=(Min=-0.340000,Max=0.340000))\r\n        StartSpinRange=(X=(Min=-0.020000,Max=0.020000))\r\n        SizeScale(0)=(RelativeSize=0.385000)\r\n        SizeScale(1)=(RelativeTime=0.070000,RelativeSize=0.765000)\r\n        SizeScale(2)=(RelativeTime=0.170000,RelativeSize=0.830000)\r\n        SizeScale(3)=(RelativeTime=0.370000,RelativeSize=0.727000)\r\n        SizeScale(4)=(RelativeTime=0.620000,RelativeSize=0.463000)\r\n        SizeScale(5)=(RelativeTime=1.000000,RelativeSize=0.256000)\r\n        SizeScaleRepeats=0.000000\r\n        StartSizeRange=(X=(Min=26.640001,Max=28.800001),Y=(Min=0.720000,Max=0.720000),Z=(Min=0.720000,Max=0.720000))\r\n        Texture=Texture'crypt_txt.FirePart'\r\n        TextureUSubdivisions=2\r\n        TextureVSubdivisions=2\r\n        LifetimeRange=(Min=0.784000,Max=0.784000)\r\n        StartVelocityRange=(X=(Min=-5.000000,Max=5.000000),Y=(Min=-5.000000,Max=5.000000),Z=(Min=86.400002,Max=103.680000))\r\n        Name=\"SpriteEmitter23534\"\r\n    End Object\r\n    Emitters(2)=SpriteEmitter'\"Assembly.SpriteEmitter23534\"'\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=-36,Yaw=-32755,Roll=88)\n    HeatIntensity=0.040000\r\n    EMFIntensity=0.100000\r\n    Tag=TorchFireGood\n    bIgnoreEchelonLighting=True\r\n    bIgnoreDynamicEchelonLighting=True\r\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Fire",
+ "dependencies": [
+  "Engine.Emitter",
+  "crypt_txt.FirePart",
+  "crypt_txt.FireSmallPart",
+  "crypt_txt.SparkOffSet"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  1342.3382568359375,
+  16802.201171875,
+  -3852.0
+ ],
+ "source": "PyroD.Emitter23529"
+}

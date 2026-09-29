@@ -1,5 +1,5 @@
 #include "../Reloaded.Editor/EmitterLibraryModel.h"
-#include "../Reloaded.Editor/EmitterLibraryDefaults.h"
+#include "../Reloaded.Editor/EmitterLibraryDefaults.gen.h"
 #include <functional>
 #include <iostream>
 #include <source_location>
@@ -116,8 +116,43 @@ int main()
         Reject([&]{Library::Builtins(Json({{"version",1},{"emitters",{builtinEntry,builtinEntry}}}).dump());});
         Reject([&]{Library::Builtins(Json({{"version",1},{"emitters",{valid}}}).dump());});
         Reject([&]{Library::Builtins("{\"version\":2,\"emitters\":[]}");});
+        // The bundled defaults (tools/emitter_library): stock emitters captured natively, each
+        // placeable into any map. SCCT's T3D import drops numeric enum values, so every enum
+        // must be spelled by name.
         auto embedded=Library::Builtins(Library::DefaultsText());
-        for(const auto& entry:embedded)Check(Library::IsBuiltinId(entry["id"]) && entry["bindings"].empty(),"every embedded default is a valid built-in entry");
+        Check(embedded.size()>=30,"the built-in library holds the default set");
+        const std::regex numericEnum("(^|\\n)\\s*(DrawStyle|UseRotationFrom|CoordinateSystem|UseDirectionAs|GetVelocityDirectionFrom|SpawningSound|StartLocationShape|EffectAxis)=[0-9-]");
+        std::set<std::string> embeddedIds,embeddedCategories;int water=0,triggers=0;
+        for(const auto& entry:embedded)
+        {
+            const std::string id=entry["id"],name=entry["name"],category=entry["category"];
+            Check(Library::IsBuiltinId(id) && entry["bindings"].empty() && embeddedIds.insert(id).second,"every embedded default is a valid built-in entry with its own id");
+            Check(category!="Other" && std::count(Library::DefaultCategories().begin(),Library::DefaultCategories().end(),category)==1 && !entry["description"].get<std::string>().empty(),"every embedded default has a default category and a description");
+            Check(entry.contains("preview") && entry["preview"].contains("target") && entry["preview"].contains("distance"),"every embedded default has a preview camera hint");
+            embeddedCategories.insert(category);water+=category=="Water";
+            const bool trigger=Has(name,"(triggered)");triggers+=trigger;
+            std::set<std::string> inline_,paths;std::string all;
+            for(const auto& record:entry["actors"])
+            {
+                const std::string body=record["text"];all+=body;
+                Check(record["class"]=="Engine.Emitter","built-in entries hold emitters only");
+                for(const char* key:{"Platform","Group","AttachTag","Base","ForcedVisibilityZoneTag"})Check(RemoveProperty(body,key)==body,"built-in emitters carry no placement lines");
+                Check(!std::regex_search(body,numericEnum),"built-in emitters spell enums by name");
+                Check(trigger==(Has(body,"Disabled=True") && record["tag"]!="None"),"only triggered entries start disabled, and they keep a Tag to be triggered by");
+                for(const auto& object:InlineObjectNames(body))inline_.insert(Fold(object));
+                for(const auto& ref:References(body))paths.insert(ref.path);
+            }
+            for(const auto& path:paths)
+            {
+                if(Fold(path).rfind("assembly.",0)==0)Check(inline_.count(Fold(path.substr(9))),"every sub-emitter reference resolves inside the entry");
+                else Check(std::count(entry["dependencies"].begin(),entry["dependencies"].end(),Json(path))==1,"every texture and sound is a listed dependency");
+            }
+            for(const auto& dependency:entry["dependencies"])Check(dependency=="Engine.Emitter" || Has(all,dependency.get<std::string>()),"every dependency is used by the entry");
+            auto placed=PreparePlacement(entry,{{512,0,64},{0,16384,0}},"RE_0123456789ab_","MyLevel",{});
+            for(const auto& object:inline_)Check(Has(Fold(placed["t3d"].get<std::string>()),"name=re_0123456789ab_"+object) && object.size()+16<64,"sub-emitters place under the map package within the native name buffer");
+            Check(!Has(placed["t3d"].get<std::string>(),"Assembly."),"a placed built-in keeps no reference to the library");
+        }
+        Check(embeddedIds.count("builtin.fire_with_smoke") && water>=10 && triggers>=4 && embeddedCategories.size()==Library::DefaultCategories().size()-1,"the defaults cover fire with smoke, a broad water set, triggered bursts and every default category");
 
         // The user file: save, update, delete, hide and restore.
         Json file=Library::EmptyDocument();

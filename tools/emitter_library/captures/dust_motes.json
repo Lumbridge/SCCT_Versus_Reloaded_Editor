@@ -1,0 +1,37 @@
+{
+ "actors": [
+  {
+   "class": "Engine.Emitter",
+   "event": "None",
+   "name": "Emitter6014",
+   "path": "Assembly.Emitter6014",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "sourcePath": "MyLevel.Emitter6014",
+   "tag": "None",
+   "text": "Begin Actor Class=Emitter Name=Emitter6014\r\n    Begin Object Class=SpriteEmitter Name=SpriteEmitter6015\r\n        StartLocationOffset=(X=20.000000)\r\n        CoordinateSystem=PTCS_Relative\r\n        ColorScale(0)=(RelativeTime=1.000000,Color=(B=120,G=199,R=194))\r\n        ColorScale(1)=(Color=(G=128,R=128))\r\n        ColorScale(2)=(RelativeTime=0.800000,Color=(B=68,G=138,R=138))\r\n        FadeOutStartTime=1.000000\r\n        FadeInEndTime=1.000000\r\n        MaxParticles=20\r\n        StartLocationRange=(X=(Min=10.000000,Max=150.000000),Y=(Min=50.000000,Max=125.000000),Z=(Min=10.000000,Max=200.000000))\r\n        FadeOut=True\r\n        FadeIn=True\r\n        AcceptsProjectors=True\r\n        UniformSize=True\r\n        SpinsPerSecondRange=(X=(Max=0.900000))\r\n        StartSizeRange=(X=(Min=1.000000,Max=3.000000))\r\n        Texture=Texture'Penitentiary_TXT.Emitter.spark2'\r\n        LifetimeRange=(Min=2.500000,Max=2.500000)\r\n        StartVelocityRange=(X=(Max=-3.000000),Y=(Min=1.000000),Z=(Min=-7.000000))\r\n        Name=\"SpriteEmitter6015\"\r\n    End Object\r\n    Emitters(0)=SpriteEmitter'\"Assembly.SpriteEmitter6015\"'\r\n    Location=(X=0,Y=0,Z=0)\n    Rotation=(Pitch=0,Yaw=0,Roll=0)\nEnd Actor\r\n"
+  }
+ ],
+ "bindings": [],
+ "category": "Sparks & Electrical",
+ "dependencies": [
+  "Engine.Emitter",
+  "Penitentiary_TXT.Emitter.spark2"
+ ],
+ "description": "",
+ "name": "New emitter",
+ "pivot": [
+  -2152.0,
+  -2670.0,
+  -7.0
+ ],
+ "source": "PrisD.Emitter6014"
+}
