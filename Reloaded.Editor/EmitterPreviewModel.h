@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <map>
 #include <set>
 #include <sstream>
@@ -46,7 +47,7 @@ namespace Workflow::EmitterPreviewModel
 
     struct Actor { std::string name,type,text;std::vector<std::string> assets,dropped;int objects{}; };
     // Actor properties that tie an entry to its source map, place it, or make
-    // it audible; Location/Rotation are written back for the preview origin.
+    // it audible; Location/Rotation are written back from the entry item.
     inline const std::set<std::string>& ActorStrip()
     {
         static const std::set<std::string> keys{"location","rotation","tag","event","group","level","region","xlevel","name","bselected","ambientsound","autodestroy","bhidden","bhiddened","bhiddenedgroup","platform","base","attachtag","owner","instigator"};
@@ -61,8 +62,10 @@ namespace Workflow::EmitterPreviewModel
     }
     // prefix+index names the actor, prefix+index+"_"+k its k-th inline object;
     // mapRoots are folded first path segments owned by a map or a library
-    // definition ("mylevel", "assembly", the open map's package).
-    inline Actor Prepare(const std::string& source,const std::string& prefix,int index,const std::string& package,const std::set<std::string>& mapRoots,const Rotation& rotation)
+    // definition ("mylevel", "assembly", the open map's package). position and
+    // rotation are the entry actor's own, relative to the entry's pivot, so a
+    // multi-actor entry keeps its layout and matches its placement.
+    inline Actor Prepare(const std::string& source,const std::string& prefix,int index,const std::string& package,const std::set<std::string>& mapRoots,const Rotation& rotation,const Vector& position={})
     {
         if(source.size()>16*1024*1024)throw std::runtime_error("The emitter text exceeds 16 MiB.");
         Actor out;out.name=prefix+std::to_string(index);
@@ -103,7 +106,9 @@ namespace Workflow::EmitterPreviewModel
             text+=line+"\n";
         }
         if(!begun || !ended)throw std::runtime_error("Incomplete emitter actor text.");
-        text=SetProperty(SetProperty(text,"Location","(X=0.000000,Y=0.000000,Z=0.000000)"),"Rotation",RotationText(rotation));
+        for(double v:position)if(!std::isfinite(v) || std::abs(v)>1e6)throw std::runtime_error("An entry actor has an invalid position.");
+        char location[128];snprintf(location,sizeof(location),"(X=%.6f,Y=%.6f,Z=%.6f)",position[0],position[1],position[2]);
+        text=SetProperty(SetProperty(text,"Location",location),"Rotation",RotationText(rotation));
         auto refs=References(text);
         for(auto i=refs.rbegin();i!=refs.rend();++i)
         {
@@ -231,19 +236,23 @@ namespace Workflow::EmitterPreviewModel
         for(int i=0;i<3;++i){box.min[i]-=particle+spread;box.max[i]+=particle+spread;}
         return box;
     }
-    struct Frame { Vector target{};double radius=0; };
-    inline Frame Estimate(const std::vector<std::pair<std::string,Rotation>>& actors)
+    // An entry actor as the preview places it: T3D text, rotation and position.
+    struct Placed { std::string text;Rotation rotation{};Vector position{}; };
+    struct Frame { Vector target{};double radius=0;Box box; };
+    inline Frame Estimate(const std::vector<Placed>& actors)
     {
         Box all;
-        for(const auto& [text,rotation]:actors)for(const auto& object:Objects(text))
+        for(const auto& actor:actors)for(const auto& object:Objects(actor.text))
         {
-            auto box=Reach(object,rotation);if(!box.valid)continue;
+            auto box=Reach(object,actor.rotation);if(!box.valid)continue;
+            for(int i=0;i<3;++i){box.min[i]+=actor.position[i];box.max[i]+=actor.position[i];}
             Include(all,box.min);Include(all,box.max);
         }
-        Frame frame;if(!all.valid){frame.radius=128;return frame;}
+        Frame frame;
+        if(!all.valid){frame.radius=128;Include(frame.box,{-64,-64,-64});Include(frame.box,{64,64,64});return frame;}
         double squared=0;
         for(int i=0;i<3;++i){frame.target[i]=(all.min[i]+all.max[i])*0.5;squared+=(all.max[i]-all.min[i])*(all.max[i]-all.min[i]);}
-        frame.radius=std::clamp(std::sqrt(squared)*0.5,24.0,4096.0);return frame;
+        frame.radius=std::clamp(std::sqrt(squared)*0.5,24.0,4096.0);frame.box=all;return frame;
     }
     // Distance at which a sphere fills the narrower of the horizontal
     // FovAngle (degrees, Unreal's convention) and the matching vertical angle.
@@ -253,6 +262,71 @@ namespace Workflow::EmitterPreviewModel
         double horizontal=std::clamp(fovDegrees,10.0,170.0)*pi/180,vertical=2*std::atan(std::tan(horizontal*0.5)/std::max(aspect,0.1));
         double half=std::min(horizontal,vertical)*0.5;
         return std::max(radius*1.15/std::sin(half),16.0);
+    }
+    // One live particle: world centre, half-size and how visible it is now (0..1, from its
+    // faded colour or alpha).
+    struct Sample { Vector at{};double size=0,weight=1; };
+    inline double Quantile(std::vector<double>& values,double q)
+    {
+        const size_t k=std::min(values.size()-1,static_cast<size_t>(std::clamp(q,0.0,1.0)*static_cast<double>(values.size()-1)+0.5));
+        std::nth_element(values.begin(),values.begin()+static_cast<std::ptrdiff_t>(k),values.end());return values[k];
+    }
+    // Unreal view axes for pitch/yaw (65536 units a turn, no roll).
+    struct Axes { Vector forward{},right{},up{}; };
+    inline Axes ViewAxes(int pitch,int yaw)
+    {
+        const double unit=6.2831853071795864769/65536.0,p=pitch*unit,y=yaw*unit;
+        return {{std::cos(p)*std::cos(y),std::cos(p)*std::sin(y),std::sin(p)},{-std::sin(y),std::cos(y),0},{-std::sin(p)*std::cos(y),-std::sin(p)*std::sin(y),std::cos(p)}};
+    }
+    // Where to look from pitch/yaw so the particles fill the view. Only visible particles
+    // count (weight >= 0.1; all of them when fewer than three are). The target is the middle
+    // of the 4..96% quantiles of their positions on the view axes, so strays neither widen
+    // nor shift the frame. The distance puts 96% of them, each grown by its own half-size,
+    // inside fill of the horizontal FovAngle and of the vertical angle for aspect
+    // (width/height), and in front of the camera; it never makes the typical particle
+    // narrower than minPixels in a view pixels wide, so sparks, snow and rain spread through
+    // a large volume show up close instead of as a few dots. width/height are the half
+    // extents on the view plane.
+    struct View { Vector target{};double distance=0,width=0,height=0;bool valid=false; };
+    inline View Fit(const std::vector<Sample>& samples,int pitch,int yaw,double fovDegrees,double aspect,double fill,double pixels,double minPixels)
+    {
+        constexpr double low=0.04,high=0.96,visible=0.1,pi=3.14159265358979323846;
+        std::vector<const Sample*> seen;for(const auto& s:samples)if(s.weight>=visible)seen.push_back(&s);
+        if(seen.size()<3){seen.clear();for(const auto& s:samples)seen.push_back(&s);}
+        View view;if(seen.size()<3)return view;
+        const auto axes=ViewAxes(pitch,yaw);
+        auto dot=[](const Vector& a,const Vector& b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];};
+        const size_t n=seen.size();std::vector<double> r(n),u(n),f(n),size(n),need(n);
+        for(size_t i=0;i<n;++i){r[i]=dot(seen[i]->at,axes.right);u[i]=dot(seen[i]->at,axes.up);f[i]=dot(seen[i]->at,axes.forward);size[i]=std::min(std::abs(seen[i]->size),2048.0);}
+        auto middle=[&](const std::vector<double>& values,double& half){auto copy=values;const double a=Quantile(copy,low),b=Quantile(copy,high);half=(b-a)*0.5;return (a+b)*0.5;};
+        double depthHalf=0;const double rc=middle(r,view.width),uc=middle(u,view.height),fc=middle(f,depthHalf);
+        for(int i=0;i<3;++i)view.target[i]=axes.right[i]*rc+axes.up[i]*uc+axes.forward[i]*fc;
+        const double half=std::tan(std::clamp(fovDegrees,10.0,170.0)*pi/360),tx=half*std::clamp(fill,0.05,1.0),ty=tx/std::max(aspect,0.1);
+        for(size_t i=0;i<n;++i){const double depth=f[i]-fc;need[i]=std::max({(std::abs(r[i]-rc)+size[i])/tx-depth,(std::abs(u[i]-uc)+size[i])/ty-depth,size[i]+8-depth});}
+        double distance=Quantile(need,high);
+        if(pixels>0 && minPixels>0)distance=std::min(distance,Quantile(size,0.5)*pixels/(half*minPixels));
+        view.distance=std::clamp(distance,16.0,20000.0);view.valid=true;
+        return view;
+    }
+    // Camera distance at which box, seen from pitch/yaw (Unreal units, 65536 a turn) while
+    // looking at target, spans fill of the view: every corner inside fill of the horizontal
+    // FovAngle and of the matching vertical angle for aspect (width/height), and in front
+    // of the camera. Sized on the view axes, so a flat or tall effect is framed by its
+    // silhouette rather than by a bounding sphere.
+    inline double FitDistance(const Box& box,const Vector& target,int pitch,int yaw,double fovDegrees,double aspect,double fill)
+    {
+        constexpr double pi=3.14159265358979323846;
+        const auto [forward,right,up]=ViewAxes(pitch,yaw);
+        const double tx=std::tan(std::clamp(fovDegrees,10.0,170.0)*pi/360)*std::clamp(fill,0.05,1.0),ty=tx/std::max(aspect,0.1);
+        double need=16;
+        for(int corner=0;corner<8 && box.valid;++corner)
+        {
+            const Vector c{(corner&1?box.max[0]:box.min[0])-target[0],(corner&2?box.max[1]:box.min[1])-target[1],(corner&4?box.max[2]:box.min[2])-target[2]};
+            auto dot=[&](const Vector& axis){return axis[0]*c[0]+axis[1]*c[1]+axis[2]*c[2];};
+            const double depth=dot(forward);
+            need=std::max({need,std::abs(dot(right))/tx-depth,std::abs(dot(up))/ty-depth,8-depth});
+        }
+        return std::min(need,20000.0);
     }
     // Camera location looking at target along Unreal pitch/yaw (65536 units/turn).
     inline Vector Eye(const Vector& target,double distance,int pitch,int yaw)
