@@ -192,16 +192,19 @@ inline void Validate(const Json& entry)
     }
 }
 inline Json EmptyDocument(){return {{"version",1},{"emitters",Json::array()},{"hiddenBuiltins",Json::array()}};}
+// A user file that cannot be read, parsed or understood. Listing goes on with
+// the built-ins and reports this; editing refuses rather than overwrite it.
+inline const char* DamagedFile(){return "The Emitter Library file (emitter_library.json) is damaged or from a newer version, so your saved emitters are not listed. Restore a valid copy or move it aside before editing the library.";}
 // The user file as read by ReadDocument (version 1 already checked); missing
 // lists are added, wrong types refuse to edit a damaged file.
 inline Json Document(Json document)
 {
-    if(!document.is_object())throw std::runtime_error("The Emitter Library file is damaged. Restore a valid emitter_library.json before editing the library.");
+    if(!document.is_object())throw std::runtime_error(DamagedFile());
     if(!document.contains("emitters"))document["emitters"]=Json::array();
     if(!document.contains("hiddenBuiltins"))document["hiddenBuiltins"]=Json::array();
     bool valid=document.at("emitters").is_array() && document.at("hiddenBuiltins").is_array();
     if(valid)for(const auto& id:document.at("hiddenBuiltins"))valid=valid && id.is_string();
-    if(!valid)throw std::runtime_error("The Emitter Library file is damaged. Restore a valid emitter_library.json before editing the library.");
+    if(!valid)throw std::runtime_error(DamagedFile());
     return document;
 }
 // The compiled-in defaults: {"version":1,"emitters":[built-in entries]}.

@@ -1198,7 +1198,7 @@ Json CaptureAssembly(const Json& members,const Pose& frame)
 Json PlaceAssembly(const Json& definition,const Pose& frame,const std::map<std::string,std::string>& bindings)
 {
     auto resolved=bindings;
-    for(const auto& dependency:definition.at("dependencies"))
+    for(const auto& dependency:PlacementDependencies(definition))
     {
         auto path=dependency.get<std::string>();
         if(!Find(path))
