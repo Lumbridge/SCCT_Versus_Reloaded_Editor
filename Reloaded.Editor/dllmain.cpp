@@ -1,6 +1,7 @@
 // dllmain.cpp : Defines the entry point for the DLL application.
 #include "pch.h"
 #include <Windows.h>
+#include <memory>
 #include "logger.h"
 #include "Rendering.h"
 #include "Debug.h"
@@ -59,6 +60,34 @@ std::wstring GetDllPath(HINSTANCE hModule) {
 static std::wstring GetExecutableDirectory(std::wstring executablePath) {
     std::wstring::size_type pos = std::wstring(executablePath).find_last_of(L"\\/");
     return std::wstring(executablePath).substr(0, pos);
+}
+
+// The engine's package lookup (ChaosTheory_Editor+0x19F300) reads '[' as the
+// start of a Name[Platform] tag and cuts the path there, so every map opened
+// by absolute path fails with "Can't find file" and the unbalanced BeginLoad
+// then trips check(GObjBeginLoadCount==0) on the next tick.
+static DWORD WINAPI BracketedInstallWarning(LPVOID parameter)
+{
+    std::unique_ptr<std::wstring> directory(static_cast<std::wstring*>(parameter));
+    const std::wstring message =
+        L"The editor is installed in a folder whose path contains '[':\n\n" + *directory +
+        L"\n\nThe engine treats '[' in a file path as a platform tag and cuts the path there, "
+        L"so opening a map will fail and the editor will crash.\n\n"
+        L"Close the editor and rename the folder without square brackets.";
+    MessageBoxW(nullptr, message.c_str(), L"Reloaded Editor",
+                MB_OK | MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST);
+    return 0;
+}
+
+static void WarnIfInstallPathBracketed(const std::wstring& directory)
+{
+    if (directory.find(L'[') == std::wstring::npos)
+        return;
+
+    Logger::log(L"InstallPath: '[' in " + directory + L" - maps opened by absolute path will fail to load");
+    // DllMain holds the loader lock; the dialog gets its own thread.
+    HANDLE h = CreateThread(nullptr, 0, BracketedInstallWarning, new std::wstring(directory), 0, nullptr);
+    if (h) CloseHandle(h);
 }
 
 void RedirectToConsole()
@@ -122,6 +151,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     Logger::Initialize(dllPath);
     Logger::log("");
     CrashDiagnostics::Initialize(dllPath);
+    WarnIfInstallPathBracketed(directoryPath);
 
     Rendering::Initialize();
     UI::Initialize();
