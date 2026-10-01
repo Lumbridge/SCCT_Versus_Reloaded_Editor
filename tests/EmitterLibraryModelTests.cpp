@@ -269,6 +269,62 @@ int main()
         Check(big["emitters"].size()==900 && big["problems"].empty() && bigList.size()==embedded.size()+900 && bigList.back()["pack"]=="big","a 900-entry pack reads and merges");
         std::cout<<"900-entry pack ("<<largeBytes<<" bytes of JSON) read and merged in "<<elapsed<<" ms\n";
 
+        // Loop: every embedded default loops, and each of its systems ends and starts again.
+        auto count=[](const std::string& text,const std::string& part){size_t n=0;for(auto at=text.find(part);at!=std::string::npos;at=text.find(part,at+1))++n;return n;};
+        for(const auto& entry:embedded)
+        {
+            auto looped=Library::Looped(entry,2,4.5);Library::Validate(looped);
+            for(const auto& record:looped["actors"])
+            {
+                const std::string body=record["text"];
+                Check(Has(body,"\n    AutoReset=True\n") && Has(body,"\n    TimeTillResetRange=(Min=2.000000,Max=4.500000)\n") && count(body,"TimeTillResetRange=")==1,"a looped emitter resets itself after the chosen wait");
+                Check(!Has(body,"Disabled=True") && !Has(body,"AutoDestroy=") && !Has(body,"RespawnDeadParticles=True"),"no system of a looped emitter waits for a trigger, removes itself or plays forever");
+                Check(count(body,"RespawnDeadParticles=False")==count(body,"Begin Object") && count(body,"End Object")==count(body,"Begin Object"),"every system of a looped emitter plays one round");
+                Check(ParseActors(body).size()==1 && Fold(ParseActors(body)[0].name)==Fold(record["name"].get<std::string>()),"a looped emitter keeps its name");
+            }
+            Check(Library::Looped(looped,2,4.5)==looped,"looping a looped effect changes nothing");
+        }
+        const auto& wave=Library::Find(embedded,"builtin.water_wave_spray");const auto& smoke=Library::Find(embedded,"builtin.smoke_plume");
+        Check(Library::StartDelay(wave)==15 && Library::StartDelay(smoke)==0,"the start delay is the longest InitialDelayRange");
+        Check(Library::Looped(wave,0,0)["actors"][0]["text"].get<std::string>().find("TimeTillResetRange=(Min=0.000000,Max=0.000000)")!=std::string::npos,"a loop may start again at once");
+        for(auto [lo,hi]:std::vector<std::pair<double,double>>{{-1,2},{3,2},{0,3601},{std::nan(""),1},{0,std::numeric_limits<double>::infinity()}})
+            Check(Has(Reject([&]{Library::Looped(wave,lo,hi);}),"between 0 and 3600 seconds"),"a loop wait outside 0..3600 seconds, or backwards, is refused");
+        // Systems that end on their own terms: a trigger spawner bursts each round, a system
+        // kept off by TriggerDisabled=False stays off, and nested blocks are left alone.
+        auto custom=Capture();
+        custom["actors"][0]["text"]=
+            "Begin Actor Class=Emitter Name=Emitter6308\r\n"
+            "    Begin Object Class=SpriteEmitter Name=SpriteEmitter6315\r\n"
+            "        SpawnOnTriggerRange=(Min=8.000000,Max=12.400000)\r\n"
+            "        SpawnOnTriggerPPS=500.000000\r\n"
+            "        MaxParticles=40\r\n"
+            "        AutoDestroy=True\r\n"
+            "        Begin Object Class=Tweak Name=Inner\r\n"
+            "            Disabled=True\r\n"
+            "        End Object\r\n"
+            "        Name=\"SpriteEmitter6315\"\r\n"
+            "    End Object\r\n"
+            "    Emitters(0)=SpriteEmitter'MyLevel.SpriteEmitter6315'\r\n"
+            "    Begin Object Class=SpriteEmitter Name=SpriteEmitter6316\r\n"
+            "        TriggerDisabled=False\r\n"
+            "        Disabled=True\r\n"
+            "        SpawnOnTriggerRange=(Max=0.400000)\r\n"
+            "        Name=\"SpriteEmitter6316\"\r\n"
+            "    End Object\r\n"
+            "    Emitters(1)=SpriteEmitter'MyLevel.SpriteEmitter6316'\r\n"
+            "    AutoDestroy=True\r\n"
+            "    AutoReset=False\r\n"
+            "    TimeTillResetRange=(Min=9.000000,Max=9.000000)\r\n"
+            "    Tag=Burst\r\n"
+            "End Actor\r\n";
+        const std::string body=Library::Looped(custom,1,3)["actors"][0]["text"];
+        Check(Has(body,"        MaxParticles=12\n        AutomaticInitialSpawning=False\n        InitialParticlesPerSecond=500.000000\n") && !Has(body,"SpawnOnTriggerPPS") && !Has(body,"MaxParticles=40")
+            && count(body,"SpawnOnTriggerRange")==1 && Has(body,"(Max=0.400000)"),"a trigger spawner spawns its largest trigger burst at the start of each round, at its trigger rate");
+        Check(Has(body,"            Disabled=True\n        End Object\n") && Has(body,"TriggerDisabled=False\n        Disabled=True\n"),"a nested block and a system kept off for good keep Disabled");
+        Check(!Has(body,"AutoDestroy") && !Has(body,"AutoReset=False") && !Has(body,"Min=9.0") && Has(body,"TimeTillResetRange=(Min=1.000000,Max=3.000000)") && Has(body,"Tag=Burst"),"the actor's own reset replaces AutoDestroy and an earlier wait, and its Tag stays");
+        auto light=custom;light["actors"][0]["text"]="Begin Actor Class=Light Name=Emitter6308\r\n    LightBrightness=64\r\nEnd Actor\r\n";
+        Check(Has(Reject([&]{Library::Looped(light,1,2);}),"no particle systems"),"an effect without particle systems cannot loop");
+
         auto dir=std::filesystem::temp_directory_path()/("emitter-library-test-"+Id());auto path=dir/"emitter_library.json";
         WriteDocument(path,file);
         Check(Library::Merge(builtins,ReadDocument(path,Library::EmptyDocument()))==Library::Merge(builtins,file),"the user file round-trips through the atomic writer");
