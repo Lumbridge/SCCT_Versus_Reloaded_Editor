@@ -524,7 +524,10 @@ namespace
         return true;
     }
     // Once every burst of an actor has been dead for 0.6 s they start again, so one-shot
-    // and triggered effects loop as in-game triggers would fire them.
+    // and triggered effects loop as in-game triggers would fire them. An actor with its
+    // own AutoReset (+0x304 bit 2, a looped placement) waits its TimeTillResetRange
+    // (+0x320/+0x324) and restarts itself in AEmitter::Tick (0x110dbec5); the preview
+    // only steps in if that has not happened 0.6 s after the longest wait.
     void Loop(float delta)
     {
         for(auto& p:state.actors)
@@ -532,7 +535,9 @@ namespace
             if(!Alive(p.actor) || (Read<unsigned>(p.actor+0x2e8)&0x8000))continue;
             bool dead=true;auto bursts=Bursts(p.actor,dead);
             if(bursts.empty() || !dead){p.dead=0;continue;}
-            if((p.dead+=delta)<0.6f)continue;
+            const bool own=(Read<unsigned>(p.actor+0x304)&2)!=0;
+            const float wait=0.6f+(own?std::clamp(std::max(Read<float>(p.actor+0x320),Read<float>(p.actor+0x324)),0.0f,3600.0f):0.0f);
+            if((p.dead+=delta)<wait)continue;
             p.dead=0;++p.resets;++state.loops;
             if(!Restart(bursts))return;
         }
