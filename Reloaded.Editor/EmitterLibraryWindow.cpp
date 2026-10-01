@@ -21,7 +21,7 @@ using namespace Workflow;
 namespace
 {
 constexpr COLORREF Background=RGB(240,240,240),Panel=RGB(255,255,255),Ink=RGB(0,0,0),Muted=RGB(96,96,96),Stage=RGB(26,26,26);
-enum Id { Search=100,Tree,Preview,Hint,Name,Category,Description,Details,Place,SaveSelection,Edit,Delete,Restore,Status,MenuPlace=300,MenuEdit,MenuDelete };
+enum Id { Search=100,Tree,Preview,Hint,Name,Category,Description,Details,Place,SaveSelection,Edit,Delete,Restore,Status,Loop,LoopWait,LoopMin,LoopTo,LoopMax,LoopUnit,MenuPlace=300,MenuEdit,MenuDelete };
 struct State
 {
     HWND window{},tree{},preview{};HFONT font{},heading{};HBRUSH background{},panel{},stage{};
@@ -37,6 +37,9 @@ struct State
     bool reveal=false;  // the next fill scrolls the selection into view (Select)
     std::string selected,message="Select an effect to preview it.";
     UINT dpi=96;int left=300,right=330,split=0;bool filling=false,attached=false;
+    // Loop places (and previews) the selection repeating itself; it is cleared when
+    // another effect is selected, the wait is kept.
+    bool loop=false;double loopMin=5,loopMax=10;
 };
 HWND window=nullptr;
 int Px(const State& s,int n){return MulDiv(n,s.dpi,96);}
@@ -80,7 +83,9 @@ void Layout(State& s)
     const int x=s.left+6,c=w-s.left-s.right-12,rx=w-s.right+6,rw=s.right-18;
     Bounds(s,Search,12,12,s.left-18,26);Bounds(s,Tree,12,46,s.left-18,h-92);
     Bounds(s,Preview,x,12,c,h-78);Bounds(s,Hint,x,h-60,c,20);
-    Bounds(s,Name,rx,10,rw,30);Bounds(s,Category,rx,42,rw,20);Bounds(s,Description,rx,68,rw,108);Bounds(s,Details,rx,184,rw,std::max(60,h-184-212));
+    Bounds(s,Name,rx,10,rw,30);Bounds(s,Category,rx,42,rw,20);Bounds(s,Description,rx,68,rw,108);Bounds(s,Details,rx,184,rw,std::max(60,h-184-284));
+    Bounds(s,Loop,rx,h-286,rw,22);
+    Bounds(s,LoopWait,rx+18,h-257,36,20);Bounds(s,LoopMin,rx+56,h-260,52,24);Bounds(s,LoopTo,rx+112,h-257,20,20);Bounds(s,LoopMax,rx+134,h-260,52,24);Bounds(s,LoopUnit,rx+192,h-257,rw-192,20);
     Bounds(s,Place,rx,h-218,rw,34);Bounds(s,SaveSelection,rx,h-176,rw,28);Bounds(s,Edit,rx,h-142,rw,28);
     Bounds(s,Delete,rx,h-108,(rw-6)/2,28);Bounds(s,Restore,rx+(rw-6)/2+6,h-108,rw-(rw-6)/2-6,28);
     Bounds(s,Status,12,h-36,w-24,28);
@@ -92,6 +97,31 @@ std::string Date(const Json& entry)
     if(ms<=0)return {};
     std::time_t t=static_cast<std::time_t>(ms/1000);std::tm local{};if(localtime_s(&local,&t))return {};
     char text[64]{};std::strftime(text,sizeof(text),"%d %b %Y %H:%M",&local);return text;
+}
+// A wait as the boxes show it: "5", "2.5".
+std::string Short(double value){char text[32]{};std::snprintf(text,sizeof(text),"%g",value);return text;}
+// The wait in the two boxes; a box that is not a number refuses with the model's sentence.
+void ReadLoopWait(State& s)
+{
+    auto number=[&](int id)
+    {
+        const auto text=EmitterLibrary::Detail::Trimmed(Text(Item(s,id)));size_t used=0;double value=std::numeric_limits<double>::quiet_NaN();
+        try{value=std::stod(text,&used);}catch(const std::exception&){}
+        return used==text.size()?value:std::numeric_limits<double>::quiet_NaN();
+    };
+    const double min=number(LoopMin),max=number(LoopMax);
+    EmitterLibrary::CheckLoopWait(min,max);s.loopMin=min;s.loopMax=max;
+}
+// The selection as Place puts it into the map: repeating itself while Loop is ticked.
+Json Placed(State& s,const Json& entry)
+{
+    if(!s.loop)return entry;
+    ReadLoopWait(s);return EmitterLibrary::Looped(entry,s.loopMin,s.loopMax);
+}
+void EnableLoop(State& s)
+{
+    for(int id:{LoopWait,LoopMin,LoopTo,LoopMax,LoopUnit})EnableWindow(Item(s,id),s.loop);
+    Button_SetCheck(Item(s,Loop),s.loop?BST_CHECKED:BST_UNCHECKED);
 }
 // A short, factual summary of what placing the entry adds to the map.
 std::string DetailText(const State& s,const Json& entry,const Json& missing)
@@ -108,7 +138,13 @@ std::string DetailText(const State& s,const Json& entry,const Json& missing)
     if(!ReadOnly(entry)){auto date=Date(entry);if(!date.empty())out+=", saved "+date;}
     if(!missing.empty())out+="\r\n"+EmitterLibrary::MissingPackagesText(missing);
     out+="\r\n"+std::to_string(actors)+(actors==1?" emitter actor, ":" emitter actors, ")+std::to_string(systems)+(systems==1?" particle system":" particle systems");
-    if(triggered)out+="\r\nTriggered: it plays when an event matching its Tag fires. The preview loops it.";
+    if(s.loop)
+    {
+        out+="\r\nLoops: it plays again "+Short(s.loopMin)+(s.loopMin==s.loopMax?"":" to "+Short(s.loopMax))+" seconds after it ends";
+        if(const double delay=EmitterLibrary::StartDelay(entry);delay>0)out+=", then waits its own start delay of up to "+Short(delay)+" seconds";
+        out+=". No trigger is needed.";
+    }
+    else if(triggered)out+="\r\nTriggered: it plays when an event matching its Tag fires. The preview loops it; tick Loop to make it repeat in the map without a trigger.";
     std::set<std::string> packages;
     for(const auto& dependency:entry.value("dependencies",Json::array()))
     {
@@ -123,7 +159,7 @@ void Paint(State& s,const std::string& message){s.message=message;InvalidateRect
 void ShowEntry(State& s)
 {
     const auto* entry=Current(s);
-    EnableWindow(Item(s,Place),entry!=nullptr);EnableWindow(Item(s,Edit),entry!=nullptr);EnableWindow(Item(s,Delete),entry!=nullptr);
+    EnableWindow(Item(s,Place),entry!=nullptr);EnableWindow(Item(s,Edit),entry!=nullptr);EnableWindow(Item(s,Delete),entry!=nullptr);EnableWindow(Item(s,Loop),entry!=nullptr);
     if(!entry)
     {
         Set(s,Name,"");Set(s,Category,"");Set(s,Description,"");Set(s,Details,"");
@@ -151,8 +187,9 @@ void ShowEntry(State& s)
         // One viewport per panel: closing hides the window, so the viewport is only
         // created again after the editor destroys the window on exit.
         if(!s.attached){if(!EmitterPreview::Attach(s.preview,error))throw std::runtime_error(error.empty()?"The preview is not available.":error);s.attached=true;}
-        EmitterPreview::Show(*entry);
-        StatusText(s,"Previewing "+Ansi(entry->at("name").get<std::string>())+". Place puts it at the builder brush; double-click an effect does the same.");
+        // Looping, the preview plays the effect as it will repeat in the map.
+        EmitterPreview::Show(Placed(s,*entry));
+        StatusText(s,"Previewing "+Ansi(entry->at("name").get<std::string>())+(s.loop?", looping":"")+". Place puts it at the builder brush; double-click an effect does the same.");
     }
     catch(const std::exception& e){EmitterPreview::Clear();Paint(s,std::string("No preview: ")+e.what());StatusText(s,std::string("No preview: ")+e.what());}
 }
@@ -319,8 +356,8 @@ void Select(State& s,const std::string& id){s.selected=id;s.reveal=true;Fill(s);
 void PlaceCurrent(State& s)
 {
     const auto* entry=Current(s);if(!entry)throw std::runtime_error("Select an effect to place.");
-    auto members=Editor::PlaceEmitterEntry(*entry,Editor::BuilderPose());
-    StatusText(s,"Placed "+Ansi(entry->at("name").get<std::string>())+" at the builder brush ("+std::to_string(members.size())+(members.size()==1?" actor, selected). Undo removes it.":" actors, selected). Undo removes them."));
+    auto members=Editor::PlaceEmitterEntry(Placed(s,*entry),Editor::BuilderPose());
+    StatusText(s,"Placed "+Ansi(entry->at("name").get<std::string>())+(s.loop?", looping,":"")+" at the builder brush ("+std::to_string(members.size())+(members.size()==1?" actor, selected). Undo removes it.":" actors, selected). Undo removes them."));
 }
 void EditCurrent(State& s)
 {
@@ -410,6 +447,10 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
             Add(*s,"STATIC","",Name,SS_ENDELLIPSIS|SS_NOPREFIX);SendMessage(Item(*s,Name),WM_SETFONT,reinterpret_cast<WPARAM>(s->heading),TRUE);
             Add(*s,"STATIC","",Category,SS_ENDELLIPSIS|SS_NOPREFIX);
             Add(*s,"EDIT","",Description,ES_MULTILINE|ES_READONLY|WS_VSCROLL|ES_AUTOVSCROLL);Add(*s,"EDIT","",Details,ES_MULTILINE|ES_READONLY|WS_VSCROLL|ES_AUTOVSCROLL);
+            Add(*s,"BUTTON","Loop: play it again after it ends",Loop,BS_AUTOCHECKBOX|WS_TABSTOP);
+            Add(*s,"STATIC","Wait",LoopWait);Add(*s,"EDIT",Short(s->loopMin).c_str(),LoopMin,ES_AUTOHSCROLL|WS_TABSTOP,WS_EX_CLIENTEDGE);
+            Add(*s,"STATIC","to",LoopTo,SS_CENTER);Add(*s,"EDIT",Short(s->loopMax).c_str(),LoopMax,ES_AUTOHSCROLL|WS_TABSTOP,WS_EX_CLIENTEDGE);
+            Add(*s,"STATIC","seconds between plays",LoopUnit,SS_ENDELLIPSIS);EnableLoop(*s);
             Button(*s,"Place at builder brush",Place);Button(*s,"Save selected emitters as new effect...",SaveSelection);Button(*s,"Edit name, category, description...",Edit);Button(*s,"Delete...",Delete);Button(*s,"Restore hidden",Restore);
             Add(*s,"STATIC","",Status,SS_ENDELLIPSIS|SS_NOPREFIX);
             Layout(*s);Fill(*s);SetTimer(w,1,500,nullptr);SetFocus(s->tree);return 0;
@@ -432,6 +473,9 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
             if(id==Search && notification==EN_CHANGE){Fill(*s);return 0;}
             if(id==MenuPlace || id==MenuEdit || id==MenuDelete){Command(*s,id==MenuPlace?Place:id==MenuEdit?Edit:Delete);return 0;}
             if(notification==BN_CLICKED && id>=Place && id<=Restore){Command(*s,id);return 0;}
+            if(id==Loop && notification==BN_CLICKED){s->loop=Button_GetCheck(Item(*s,Loop))==BST_CHECKED;EnableLoop(*s);ShowEntry(*s);return 0;}
+            // A changed wait shows in the preview when the box is left.
+            if((id==LoopMin || id==LoopMax) && notification==EN_KILLFOCUS && s->loop){ShowEntry(*s);return 0;}
         }
         if(message==WM_NOTIFY)
         {
@@ -445,7 +489,12 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
             if(header->idFrom==Tree && header->code==TVN_SELCHANGEDA && !s->filling)
             {
                 auto change=reinterpret_cast<NMTREEVIEWA*>(lp);
-                if(change->itemNew.lParam>=0 && change->itemNew.lParam<static_cast<LPARAM>(Entries(*s).size())){s->selected=Entries(*s)[change->itemNew.lParam].at("id");ShowEntry(*s);}
+                if(change->itemNew.lParam>=0 && change->itemNew.lParam<static_cast<LPARAM>(Entries(*s).size()))
+                {
+                    const std::string id=Entries(*s)[change->itemNew.lParam].at("id");
+                    if(id!=s->selected){s->loop=false;EnableLoop(*s);}
+                    s->selected=id;ShowEntry(*s);
+                }
                 return 0;
             }
             if(header->idFrom==Tree && (header->code==NM_DBLCLK || header->code==NM_RCLICK))
@@ -481,7 +530,7 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
         }
         if(message==WM_ERASEBKGND){RECT r{};GetClientRect(w,&r);FillRect(reinterpret_cast<HDC>(wp),&r,s->background);return 1;}
         // Closing hides the window and empties the preview; the editor destroys it on exit.
-        if(message==WM_CLOSE){try{WriteDocument(Editor::Directory()/"emitter-library-window.json",{{"version",1},{"left",s->left},{"right",s->right}});}catch(...){}EmitterPreview::Clear();ShowWindow(w,SW_HIDE);return 0;}
+        if(message==WM_CLOSE){try{WriteDocument(Editor::Directory()/"emitter-library-window.json",{{"version",1},{"left",s->left},{"right",s->right},{"loopMin",s->loopMin},{"loopMax",s->loopMax}});}catch(...){}EmitterPreview::Clear();ShowWindow(w,SW_HIDE);return 0;}
         // Children are destroyed after this: delete the preview viewport first.
         if(message==WM_DESTROY){KillTimer(w,1);EmitterPreview::Detach();return 0;}
         if(message==WM_NCDESTROY){window=nullptr;DeleteObject(s->font);DeleteObject(s->heading);DeleteObject(s->background);DeleteObject(s->panel);SetWindowLongPtr(w,GWLP_USERDATA,0);delete s;return DefWindowProcA(w,message,wp,lp);}
@@ -506,7 +555,8 @@ void Open(HWND owner)
     INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_TREEVIEW_CLASSES|ICC_STANDARD_CLASSES};InitCommonControlsEx(&controls);
     WNDCLASSA wc{};wc.lpfnWndProc=WindowProc;wc.hInstance=GetModuleHandle(nullptr);wc.lpszClassName="ReloadedEmitterLibrary";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);RegisterClassA(&wc);
     auto s=new State;
-    try{auto prefs=ReadDocument(Editor::Directory()/"emitter-library-window.json",Json::object());s->left=std::clamp(prefs.value("left",300),220,700);s->right=std::clamp(prefs.value("right",330),260,700);}catch(...){}
+    try{auto prefs=ReadDocument(Editor::Directory()/"emitter-library-window.json",Json::object());s->left=std::clamp(prefs.value("left",300),220,700);s->right=std::clamp(prefs.value("right",330),260,700);
+        const double min=prefs.value("loopMin",5.0),max=prefs.value("loopMax",10.0);EmitterLibrary::CheckLoopWait(min,max);s->loopMin=min;s->loopMax=max;}catch(...){}
     window=CreateWindowExA(WS_EX_CONTROLPARENT,wc.lpszClassName,"Emitter Library",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1240,760,owner,nullptr,wc.hInstance,s);
     if(!window){delete s;throw std::runtime_error("The Emitter Library window could not be created.");}
     ShowWindow(window,SW_SHOW);

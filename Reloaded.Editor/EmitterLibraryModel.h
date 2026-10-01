@@ -3,9 +3,12 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <limits>
+#include <map>
 #include <regex>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -480,6 +483,139 @@ inline const std::vector<std::string>& PlacementProperties()
 {
     static const std::vector<std::string> keys={"Platform","AttachTag","Base","Owner","PhysicsVolume","Group","ForcedVisibilityZoneTag","bHiddenEd","bHiddenEdGroup","bLockLocation"};
     return keys;
+}
+// Loop: the effect plays again a wait of min..max seconds after every particle of all
+// its systems has died. Each emitter actor gets AEmitter's own AutoReset with
+// TimeTillResetRange: AEmitter::Tick counts the wait down once all its systems are
+// dead (0x110dbec5) and then resets them together (0x110dbf40); while it is set a
+// system's own AutoReset is ignored (0x110dbc2b), so the layers stay in step. So that
+// every system ends and starts again:
+//  - Disabled (waiting for a trigger) is dropped, unless TriggerDisabled=False keeps
+//    the system off for good;
+//  - AutoDestroy is dropped: a system's disables it when it ends (0x110dbc95), the
+//    actor's destroys the actor;
+//  - RespawnDeadParticles=False, so a continuous system plays MaxParticles once a round;
+//  - a trigger spawner (SpawnOnTriggerRange) spawns its trigger burst at the start of
+//    each round instead (MaxParticles, at SpawnOnTriggerPPS or at once).
+inline constexpr double MaxLoopWait=3600;
+inline void CheckLoopWait(double min,double max)
+{
+    if(!std::isfinite(min) || !std::isfinite(max) || min<0 || max>MaxLoopWait || min>max)
+        throw std::runtime_error("Enter a loop wait between 0 and 3600 seconds, with the first number no larger than the second.");
+}
+namespace Detail
+{
+    inline std::string Trimmed(const std::string& s)
+    {
+        const auto first=s.find_first_not_of(" \t\r\n");
+        return first==std::string::npos?std::string():s.substr(first,s.find_last_not_of(" \t\r\n")-first+1);
+    }
+    // Folded key of a T3D property line: "SizeScale(0)=(...)" -> "sizescale".
+    inline std::string LineKey(const std::string& line)
+    {
+        const auto t=Trimmed(line);const auto end=t.find_first_of("=(");
+        return end==std::string::npos?std::string():Fold(Trimmed(t.substr(0,end)));
+    }
+    inline std::string LineValue(const std::string& line){const auto t=Trimmed(line);const auto at=t.find('=');return at==std::string::npos?std::string():Trimmed(t.substr(at+1));}
+    // A number field of a T3D range "(Min=1.0,Max=2.0)"; fallback when absent.
+    inline double RangeField(const std::string& value,const char* field,double fallback)
+    {
+        const std::regex form(std::string("\\b")+field+"=([-+0-9.eE]+)",std::regex::icase);std::smatch match;
+        if(!std::regex_search(value,match,form))return fallback;
+        try{const double v=std::stod(match[1].str());return std::isfinite(v)?v:fallback;}catch(const std::exception&){return fallback;}
+    }
+    inline double Number(const std::string& value,double fallback)
+    {
+        try{size_t used=0;const double v=std::stod(value,&used);return used && std::isfinite(v)?v:fallback;}catch(const std::exception&){return fallback;}
+    }
+    inline std::string Seconds(double value){char text[32];std::snprintf(text,sizeof(text),"%.6f",value);return text;}
+    // One inline particle system: its lines between Begin Object and End Object, each
+    // with its depth below the system (0 for the system's own properties).
+    struct SystemLine{std::string text;int depth;};
+    inline std::vector<std::string> LoopSystem(const std::vector<SystemLine>& lines,const std::string& indent)
+    {
+        std::map<std::string,std::string> values;
+        for(const auto& line:lines)if(!line.depth)if(auto key=LineKey(line.text);!key.empty())values[key]=LineValue(line.text);
+        auto value=[&](const char* key){auto found=values.find(key);return found==values.end()?std::string():found->second;};
+        const bool keptOff=Fold(value("triggerdisabled"))=="false" && Fold(value("disabled"))=="true";
+        const auto spawn=value("spawnontriggerrange");
+        // The round's burst is the largest trigger burst, whole particles only.
+        const double count=spawn.empty()?0:std::floor(std::max(RangeField(spawn,"Min",0),RangeField(spawn,"Max",0)));
+        const bool spawner=count>=1 && count<=100000;
+        std::set<std::string> drop{"autodestroy","respawndeadparticles"};
+        if(!keptOff)drop.insert("disabled");
+        if(spawner)for(const char* key:{"spawnontriggerrange","spawnontriggerpps","maxparticles","automaticinitialspawning","initialparticlespersecond"})drop.insert(key);
+        std::vector<std::string> out;
+        for(const auto& line:lines)if(line.depth || !drop.count(LineKey(line.text)))out.push_back(line.text);
+        out.push_back(indent+"RespawnDeadParticles=False");
+        if(spawner)
+        {
+            const double rate=Number(value("spawnontriggerpps"),0);
+            out.push_back(indent+"MaxParticles="+std::to_string(static_cast<long long>(count)));
+            out.push_back(indent+"AutomaticInitialSpawning=False");
+            out.push_back(indent+"InitialParticlesPerSecond="+Seconds(rate>0?rate:10000));
+        }
+        return out;
+    }
+    // An emitter actor's text with the loop applied; unchanged without particle systems.
+    inline std::string LoopActor(const std::string& text,double min,double max,bool& systems)
+    {
+        std::istringstream input(text);std::string line,out,indent;std::vector<SystemLine> block;int depth=0;bool any=false,inside=false;
+        while(std::getline(input,line))
+        {
+            if(!line.empty() && line.back()=='\r')line.pop_back();
+            const auto l=Fold(Trimmed(line));
+            const bool begin=l.rfind("begin ",0)==0,end=l.rfind("end ",0)==0;
+            if(inside)
+            {
+                if(end && depth==2)
+                {
+                    for(const auto& kept:LoopSystem(block,indent))out+=kept+"\n";
+                    out+=line+"\n";inside=false;--depth;continue;
+                }
+                // A nested block's own Begin and End lines count as below the system.
+                if(end)--depth;
+                block.push_back({line,begin || end?depth-1:depth-2});
+                if(begin)++depth;
+                continue;
+            }
+            if(begin && ++depth==2 && l.rfind("begin object ",0)==0)
+            {
+                inside=any=true;block.clear();indent=line.substr(0,line.find_first_not_of(" \t"))+"    ";
+            }
+            else if(end)--depth;
+            out+=line+"\n";
+        }
+        if(!any)return text;
+        systems=true;
+        return SetProperty(SetProperty(RemoveProperty(out,"AutoDestroy"),"AutoReset","True"),"TimeTillResetRange","(Min="+Seconds(min)+",Max="+Seconds(max)+")");
+    }
+}
+inline Json Looped(Json entry,double min,double max)
+{
+    CheckLoopWait(min,max);
+    if(!entry.is_object() || !entry.contains("actors") || !entry.at("actors").is_array())throw std::runtime_error("Select an effect to loop.");
+    bool systems=false;
+    for(auto& actor:entry.at("actors"))if(actor.is_object() && actor.contains("text") && actor.at("text").is_string())
+        actor["text"]=Detail::LoopActor(actor.at("text").get<std::string>(),min,max,systems);
+    if(!systems)throw std::runtime_error("This effect has no particle systems to loop.");
+    return entry;
+}
+// The longest start delay (InitialDelayRange) of an entry's particle systems, in
+// seconds: a looping effect waits this long again at the start of each round.
+inline double StartDelay(const Json& entry)
+{
+    double delay=0;
+    if(entry.is_object())for(const auto& actor:entry.value("actors",Json::array()))
+    {
+        std::istringstream input(actor.value("text",std::string{}));std::string line;
+        while(std::getline(input,line))if(Detail::LineKey(line)=="initialdelayrange")
+        {
+            const auto value=Detail::LineValue(line);
+            delay=std::max({delay,Detail::RangeField(value,"Min",0),Detail::RangeField(value,"Max",0)});
+        }
+    }
+    return std::isfinite(delay)?delay:0;
 }
 // A first guess from the textures, meshes and sounds an entry uses.
 inline std::string GuessCategory(const Json& entry)
