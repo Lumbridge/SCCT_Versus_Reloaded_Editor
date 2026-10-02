@@ -41,6 +41,7 @@ Begin Actor Class=Engine.BlockingVolume Name=Volume0
 End Actor
 Begin Actor Class=Trigger Name=Trigger0
     Location=(X=12.500000,Y=-8,Z=9)
+    DrawScale3D=(Z=1.000000)
     m_Platform=1
     Platform=PLF_PC_Only
     Event="Trigger event"
@@ -161,6 +162,18 @@ int main(int argc, char** argv)
     assert(error.find("staticmesh") != std::string::npos);
     assert(!VerifySourceMap(prepared, Replace(composed, "Location=(X=12.500000", "Location=(X=15"), error));
     assert(error.find("location") != std::string::npos);
+    // A sub-precision default component re-imports as the default and is omitted.
+    assert(VerifySourceMap(prepared, Replace(composed, "DrawScale3D=(Z=1.000000)", ""), error));
+    assert(!VerifySourceMap(prepared, Replace(composed, "DrawScale3D=(Z=1.000000)", "DrawScale3D=(Z=2)"), error));
+    assert(error.find("drawscale3d") != std::string::npos);
+    {
+        PreparedMap scaled;
+        std::string scaledMap;
+        assert(Prepare(Replace(kRecovered, "DrawScale3D=(Z=1.000000)", "DrawScale3D=(Z=2.000000)"), scaled, error));
+        assert(ComposeSourceMap(scaled, kFresh, kGeometry, scaledMap, error));
+        assert(!VerifySourceMap(scaled, Replace(scaledMap, "DrawScale3D=(Z=2.000000)", ""), error));
+        assert(error.find("drawscale3d") != std::string::npos);
+    }
     assert(!VerifySourceMap(prepared, Replace(composed, "m_Platform=1", "m_Platform=0"), error));
     assert(error.find("m_platform") != std::string::npos);
     assert(!VerifySourceMap(prepared, Replace(composed, "m_Platform=1", ""), error));
