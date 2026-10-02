@@ -972,6 +972,27 @@ namespace
         return true;
     }
 
+    // Native export writes a transform struct when a component differs from the
+    // Actor default by less than its six-decimal precision (USDOJO
+    // StaticMeshActor470 DrawScale3D=(Z=1.000000)). Text import stores the
+    // printed default, so the re-export omits the property. Accept that only
+    // when every recorded component equals the Actor default.
+    bool DefaultTransform(const std::string& property, std::string_view value)
+    {
+        const double fallback = property == "drawscale3d" ? 1
+            : property == "location" || property == "prepivot" || property == "rotation" ? 0 : -1;
+        if (fallback < 0) return false;
+        const auto tokens = ComparisonTokens(value);
+        if (tokens.size() < 5 || tokens.front().text != "(" || tokens.back().text != ")") return false;
+        for (std::size_t i = 1; i + 1 < tokens.size(); i += 4)
+        {
+            if (i + 3 >= tokens.size() || tokens[i].numeric || tokens[i + 1].text != "="
+                || !tokens[i + 2].numeric || std::abs(tokens[i + 2].number - fallback) > 0.001
+                || (tokens[i + 3].text != "," && i + 3 != tokens.size() - 1)) return false;
+        }
+        return true;
+    }
+
     std::vector<std::string> GameplayEdges(const std::vector<Actor>& records)
     {
         std::vector<std::string> result;
@@ -1311,7 +1332,8 @@ bool RecoveredActorImport::VerifySourceMap(const PreparedMap& prepared,
             // struct/array element whose only assignments are null objects
             // (HELI02 SAlarm.MoversToLock). Keep checking every non-null field.
             if (imported == importedProperties.end()
-                && (emptyReference || (hasEmptyReference && SameProperty(property.second,"()")))) continue;
+                && (emptyReference || (hasEmptyReference && SameProperty(property.second,"()"))
+                    || DefaultTransform(property.first, property.second))) continue;
             if (imported == importedProperties.end() || !SameProperty(property.second, imported->second))
             {
                 error = "The imported source changed the " + property.first
