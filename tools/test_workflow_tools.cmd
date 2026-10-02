@@ -14,7 +14,7 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\BrushGridSnapTests.cpp /Fo"%TE
 if errorlevel 1 goto failed
 "%TEMP%\BrushGridSnapTests.exe"
 if errorlevel 1 goto failed
-cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\MapAuthoringModelTests.cpp Reloaded.Editor\WorkflowModel.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MapAuthoringModelTests.exe"
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\MapAuthoringModelTests.cpp Reloaded.Editor\WorkflowModel.cpp Reloaded.Editor\RecoveredPolygonImport.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MapAuthoringModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\MapAuthoringModelTests.exe"
 if errorlevel 1 goto failed

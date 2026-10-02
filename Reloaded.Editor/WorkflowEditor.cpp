@@ -15,6 +15,8 @@
 #include "BspDiagnostics.h"
 #include "MemoryWriter.h"
 #include <algorithm>
+#include <chrono>
+#include <fstream>
 #include <cmath>
 #include <fstream>
 #include <functional>

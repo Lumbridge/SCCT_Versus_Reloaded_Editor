@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "MapAuthoringDialog.h"
 #include "WorkflowEditor.h"
+#include "MapAuthoringModel.h"
 #include <commdlg.h>
 #include <fstream>
 #include <stdexcept>
@@ -21,8 +22,10 @@ namespace
         if(message==WM_CREATE)
         {
             state=static_cast<Preview*>(reinterpret_cast<CREATESTRUCT*>(l)->lpCreateParams);SetWindowLongPtr(window,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(state));
-            auto edit=CreateWindowExW(WS_EX_CLIENTEDGE,L"EDIT",state->text.c_str(),WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,0,0,0,0,window,reinterpret_cast<HMENU>(10),nullptr,nullptr);
-            SendMessage(edit,EM_SETLIMITTEXT,0,0);
+            // Created empty: an edit control refuses creation text beyond its default 30,000-character limit,
+            // which a large change file's preview exceeds. Raise the limit, then set the text.
+            auto edit=CreateWindowExW(WS_EX_CLIENTEDGE,L"EDIT",L"",WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,0,0,0,0,window,reinterpret_cast<HMENU>(10),nullptr,nullptr);
+            SendMessage(edit,EM_SETLIMITTEXT,0,0);SetWindowTextW(edit,state->text.c_str());
             CreateWindowW(L"BUTTON",L"Apply changes",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,0,0,0,0,window,reinterpret_cast<HMENU>(IDOK),nullptr,nullptr);
             CreateWindowW(L"BUTTON",L"Cancel",WS_CHILD|WS_VISIBLE|WS_TABSTOP,0,0,0,0,window,reinterpret_cast<HMENU>(IDCANCEL),nullptr,nullptr);
             for(int id:{10,IDOK,IDCANCEL})SendMessage(GetDlgItem(window,id),WM_SETFONT,reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)),TRUE);
@@ -42,7 +45,7 @@ namespace
     }
     bool Confirm(HWND owner,const Workflow::Json& preview,const Workflow::Json& document)
     {
-        auto map=document.at("map").get<std::string>();if(map.rfind("unsaved:",0)==0)map="Unsaved map (current editor session)";
+        auto map=document.at("map").get<std::string>();if(map.rfind("unsaved:",0)==0)map="Unsaved map (current editor session)";else if(map=="*")map="The map that is open";
         std::string text="Map: "+map+"\r\n"+document.value("description",std::string{})+"\r\n\r\n"+preview.at("note").get<std::string>()+"\r\n\r\n";
         for(const auto& line:preview.at("changes"))text+=line.get<std::string>()+"\r\n";
         Preview state{Wide(text)};
@@ -76,6 +79,7 @@ void Open(HWND owner,bool exporting)
         if(std::filesystem::file_size(path)>128*1024*1024)throw std::runtime_error("Change file exceeds 128 MiB.");
         std::ifstream input(std::filesystem::path(path),std::ios::binary);if(!input)throw std::runtime_error("Cannot read the change file.");
         auto document=Workflow::Json::parse(input,[](int depth,Workflow::Json::parse_event_t,Workflow::Json&){if(depth>64)throw std::runtime_error("Change file is nested too deeply.");return true;});
+        Workflow::Authoring::Rebase(document,std::filesystem::path(path).parent_path()); // Texture files beside the change file.
         auto preview=Workflow::Editor::PreviewMapAuthoring(document);
         const auto level=Workflow::Editor::LevelIdentity();const auto generation=Workflow::Editor::MapGeneration();const auto revision=Workflow::Editor::Revision();
         if(!Confirm(owner,preview,document))return;
