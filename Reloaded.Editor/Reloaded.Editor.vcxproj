@@ -140,6 +140,8 @@
     <ClInclude Include="BspDiagnostics.h" />
     <ClInclude Include="BspTextureClipboard.h" />
     <ClInclude Include="CrashDiagnostics.h" />
+    <ClInclude Include="CrashRecovery.h" />
+    <ClInclude Include="CrashRecoveryModel.h" />
     <ClInclude Include="Debug.h" />
     <ClInclude Include="dllmain.h" />
     <ClInclude Include="framework.h" />
@@ -263,6 +265,7 @@
     <ClCompile Include="BspDiagnostics.cpp" />
     <ClCompile Include="BspTextureClipboard.cpp" />
     <ClCompile Include="CrashDiagnostics.cpp" />
+    <ClCompile Include="CrashRecovery.cpp" />
     <ClCompile Include="Debug.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="GEKeybindSwap.cpp" />
