@@ -1,10 +1,18 @@
 param(
     [string]$BinaryDirectory = (Join-Path $PSScriptRoot '../bin'),
-    [string]$ArchivePath = (Join-Path $PSScriptRoot '../bin/Reloaded_Editor.zip'),
+    [string]$ArchivePath,
     [string]$LauncherPath
 )
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
+# The self-updater compares the release tag with the version built into the
+# DLL, so the archive is named after that version and the release must be
+# tagged v<version>. A release whose DLL reports an older version would be
+# offered to its own users again on every start.
+$versionHeader = Get-Content -LiteralPath (Join-Path $repository 'Reloaded.Editor/Version.h') -Raw
+if ($versionHeader -notmatch '#define RELOADED_EDITOR_VERSION "([0-9A-Za-z.+-]+)"') { throw 'Version.h has no RELOADED_EDITOR_VERSION.' }
+$version = $Matches[1]
+if (!$ArchivePath) { $ArchivePath = Join-Path $PSScriptRoot "../bin/Reloaded_Editor_v$version.zip" }
 $launcherHash = '4CEC8AA84BCEE940A2661F4277E51EA7F5803BD4CFB0BD5953AA356C451D8400'
 $upstreamZipHash = '57A53D6DCB3CB7430903039F0693C3193DABDDC6260B9078D2ABAC3B1E2673AF'
 $upstreamUrl = 'https://github.com/AllyPal/SCCT_Versus_Reloaded_Editor/releases/download/v1.2/Reloaded_Editor_1.2.zip'
@@ -53,6 +61,7 @@ try {
         }
     } finally { $archive.Dispose() }
     Write-Output "Release archive: $archiveFullPath"
+    Write-Output "Version: $version (tag the release v$version)"
     Write-Output "Launcher: unchanged AllyPal v1.2 ($launcherHash)"
 } finally {
     if ($staging) {

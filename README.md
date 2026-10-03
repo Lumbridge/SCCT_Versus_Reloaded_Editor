@@ -8,6 +8,8 @@ An unofficial patch for the **Splinter Cell: Chaos Theory Versus** map editor. I
 2. Extract it into the folder that contains `SCCT_Versus.exe`.
 3. Run `Reloaded_Editor.exe`.
 
+The editor keeps itself up to date: shortly after it starts, it checks the releases and offers to install a newer version, which takes effect the next time you start it. **Help > Check for Reloaded Updates...** checks on demand, and **Help > Check for Updates at Startup** turns the automatic check off.
+
 Looking for maps to open? Recovered, enhanced and community maps are in [SCCT-Maps](https://github.com/Lumbridge/SCCT-Maps), and [SCCT Map Manager](https://github.com/Lumbridge/SCCT-Map-Manager) installs them for you.
 
 ## What it adds
@@ -62,6 +64,7 @@ Recovered maps keep their original baked lighting through ordinary builds. Recov
 | **Grid snapping** | Right-click a brush face or vertices to snap them to the grid per axis; **Ctrl + mouse wheel** changes the grid size. |
 | **Fit builder brush** | Right-click selected meshes or brushes to enclose them in the builder brush, including rotated brushes. |
 | **Quick portal** | In Vertex Editing, select four coplanar corners and right-click **Add portal sheet**. Creates a single invisible, non-solid zone portal polygon whose corners are the selected corners, like the stock Add Special zone portal on a sheet brush, with Undo/Redo. |
+| **Self-updater** | Offers newer releases at start-up and installs them in place; **Help > Check for Reloaded Updates...** checks on demand. |
 | **Reloaded Shortcuts** | **Help > Reloaded Shortcuts...** lists every key, mouse gesture and menu the patch adds, with the Geometric Event keys as configured. |
 | **Fixes** | Playtests launch at the monitor's resolution, off-screen property windows come back, a missing builder brush is repaired, larger BSP point counts are supported, and crashes are logged. |
 
