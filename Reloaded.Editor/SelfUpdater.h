@@ -12,8 +12,8 @@
 // after the editor is restarted.
 namespace SelfUpdater
 {
-    constexpr UINT kCheckNow = 40995;
-    constexpr UINT kToggleStartupCheck = 40996;
+    constexpr UINT kCheckNow = 40984;
+    constexpr UINT kToggleStartupCheck = 40985;
 
     // From DLL start-up, with the path of this DLL.
     void Initialize(const std::wstring& dllPath);
