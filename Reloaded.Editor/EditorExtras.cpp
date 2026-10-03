@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "EditorExtras.h"
+#include "EditorConfigBits.h"
 #include "WorkflowEditor.h"
 #include "GEKeybindSwap.h"
 #include "LevelSnapshot.h"
@@ -82,6 +83,7 @@ namespace
     // map goes to the top of the recent list, and counts as clean.
     void Tick()
     {
+        EditorConfigBits::Apply();
         try
         {
             const auto map = Editor::MapFile();
@@ -168,6 +170,7 @@ namespace
     void Install()
     {
         LoadRecent();
+        EditorConfigBits::Apply();
         LevelSnapshot::Attach(frameWindow);
         InstallMenus();
         SetWindowSubclass(frameWindow, FrameProc, 1, 0);

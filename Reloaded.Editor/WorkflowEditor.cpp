@@ -14,6 +14,7 @@
 #include "MapRecovery.h"
 #include "BspDiagnostics.h"
 #include "MemoryWriter.h"
+#include "General.h"
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -1129,6 +1130,69 @@ void FitBuilderBrushToBrushes()
         for(int j=0;j<3;++j)orientation[3+row*3+col]+=static_cast<float>(coords[3+row*3+j]*axes[col][j]);
     const Vector center{world[0],world[1],world[2]};
     FitBuilderBrushToBounds(bounds,"Position builder brush around brush",&orientation,&center);
+}
+void PlaceBuilderBrushAtClick(bool rebuild,bool onSurface)
+{
+    const auto editor=Engine();
+    // Stock Paste > Here reads ClickLocation from GUnrealEd, and Add Actor
+    // Here pushes out along ClickPlane's normal. GridEnabled is bit 0 of the
+    // constraints word ahead of GridSize.
+    auto unrealEd=Read<Address>(0x117a59b0);if(!unrealEd)throw std::runtime_error("The editor is unavailable.");
+    const auto click=Read<std::array<float,3>>(unrealEd+0x1bc);
+    auto plane=Read<std::array<float,3>>(unrealEd+0x1d4);
+    Vector normal{};double length=0;
+    for(int axis=0;axis<3;++axis){normal[axis]=plane[axis];length+=normal[axis]*normal[axis];}
+    length=std::sqrt(length);
+    // Backdrop and actor clicks leave a stale plane; only a surface click sets it.
+    if(!onSurface || !std::isfinite(length) || length<0.5)normal={};
+    else for(double& v:normal)v/=length;
+    const bool snap=(Read<unsigned>(editor+0x1f8)&1)!=0;
+    const auto grid=Read<std::array<float,3>>(editor+0x200);
+    auto builder=reinterpret_cast<Address>(MapRecovery::ResolveBuilderBrushActor(reinterpret_cast<void*>(Level())));
+    if(!builder)throw std::runtime_error("The builder brush is unavailable.");
+    Transaction transaction(rebuild?"Rebuild builder brush and place here":"Place builder brush here");
+    Modify(builder);
+    if(rebuild)
+    {
+        auto model=Read<Address>(builder+0x238),polys=model?Read<Address>(model+0x50):0;
+        if(model)Modify(model);
+        if(polys)Modify(polys);
+        General::RebuildBuilderBrushAsDefaultCube();
+    }
+    // How far the brush reaches behind its pivot along the normal, measured on
+    // its world vertices, so its nearest face rests on the clicked surface.
+    double push=0;
+    if(normal!=Vector{})
+    {
+        auto model=Read<Address>(builder+0x238),polys=model?Read<Address>(model+0x50):0;
+        if(!polys)throw std::runtime_error("Rebuild the builder brush before using this command.");
+        std::array<float,12> coords{};Call<void*>(builder,0xac,coords.data());
+        const auto pivot=Position(builder);bool any=false;
+        for(auto poly:Array(polys+0x28,0x14c))
+        {
+            const auto count=std::min<unsigned>(Read<unsigned short>(poly+0x148),16);
+            for(unsigned i=0;i<count;++i)
+            {
+                auto local=Read<std::array<float,3>>(poly+0x18+i*12);std::array<float,3> world{};
+                reinterpret_cast<void*(__thiscall*)(void*,void*,const void*)>(0x10eb2ba0)(local.data(),world.data(),coords.data());
+                double along=0;for(int axis=0;axis<3;++axis)along+=(world[axis]-pivot[axis])*normal[axis];
+                push=any?std::max(push,-along):-along;any=true;
+            }
+        }
+        if(!any)throw std::runtime_error("The builder brush has no polygons.");
+    }
+    Vector target{};
+    for(int axis=0;axis<3;++axis)
+    {
+        double value=click[axis];
+        // Snap only along the surface; snapping across it would sink or lift the brush.
+        if(snap && grid[axis]>0 && std::abs(normal[axis])<0.001)value=std::round(value/grid[axis])*grid[axis];
+        value+=normal[axis]*push;
+        if(!std::isfinite(value) || std::abs(value)>10000000)throw std::runtime_error("The clicked location is out of range.");
+        target[axis]=static_cast<float>(value);
+    }
+    SetPosition(builder,target);
+    Call(builder,0x44);transaction.Commit();Redraw();
 }
 Json CaptureAssembly(const Json& members,const Pose& frame)
 {

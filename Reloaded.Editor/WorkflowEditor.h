@@ -26,6 +26,10 @@ namespace Workflow::Editor
     Json SelectedMeshBounds();
     void FitBuilderBrushToMeshes();
     void FitBuilderBrushToBrushes();
+    // Moves the builder brush to the viewport's last right-click point (grid
+    // snapped along the surface when the grid is on), optionally rebuilding it
+    // as the default cube. On a surface click it rests on the surface.
+    void PlaceBuilderBrushAtClick(bool rebuild, bool onSurface);
     bool CanAddVertexPortal();
     Json AddVertexPortal();
     Json BrushSnapBounds(bool surfaces = false);
