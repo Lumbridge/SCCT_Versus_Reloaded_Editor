@@ -169,6 +169,15 @@ compact_points=$([int][bool]$CompactPoints)
 trace_point=$TracePoint
 trace_actor=$TraceActor
 "@ | Set-Content -LiteralPath (Join-Path $testSystem 'native_recovery_test.ini') -Encoding ascii
+# The self-updater's start-up check would reach GitHub and could open a
+# message box the probe cannot answer.
+Add-Type -Namespace NativeRecoveryTest -Name Ini -MemberDefinition @'
+[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+public static extern bool WritePrivateProfileString(string section, string key, string value, string file);
+'@
+if (![NativeRecoveryTest.Ini]::WritePrivateProfileString('Updates', 'CheckOnStartup', '0', (Join-Path $testSystem 'Reloaded_Editor.ini'))) {
+    throw 'Could not turn off the update check in the test installation.'
+}
 Write-Output "TestRoot=$testRoot"
 if ($PrepareOnly) { return }
 

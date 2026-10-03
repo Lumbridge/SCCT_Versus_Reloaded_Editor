@@ -1,0 +1,297 @@
+#pragma once
+// The pure part of the self-updater: release versions and their order, the
+// choice of release from the GitHub releases list, the zip directory of the
+// release archive and the checks on the files taken out of it. No network,
+// no zlib and no Windows, so the tests compile it alone.
+#include "Include/nlohmann/json.hpp"
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace Updater
+{
+    using Json = nlohmann::json;
+    using Bytes = std::vector<std::uint8_t>;
+
+    // A release version: up to three numbers and an optional pre-release
+    // ("1.3.0-beta.12"), ordered as semantic versions order them.
+    struct Version
+    {
+        std::array<unsigned, 3> core{};
+        std::vector<std::string> pre;
+
+        static std::optional<Version> Parse(std::string text)
+        {
+            if (!text.empty() && (text[0] == 'v' || text[0] == 'V')) text.erase(0, 1);
+            if (const auto plus = text.find('+'); plus != std::string::npos) text.resize(plus);
+            std::string preText;
+            if (const auto dash = text.find('-'); dash != std::string::npos)
+            {
+                preText = text.substr(dash + 1);
+                text.resize(dash);
+                if (preText.empty()) return std::nullopt;
+            }
+            Version v;
+            size_t part = 0, i = 0;
+            while (true)
+            {
+                if (part == 3 || i >= text.size() || !IsDigit(text[i])) return std::nullopt;
+                unsigned long long value = 0;
+                for (; i < text.size() && IsDigit(text[i]); ++i)
+                    if ((value = value * 10 + (text[i] - '0')) > 0xFFFFFFFFull) return std::nullopt;
+                v.core[part++] = static_cast<unsigned>(value);
+                if (i == text.size()) break;
+                if (text[i++] != '.') return std::nullopt;
+            }
+            for (size_t start = 0; !preText.empty();)
+            {
+                const auto dot = preText.find('.', start);
+                std::string id = preText.substr(start, dot == std::string::npos ? std::string::npos : dot - start);
+                if (id.empty()) return std::nullopt;
+                for (char c : id)
+                    if (!IsDigit(c) && !(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') && c != '-') return std::nullopt;
+                v.pre.push_back(id);
+                if (dot == std::string::npos) break;
+                start = dot + 1;
+            }
+            return v;
+        }
+
+        std::string ToString() const
+        {
+            std::string s = std::to_string(core[0]) + "." + std::to_string(core[1]) + "." + std::to_string(core[2]);
+            for (size_t i = 0; i < pre.size(); ++i) s += (i ? "." : "-") + pre[i];
+            return s;
+        }
+
+        // Negative, zero or positive as a is older than, equal to or newer than b.
+        static int Compare(const Version& a, const Version& b)
+        {
+            for (size_t i = 0; i < 3; ++i)
+                if (a.core[i] != b.core[i]) return a.core[i] < b.core[i] ? -1 : 1;
+            // A release is newer than any of its pre-releases.
+            if (a.pre.empty() || b.pre.empty()) return a.pre.empty() == b.pre.empty() ? 0 : a.pre.empty() ? 1 : -1;
+            for (size_t i = 0; i < (std::min)(a.pre.size(), b.pre.size()); ++i)
+            {
+                const auto& x = a.pre[i];
+                const auto& y = b.pre[i];
+                const bool xn = Numeric(x), yn = Numeric(y);
+                if (xn && yn)
+                {
+                    // Compare as numbers without overflow: longer is larger once zeros are gone.
+                    const auto sx = x.substr((std::min)(x.find_first_not_of('0'), x.size()));
+                    const auto sy = y.substr((std::min)(y.find_first_not_of('0'), y.size()));
+                    if (sx.size() != sy.size()) return sx.size() < sy.size() ? -1 : 1;
+                    if (sx != sy) return sx < sy ? -1 : 1;
+                }
+                else if (xn != yn) return xn ? -1 : 1;
+                else if (x != y) return x < y ? -1 : 1;
+            }
+            if (a.pre.size() != b.pre.size()) return a.pre.size() < b.pre.size() ? -1 : 1;
+            return 0;
+        }
+        friend bool operator<(const Version& a, const Version& b) { return Compare(a, b) < 0; }
+        friend bool operator==(const Version& a, const Version& b) { return Compare(a, b) == 0; }
+
+    private:
+        static bool IsDigit(char c) { return c >= '0' && c <= '9'; }
+        static bool Numeric(const std::string& s) { return !s.empty() && std::all_of(s.begin(), s.end(), IsDigit); }
+    };
+
+    struct Release
+    {
+        Version version;
+        std::string tag, name, notes, page;
+        std::string assetName, assetUrl, sha256; // sha256: lower-case hex, empty when GitHub gave none
+        std::uint64_t assetSize = 0;
+        bool prerelease = false;
+    };
+
+    inline std::string Lower(std::string s)
+    {
+        for (auto& c : s) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        return s;
+    }
+
+    // The release archive: one Reloaded_Editor*.zip per release.
+    inline bool IsReleaseArchive(const std::string& name)
+    {
+        const auto n = Lower(name);
+        return n.size() > 4 && n.rfind("reloaded_editor", 0) == 0 && n.compare(n.size() - 4, 4, ".zip") == 0;
+    }
+
+    // The newest published release in a GitHub /releases list that has an
+    // archive to install. Drafts, unparseable tags and releases without
+    // exactly one archive are passed over.
+    inline std::optional<Release> Newest(const Json& releases, bool includePrereleases)
+    {
+        if (!releases.is_array()) throw std::runtime_error("GitHub returned an unexpected releases list.");
+        std::optional<Release> best;
+        for (const auto& r : releases)
+        {
+            if (!r.is_object() || r.value("draft", false)) continue;
+            const bool pre = r.value("prerelease", false);
+            if (pre && !includePrereleases) continue;
+            const auto tag = r.contains("tag_name") && r["tag_name"].is_string() ? r["tag_name"].get<std::string>() : std::string{};
+            const auto version = Version::Parse(tag);
+            if (!version || (best && !(best->version < *version))) continue;
+            const Json* archive = nullptr;
+            int archives = 0;
+            if (r.contains("assets") && r["assets"].is_array())
+                for (const auto& a : r["assets"])
+                    if (a.is_object() && a.contains("name") && a["name"].is_string() && IsReleaseArchive(a["name"].get<std::string>()))
+                        ++archives, archive = &a;
+            if (archives != 1 || !(*archive).contains("browser_download_url") || !(*archive)["browser_download_url"].is_string()) continue;
+            Release out;
+            out.version = *version;
+            out.tag = tag;
+            out.prerelease = pre;
+            auto text = [&](const Json& o, const char* key) { return o.contains(key) && o[key].is_string() ? o[key].get<std::string>() : std::string{}; };
+            out.name = text(r, "name");
+            out.notes = text(r, "body");
+            out.page = text(r, "html_url");
+            out.assetName = text(*archive, "name");
+            out.assetUrl = text(*archive, "browser_download_url");
+            if (archive->contains("size") && (*archive)["size"].is_number_integer() && (*archive)["size"].get<std::int64_t>() > 0)
+                out.assetSize = (*archive)["size"].get<std::uint64_t>();
+            const auto digest = Lower(text(*archive, "digest"));
+            if (digest.rfind("sha256:", 0) == 0 && digest.size() == 7 + 64
+                && digest.find_first_not_of("0123456789abcdef", 7) == std::string::npos)
+                out.sha256 = digest.substr(7);
+            best = out;
+        }
+        return best;
+    }
+
+    // Release notes as a message box shows them: Markdown headings and
+    // emphasis dropped, CRLF line ends, and no more than limit characters.
+    inline std::string PlainNotes(const std::string& markdown, size_t limit = 1200)
+    {
+        std::string out, line;
+        auto flush = [&] {
+            size_t start = line.find_first_not_of('#');
+            if (start != 0 && start != std::string::npos && line[start] == ' ') line.erase(0, start + 1);
+            for (size_t p; (p = line.find("**")) != std::string::npos;) line.erase(p, 2);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty() && (out.empty() || (out.size() >= 4 && out.compare(out.size() - 4, 4, "\r\n\r\n") == 0))) { line.clear(); return; }
+            out += line + "\r\n";
+            line.clear();
+        };
+        for (char c : markdown)
+            if (c == '\n') flush(); else line += c;
+        flush();
+        while (out.size() >= 2 && out.compare(out.size() - 2, 2, "\r\n") == 0) out.resize(out.size() - 2);
+        if (out.size() > limit)
+        {
+            out.resize(limit);
+            // Do not cut a UTF-8 sequence in half.
+            while (!out.empty() && (static_cast<unsigned char>(out.back()) & 0xC0) == 0x80) out.pop_back();
+            if (!out.empty() && static_cast<unsigned char>(out.back()) >= 0xC0) out.pop_back();
+            out += "...";
+        }
+        return out;
+    }
+
+    inline std::uint32_t Crc32(const std::uint8_t* data, size_t size)
+    {
+        static const auto table = [] {
+            std::array<std::uint32_t, 256> t{};
+            for (std::uint32_t i = 0; i < 256; ++i)
+            {
+                std::uint32_t c = i;
+                for (int k = 0; k < 8; ++k) c = c & 1 ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+                t[i] = c;
+            }
+            return t;
+        }();
+        std::uint32_t c = 0xFFFFFFFFu;
+        for (size_t i = 0; i < size; ++i) c = table[(c ^ data[i]) & 0xFF] ^ (c >> 8);
+        return c ^ 0xFFFFFFFFu;
+    }
+
+    struct ZipEntry
+    {
+        std::string name; // as stored, '/' separated
+        std::uint16_t method = 0; // 0 stored, 8 deflate
+        std::uint32_t crc = 0, compressedSize = 0, size = 0;
+        size_t dataOffset = 0; // the compressed bytes in the archive
+    };
+
+    // The entries of a zip archive, read from its central directory.
+    // Multi-disk, ZIP64 and encrypted archives are refused.
+    inline std::vector<ZipEntry> ReadZip(const Bytes& zip)
+    {
+        auto fail = [](const char* why) -> void { throw std::runtime_error(std::string("The update archive is not a usable zip file: ") + why); };
+        auto u16 = [&](size_t at) { if (at + 2 > zip.size()) fail("it is truncated."); return static_cast<std::uint16_t>(zip[at] | zip[at + 1] << 8); };
+        auto u32 = [&](size_t at) { if (at + 4 > zip.size()) fail("it is truncated."); return static_cast<std::uint32_t>(zip[at] | zip[at + 1] << 8 | zip[at + 2] << 16 | static_cast<std::uint32_t>(zip[at + 3]) << 24); };
+        if (zip.size() < 22) fail("it is too small.");
+        size_t end = std::string::npos;
+        for (size_t at = zip.size() - 22;; --at)
+        {
+            if (u32(at) == 0x06054b50 && at + 22 + u16(at + 20) == zip.size()) { end = at; break; }
+            if (at == 0 || zip.size() - at > 22 + 0xFFFF) break;
+        }
+        if (end == std::string::npos) fail("its directory is missing.");
+        if (u16(end + 4) != 0 || u16(end + 6) != 0) fail("it spans several disks.");
+        const unsigned count = u16(end + 10);
+        if (count != u16(end + 8)) fail("it spans several disks.");
+        const std::uint32_t directorySize = u32(end + 12), directoryOffset = u32(end + 16);
+        if (directoryOffset == 0xFFFFFFFFu || count == 0xFFFF) fail("it is a ZIP64 archive.");
+        if (static_cast<std::uint64_t>(directoryOffset) + directorySize > end) fail("its directory is out of range.");
+        std::vector<ZipEntry> entries;
+        size_t at = directoryOffset;
+        for (unsigned i = 0; i < count; ++i)
+        {
+            if (u32(at) != 0x02014b50) fail("a directory record is damaged.");
+            ZipEntry e;
+            const std::uint16_t flags = u16(at + 8);
+            e.method = u16(at + 10);
+            e.crc = u32(at + 16);
+            e.compressedSize = u32(at + 20);
+            e.size = u32(at + 24);
+            const std::uint16_t nameLength = u16(at + 28), extraLength = u16(at + 30), commentLength = u16(at + 32);
+            const std::uint32_t local = u32(at + 42);
+            if (at + 46 + nameLength > end) fail("a file name is out of range.");
+            e.name.assign(reinterpret_cast<const char*>(&zip[at + 46]), nameLength);
+            at += 46 + nameLength + extraLength + commentLength;
+            if (flags & 1) fail("it is encrypted.");
+            if (e.compressedSize == 0xFFFFFFFFu || e.size == 0xFFFFFFFFu || local == 0xFFFFFFFFu) fail("it is a ZIP64 archive.");
+            if (u32(local) != 0x04034b50) fail("a file record is damaged.");
+            e.dataOffset = static_cast<size_t>(local) + 30 + u16(local + 26) + u16(local + 28);
+            if (static_cast<std::uint64_t>(e.dataOffset) + e.compressedSize > directoryOffset) fail("a file is out of range.");
+            entries.push_back(std::move(e));
+        }
+        return entries;
+    }
+
+    // The one entry whose file name (ignoring any folder) is name, compared
+    // without case; nullptr when there is none. Two such entries are refused.
+    inline const ZipEntry* FindEntry(const std::vector<ZipEntry>& entries, const std::string& name)
+    {
+        const ZipEntry* found = nullptr;
+        for (const auto& e : entries)
+        {
+            const auto slash = e.name.find_last_of("/\\");
+            if (Lower(slash == std::string::npos ? e.name : e.name.substr(slash + 1)) != Lower(name)) continue;
+            if (found) throw std::runtime_error("The update archive contains " + name + " more than once.");
+            found = &e;
+        }
+        return found;
+    }
+
+    // A 32-bit Windows image, and whether it is a DLL.
+    enum class Image { None, Exe, Dll };
+    inline Image ImageKind(const Bytes& file)
+    {
+        auto u16 = [&](size_t at) { return static_cast<unsigned>(file[at] | file[at + 1] << 8); };
+        if (file.size() < 0x40 || file[0] != 'M' || file[1] != 'Z') return Image::None;
+        const size_t pe = file[0x3C] | file[0x3D] << 8 | file[0x3E] << 16 | static_cast<size_t>(file[0x3F]) << 24;
+        if (pe > file.size() || file.size() - pe < 24 || file[pe] != 'P' || file[pe + 1] != 'E' || file[pe + 2] || file[pe + 3]) return Image::None;
+        if (u16(pe + 4) != 0x14C) return Image::None; // IMAGE_FILE_MACHINE_I386
+        return u16(pe + 22) & 0x2000 ? Image::Dll : Image::Exe; // IMAGE_FILE_DLL
+    }
+}

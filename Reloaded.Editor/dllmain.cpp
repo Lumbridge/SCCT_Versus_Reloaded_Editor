@@ -42,6 +42,7 @@
 #include "WorkflowTools.h"
 #include "PasteFix.h"
 #include "EmitterPreview.h"
+#include "SelfUpdater.h"
 
 INIT_ONCE g_InitOnce = INIT_ONCE_STATIC_INIT;
 HINSTANCE g_hReloadedDll = nullptr;
@@ -190,6 +191,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     EmitterPreview::Initialize();
     BspDiagnostics::Initialize(dllPath);
     PasteFix::Initialize();
+    SelfUpdater::Initialize(dllPath);
 
 #ifdef _DEBUG
     Debug::Initialize();

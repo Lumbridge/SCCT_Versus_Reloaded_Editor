@@ -4,6 +4,7 @@
 #include "WorkflowEditor.h"
 #include "GEKeybindSwap.h"
 #include "LevelSnapshot.h"
+#include "SelfUpdater.h"
 #include "logger.h"
 #include <commctrl.h>
 #include <algorithm>
@@ -163,8 +164,12 @@ namespace
             AppendMenuA(build, MF_STRING, EditorExtras::kLevelSnapshotViewport, "Set Level Snapshot from &Viewport");
             AppendMenuA(build, MF_STRING, EditorExtras::kLevelSnapshotFile, "Set Level Snapshot from &Image File...");
         }
-        if (HMENU help = MenuWithCommand(bar, 40480); help && GetMenuState(help, EditorExtras::kShortcuts, MF_BYCOMMAND) == UINT(-1))
-            AppendMenuA(help, MF_STRING, EditorExtras::kShortcuts, "Reloaded &Shortcuts...");
+        if (HMENU help = MenuWithCommand(bar, 40480))
+        {
+            if (GetMenuState(help, EditorExtras::kShortcuts, MF_BYCOMMAND) == UINT(-1))
+                AppendMenuA(help, MF_STRING, EditorExtras::kShortcuts, "Reloaded &Shortcuts...");
+            SelfUpdater::AppendHelpMenu(help);
+        }
         DrawMenuBar(frameWindow);
     }
     void Install()
@@ -218,6 +223,7 @@ namespace
                "Build: Play From Camera as Spy / Merc starts a playtest at the perspective viewport's camera.\r\n"
                "Build: Set Level Snapshot from Viewport / Image File puts the picture the game shows in map selection\r\n"
                "into the map's <Map>-i package (Packages\\Textures), backing up the old one under ReloadedEditor.\r\n"
+               "Help: Check for Reloaded Updates offers the newest release; Check for Updates at Startup turns the automatic check on or off.\r\n"
                "View > Reloaded Tools: Map Design (its own Keys... window lists the plan's shortcuts), Brush Visibility,\r\n"
                "Gameplay Connections, SMagicEvent Workbench, SCamNetwork Manager, Working Views, Assemblies, JSON.\r\n";
     }
@@ -391,6 +397,7 @@ void EditorExtras::AppendActorMenu(HMENU menu)
 
 bool EditorExtras::HandleCommand(UINT command)
 {
+    if (SelfUpdater::HandleCommand(command)) return true;
     const bool ours = (command >= kSelectSameClass && command <= kLevelSnapshotFile) || (command >= kRecentFirst && command <= kRecentLast);
     if (!ours) return false;
     try
