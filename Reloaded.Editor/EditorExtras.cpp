@@ -9,6 +9,7 @@
 #include "logger.h"
 #include <commctrl.h>
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -24,7 +25,15 @@ namespace Editor = Workflow::Editor;
 namespace
 {
     HWND frameWindow = nullptr;
-    HHOOK startupHook = nullptr;
+    // The install runs on the frame's thread from a message hook. The hook stays
+    // until an attempt puts every menu entry in place; `installed` says so,
+    // independently of the hook handle, which the injection thread stores only
+    // after the hook may already have run.
+    std::atomic<HHOOK> startupHook{nullptr};
+    std::atomic<bool> installed{false};
+    unsigned installAttempts = 0;
+    DWORD lastInstallAttempt = 0;
+    const char* installStep = "";
     HMENU recentMenu = nullptr;
     HWND shortcutsWindow = nullptr;
     std::vector<std::string> recent;
@@ -81,11 +90,20 @@ namespace
         RebuildRecentMenu();
     }
 
+    bool InstallMenus();
+
     // Every few seconds on the frame's thread: a newly opened or saved-as
-    // map goes to the top of the recent list, and counts as clean.
+    // map goes to the top of the recent list, and counts as clean. Menu
+    // entries lost to a rebuilt menu bar are put back.
     void Tick()
     {
         EditorConfigBits::Apply();
+        static bool reported = false;
+        if (!InstallMenus() && !reported)
+        {
+            reported = true;
+            Logger::log("Editor extras: some menu entries could not be put back on the timer");
+        }
         try
         {
             const auto map = Editor::MapFile();
@@ -145,12 +163,23 @@ namespace
                     if (GetMenuItemID(sub, j) == command) return sub;
         return nullptr;
     }
-    void InstallMenus()
+    bool HasSubMenu(HMENU menu, HMENU sub)
+    {
+        for (int i = 0; i < GetMenuItemCount(menu); ++i)
+            if (GetSubMenu(menu, i) == sub) return true;
+        return false;
+    }
+    // Idempotent; true when every entry is on the frame's current menu bar.
+    bool InstallMenus()
     {
         HMENU bar = GetMenu(frameWindow);
-        if (!bar) return;
-        if (HMENU file = GetSubMenu(bar, 0); file && !recentMenu)
+        if (!bar) return false;
+        HMENU file = GetSubMenu(bar, 0);
+        if (file && recentMenu && !HasSubMenu(file, recentMenu)) recentMenu = nullptr; // The bar was rebuilt.
+        bool changed = false;
+        if (file && !recentMenu)
         {
+            changed = true;
             // After New and Open.
             recentMenu = CreatePopupMenu();
             InsertMenuA(file, 2, MF_BYPOSITION | MF_POPUP, reinterpret_cast<UINT_PTR>(recentMenu), "Open &Recent");
@@ -158,6 +187,7 @@ namespace
         }
         if (HMENU build = MenuWithCommand(bar, 40038); build && GetMenuState(build, EditorExtras::kPlayFromCameraSpy, MF_BYCOMMAND) == UINT(-1))
         {
+            changed = true;
             AppendMenuA(build, MF_SEPARATOR, 0, nullptr);
             AppendMenuA(build, MF_STRING, EditorExtras::kPlayFromCameraSpy, "Play From Camera as &Spy");
             AppendMenuA(build, MF_STRING, EditorExtras::kPlayFromCameraMerc, "Play From Camera as &Merc");
@@ -168,32 +198,88 @@ namespace
         if (HMENU help = MenuWithCommand(bar, 40480))
         {
             if (GetMenuState(help, EditorExtras::kShortcuts, MF_BYCOMMAND) == UINT(-1))
+            {
+                changed = true;
                 AppendMenuA(help, MF_STRING, EditorExtras::kShortcuts, "Reloaded &Shortcuts...");
-            SelfUpdater::AppendHelpMenu(help);
+            }
+            if (GetMenuState(help, SelfUpdater::kCheckNow, MF_BYCOMMAND) == UINT(-1))
+            {
+                changed = true;
+                SelfUpdater::AppendHelpMenu(help);
+            }
         }
-        DrawMenuBar(frameWindow);
+        if (changed) DrawMenuBar(frameWindow);
+        HMENU build = MenuWithCommand(bar, 40038), help = MenuWithCommand(bar, 40480);
+        return file && recentMenu && HasSubMenu(file, recentMenu)
+            && build && GetMenuState(build, EditorExtras::kPlayFromCameraSpy, MF_BYCOMMAND) != UINT(-1)
+            && help && GetMenuState(help, EditorExtras::kShortcuts, MF_BYCOMMAND) != UINT(-1)
+            && GetMenuState(help, SelfUpdater::kCheckNow, MF_BYCOMMAND) != UINT(-1);
     }
-    void Install()
+
+    // Every step is safe to repeat, so a failed attempt is simply retried.
+    // installStep names the step for the log should one fault.
+    bool InstallSteps(std::string& error)
     {
-        LoadRecent();
-        EditorConfigBits::Apply();
-        LevelSnapshot::Attach(frameWindow);
-        InstallMenus();
-        SetWindowSubclass(frameWindow, FrameProc, 1, 0);
-        SetTimer(frameWindow, kTimer, 10000, nullptr);
+        static bool loaded = false;
+        try
+        {
+            installStep = "LoadRecent";
+            if (!loaded) { LoadRecent(); loaded = true; }
+            installStep = "EditorConfigBits::Apply";
+            EditorConfigBits::Apply();
+            installStep = "LevelSnapshot::Attach";
+            LevelSnapshot::Attach(frameWindow);
+            installStep = "SetWindowSubclass";
+            if (!SetWindowSubclass(frameWindow, FrameProc, 1, 0)) { error = "SetWindowSubclass failed"; return false; }
+            installStep = "SetTimer";
+            if (!SetTimer(frameWindow, kTimer, 10000, nullptr)) { error = "SetTimer failed"; return false; }
+            installStep = "InstallMenus";
+            if (!InstallMenus()) { error = "menu bar not ready"; return false; }
+            return true;
+        }
+        catch (const std::exception& e) { error = e.what(); }
+        catch (...) { error = "unknown C++ exception"; }
+        return false;
+    }
+    // Faults in a hook callback can vanish on WOW64 without a trace; catch
+    // them here so the attempt is logged and retried.
+    bool GuardedInstall(std::string& error, DWORD& fault)
+    {
+        __try { return InstallSteps(error); }
+        __except (fault = GetExceptionCode(), EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    void TryInstall()
+    {
+        if (installed || !IsWindow(frameWindow)) return;
+        const DWORD now = GetTickCount();
+        if (installAttempts && now - lastInstallAttempt < 250) return;
+        lastInstallAttempt = now;
+        ++installAttempts;
+        std::string error;
+        DWORD fault = 0;
+        if (GuardedInstall(error, fault))
+        {
+            installed = true;
+            Logger::log("Editor extras: installed on attempt " + std::to_string(installAttempts));
+            return;
+        }
+        // The first few failures, then every 40th (about every 10s).
+        if (installAttempts <= 5 || installAttempts % 40 == 0)
+        {
+            char code[32] = "";
+            if (fault) sprintf_s(code, "fault 0x%08lX", fault);
+            Logger::log("Editor extras: attempt " + std::to_string(installAttempts) + " failed at " + installStep + ": "
+                        + (fault ? std::string(code) : error));
+        }
     }
     LRESULT CALLBACK StartupHook(int code, WPARAM w, LPARAM l)
     {
-        // Runs on the frame's thread. The first message brings everything up;
-        // then the hook removes itself.
-        HHOOK hook = startupHook;
-        const LRESULT result = CallNextHookEx(hook, code, w, l);
-        if (hook)
-        {
-            startupHook = nullptr;
-            try { Install(); } catch (const std::exception& e) { Logger::log(std::string("Editor extras: ") + e.what()); }
-            UnhookWindowsHookEx(hook);
-        }
+        // Runs on the frame's thread, on every message until the install
+        // succeeds; then the hook removes itself.
+        const LRESULT result = CallNextHookEx(nullptr, code, w, l);
+        if (code >= 0) TryInstall();
+        if (installed)
+            if (HHOOK hook = startupHook.exchange(nullptr)) UnhookWindowsHookEx(hook);
         return result;
     }
 
@@ -376,9 +462,28 @@ void EditorExtras::Attach(HWND frame)
 {
     if (!frame || frameWindow) return;
     frameWindow = frame;
-    startupHook = SetWindowsHookExA(WH_GETMESSAGE, StartupHook, nullptr, GetWindowThreadProcessId(frame, nullptr));
-    if (startupHook) PostMessage(frame, WM_NULL, 0, 0); // Something for the hook to see.
-    else Logger::log("Editor extras: could not reach the frame's thread");
+    const DWORD thread = GetWindowThreadProcessId(frame, nullptr);
+    Logger::log("Editor extras: attaching to the frame's thread " + std::to_string(thread));
+    // A hook on another thread belongs to the thread that set it and goes
+    // away when that thread exits. Returning at once let the injection thread
+    // end before the frame's thread, busy starting up, had looked at a
+    // message: then nothing was installed at all. So this thread waits for
+    // the install, hooking again if hooking failed and giving the hook
+    // messages to see.
+    for (int i = 0; i < 1200 && !installed; ++i) // up to ~10 minutes
+    {
+        if (!IsWindow(frame)) { Logger::log("Editor extras: the frame window went away before the install"); return; }
+        if (!startupHook)
+        {
+            HHOOK hook = SetWindowsHookExA(WH_GETMESSAGE, StartupHook, nullptr, thread);
+            if (!hook && i % 20 == 0) Logger::log("Editor extras: could not hook the frame's thread, error " + std::to_string(GetLastError()));
+            startupHook = hook;
+        }
+        if (i == 60) Logger::log("Editor extras: not installed after 30s, still trying (" + std::to_string(installAttempts) + " attempts)");
+        if (i % 4 == 0) PostMessage(frame, WM_NULL, 0, 0); // Something for the hook to see.
+        Sleep(500);
+    }
+    if (!installed) Logger::log("Editor extras: gave up waiting for the install");
 }
 
 void EditorExtras::AppendActorMenu(HMENU menu)

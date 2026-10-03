@@ -24,6 +24,8 @@ namespace EditorExtras
 
     // From the menu-injection thread, once the editor frame exists: brings up
     // the timer, the frame subclass and the menu entries on the frame's thread.
+    // Returns once they are in place: the calling thread owns the hook that
+    // does the work, so it must not exit before then.
     void Attach(HWND frame);
     // From the frame's command dispatcher. True when the command was ours.
     bool HandleCommand(UINT command);
