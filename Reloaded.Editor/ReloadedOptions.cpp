@@ -231,46 +231,29 @@ static void LoadSettings()
 
 static void SaveSettings()
 {
+    // Key by key: Reloaded_Editor.ini also holds the static mesh and texture
+    // favourites, the update settings and others' sections, which rewriting
+    // the whole file used to delete.
     const std::string ini = GetIniPath();
-    // Write the INI manually to keep blank lines between sections.
-    char text[512];
-    int len = snprintf(text, sizeof(text),
-        "[Viewport]\r\n"
-        "MaxFPS=%d\r\n"
-        "MuteSounds=%d\r\n"
-        "NoDuplicateOffset=%d\r\n"
-        "\r\n"
-        "[GEKeybinds]\r\n"
-        "LedgeGrab=%c\r\n"
-        "HandOverHand=%c\r\n"
-        "Pipe=%c\r\n"
-        "Ladder=%c\r\n"
-        "Zipline=%c\r\n"
-        "Fence=%c\r\n"
-        "\r\n"
-        "[General]\r\n"
-        "MinimizeOnPlay=%d\r\n",
-        g_ReloadedMaxFPS,
-        g_ReloadedMuteSounds ? 1 : 0,
-        g_ReloadedNoDuplicateOffset ? 1 : 0,
-        static_cast<char>(g_KeyLedgeGrab),
-        static_cast<char>(g_KeyHandOverHand),
-        static_cast<char>(g_KeyPipe),
-        static_cast<char>(g_KeyLadder),
-        static_cast<char>(g_KeyZipline),
-        static_cast<char>(g_KeyFence),
-        g_ReloadedMinimizeOnPlay ? 1 : 0);
-    if (len <= 0)
-        return;
-
-    HANDLE h = CreateFileA(ini.c_str(), GENERIC_WRITE, 0, nullptr,
-                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE)
-        return;
-
-    DWORD written = 0;
-    WriteFile(h, text, static_cast<DWORD>(len), &written, nullptr);
-    CloseHandle(h);
+    auto put = [&](const char* section, const char* key, int value) {
+        char text[16];
+        snprintf(text, sizeof(text), "%d", value);
+        WritePrivateProfileStringA(section, key, text, ini.c_str());
+    };
+    auto putKey = [&](const char* key, uint8_t letter) {
+        const char text[2] = { static_cast<char>(letter), '\0' };
+        WritePrivateProfileStringA("GEKeybinds", key, text, ini.c_str());
+    };
+    put("Viewport", "MaxFPS", g_ReloadedMaxFPS);
+    put("Viewport", "MuteSounds", g_ReloadedMuteSounds ? 1 : 0);
+    put("Viewport", "NoDuplicateOffset", g_ReloadedNoDuplicateOffset ? 1 : 0);
+    putKey("LedgeGrab", g_KeyLedgeGrab);
+    putKey("HandOverHand", g_KeyHandOverHand);
+    putKey("Pipe", g_KeyPipe);
+    putKey("Ladder", g_KeyLadder);
+    putKey("Zipline", g_KeyZipline);
+    putKey("Fence", g_KeyFence);
+    put("General", "MinimizeOnPlay", g_ReloadedMinimizeOnPlay ? 1 : 0);
 }
 
 static void SetGEEdit(HWND hDlg, int id, uint8_t key)
