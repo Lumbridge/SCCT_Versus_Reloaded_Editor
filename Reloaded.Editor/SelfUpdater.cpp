@@ -10,9 +10,11 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "bcrypt.lib")
+#pragma comment(lib, "version.lib")
 
 using Updater::Bytes;
 using Updater::Release;
@@ -22,7 +24,14 @@ namespace fs = std::filesystem;
 namespace
 {
     constexpr wchar_t kReleasesUrl[] = L"https://api.github.com/repos/Lumbridge/SCCT_Versus_Reloaded_Editor/releases?per_page=20";
+    // + the tag: one release, for the notes of the version running.
+    constexpr wchar_t kReleaseByTagUrl[] = L"https://api.github.com/repos/Lumbridge/SCCT_Versus_Reloaded_Editor/releases/tags/";
+    constexpr wchar_t kApiHeaders[] = L"Accept: application/vnd.github+json\r\nX-GitHub-Api-Version: 2022-11-28\r\n";
+    constexpr char kReleasePage[] = "https://github.com/Lumbridge/SCCT_Versus_Reloaded_Editor/releases/tag/v";
     constexpr wchar_t kTitle[] = L"RE+ Update";
+    // The release notes window, shown a moment after the frame is up.
+    constexpr UINT_PTR kWhatsNewTimer = 0x524E;
+    constexpr UINT kWhatsNewDelayMs = 1500;
     constexpr char kSection[] = "Updates";
     // Long enough for the editor to finish opening before anything asks.
     constexpr DWORD kStartupDelayMs = 8000;
@@ -33,11 +42,16 @@ namespace
 
     fs::path directory;
     std::atomic<bool> busy{false};
-    // Set once an update is in place, so a second check before the restart
-    // does not offer the same release again.
+    // Set once an update or a roll back is in place, so a second check before
+    // the restart does not offer the same release again.
     std::atomic<bool> installed{false};
-    std::string installedVersion;
+    std::wstring installedName; // "RE+ 2.1.0" or "The previous version"
     HMENU helpMenu = nullptr;
+    HWND frame = nullptr;
+    // Set once the start-up clean-up has kept or removed the last update's files.
+    HANDLE cleanedUp = nullptr;
+    std::mutex fetchedLock;
+    std::optional<Updater::WhatsNew> fetched;
 
     std::wstring Wide(const std::string& s)
     {
@@ -46,6 +60,14 @@ namespace
         std::wstring w(n, L'\0');
         MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
         return w;
+    }
+    std::string Narrow(const std::wstring& w)
+    {
+        if (w.empty()) return {};
+        const int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+        std::string s(n, '\0');
+        WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), s.data(), n, nullptr, nullptr);
+        return s;
     }
 
     std::string IniPath()
@@ -215,21 +237,298 @@ namespace
         }
     }
 
-    // What the previous update left behind. The old DLL is no longer loaded
-    // once the editor has restarted; one still in use by another open editor
-    // stays until a later start.
+    // Reloaded.Editor.previous.dll, Reloaded_Editor.previous.exe: the version
+    // an update replaced, which Roll Back puts back.
+    fs::path Previous(const fs::path& target)
+    {
+        return target.parent_path() / (target.stem().wstring() + L".previous" + target.extension().wstring());
+    }
+
+    // Puts image in place of target and keeps the running target as its
+    // Previous, replacing the one image was read from: a swap that leaves the
+    // newer version ready to switch back to.
+    void SwapWithPrevious(const fs::path& target, const Bytes& image)
+    {
+        const auto staged = Staged(target), previous = Previous(target);
+        Store(staged, image);
+        if (!MoveFileExW(target.c_str(), previous.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        {
+            const DWORD error = GetLastError();
+            std::error_code ignored;
+            fs::remove(staged, ignored);
+            SetLastError(error);
+            FailWin32("Could not move " + target.filename().string() + " aside");
+        }
+        if (!MoveFileExW(staged.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        {
+            const DWORD error = GetLastError();
+            // The running file back, then the previous one from its copy.
+            MoveFileExW(previous.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+            MoveFileExW(staged.c_str(), previous.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+            SetLastError(error);
+            FailWin32("Could not put the previous " + target.filename().string() + " in place");
+        }
+    }
+
+    // What the last update left behind. The old DLL is no longer loaded once
+    // the editor has restarted, and renaming works even while another open
+    // editor still uses it, so it is kept as the previous version; staged
+    // files of an interrupted install are removed.
     void CleanUp()
     {
-        for (const char* name : {kDllName, kLauncherName})
-        {
-            const auto target = directory / name;
-            for (const auto& leftover : {Old(target), Staged(target)})
+        using Updater::CleanUpAction;
+        const auto dll = directory / kDllName, launcher = directory / kLauncherName;
+        std::error_code e;
+        Updater::Leftovers found;
+        found.oldDll = fs::exists(Old(dll), e);
+        found.oldLauncher = fs::exists(Old(launcher), e);
+        found.previousLauncher = fs::exists(Previous(launcher), e);
+        found.stagedDll = fs::exists(Staged(dll), e);
+        found.stagedLauncher = fs::exists(Staged(launcher), e);
+        auto keep = [](const fs::path& from, const fs::path& to) {
+            if (MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
             {
-                std::error_code e;
-                if (fs::exists(leftover, e) && !fs::remove(leftover, e))
-                    Logger::log("Updater: could not remove " + leftover.string() + " yet");
+                Logger::log("Updater: kept " + from.filename().string() + " as " + to.filename().string());
+                return true;
+            }
+            Logger::log("Updater: could not keep " + from.filename().string() + " as " + to.filename().string()
+                        + " yet (error " + std::to_string(GetLastError()) + ")");
+            return false;
+        };
+        auto remove = [](const fs::path& path) {
+            std::error_code error;
+            if (fs::remove(path, error) || !fs::exists(path, error)) return true;
+            Logger::log("Updater: could not remove " + path.string() + " yet");
+            return false;
+        };
+        bool keptDll = true;
+        for (const auto& step : Updater::CleanUpPlan(found))
+        {
+            if (step.needsDll && !keptDll) continue;
+            switch (step.action)
+            {
+            case CleanUpAction::KeepOldDll: keptDll = keep(Old(dll), Previous(dll)); break;
+            case CleanUpAction::KeepOldLauncher: keep(Old(launcher), Previous(launcher)); break;
+            case CleanUpAction::RemovePreviousLauncher: remove(Previous(launcher)); break;
+            case CleanUpAction::RemoveOldLauncher: remove(Old(launcher)); break;
+            case CleanUpAction::RemoveStagedDll: remove(Staged(dll)); break;
+            case CleanUpAction::RemoveStagedLauncher: remove(Staged(launcher)); break;
             }
         }
+    }
+
+    // The version in a DLL's file properties; nullopt for 1.x builds, which
+    // did not record it.
+    std::optional<Version> FileVersion(const fs::path& file)
+    {
+        DWORD ignored = 0;
+        const DWORD size = GetFileVersionInfoSizeW(file.c_str(), &ignored);
+        if (!size) return std::nullopt;
+        std::vector<BYTE> data(size);
+        if (!GetFileVersionInfoW(file.c_str(), 0, size, data.data())) return std::nullopt;
+        struct Translation { WORD language, codePage; };
+        Translation* translation = nullptr;
+        UINT length = 0;
+        if (!VerQueryValueW(data.data(), L"\\VarFileInfo\\Translation", reinterpret_cast<void**>(&translation), &length) || length < sizeof(Translation))
+            return std::nullopt;
+        wchar_t key[64] = {};
+        swprintf_s(key, L"\\StringFileInfo\\%04x%04x\\ProductVersion", translation->language, translation->codePage);
+        wchar_t* value = nullptr;
+        if (!VerQueryValueW(data.data(), key, reinterpret_cast<void**>(&value), &length) || !length || !value) return std::nullopt;
+        return Updater::ProductVersion(Narrow(value));
+    }
+
+    // What's new: the notes of the release last installed.
+    fs::path WhatsNewPath() { return directory / "ReloadedEditor" / "WhatsNew.txt"; }
+    std::optional<Updater::WhatsNew> LoadWhatsNew()
+    {
+        const auto bytes = Load(WhatsNewPath());
+        return Updater::WhatsNew::Parse(std::string(bytes.begin(), bytes.end()));
+    }
+    void SaveWhatsNew(const Updater::WhatsNew& record)
+    {
+        try
+        {
+            std::error_code e;
+            fs::create_directories(WhatsNewPath().parent_path(), e);
+            const auto text = record.Format();
+            Store(WhatsNewPath(), Bytes(text.begin(), text.end()));
+        }
+        catch (const std::exception& e) { Logger::log(std::string("Updater: could not save the release notes: ") + e.what()); }
+    }
+
+    HWND whatsNewWindow = nullptr;
+    LRESULT CALLBACK WhatsNewProc(HWND window, UINT message, WPARAM w, LPARAM l)
+    {
+        if (message == WM_CREATE)
+        {
+            HWND edit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,
+                                        8, 8, 600, 400, window, reinterpret_cast<HMENU>(1), GetModuleHandle(nullptr), nullptr);
+            SendMessageW(edit, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+            SendMessageW(edit, EM_SETLIMITTEXT, 0, 0);
+            return 0;
+        }
+        if (message == WM_SIZE) { MoveWindow(GetDlgItem(window, 1), 8, 8, (std::max)(1, LOWORD(l) - 16), (std::max)(1, HIWORD(l) - 16), TRUE); return 0; }
+        if (message == WM_CLOSE) { DestroyWindow(window); return 0; }
+        if (message == WM_NCDESTROY) whatsNewWindow = nullptr;
+        return DefWindowProcW(window, message, w, l);
+    }
+    // A resizable, read-only window: release notes can be long.
+    void ShowWhatsNew(const Updater::WhatsNew& record)
+    {
+        const auto caption = L"What's New in " RE_PLUS_NAME L" " + Wide(record.version);
+        if (!whatsNewWindow)
+        {
+            static bool registered = false;
+            WNDCLASSW wc{};
+            wc.hInstance = GetModuleHandle(nullptr);
+            wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+            wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
+            wc.lpfnWndProc = WhatsNewProc;
+            wc.lpszClassName = L"ReloadedWhatsNew";
+            if (!registered) registered = RegisterClassW(&wc) != 0;
+            whatsNewWindow = CreateWindowExW(WS_EX_TOOLWINDOW, wc.lpszClassName, caption.c_str(), WS_OVERLAPPEDWINDOW,
+                                             CW_USEDEFAULT, CW_USEDEFAULT, 640, 460, frame, nullptr, wc.hInstance, nullptr);
+            if (!whatsNewWindow) { Logger::log("Updater: could not open the What's New window"); return; }
+        }
+        else SetWindowTextW(whatsNewWindow, caption.c_str());
+        std::string text = record.title.empty() ? RE_PLUS_NAME " " + record.version : record.title;
+        text += "\r\n\r\n" + (record.notes.empty() ? std::string("This release has no notes.") : record.notes);
+        text += std::string("\r\n\r\n") + kReleasePage + record.version;
+        SetWindowTextW(GetDlgItem(whatsNewWindow, 1), Wide(text).c_str());
+        ShowWindow(whatsNewWindow, SW_SHOWNORMAL);
+        SetForegroundWindow(whatsNewWindow);
+    }
+
+    // Once, at the first start of a version the updater installed.
+    void CALLBACK WhatsNewAtStart(HWND window, UINT, UINT_PTR id, DWORD)
+    {
+        KillTimer(window, id);
+        auto record = LoadWhatsNew();
+        if (!record || !record->ShowAtStart(RE_PLUS_VERSION)) return;
+        record->shown = true;
+        SaveWhatsNew(*record);
+        Logger::log("Updater: showing what's new in " + record->version);
+        ShowWhatsNew(*record);
+    }
+
+    // Help > What's New when the notes are not kept here: the editor was
+    // installed by hand, or the notes belong to another version.
+    DWORD WINAPI FetchNotesThread(LPVOID)
+    {
+        try
+        {
+            const auto body = Get(kReleaseByTagUrl + Wide("v" RE_PLUS_VERSION), kApiHeaders, kMaxListBytes);
+            const auto release = Updater::Json::parse(body.begin(), body.end(), nullptr, false);
+            if (release.is_discarded()) throw std::runtime_error("GitHub returned a release that could not be read.");
+            const auto [title, notes] = Updater::TitleAndNotes(release);
+            {
+                std::lock_guard lock(fetchedLock);
+                fetched = Updater::WhatsNew{RE_PLUS_VERSION, title, Updater::PlainNotes(notes, Updater::WhatsNew::kNotesLimit), true};
+            }
+            if (!frame || !PostMessageW(frame, WM_COMMAND, SelfUpdater::kShowFetchedNotes, 0)) throw std::runtime_error("The editor window went away.");
+        }
+        catch (const std::exception& e)
+        {
+            Logger::log(std::string("Updater: could not fetch the release notes: ") + e.what());
+            Ask(L"Could not fetch the notes for " RE_PLUS_DISPLAY_VERSION L".\r\n\r\n" + Wide(e.what())
+                    + L"\r\n\r\nEvery release's notes are at https://github.com/Lumbridge/SCCT_Versus_Reloaded_Editor/releases",
+                MB_OK | MB_ICONWARNING);
+        }
+        return 0;
+    }
+
+    std::wstring PreviousName(const std::optional<Version>& version)
+    {
+        return version ? L"RE+ " + Wide(version->ToString()) : L"the previous version";
+    }
+    // "Roll Back to RE+ 2.0.0..." (or Forward, after rolling back), greyed
+    // when no previous version is kept or a change waits for a restart.
+    void UpdateRollBackItem()
+    {
+        if (!helpMenu) return;
+        const auto previous = Previous(directory / kDllName);
+        std::error_code e;
+        std::wstring label;
+        UINT flags = MF_BYCOMMAND | MF_STRING;
+        if (installed) label = L"Roll &Back (restart the editor to finish the change)", flags |= MF_GRAYED;
+        else if (!fs::exists(previous, e)) label = L"Roll &Back to a Previous Version", flags |= MF_GRAYED;
+        else
+        {
+            const auto version = FileVersion(previous);
+            const auto current = Version::Parse(RE_PLUS_VERSION);
+            const bool forward = version && current && *current < *version;
+            label = std::wstring(forward ? L"Roll &Forward to " : L"Roll &Back to ") + (version ? PreviousName(version) : L"the Previous Version") + L"...";
+        }
+        ModifyMenuW(helpMenu, SelfUpdater::kRollBack, flags, SelfUpdater::kRollBack, label.c_str());
+    }
+
+    void RollBack()
+    {
+        const auto dll = directory / kDllName, launcher = directory / kLauncherName, previous = Previous(dll);
+        auto tell = [](const std::wstring& text, UINT icon) { MessageBoxW(frame, text.c_str(), L"RE+ Roll Back", MB_OK | icon); };
+        if (installed)
+        {
+            tell(installedName + L" is already in place. Save your work and restart the editor to start using it.", MB_ICONINFORMATION);
+            return;
+        }
+        std::error_code e;
+        if (!fs::exists(previous, e))
+        {
+            tell(L"No previous version is kept. One is kept from the next update on.", MB_ICONINFORMATION);
+            UpdateRollBackItem();
+            return;
+        }
+        const auto version = FileVersion(previous);
+        const auto current = Version::Parse(RE_PLUS_VERSION);
+        const bool forward = version && current && *current < *version;
+        const auto skip = Updater::SkipAfterRollBack(RE_PLUS_VERSION, version);
+        auto name = PreviousName(version);
+        std::wstring text = std::wstring(forward ? L"Switch to " : L"Roll back to ") + name + L"?\r\n\r\n"
+                            RE_PLUS_DISPLAY_VERSION L" is kept in its place, so you can switch back from the Help menu. "
+                            L"The change takes effect when you restart the editor.";
+        if (!skip.empty())
+            text += L"\r\n\r\nThe update check at startup will not offer " RE_PLUS_DISPLAY_VERSION
+                    L" again; Help > Check for RE+ Updates still can.";
+        if (MessageBoxW(frame, text.c_str(), L"RE+ Roll Back", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+        if (busy.exchange(true))
+        {
+            tell(L"An update check is running. Try again when it has finished.", MB_ICONINFORMATION);
+            return;
+        }
+        struct Done { ~Done() { busy = false; } } done;
+        try
+        {
+            const auto image = Load(previous);
+            if (Updater::ImageKind(image) != Updater::Image::Dll)
+                throw std::runtime_error("Reloaded.Editor.previous.dll is not a 32-bit Windows DLL.");
+            SwapWithPrevious(dll, image);
+            if (fs::exists(Previous(launcher), e))
+                try
+                {
+                    const auto exe = Load(Previous(launcher));
+                    if (Updater::ImageKind(exe) != Updater::Image::Exe) throw std::runtime_error("it is not a 32-bit Windows program");
+                    SwapWithPrevious(launcher, exe);
+                }
+                catch (const std::exception& error)
+                {
+                    // The launcher only injects the DLL; either one starts either DLL.
+                    Logger::log(std::string("Updater: launcher left as it was: ") + error.what());
+                }
+        }
+        catch (const std::exception& error)
+        {
+            Logger::log(std::string("Updater: roll back failed: ") + error.what());
+            tell(L"Could not roll back. The editor is unchanged.\r\n\r\n" + Wide(error.what()), MB_ICONERROR);
+            return;
+        }
+        if (!skip.empty()) SetSkippedVersion(skip);
+        name[0] = towupper(name[0]);
+        installedName = name;
+        installed = true;
+        Logger::log("Updater: rolled " + std::string(forward ? "forward" : "back") + " from " RE_PLUS_VERSION " to " + Narrow(name));
+        UpdateRollBackItem();
+        tell(name + L" is in place. Save your work and restart the editor to start using it.", MB_ICONINFORMATION);
     }
 
     // A pre-release (2.1.0-rc.1) is only offered to an editor already running
@@ -305,7 +604,7 @@ namespace
             if (installed)
             {
                 if (interactive)
-                    Ask(L"RE+ " + Wide(installedVersion) + L" is already installed. Save your work and restart the editor to start using it.", MB_OK | MB_ICONINFORMATION);
+                    Ask(installedName + L" is already in place. Save your work and restart the editor to start using it.", MB_OK | MB_ICONINFORMATION);
                 return;
             }
             const auto newest = Fetch(current && !current->pre.empty());
@@ -333,10 +632,14 @@ namespace
                 Ask(L"The update could not be installed. The editor is unchanged.\r\n\r\n" + Wide(e.what()), MB_OK | MB_ICONERROR);
                 return;
             }
-            installedVersion = release.version.ToString();
+            installedName = L"RE+ " + Wide(release.version.ToString());
             installed = true;
             SetSkippedVersion("");
-            Ask(L"RE+ " + Wide(installedVersion) + L" is installed. Save your work and restart the editor to start using it.", MB_OK | MB_ICONINFORMATION);
+            // Shown once by the first start of the new version.
+            SaveWhatsNew({release.version.ToString(), release.name.empty() ? release.tag : release.name,
+                          Updater::PlainNotes(release.notes, Updater::WhatsNew::kNotesLimit), false});
+            UpdateRollBackItem();
+            Ask(installedName + L" is installed. Save your work and restart the editor to start using it.", MB_OK | MB_ICONINFORMATION);
         }
         catch (const std::exception& e)
         {
@@ -349,6 +652,7 @@ namespace
     DWORD WINAPI StartupThread(LPVOID)
     {
         CleanUp();
+        SetEvent(cleanedUp);
         if (!CheckOnStartup()) return 0;
         Sleep(kStartupDelayMs);
         Check(false);
@@ -360,18 +664,29 @@ namespace
 void SelfUpdater::Initialize(const std::wstring& dllPath)
 {
     directory = fs::path(dllPath).parent_path();
+    cleanedUp = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     // DllMain holds the loader lock; everything happens on the worker.
     if (HANDLE h = CreateThread(nullptr, 0, StartupThread, nullptr, 0, nullptr)) CloseHandle(h);
+    else if (cleanedUp) SetEvent(cleanedUp);
 }
 
-void SelfUpdater::AppendHelpMenu(HMENU help)
+void SelfUpdater::AppendHelpMenu(HMENU help, HWND frameWindow)
 {
     if (GetMenuState(help, kCheckNow, MF_BYCOMMAND) != UINT(-1)) return;
     helpMenu = help;
+    frame = frameWindow;
+    // The Roll Back item names the kept version, which the clean-up may only
+    // just have put in place.
+    if (cleanedUp) WaitForSingleObject(cleanedUp, 3000);
     AppendMenuA(help, MF_SEPARATOR, 0, nullptr);
     AppendMenuA(help, MF_STRING, kCheckNow, "Check for " RE_PLUS_NAME " &Updates...");
     AppendMenuA(help, MF_STRING | (CheckOnStartup() ? MF_CHECKED : MF_UNCHECKED), kToggleStartupCheck, "Check for Updates at S&tartup");
+    AppendMenuA(help, MF_STRING, kWhatsNew, "What's &New in " RE_PLUS_NAME "...");
+    AppendMenuA(help, MF_STRING, kRollBack, "Roll &Back");
+    UpdateRollBackItem();
     AppendMenuA(help, MF_STRING, kAbout, "&About " RE_PLUS_NAME "...");
+    static bool scheduled = false;
+    if (!scheduled && frame) scheduled = SetTimer(frame, kWhatsNewTimer, kWhatsNewDelayMs, WhatsNewAtStart) != 0;
 }
 
 bool SelfUpdater::HandleCommand(UINT command)
@@ -396,6 +711,27 @@ bool SelfUpdater::HandleCommand(UINT command)
         const bool on = !CheckOnStartup();
         SetCheckOnStartup(on);
         if (helpMenu) CheckMenuItem(helpMenu, kToggleStartupCheck, MF_BYCOMMAND | (on ? MF_CHECKED : MF_UNCHECKED));
+        return true;
+    }
+    if (command == kWhatsNew)
+    {
+        if (const auto record = LoadWhatsNew(); record && record->For(RE_PLUS_VERSION)) ShowWhatsNew(*record);
+        else if (HANDLE h = CreateThread(nullptr, 0, FetchNotesThread, nullptr, 0, nullptr)) CloseHandle(h);
+        return true;
+    }
+    if (command == kShowFetchedNotes)
+    {
+        std::optional<Updater::WhatsNew> notes;
+        {
+            std::lock_guard lock(fetchedLock);
+            notes.swap(fetched);
+        }
+        if (notes) ShowWhatsNew(*notes);
+        return true;
+    }
+    if (command == kRollBack)
+    {
+        RollBack();
         return true;
     }
     return false;

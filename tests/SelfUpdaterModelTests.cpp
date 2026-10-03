@@ -138,6 +138,49 @@ int main()
         Check(cut == std::string(10, 'a') + "...", "cut does not split UTF-8");
         Check(PlainNotes("").empty(), "empty notes");
 
+        // What's new.
+        Json one = {{"tag_name", "v2.1.0"}, {"name", "RE+ 2.1.0"}, {"body", "## Added\n- Roll back"}};
+        auto [title, body] = TitleAndNotes(one);
+        Check(title == "RE+ 2.1.0" && body == "## Added\n- Roll back", "release title and notes");
+        Check(TitleAndNotes(Json{{"tag_name", "v2.1.0"}}).first == "v2.1.0", "title falls back to the tag");
+        Reject([] { TitleAndNotes(Json::array()); });
+        WhatsNew record{"2.1.0", "RE+ 2.1.0\r\nsecond line", PlainNotes("## Added\n- Roll back\n\nMore.", WhatsNew::kNotesLimit)};
+        const auto stored = record.Format();
+        auto back = WhatsNew::Parse(stored);
+        Check(back && back->version == "2.1.0" && back->title == "RE+ 2.1.0 second line" && !back->shown, "record round trip");
+        Check(back->notes == "Added\r\n- Roll back\r\n\r\nMore.", "notes kept with their blank lines");
+        Check(back->ShowAtStart("2.1.0") && back->ShowAtStart("v2.1.0"), "shown at the first start of its version");
+        Check(!back->ShowAtStart("2.0.0") && !back->ShowAtStart("2.1.0-rc.1") && !back->ShowAtStart("junk"), "not for another version");
+        back->shown = true;
+        auto again = WhatsNew::Parse(back->Format());
+        Check(again && again->shown && !again->ShowAtStart("2.1.0") && again->For("2.1.0"), "shown once, still available on demand");
+        Check(WhatsNew::Parse("RE+ What's New\nVersion=2.1.0\nShown=1\n")->notes.empty(), "LF record without notes");
+        Check(!WhatsNew::Parse("") && !WhatsNew::Parse("Version=2.1.0\r\n\r\nx") && !WhatsNew::Parse("RE+ What's New\r\nVersion=latest\r\n\r\nx"),
+              "damaged records refused");
+
+        // Previous versions.
+        Check(ProductVersion("RE+ 2.0.0") && *ProductVersion("RE+ 2.0.0") == V("2.0.0"), "RE+ product version");
+        Check(ProductVersion("RE+ 2.1.0-rc.1")->ToString() == "2.1.0-rc.1", "release candidate");
+        Check(!ProductVersion("2.0.0.1") && !ProductVersion("2.0.0") && !ProductVersion("") && !ProductVersion("RE+ x"), "1.x builds are unknown");
+        Check(SkipAfterRollBack("2.1.0", V("2.0.0")) == "v2.1.0", "rolling back skips the version left");
+        Check(SkipAfterRollBack("2.1.0", std::nullopt) == "v2.1.0", "unknown previous treated as older");
+        Check(SkipAfterRollBack("2.0.0", V("2.1.0")).empty() && SkipAfterRollBack("2.1.0", V("2.1.0")).empty(), "rolling forward skips nothing");
+
+        // Clean-up at start.
+        auto plan = [](Leftovers l) {
+            std::string s;
+            for (const auto& step : CleanUpPlan(l)) s += std::to_string(static_cast<int>(step.action)) + (step.needsDll ? "d" : "") + " ";
+            return s;
+        };
+        Check(plan({}).empty(), "nothing to do");
+        Check(plan({true}) == "0 ", "the old DLL becomes the previous one");
+        Check(plan({true, true}) == "0 1d ", "with its launcher");
+        Check(plan({true, false, true}) == "0 2d ", "a previous launcher that no longer matches goes");
+        Check(plan({true, true, true}) == "0 1d ", "a new previous launcher replaces it");
+        Check(plan({false, true, true}) == "3 ", "a lone old launcher goes; the previous pair stays");
+        Check(plan({false, false, true}).empty(), "previous version left alone");
+        Check(plan({true, false, false, true, true}) == "0 4 5 ", "staged files removed");
+
         // Zip directory.
         Check(Crc32(reinterpret_cast<const std::uint8_t*>("123456789"), 9) == 0xCBF43926u, "CRC-32 check value");
         const Bytes dll = PeFile(0x14C, true), exe = PeFile(0x14C, false);

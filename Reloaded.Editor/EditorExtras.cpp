@@ -205,7 +205,7 @@ namespace
             if (GetMenuState(help, SelfUpdater::kCheckNow, MF_BYCOMMAND) == UINT(-1))
             {
                 changed = true;
-                SelfUpdater::AppendHelpMenu(help);
+                SelfUpdater::AppendHelpMenu(help, frameWindow);
             }
         }
         if (changed) DrawMenuBar(frameWindow);
@@ -310,7 +310,9 @@ namespace
                "Build: Play From Camera as Spy / Merc starts a playtest at the perspective viewport's camera.\r\n"
                "Build: Set Level Snapshot from Viewport / Image File puts the picture the game shows in map selection\r\n"
                "into the map's <Map>-i package (Packages\\Textures), backing up the old one under ReloadedEditor.\r\n"
-               "Help: Check for RE+ Updates offers the newest release; Check for Updates at Startup turns the automatic check on or off; About RE+ shows the version.\r\n"
+               "Help: Check for RE+ Updates offers the newest release; Check for Updates at Startup turns the automatic check on or off;\r\n"
+               "What's New in RE+ shows this version's release notes (also shown once after an update); Roll Back puts the version\r\n"
+               "an update replaced back in place (and the newer one stays kept, to switch again); About RE+ shows the version.\r\n"
                "View > Reloaded Tools: Map Design (its own Keys... window lists the plan's shortcuts), Brush Visibility,\r\n"
                "Gameplay Connections, SMagicEvent Workbench, SCamNetwork Manager, Working Views, Assemblies, JSON.\r\n";
     }
