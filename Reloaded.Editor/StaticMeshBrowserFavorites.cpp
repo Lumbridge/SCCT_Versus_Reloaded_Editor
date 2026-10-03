@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "StaticMeshBrowserFavorites.h"
+#include "MeshFavoritesModel.h"
 #include "WorkflowTools.h"
 #include "MemoryWriter.h"
 #include <commctrl.h>
@@ -45,21 +46,33 @@
 #define STATIC_MESH_CONTEXT_MENU_ID    15159
 #define IDMN_SM_TOGGLE_FAVORITE        40909
 #define IDC_SM_FAVORITES_FILTER        40910
+#define IDC_SM_FAVORITES_PACKAGE       40914
+#define IDC_SM_FAVORITES_SORT          40915
 #define WM_SM_ATTACH_FAVORITES         (WM_APP + 0x5A)
+#define WM_SM_REFRESH_FAVORITES        (WM_APP + 0x5B)
 #define TIMER_SM_FAVORITES_REFRESH     0x5AF1
 
 static constexpr const char* kFavoritesIniSection =
     "StaticMeshBrowserFavorites";
+// Kept apart: saving the favourites rewrites their whole section.
+static constexpr const char* kViewIniSection =
+    "StaticMeshBrowserFavoritesView";
 static constexpr int kMaxFavorites = 4096;
 
-struct SM_ResolvedFavorite
-{
-    std::string Path;
-    void* Object;
-};
-
+// g_FavoritePaths is in the order the favourites were added (the ini order);
+// g_FavoriteObjects holds each one's mesh while it is loaded, else nullptr.
 static std::vector<std::string> g_FavoritePaths;
-static std::vector<SM_ResolvedFavorite> g_ResolvedFavorites;
+static std::vector<void*> g_FavoriteObjects;
+static size_t g_LastResolvedCount = 0;
+// Packages already loaded (or found missing) for unloaded favourites; cleared
+// when favourites drop out of memory, as they do when another map is opened.
+static std::unordered_set<std::string> g_AttemptedPackages;
+// The list's rows, by item index, while Favorites is shown.
+static std::vector<MeshFavorites::Row> g_Rows;
+static std::string g_PackageFilter; // empty: every package
+static MeshFavorites::Sort g_Sort = MeshFavorites::Sort::Package;
+// The favourite a right-click on the list was over, while its menu is open.
+static std::string g_ContextPath;
 static std::string g_IniPath;
 static volatile LONG g_FavoritesActive = FALSE;
 static bool g_FeatureSupported = false;
@@ -73,9 +86,11 @@ static HWND g_GroupAll = nullptr;
 static HWND g_MeshList = nullptr;
 static HWND g_MeshListParent = nullptr;
 static HWND g_FilterButton = nullptr;
-static bool g_PackageWasEnabled = true;
-static bool g_GroupWasEnabled = true;
-static bool g_GroupAllWasEnabled = true;
+static HWND g_PackageFilterCombo = nullptr;
+static HWND g_SortCombo = nullptr;
+static bool g_PackageWasVisible = true;
+static bool g_GroupWasVisible = true;
+static bool g_GroupAllWasVisible = true;
 static int g_NormalColumnWidth = -1;
 static bool g_ControlsAttached = false;
 
@@ -341,6 +356,26 @@ static void SM_LoadFavorites()
     }
     if (migrated)
         SM_SaveFavorites();
+    // Paths re-read from the ini start unresolved; the next refresh finds them.
+    g_FavoriteObjects.assign(g_FavoritePaths.size(), nullptr);
+}
+
+static void SM_LoadView()
+{
+    char value[256] = {};
+    GetPrivateProfileStringA(kViewIniSection, "Sort", "", value,
+                             static_cast<DWORD>(std::size(value)), SM_GetIniPath().c_str());
+    g_Sort = MeshFavorites::SortFromKey(value);
+    GetPrivateProfileStringA(kViewIniSection, "Package", "", value,
+                             static_cast<DWORD>(std::size(value)), SM_GetIniPath().c_str());
+    g_PackageFilter = value;
+}
+
+static void SM_SaveView()
+{
+    const std::string ini = SM_GetIniPath();
+    WritePrivateProfileStringA(kViewIniSection, "Sort", MeshFavorites::SortKey(g_Sort), ini.c_str());
+    WritePrivateProfileStringA(kViewIniSection, "Package", g_PackageFilter.c_str(), ini.c_str());
 }
 
 static void SM_SaveFavorites()
@@ -366,7 +401,7 @@ static void SM_SaveFavorites()
 
 static void SM_RefreshResolvedFavorites()
 {
-    g_ResolvedFavorites.clear();
+    g_FavoriteObjects.assign(g_FavoritePaths.size(), nullptr);
     void** objects = nullptr;
     INT objectCount = 0;
     if (!SM_ReadGObjects(&objects, &objectCount))
@@ -374,7 +409,10 @@ static void SM_RefreshResolvedFavorites()
 
     g_LastGObjectsCount = objectCount;
     if (g_FavoritePaths.empty())
+    {
+        g_LastResolvedCount = 0;
         return;
+    }
 
     std::unordered_map<std::string, size_t> wanted;
     wanted.reserve(g_FavoritePaths.size());
@@ -401,12 +439,28 @@ static void SM_RefreshResolvedFavorites()
         }
     }
 
-    g_ResolvedFavorites.reserve(resolved.size());
-    for (size_t i = 0; i < resolved.size(); ++i)
-    {
-        if (resolved[i])
-            g_ResolvedFavorites.push_back({ g_FavoritePaths[i], resolved[i] });
-    }
+    g_FavoriteObjects = resolved;
+    const size_t resolvedCount = static_cast<size_t>(
+        std::count_if(resolved.begin(), resolved.end(), [](void* o) { return o != nullptr; }));
+    // Opening another map unloads the mesh packages it does not use; let
+    // their favourites' packages be loaded again.
+    if (resolvedCount < g_LastResolvedCount)
+        g_AttemptedPackages.clear();
+    g_LastResolvedCount = resolvedCount;
+}
+
+// The favourite's mesh, if it is still the object the list was built with: a
+// map change can free it and reuse its memory before the next refresh.
+static void* SM_LiveFavorite(size_t favorite)
+{
+    if (favorite >= g_FavoriteObjects.size() || !g_FavoriteObjects[favorite])
+        return nullptr;
+    void* object = g_FavoriteObjects[favorite];
+    std::string path;
+    if (!SM_IsStaticMesh(object) || !SM_BuildObjectPath(object, path) ||
+        SM_ToLower(path) != SM_ToLower(g_FavoritePaths[favorite]))
+        return nullptr;
+    return object;
 }
 
 static bool __cdecl SM_ExecEditorCommand(const char* command)
@@ -470,18 +524,16 @@ static std::string SM_FavoritePackage(const std::string& path)
 
 static void SM_LoadMissingFavoritePackages()
 {
-    std::unordered_set<std::string> resolved;
-    resolved.reserve(g_ResolvedFavorites.size());
-    for (const auto& favorite : g_ResolvedFavorites)
-        resolved.insert(SM_ToLower(favorite.Path));
-
     std::unordered_map<std::string, std::string> wantedPackages;
-    for (const auto& path : g_FavoritePaths)
+    for (size_t i = 0; i < g_FavoritePaths.size(); ++i)
     {
-        if (resolved.find(SM_ToLower(path)) != resolved.end())
+        if (i < g_FavoriteObjects.size() && g_FavoriteObjects[i])
             continue;
-        const std::string package = SM_FavoritePackage(path);
-        if (!package.empty())
+        const std::string package = SM_FavoritePackage(g_FavoritePaths[i]);
+        // Each package is tried once until favourites are unloaded again, so
+        // one that is missing or is a map's own package is not retried every
+        // second.
+        if (!package.empty() && g_AttemptedPackages.insert(SM_ToLower(package)).second)
             wantedPackages.emplace(SM_ToLower(package), package);
     }
     if (wantedPackages.empty())
@@ -642,16 +694,67 @@ static void SM_UpdateNativePreview(void* mesh)
         Logger::log("StaticMeshBrowserFavorites: native preview refresh failed");
 }
 
+static void __cdecl SM_PopulateFavorites(void* browser);
+
 static void SM_SelectFavoriteItem(int index)
 {
-    if (!g_MeshList || index < 0)
+    if (!g_MeshList || index < 0 || static_cast<size_t>(index) >= g_Rows.size())
         return;
-    LVITEMA item = {};
-    item.mask = LVIF_PARAM;
-    item.iItem = index;
-    if (SendMessageA(g_MeshList, LVM_GETITEMA, 0,
-                     reinterpret_cast<LPARAM>(&item)) && item.lParam)
-        SM_UpdateNativePreview(reinterpret_cast<void*>(item.lParam));
+    void* mesh = SM_LiveFavorite(g_Rows[index].favorite);
+    if (mesh)
+    {
+        SM_UpdateNativePreview(mesh);
+        return;
+    }
+    // Freed since the list was built: rebuild it, once this notification is over.
+    const size_t favorite = g_Rows[index].favorite;
+    if (favorite < g_FavoriteObjects.size() && g_FavoriteObjects[favorite] && g_BrowserWindow)
+        PostMessage(g_BrowserWindow, WM_SM_REFRESH_FAVORITES, 0, 0);
+}
+
+static std::vector<MeshFavorites::Favorite> SM_FavoriteStates()
+{
+    std::vector<MeshFavorites::Favorite> favorites;
+    favorites.reserve(g_FavoritePaths.size());
+    for (size_t i = 0; i < g_FavoritePaths.size(); ++i)
+        favorites.push_back({ g_FavoritePaths[i], i < g_FavoriteObjects.size() && g_FavoriteObjects[i] });
+    return favorites;
+}
+
+// The package filter's entries: every package, then each one with its count.
+// A filter naming a package with no favourites left falls back to every package.
+static void SM_FillPackageFilter(const std::vector<MeshFavorites::Favorite>& favorites)
+{
+    if (!g_PackageFilterCombo)
+        return;
+    const auto packages = MeshFavorites::Packages(favorites);
+    if (!g_PackageFilter.empty() &&
+        std::none_of(packages.begin(), packages.end(), [](const MeshFavorites::Package& p)
+            { return SM_ToLower(p.name) == SM_ToLower(g_PackageFilter); }))
+        g_PackageFilter.clear();
+
+    SendMessageA(g_PackageFilterCombo, WM_SETREDRAW, FALSE, 0);
+    SendMessageA(g_PackageFilterCombo, CB_RESETCONTENT, 0, 0);
+    SendMessageA(g_PackageFilterCombo, CB_ADDSTRING, 0,
+                 reinterpret_cast<LPARAM>(MeshFavorites::AllLabel(favorites.size()).c_str()));
+    int selected = 0;
+    for (size_t i = 0; i < packages.size(); ++i)
+    {
+        SendMessageA(g_PackageFilterCombo, CB_ADDSTRING, 0,
+                     reinterpret_cast<LPARAM>(MeshFavorites::PackageLabel(packages[i]).c_str()));
+        if (SM_ToLower(packages[i].name) == SM_ToLower(g_PackageFilter))
+            selected = static_cast<int>(i) + 1;
+    }
+    SendMessageA(g_PackageFilterCombo, CB_SETCURSEL, selected, 0);
+    SendMessageA(g_PackageFilterCombo, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(g_PackageFilterCombo, nullptr, TRUE);
+}
+
+// The package the filter's entry at index names (0 is every package).
+static std::string SM_PackageAt(int index)
+{
+    const auto packages = MeshFavorites::Packages(SM_FavoriteStates());
+    return index > 0 && static_cast<size_t>(index) <= packages.size() ? packages[index - 1].name : std::string{};
 }
 
 static void __cdecl SM_PopulateFavorites(void* browser)
@@ -664,6 +767,9 @@ static void __cdecl SM_PopulateFavorites(void* browser)
     if (SM_ReadGObjects(&objects, &objectCount) &&
         objectCount != g_LastGObjectsCount)
         SM_RefreshResolvedFavorites();
+    const auto favorites = SM_FavoriteStates();
+    SM_FillPackageFilter(favorites);
+    g_Rows = MeshFavorites::Rows(favorites, g_PackageFilter, g_Sort);
 
     if (!g_MeshList || !IsWindow(g_MeshList))
     {
@@ -683,21 +789,24 @@ static void __cdecl SM_PopulateFavorites(void* browser)
     ListView_DeleteAllItems(g_MeshList);
 
     int selected = -1;
-    for (size_t i = 0; i < g_ResolvedFavorites.size(); ++i)
+    for (size_t i = 0; i < g_Rows.size(); ++i)
     {
+        // lParam keeps the mesh, as the native list's items do; rows that are
+        // not loaded carry none. g_Rows follows the item order exactly.
+        void* object = g_FavoriteObjects[g_Rows[i].favorite];
         LVITEMA item = {};
         item.mask = LVIF_TEXT | LVIF_PARAM;
         item.iItem = static_cast<int>(i);
-        item.pszText = const_cast<char*>(g_ResolvedFavorites[i].Path.c_str());
-        item.lParam = reinterpret_cast<LPARAM>(g_ResolvedFavorites[i].Object);
+        item.pszText = const_cast<char*>(g_Rows[i].label.c_str());
+        item.lParam = reinterpret_cast<LPARAM>(object);
         const int inserted = static_cast<int>(SendMessageA(
             g_MeshList, LVM_INSERTITEMA, 0,
             reinterpret_cast<LPARAM>(&item)));
-        if (inserted >= 0 && g_ResolvedFavorites[i].Object == current)
+        if (inserted >= 0 && object && object == current)
             selected = inserted;
     }
 
-    if (!g_ResolvedFavorites.empty())
+    if (!g_Rows.empty())
         ListView_SetColumnWidth(g_MeshList, 0, LVSCW_AUTOSIZE);
     if (selected >= 0)
     {
@@ -770,24 +879,65 @@ static void SM_PositionFilterButton()
     SetWindowPos(g_FilterButton, nullptr, buttonX, packageRect.top,
                  buttonWidth, packageRect.bottom - packageRect.top,
                  SWP_NOZORDER | SWP_NOACTIVATE);
+
+    // The Favorites package filter and sort order sit where the native package
+    // and group boxes are, which are hidden while Favorites is shown. The
+    // height includes the drop-down list.
+    constexpr int dropHeight = 320;
+    if (g_PackageFilterCombo)
+        SetWindowPos(g_PackageFilterCombo, HWND_TOP, packageRect.left, packageRect.top,
+                     packageWidth, dropHeight, SWP_NOACTIVATE);
+    // The sort order also takes the "All" check box's place, left of the group box.
+    RECT allRect = groupRect;
+    if (g_GroupAll && GetWindowRect(g_GroupAll, &allRect))
+        MapWindowPoints(nullptr, g_BrowserWindow, reinterpret_cast<POINT*>(&allRect), 2);
+    const LONG sortLeft = (std::min)(allRect.left, groupRect.left);
+    if (g_SortCombo)
+        SetWindowPos(g_SortCombo, HWND_TOP, sortLeft, groupRect.top,
+                     groupRect.right - sortLeft, dropHeight, SWP_NOACTIVATE);
 }
 
-static void SM_EnableNativeFilters(bool enable)
+// Native package, group and "all groups" controls give way to the Favorites
+// package filter and sort order while Favorites is shown.
+static void SM_ShowNativeFilters(bool show)
 {
-    if (enable)
+    if (show)
     {
-        EnableWindow(g_PackageCombo, g_PackageWasEnabled);
-        EnableWindow(g_GroupCombo, g_GroupWasEnabled);
-        EnableWindow(g_GroupAll, g_GroupAllWasEnabled);
+        ShowWindow(g_PackageFilterCombo, SW_HIDE);
+        ShowWindow(g_SortCombo, SW_HIDE);
+        ShowWindow(g_PackageCombo, g_PackageWasVisible ? SW_SHOWNA : SW_HIDE);
+        ShowWindow(g_GroupCombo, g_GroupWasVisible ? SW_SHOWNA : SW_HIDE);
+        ShowWindow(g_GroupAll, g_GroupAllWasVisible ? SW_SHOWNA : SW_HIDE);
     }
     else
     {
-        g_PackageWasEnabled = IsWindowEnabled(g_PackageCombo) != FALSE;
-        g_GroupWasEnabled = IsWindowEnabled(g_GroupCombo) != FALSE;
-        g_GroupAllWasEnabled = IsWindowEnabled(g_GroupAll) != FALSE;
-        EnableWindow(g_PackageCombo, FALSE);
-        EnableWindow(g_GroupCombo, FALSE);
-        EnableWindow(g_GroupAll, FALSE);
+        g_PackageWasVisible = IsWindowVisible(g_PackageCombo) != FALSE;
+        g_GroupWasVisible = IsWindowVisible(g_GroupCombo) != FALSE;
+        g_GroupAllWasVisible = IsWindowVisible(g_GroupAll) != FALSE;
+        ShowWindow(g_PackageCombo, SW_HIDE);
+        ShowWindow(g_GroupCombo, SW_HIDE);
+        ShowWindow(g_GroupAll, SW_HIDE);
+        SM_PositionFilterButton();
+        ShowWindow(g_PackageFilterCombo, SW_SHOWNA);
+        ShowWindow(g_SortCombo, SW_SHOWNA);
+    }
+}
+
+// A self-sorting list would reorder the rows away from g_Rows.
+static LONG_PTR g_NativeListSortStyle = 0;
+static void SM_SuspendListSorting(bool suspend)
+{
+    const LONG_PTR style = GetWindowLongPtrA(g_MeshList, GWL_STYLE);
+    if (suspend)
+    {
+        g_NativeListSortStyle = style & (LVS_SORTASCENDING | LVS_SORTDESCENDING);
+        if (g_NativeListSortStyle)
+            SetWindowLongPtrA(g_MeshList, GWL_STYLE, style & ~(LVS_SORTASCENDING | LVS_SORTDESCENDING));
+    }
+    else if (g_NativeListSortStyle)
+    {
+        SetWindowLongPtrA(g_MeshList, GWL_STYLE, style | g_NativeListSortStyle);
+        g_NativeListSortStyle = 0;
     }
 }
 
@@ -804,10 +954,15 @@ static void SM_SetFavoritesActive(bool active)
     if (active)
     {
         g_NormalColumnWidth = ListView_GetColumnWidth(g_MeshList, 0);
+        // Pick up favourites another open editor saved, and retry every
+        // package: switching Favorites on is the way to ask again.
+        SM_LoadFavorites();
+        g_AttemptedPackages.clear();
         SM_RefreshResolvedFavorites();
         SM_LoadMissingFavoritePackages();
         InterlockedExchange(&g_FavoritesActive, TRUE);
-        SM_EnableNativeFilters(false);
+        SM_ShowNativeFilters(false);
+        SM_SuspendListSorting(true);
         if (g_FilterButton)
             SendMessage(g_FilterButton, BM_SETCHECK, BST_CHECKED, 0);
         SM_PopulateFavorites(g_BrowserObject);
@@ -815,9 +970,11 @@ static void SM_SetFavoritesActive(bool active)
     else
     {
         InterlockedExchange(&g_FavoritesActive, FALSE);
+        g_Rows.clear();
         if (g_FilterButton)
             SendMessage(g_FilterButton, BM_SETCHECK, BST_UNCHECKED, 0);
-        SM_EnableNativeFilters(true);
+        SM_SuspendListSorting(false);
+        SM_ShowNativeFilters(true);
         reinterpret_cast<NativeRefreshListFn>(SM_NATIVE_REFRESH_LIST)(
             g_BrowserObject);
         if (g_NormalColumnWidth > 0)
@@ -827,11 +984,19 @@ static void SM_SetFavoritesActive(bool active)
 
 static void SM_ToggleCurrentFavorite()
 {
-    void* mesh = SM_GetCurrentMesh();
-    std::string path;
-    if (!SM_IsStaticMesh(mesh) || !SM_BuildObjectPath(mesh, path))
-        return;
+    // A right-click in the Favorites list names its row, which may not be
+    // loaded; anywhere else it is the browser's current mesh.
+    std::string path = g_ContextPath;
+    if (path.empty())
+    {
+        void* mesh = SM_GetCurrentMesh();
+        if (!SM_IsStaticMesh(mesh) || !SM_BuildObjectPath(mesh, path))
+            return;
+    }
 
+    // Start from the saved list, so favourites added in another open editor
+    // are not dropped by this one's save.
+    SM_LoadFavorites();
     size_t index = 0;
     if (SM_FindFavorite(path, &index))
         g_FavoritePaths.erase(g_FavoritePaths.begin() + index);
@@ -878,18 +1043,31 @@ static HMENU WINAPI SM_LoadMenuA_Hook(HINSTANCE instance, LPCSTR menuName)
 
     void* mesh = SM_GetCurrentMesh();
     std::string path;
-    const bool hasMesh = SM_IsStaticMesh(mesh) &&
+    bool hasMesh = SM_IsStaticMesh(mesh) &&
         SM_BuildObjectPath(mesh, path);
-    const bool isFavorite = hasMesh && SM_FindFavorite(path);
+    bool isFavorite = hasMesh && SM_FindFavorite(path);
+    if (!g_ContextPath.empty())
+    {
+        // A Favorites row that is not loaded can still be removed.
+        hasMesh = hasMesh && SM_ToLower(path) == SM_ToLower(g_ContextPath);
+        isFavorite = true;
+    }
     const char* label = isFavorite
         ? "Remove from &Favorites"
         : "Add to &Favorites";
-    const UINT flags = MF_BYPOSITION | MF_STRING |
+    const UINT toggleFlags = MF_BYPOSITION | MF_STRING |
+        (hasMesh || isFavorite ? MF_ENABLED : MF_GRAYED);
+    const UINT meshFlags = MF_BYPOSITION | MF_STRING |
         (hasMesh ? MF_ENABLED : MF_GRAYED);
 
     // Stock positions 0-2 are Delete, Copy and Rename; keep Sections last.
-    InsertMenuA(context, 3, flags, IDMN_SM_TOGGLE_FAVORITE, label);
-    InsertMenuA(context, 4, flags, WorkflowTools::kFindMesh, "Find &Usages...");
+    InsertMenuA(context, 3, toggleFlags, IDMN_SM_TOGGLE_FAVORITE, label);
+    InsertMenuA(context, 4, meshFlags, WorkflowTools::kFindMesh, "Find &Usages...");
+    // The stock commands act on the current mesh, which is not this row.
+    if (!g_ContextPath.empty() && !hasMesh)
+        for (int i = 0; i < GetMenuItemCount(context); ++i)
+            if (GetMenuItemID(context, i) != IDMN_SM_TOGGLE_FAVORITE)
+                EnableMenuItem(context, i, MF_BYPOSITION | MF_GRAYED);
     return menu;
 }
 
@@ -929,8 +1107,14 @@ static void SM_ShowContextMenu(HWND list, LPARAM mousePosition)
     ListView_EnsureVisible(list, item, FALSE);
     SetFocus(list);
 
+    g_ContextPath.clear();
     if (InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
+    {
         SM_SelectFavoriteItem(item);
+        if (static_cast<size_t>(item) < g_Rows.size())
+            g_ContextPath = g_FavoritePaths[g_Rows[item].favorite];
+    }
+    struct ClearContext { ~ClearContext() { g_ContextPath.clear(); } } clearContext;
 
     HMENU menu = SM_LoadMenuA_Hook(
         GetModuleHandleA(nullptr),
@@ -999,6 +1183,29 @@ static bool SM_AttachBrowserControls()
         SendMessage(g_FilterButton, WM_SETFONT,
                     reinterpret_cast<WPARAM>(font), TRUE);
     }
+
+    auto createCombo = [](int id) {
+        HWND combo = CreateWindowExA(
+            0, "COMBOBOX", "",
+            WS_CHILD | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST,
+            0, 0, 120, 320, g_BrowserWindow,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+            GetModuleHandleA(nullptr), nullptr);
+        if (combo)
+            SendMessage(combo, WM_SETFONT, SendMessage(g_FilterButton, WM_GETFONT, 0, 0), TRUE);
+        return combo;
+    };
+    if (!g_PackageFilterCombo || !IsWindow(g_PackageFilterCombo))
+        g_PackageFilterCombo = createCombo(IDC_SM_FAVORITES_PACKAGE);
+    if (!g_SortCombo || !IsWindow(g_SortCombo))
+    {
+        g_SortCombo = createCombo(IDC_SM_FAVORITES_SORT);
+        for (auto sort : MeshFavorites::kSorts)
+            SendMessageA(g_SortCombo, CB_ADDSTRING, 0,
+                         reinterpret_cast<LPARAM>(MeshFavorites::SortLabel(sort)));
+    }
+    if (g_SortCombo)
+        SendMessage(g_SortCombo, CB_SETCURSEL, static_cast<WPARAM>(g_Sort), 0);
 
     if (g_MeshListParent)
         SetWindowSubclass(g_MeshListParent, SM_ListParentSubclassProc, 12, 0);
@@ -1079,6 +1286,21 @@ static LRESULT CALLBACK SM_BrowserSubclassProc(HWND window, UINT message,
             SM_SetFavoritesActive(checked);
             return 0;
         }
+        if (HIWORD(wParam) == CBN_SELCHANGE &&
+            (LOWORD(wParam) == IDC_SM_FAVORITES_PACKAGE || LOWORD(wParam) == IDC_SM_FAVORITES_SORT))
+        {
+            const int choice = static_cast<int>(SendMessage(reinterpret_cast<HWND>(lParam), CB_GETCURSEL, 0, 0));
+            if (choice >= 0)
+            {
+                if (LOWORD(wParam) == IDC_SM_FAVORITES_PACKAGE)
+                    g_PackageFilter = SM_PackageAt(choice);
+                else if (static_cast<size_t>(choice) < std::size(MeshFavorites::kSorts))
+                    g_Sort = MeshFavorites::kSorts[choice];
+                SM_SaveView();
+                SM_PopulateFavorites(g_BrowserObject);
+            }
+            return 0;
+        }
     }
 
     if (message == WM_SM_ATTACH_FAVORITES)
@@ -1089,6 +1311,8 @@ static LRESULT CALLBACK SM_BrowserSubclassProc(HWND window, UINT message,
 
     if (message == WM_TIMER && wParam == TIMER_SM_FAVORITES_REFRESH)
     {
+        // Ticks since the object count last changed.
+        static int steadyTicks = 0;
         if (InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
         {
             void** objects = nullptr;
@@ -1096,10 +1320,33 @@ static LRESULT CALLBACK SM_BrowserSubclassProc(HWND window, UINT message,
             if (SM_ReadGObjects(&objects, &objectCount) &&
                 objectCount != g_LastGObjectsCount)
             {
+                steadyTicks = 0;
                 SM_RefreshResolvedFavorites();
                 SM_PopulateFavorites(g_BrowserObject);
             }
+            else if (++steadyTicks == 2)
+            {
+                // Opening another map unloads the packages it does not use.
+                // Load the favourites' packages back once nothing has loaded
+                // for two ticks and no modal dialog has the editor, so this
+                // never lands in the middle of a map load.
+                HWND top = GetAncestor(window, GA_ROOTOWNER);
+                if (!top || IsWindowEnabled(top))
+                {
+                    const size_t before = g_LastResolvedCount;
+                    SM_LoadMissingFavoritePackages();
+                    if (g_LastResolvedCount != before)
+                        SM_PopulateFavorites(g_BrowserObject);
+                }
+            }
         }
+        return 0;
+    }
+
+    if (message == WM_SM_REFRESH_FAVORITES)
+    {
+        SM_RefreshResolvedFavorites();
+        SM_PopulateFavorites(g_BrowserObject);
         return 0;
     }
 
@@ -1122,6 +1369,9 @@ static LRESULT CALLBACK SM_BrowserSubclassProc(HWND window, UINT message,
         g_MeshList = nullptr;
         g_MeshListParent = nullptr;
         g_FilterButton = nullptr;
+        g_PackageFilterCombo = nullptr;
+        g_SortCombo = nullptr;
+        g_Rows.clear();
         g_ControlsAttached = false;
         RemoveWindowSubclass(window, SM_BrowserSubclassProc, 11);
     }
@@ -1197,6 +1447,7 @@ static LRESULT CALLBACK SM_CommandSubclassProc(HWND window, UINT message,
 void StaticMeshBrowserFavorites::Initialize()
 {
     SM_LoadFavorites();
+    SM_LoadView();
 
     static const BYTE expectedRefreshPrologue[] =
         { 0x55, 0x8B, 0xEC, 0x6A, 0xFF };
