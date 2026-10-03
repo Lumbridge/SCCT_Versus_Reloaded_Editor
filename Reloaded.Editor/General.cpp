@@ -375,16 +375,11 @@ static bool WriteDefaultBuilderCube(char* path, size_t pathSize)
     return true;
 }
 
-static void __cdecl RebuildDefaultBuilderBrush()
+void General::RebuildBuilderBrushAsDefaultCube()
 {
     char brushFile[MAX_PATH] = {};
     if (!WriteDefaultBuilderCube(brushFile, std::size(brushFile)))
-    {
-        MessageBoxA(GetActiveWindow(),
-                    "Could not create the temporary default-cube brush file.",
-                    "Rebuild Builder Brush", MB_OK | MB_ICONERROR);
-        return;
-    }
+        throw std::runtime_error("Could not create the temporary default-cube brush file.");
 
     char importCommand[MAX_PATH + 32] = {};
     _snprintf_s(importCommand, sizeof(importCommand), _TRUNCATE,
@@ -394,9 +389,17 @@ static void __cdecl RebuildDefaultBuilderBrush()
     DeleteFileA(brushFile);
 
     if (!reset || !imported)
-        MessageBoxA(GetActiveWindow(),
-                    "The editor did not accept the builder-brush rebuild command.",
-                    "Rebuild Builder Brush", MB_OK | MB_ICONERROR);
+        throw std::runtime_error("The editor did not accept the builder-brush rebuild command.");
+}
+
+static void __cdecl RebuildDefaultBuilderBrush()
+{
+    try { General::RebuildBuilderBrushAsDefaultCube(); }
+    catch (const std::exception& e)
+    {
+        MessageBoxA(GetActiveWindow(), e.what(), "Rebuild Builder Brush",
+                    MB_OK | MB_ICONERROR);
+    }
 }
 
 static bool g_gameView = false;
@@ -670,7 +673,7 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         je workflow_dispatch
         cmp dword ptr [esp+4], 40936 // Brush/surface edge snap commands
         jb workflow_legacy_range
-        cmp dword ptr [esp+4], 40981 // Through brush fitting and vertex portal creation
+        cmp dword ptr [esp+4], 40983 // Through brush fitting, vertex portals and Builder Brush > Place Here
         jbe workflow_dispatch
     workflow_legacy_range:
         cmp dword ptr [esp+4], 40920

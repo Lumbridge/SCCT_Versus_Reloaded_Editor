@@ -704,6 +704,7 @@ namespace
         reinterpret_cast<void(__thiscall*)(void*,void*,void*)>(0x10ed5c20)(self,cause,hit);
     }
     using LoadMenuFn=HMENU(WINAPI*)(HINSTANCE,LPCSTR); LoadMenuFn previousLoadMenu=nullptr;
+    bool builderMenuOnSurface=false; // the Builder Brush submenu was last built for a BSP surface popup
     using TrackMenuFn=BOOL(WINAPI*)(HMENU,UINT,int,int,int,HWND,const RECT*);
     TrackMenuFn previousTrackMenu=nullptr;
     BOOL WINAPI TrackMenuHook(HMENU menu,UINT flags,int x,int y,int reserved,HWND window,const RECT* rect)
@@ -786,6 +787,15 @@ namespace
                     AppendMenuA(sub,MF_STRING,kFitBuilderBrushToBrush,"Position the builder brush around this brush");
                 }
                 catch(const std::exception&) { /* Only available for valid editable-brush selections. */ }
+            }
+            // Backdrop, actor and surface popups all set the click location
+            // that their stock Paste > Here uses.
+            if(id>=106 && id<=108) if(auto sub=GetSubMenu(menu,0)) if(auto builder=CreatePopupMenu())
+            {
+                builderMenuOnSurface=id==108;
+                AppendMenuA(builder,MF_STRING,kPlaceBuilderBrush,"&Place Here");
+                AppendMenuA(builder,MF_STRING,kRebuildPlaceBuilderBrush,"&Rebuild and Place Here");
+                AppendMenuA(sub,MF_POPUP,reinterpret_cast<UINT_PTR>(builder),"&Builder Brush");
             }
         }
         return menu;
@@ -880,6 +890,12 @@ bool HandleCommand(UINT command)
     {
         try { Editor::FitBuilderBrushToBrushes(); }
         catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Position Builder Brush",MB_OK|MB_ICONINFORMATION); }
+        return true;
+    }
+    if(command==kPlaceBuilderBrush || command==kRebuildPlaceBuilderBrush)
+    {
+        try { Editor::PlaceBuilderBrushAtClick(command==kRebuildPlaceBuilderBrush,builderMenuOnSurface); }
+        catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Builder Brush",MB_OK|MB_ICONINFORMATION); }
         return true;
     }
     if(command==MapRecovery::kRecalculateLightingCommandId){MapRecovery::RecalculateLighting(GetActiveWindow());return true;}
