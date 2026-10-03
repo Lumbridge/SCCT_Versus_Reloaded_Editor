@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "EmitterPreview.h"
+#include "EditorConfigBits.h"
 #include "EmitterPreviewModel.h"
 #include "MemoryWriter.h"
 #include "Rendering.h"
@@ -477,15 +478,17 @@ namespace
         Address editor=*reinterpret_cast<Address*>(kEditor);uint32_t saved[2]{};
         if(!editor || !Copy(saved,reinterpret_cast<void*>(editor+0xfc),4) || !Copy(saved+1,reinterpret_cast<void*>(editor+0x118),4))return 1;
         Copy(reinterpret_cast<void*>(editor+0xfc),&kBackground,4);Copy(reinterpret_cast<void*>(editor+0x118),&kBackground,4);
-        // The UseSizingBox overlay (GUnrealEd+0x21c bit 2, 0x10eccef7) prints the map's
+        // The UseSizingBox overlay (0x10eccef7; GUnrealEd+0x21c bit 2 under the stock
+        // packages, wherever EditorConfigBits found it otherwise) prints the map's
         // selected actor into every viewport; it has no place in the preview.
+        uint32_t sizingAt=0x21c;uint8_t sizingBit=2;EditorConfigBits::Locate("UseSizingBox",sizingAt,sizingBit);
         Address unrealEd=0;unsigned char sizing=0;
-        const bool box=Copy(&unrealEd,reinterpret_cast<void*>(kUnrealEd),4) && unrealEd && Copy(&sizing,reinterpret_cast<void*>(unrealEd+0x21c),1);
-        if(box){const unsigned char off=sizing&~2;Copy(reinterpret_cast<void*>(unrealEd+0x21c),&off,1);}
+        const bool box=Copy(&unrealEd,reinterpret_cast<void*>(kUnrealEd),4) && unrealEd && Copy(&sizing,reinterpret_cast<void*>(unrealEd+sizingAt),1);
+        if(box){const unsigned char off=sizing&~sizingBit;Copy(reinterpret_cast<void*>(unrealEd+sizingAt),&off,1);}
         const Address viewport=state.viewport;
         auto paint=[&]{reinterpret_cast<RepaintFn>(*reinterpret_cast<Address*>(*reinterpret_cast<Address*>(viewport)+0xc8))(viewport,blit);};
         DWORD code=Native(paint);
-        if(box)Copy(reinterpret_cast<void*>(unrealEd+0x21c),&sizing,1);
+        if(box)Copy(reinterpret_cast<void*>(unrealEd+sizingAt),&sizing,1);
         Copy(reinterpret_cast<void*>(editor+0xfc),saved,4);Copy(reinterpret_cast<void*>(editor+0x118),saved+1,4);
         return code;
     }

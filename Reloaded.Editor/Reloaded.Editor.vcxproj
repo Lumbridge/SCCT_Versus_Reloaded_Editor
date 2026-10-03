@@ -224,6 +224,7 @@
     <ClInclude Include="CollisionBox.h" />
     <ClInclude Include="BspLeafLightTable.h" />
     <ClInclude Include="ProjectorDetachFix.h" />
+    <ClInclude Include="EditorConfigBits.h" />
     <ClInclude Include="SizingBoxFix.h" />
     <ClInclude Include="EngineLog.h" />
     <ClInclude Include="LightmapPacker.h" />
@@ -305,6 +306,7 @@
     <ClCompile Include="BspLeafLightFix.cpp" />
     <ClCompile Include="BspCollisionFix.cpp" />
     <ClCompile Include="ProjectorDetachFix.cpp" />
+    <ClCompile Include="EditorConfigBits.cpp" />
     <ClCompile Include="SizingBoxFix.cpp" />
     <ClCompile Include="EngineLog.cpp" />
     <ClCompile Include="LightmapPacker.cpp" />
