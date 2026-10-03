@@ -22,7 +22,7 @@ namespace fs = std::filesystem;
 namespace
 {
     constexpr wchar_t kReleasesUrl[] = L"https://api.github.com/repos/Lumbridge/SCCT_Versus_Reloaded_Editor/releases?per_page=20";
-    constexpr wchar_t kTitle[] = L"Reloaded Editor Update";
+    constexpr wchar_t kTitle[] = L"RE+ Update";
     constexpr char kSection[] = "Updates";
     // Long enough for the editor to finish opening before anything asks.
     constexpr DWORD kStartupDelayMs = 8000;
@@ -99,7 +99,7 @@ namespace
         parts.dwExtraInfoLength = ARRAYSIZE(extra);
         if (!WinHttpCrackUrl(url.c_str(), 0, 0, &parts) || parts.nScheme != INTERNET_SCHEME_HTTPS)
             throw std::runtime_error("Unusable update address.");
-        const std::wstring agent = L"Reloaded-Editor/" + Wide(RELOADED_EDITOR_VERSION);
+        const std::wstring agent = L"RE-Plus/" + Wide(RE_PLUS_VERSION);
         HINTERNET opened = WinHttpOpen(agent.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
         if (!opened) opened = WinHttpOpen(agent.c_str(), WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
         Internet session(opened);
@@ -232,12 +232,14 @@ namespace
         }
     }
 
-    std::optional<Release> Fetch()
+    // A pre-release (2.1.0-rc.1) is only offered to an editor already running
+    // one; everyone else waits for the release.
+    std::optional<Release> Fetch(bool includePrereleases)
     {
         const auto body = Get(kReleasesUrl, L"Accept: application/vnd.github+json\r\nX-GitHub-Api-Version: 2022-11-28\r\n", kMaxListBytes);
         const auto list = Updater::Json::parse(body.begin(), body.end(), nullptr, false);
         if (list.is_discarded()) throw std::runtime_error("GitHub returned a releases list that could not be read.");
-        return Updater::Newest(list, true);
+        return Updater::Newest(list, includePrereleases);
     }
 
     void Install(const Release& release)
@@ -297,27 +299,27 @@ namespace
             return;
         }
         struct Done { ~Done() { busy = false; } } done;
-        const auto current = Version::Parse(RELOADED_EDITOR_VERSION);
+        const auto current = Version::Parse(RE_PLUS_VERSION);
         try
         {
             if (installed)
             {
                 if (interactive)
-                    Ask(L"Reloaded Editor " + Wide(installedVersion) + L" is already installed. Save your work and restart the editor to start using it.", MB_OK | MB_ICONINFORMATION);
+                    Ask(L"RE+ " + Wide(installedVersion) + L" is already installed. Save your work and restart the editor to start using it.", MB_OK | MB_ICONINFORMATION);
                 return;
             }
-            const auto newest = Fetch();
+            const auto newest = Fetch(current && !current->pre.empty());
             if (!newest || !current || !(*current < newest->version))
             {
-                Logger::log("Updater: up to date (" RELOADED_EDITOR_VERSION ")");
-                if (interactive) Ask(L"You have the latest Reloaded Editor (" + Wide(RELOADED_EDITOR_VERSION) + L").", MB_OK | MB_ICONINFORMATION);
+                Logger::log("Updater: up to date (" RE_PLUS_VERSION ")");
+                if (interactive) Ask(L"You have the latest version, " RE_PLUS_DISPLAY_VERSION L".", MB_OK | MB_ICONINFORMATION);
                 return;
             }
             const auto& release = *newest;
             if (!interactive && SkippedVersion() == release.tag) return;
             Logger::log("Updater: " + release.tag + " is available");
-            std::wstring text = L"Reloaded Editor " + Wide(release.version.ToString()) + (release.prerelease ? L" (beta)" : L"")
-                + L" is available. You have " + Wide(RELOADED_EDITOR_VERSION) + L".";
+            std::wstring text = L"RE+ " + Wide(release.version.ToString()) + (release.prerelease ? L" (release candidate)" : L"")
+                + L" is available. You have " RE_PLUS_DISPLAY_VERSION L".";
             if (const auto notes = Updater::PlainNotes(release.notes); !notes.empty()) text += L"\r\n\r\n" + Wide(notes);
             text += L"\r\n\r\nInstall it now? It takes effect when you restart the editor.\r\n\r\n"
                     L"Yes: download and install it.\r\nNo: skip this version.\r\nCancel: ask me again next time.";
@@ -334,7 +336,7 @@ namespace
             installedVersion = release.version.ToString();
             installed = true;
             SetSkippedVersion("");
-            Ask(L"Reloaded Editor " + Wide(installedVersion) + L" is installed. Save your work and restart the editor to start using it.", MB_OK | MB_ICONINFORMATION);
+            Ask(L"RE+ " + Wide(installedVersion) + L" is installed. Save your work and restart the editor to start using it.", MB_OK | MB_ICONINFORMATION);
         }
         catch (const std::exception& e)
         {
@@ -367,12 +369,23 @@ void SelfUpdater::AppendHelpMenu(HMENU help)
     if (GetMenuState(help, kCheckNow, MF_BYCOMMAND) != UINT(-1)) return;
     helpMenu = help;
     AppendMenuA(help, MF_SEPARATOR, 0, nullptr);
-    AppendMenuA(help, MF_STRING, kCheckNow, "Check for Reloaded &Updates...");
+    AppendMenuA(help, MF_STRING, kCheckNow, "Check for " RE_PLUS_NAME " &Updates...");
     AppendMenuA(help, MF_STRING | (CheckOnStartup() ? MF_CHECKED : MF_UNCHECKED), kToggleStartupCheck, "Check for Updates at S&tartup");
+    AppendMenuA(help, MF_STRING, kAbout, "&About " RE_PLUS_NAME "...");
 }
 
 bool SelfUpdater::HandleCommand(UINT command)
 {
+    if (command == kAbout)
+    {
+        MessageBoxA(GetActiveWindow(),
+            RE_PLUS_DISPLAY_VERSION "\r\n\r\n"
+            RE_PLUS_FULL_NAME ": a patch for the Splinter Cell: Chaos Theory Versus map editor, "
+            "built on AllyPal's Reloaded Editor 1.21.\r\n\r\n"
+            "https://github.com/Lumbridge/SCCT_Versus_Reloaded_Editor",
+            "About " RE_PLUS_NAME, MB_OK | MB_ICONINFORMATION);
+        return true;
+    }
     if (command == kCheckNow)
     {
         if (HANDLE h = CreateThread(nullptr, 0, CheckThread, nullptr, 0, nullptr)) CloseHandle(h);

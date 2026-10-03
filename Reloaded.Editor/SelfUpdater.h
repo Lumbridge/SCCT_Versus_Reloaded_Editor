@@ -3,7 +3,7 @@
 #include <string>
 
 // Updates the editor from the GitHub releases. A short while after start-up
-// (unless turned off) and from Help > Check for Reloaded Updates, a worker
+// (unless turned off) and from Help > Check for RE+ Updates, a worker
 // thread asks GitHub for the newest release; when it is newer than this DLL
 // it offers to install it. Installing downloads the release archive, checks
 // it, and swaps Reloaded.Editor.dll (and the launcher) in place: a loaded DLL
@@ -14,10 +14,11 @@ namespace SelfUpdater
 {
     constexpr UINT kCheckNow = 40984;
     constexpr UINT kToggleStartupCheck = 40985;
+    constexpr UINT kAbout = 40986;
 
     // From DLL start-up, with the path of this DLL.
     void Initialize(const std::wstring& dllPath);
-    // The Help menu entries.
+    // The Help menu entries: the update checks and About RE+.
     void AppendHelpMenu(HMENU help);
     // From the frame's command dispatcher. True when the command was ours.
     bool HandleCommand(UINT command);

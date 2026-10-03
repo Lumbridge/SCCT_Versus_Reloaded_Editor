@@ -10,9 +10,14 @@ $repository = Split-Path -Parent $PSScriptRoot
 # tagged v<version>. A release whose DLL reports an older version would be
 # offered to its own users again on every start.
 $versionHeader = Get-Content -LiteralPath (Join-Path $repository 'Reloaded.Editor/Version.h') -Raw
-if ($versionHeader -notmatch '#define RELOADED_EDITOR_VERSION "([0-9A-Za-z.+-]+)"') { throw 'Version.h has no RELOADED_EDITOR_VERSION.' }
-$version = $Matches[1]
-if (!$ArchivePath) { $ArchivePath = Join-Path $PSScriptRoot "../bin/Reloaded_Editor_v$version.zip" }
+$parts = foreach ($part in 'MAJOR', 'MINOR', 'PATCH') {
+    if ($versionHeader -notmatch "#define RE_PLUS_VERSION_$part (\d+)") { throw "Version.h has no RE_PLUS_VERSION_$part." }
+    $Matches[1]
+}
+if ($versionHeader -notmatch '#define RE_PLUS_VERSION_PRERELEASE "((-rc\.[1-9]\d*)?)"') { throw 'Version.h RE_PLUS_VERSION_PRERELEASE must be "" or "-rc.N".' }
+$version = ($parts -join '.') + $Matches[1]
+# The updater takes the one Reloaded_Editor*.zip of a release; keep that prefix.
+if (!$ArchivePath) { $ArchivePath = Join-Path $PSScriptRoot "../bin/Reloaded_Editor_Plus_v$version.zip" }
 $launcherHash = '4CEC8AA84BCEE940A2661F4277E51EA7F5803BD4CFB0BD5953AA356C451D8400'
 $upstreamZipHash = '57A53D6DCB3CB7430903039F0693C3193DABDDC6260B9078D2ABAC3B1E2673AF'
 $upstreamUrl = 'https://github.com/AllyPal/SCCT_Versus_Reloaded_Editor/releases/download/v1.2/Reloaded_Editor_1.2.zip'
@@ -61,7 +66,7 @@ try {
         }
     } finally { $archive.Dispose() }
     Write-Output "Release archive: $archiveFullPath"
-    Write-Output "Version: $version (tag the release v$version)"
+    Write-Output "Version: RE+ $version (tag the release v$version$(if ($version -like '*-rc.*') { ', published as a pre-release' }))"
     Write-Output "Launcher: unchanged AllyPal v1.2 ($launcherHash)"
 } finally {
     if ($staging) {

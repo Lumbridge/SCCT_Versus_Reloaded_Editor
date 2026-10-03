@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "Version.h"
 #include "LightmapFix.h"
 #include "Hooks.h"
 #include "logger.h"
@@ -305,7 +306,7 @@ static void __cdecl WarnIfMapDamaged(const char* cmd)
     if (s_damageSink)
         s_damageSink(message);
     else
-        MessageBoxA(nullptr, message, "Reloaded Editor", MB_OK | MB_ICONWARNING);
+        MessageBoxA(nullptr, message, RE_PLUS_NAME, MB_OK | MB_ICONWARNING);
 }
 
 // Every map load/save, including Play Level's runtime copy, reaches Exec.

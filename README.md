@@ -1,6 +1,6 @@
-# SCCT Versus Reloaded Editor
+# RE+ (Reloaded Editor Plus)
 
-An unofficial patch for the **Splinter Cell: Chaos Theory Versus** map editor. It works with the stock game and with [Enhanced SCCT Versus](https://github.com/Joshhhuaaa/EnhancedSCCTVersus), and builds on [AllyPal's Reloaded Editor](https://github.com/AllyPal/SCCT_Versus_Reloaded_Editor).
+RE+ is an unofficial patch for the **Splinter Cell: Chaos Theory Versus** map editor. It works with the stock game and with [Enhanced SCCT Versus](https://github.com/Joshhhuaaa/EnhancedSCCTVersus), and builds on [AllyPal's Reloaded Editor](https://github.com/AllyPal/SCCT_Versus_Reloaded_Editor).
 
 ## Install
 
@@ -8,7 +8,17 @@ An unofficial patch for the **Splinter Cell: Chaos Theory Versus** map editor. I
 2. Extract it into the folder that contains `SCCT_Versus.exe`.
 3. Run `Reloaded_Editor.exe`.
 
-The editor keeps itself up to date: shortly after it starts, it checks the releases and offers to install a newer version, which takes effect the next time you start it. **Help > Check for Reloaded Updates...** checks on demand, and **Help > Check for Updates at Startup** turns the automatic check off.
+The editor keeps itself up to date: shortly after it starts, it checks the releases and offers to install a newer version, which takes effect the next time you start it. **Help > Check for RE+ Updates...** checks on demand, and **Help > Check for Updates at Startup** turns the automatic check off. The window title and **Help > About RE+...** show the version you are running.
+
+### Versions
+
+RE+ releases are numbered `MAJOR.MINOR.PATCH`, starting at **RE+ 2.0.0** (1.x was AllyPal's Reloaded Editor and the 1.3.0 betas that led to RE+):
+
+- **MINOR** (2.1.0, 2.2.0) is a feature release: new tools, windows or workflows.
+- **PATCH** (2.1.1) only fixes bugs.
+- **MAJOR** changes only when something stops being compatible, such as the install layout or files an earlier version saved.
+
+A release that needs testing first goes out as a release candidate (`2.1.0-rc.1`), marked as a pre-release on GitHub. The updater offers release candidates only to editors already running one, so everyone else gets the release.
 
 Looking for maps to open? Recovered, enhanced and community maps are in [SCCT-Maps](https://github.com/Lumbridge/SCCT-Maps), and [SCCT Map Manager](https://github.com/Lumbridge/SCCT-Map-Manager) installs them for you.
 
@@ -64,7 +74,7 @@ Recovered maps keep their original baked lighting through ordinary builds. Recov
 | **Grid snapping** | Right-click a brush face or vertices to snap them to the grid per axis; **Ctrl + mouse wheel** changes the grid size. |
 | **Fit builder brush** | Right-click selected meshes or brushes to enclose them in the builder brush, including rotated brushes. |
 | **Quick portal** | In Vertex Editing, select four coplanar corners and right-click **Add portal sheet**. Creates a single invisible, non-solid zone portal polygon whose corners are the selected corners, like the stock Add Special zone portal on a sheet brush, with Undo/Redo. |
-| **Self-updater** | Offers newer releases at start-up and installs them in place; **Help > Check for Reloaded Updates...** checks on demand. |
+| **Self-updater** | Offers newer releases at start-up and installs them in place; **Help > Check for RE+ Updates...** checks on demand. |
 | **Reloaded Shortcuts** | **Help > Reloaded Shortcuts...** lists every key, mouse gesture and menu the patch adds, with the Geometric Event keys as configured. |
 | **Fixes** | Playtests launch at the monitor's resolution, off-screen property windows come back, a missing builder brush is repaired, larger BSP point counts are supported, and crashes are logged. |
 
@@ -93,6 +103,6 @@ if ($LASTEXITCODE -ne 0) { throw 'Release build failed' }
 ./tools/package_release.ps1
 ```
 
-The release ZIP is written to `bin/Reloaded_Editor.zip`. Packaging downloads the unchanged AllyPal v1.2 launcher and verifies its hash; pass `-LauncherPath` to use a local copy. Tests are described in [tests/README.md](tests/README.md).
+Set the version in `Reloaded.Editor/Version.h` first: the title, About box, updater, DLL properties and archive name all come from it. The release ZIP is written to `bin/Reloaded_Editor_Plus_v<version>.zip`; tag the release `v<version>`. Packaging downloads the unchanged AllyPal v1.2 launcher and verifies its hash; pass `-LauncherPath` to use a local copy. Tests are described in [tests/README.md](tests/README.md).
 
 </details>

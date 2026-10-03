@@ -157,7 +157,7 @@ static void InstallLegacyPlayLaunchHook()
     MemoryWriter::WriteBytes(0x11AF228C, &function, sizeof(function));
 }
 
-static const char s_github_url[] = "https://github.com/AllyPal/SCCT_Versus_Reloaded_Editor";
+static const char s_github_url[] = "https://github.com/Lumbridge/SCCT_Versus_Reloaded_Editor";
 static const char s_wiki_url[]    = "https://github.com/AllyPal/SCCT_Versus_Reloaded_Editor/wiki";
 
 static void __cdecl OpenURL(const char* url)
@@ -673,7 +673,7 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         je workflow_dispatch
         cmp dword ptr [esp+4], 40936 // Brush/surface edge snap commands
         jb workflow_legacy_range
-        cmp dword ptr [esp+4], 40985 // Through brush fitting, vertex portals, Builder Brush > Place Here and the update checks
+        cmp dword ptr [esp+4], 40986 // Through brush fitting, vertex portals, Builder Brush > Place Here, the update checks and About RE+
         jbe workflow_dispatch
     workflow_legacy_range:
         cmp dword ptr [esp+4], 40920
@@ -702,7 +702,7 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         je   do_select_surface_brush
         cmp  dword ptr [esp+4], 40902 // Rebuild All Maps
         je   do_rebuild_all
-        cmp  dword ptr [esp+4], 40900 // Reloaded Github
+        cmp  dword ptr [esp+4], 40900 // RE+ on GitHub
         je   do_github
         cmp  dword ptr [esp+4], 40901 // Reloaded Wiki
         je   do_wiki
