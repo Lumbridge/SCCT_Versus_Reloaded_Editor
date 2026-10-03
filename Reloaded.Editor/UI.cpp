@@ -11,12 +11,27 @@
 #include "MapPackageDialog.h"
 #include "EditorExtras.h"
 
+#include "Version.h"
+
 INIT_HOOKS;
 
+// The frame's own title, "RE+ 2.0.0 - Chaos Theory Editor"; with a map open the
+// frame adds " - [<map>]" after it. It is passed to sprintf as a format.
+static const char editor_title[] = RE_PLUS_WINDOW_TITLE;
+// The map window's title, just the map name.
+static const char map_title[] = "%s";
+
+// The stock map title is sprintf(buffer, "...Version %.1f - [%s", version, map),
+// with the version a float pushed as a double. RE+ versions are not floats, so
+// the map name (the third argument) is copied over the double's first half and
+// a "%s" format reads it from there. The call still pops all its arguments.
+// edx is free here: the call right after clobbers it.
 JMP_HOOK(0x10E4319C, SetTitle) {
     static int Return = 0x10E431A1;
     __asm {
-        push offset editor_header
+        mov edx, dword ptr[esp + 8]
+        mov dword ptr[esp], edx
+        push offset map_title
         jmp dword ptr[Return]
     }
 }
@@ -24,7 +39,9 @@ JMP_HOOK(0x10E4319C, SetTitle) {
 JMP_HOOK(0x10E3C138, SetTitle2) {
     static int Return = 0x10E3C13D;
     __asm {
-        push offset editor_header
+        mov edx, dword ptr[esp + 8]
+        mov dword ptr[esp], edx
+        push offset map_title
         jmp dword ptr[Return]
     }
 }
@@ -32,7 +49,7 @@ JMP_HOOK(0x10E3C138, SetTitle2) {
 JMP_HOOK(0x10E2E49F, SetTitleEditorName) {
     static int Return = 0x10E2E4A4;
     __asm {
-        push offset editor_header_prefix
+        push offset editor_title
         jmp dword ptr[Return]
     }
 }
@@ -40,7 +57,7 @@ JMP_HOOK(0x10E2E49F, SetTitleEditorName) {
 JMP_HOOK(0x10E4B285, SetTitleEditorName2) {
     static int Return = 0x10E4B28A;
     __asm {
-        push offset editor_header_prefix
+        push offset editor_title
         jmp dword ptr[Return]
     }
 }
@@ -220,8 +237,8 @@ static void InjectReloadedMenuItems(HWND frame)
     if (help && MenuPosByCommand(help, 40900) < 0)
     {
         AppendMenuA(help, MF_SEPARATOR, 0, nullptr);
-        AppendMenuA(help, MF_STRING, 40900, "&Reloaded Editor GitHub");
-        AppendMenuA(help, MF_STRING, 40901, "&Reloaded Editor Wiki");
+        AppendMenuA(help, MF_STRING, 40900, RE_PLUS_NAME " on &GitHub");
+        AppendMenuA(help, MF_STRING, 40901, "&Reloaded Editor Wiki (AllyPal)");
     }
 
     DrawMenuBar(frame);
@@ -263,8 +280,6 @@ static DWORD WINAPI MenuInjectThread(LPVOID)
 void UI::Initialize()
 {
     INSTALL_HOOKS;
-
-    MemoryWriter::WriteBytes(0x11463408, &editor_version, sizeof(editor_version));
 
     HANDLE h = CreateThread(nullptr, 0, MenuInjectThread, nullptr, 0, nullptr);
     if (h) CloseHandle(h);

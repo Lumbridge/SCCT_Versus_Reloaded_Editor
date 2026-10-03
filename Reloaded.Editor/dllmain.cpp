@@ -3,6 +3,7 @@
 #include <Windows.h>
 #include <memory>
 #include "logger.h"
+#include "Version.h"
 #include "Rendering.h"
 #include "Debug.h"
 #include "UI.h"
@@ -75,7 +76,7 @@ static DWORD WINAPI BracketedInstallWarning(LPVOID parameter)
         L"\n\nThe engine treats '[' in a file path as a platform tag and cuts the path there, "
         L"so opening a map will fail and the editor will crash.\n\n"
         L"Close the editor and rename the folder without square brackets.";
-    MessageBoxW(nullptr, message.c_str(), L"Reloaded Editor",
+    MessageBoxW(nullptr, message.c_str(), L"" RE_PLUS_NAME,
                 MB_OK | MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST);
     return 0;
 }
@@ -103,7 +104,7 @@ void RedirectToConsole()
     freopen_s(&fp, "CONIN$", "r", stdin);
     freopen_s(&fp, "CONOUT$", "w", stderr);
 
-    std::cout << "SCCT Versus Reloaded injected successfully" << "\n";
+    std::cout << RE_PLUS_DISPLAY_VERSION " injected successfully" << "\n";
 }
 
 // Custom unhandled exception filter
@@ -151,6 +152,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
 
     Logger::Initialize(dllPath);
     Logger::log("");
+    Logger::log(RE_PLUS_DISPLAY_VERSION);
     CrashDiagnostics::Initialize(dllPath);
     WarnIfInstallPathBracketed(directoryPath);
 

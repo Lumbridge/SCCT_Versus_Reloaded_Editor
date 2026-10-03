@@ -5,6 +5,7 @@
 #include "GEKeybindSwap.h"
 #include "LevelSnapshot.h"
 #include "SelfUpdater.h"
+#include "Version.h"
 #include "logger.h"
 #include <commctrl.h>
 #include <algorithm>
@@ -223,7 +224,7 @@ namespace
                "Build: Play From Camera as Spy / Merc starts a playtest at the perspective viewport's camera.\r\n"
                "Build: Set Level Snapshot from Viewport / Image File puts the picture the game shows in map selection\r\n"
                "into the map's <Map>-i package (Packages\\Textures), backing up the old one under ReloadedEditor.\r\n"
-               "Help: Check for Reloaded Updates offers the newest release; Check for Updates at Startup turns the automatic check on or off.\r\n"
+               "Help: Check for RE+ Updates offers the newest release; Check for Updates at Startup turns the automatic check on or off; About RE+ shows the version.\r\n"
                "View > Reloaded Tools: Map Design (its own Keys... window lists the plan's shortcuts), Brush Visibility,\r\n"
                "Gameplay Connections, SMagicEvent Workbench, SCamNetwork Manager, Working Views, Assemblies, JSON.\r\n";
     }
@@ -418,7 +419,7 @@ bool EditorExtras::HandleCommand(UINT command)
     }
     catch (const std::exception& e)
     {
-        MessageBoxA(GetActiveWindow(), e.what(), "Reloaded Editor", MB_OK | MB_ICONINFORMATION);
+        MessageBoxA(GetActiveWindow(), e.what(), RE_PLUS_NAME, MB_OK | MB_ICONINFORMATION);
     }
     return true;
 }

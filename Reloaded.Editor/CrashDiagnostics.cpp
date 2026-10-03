@@ -2,6 +2,7 @@
 #include "CrashDiagnostics.h"
 
 #include "logger.h"
+#include "Version.h"
 
 #include <DbgHelp.h>
 #include <cstdarg>
@@ -263,7 +264,7 @@ void CrashDiagnostics::LogUnhandledException(EXCEPTION_POINTERS* exceptionInfo)
         FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file != INVALID_HANDLE_VALUE)
     {
-        WriteLine(file, "SCCT Versus Reloaded Editor unhandled exception");
+        WriteLine(file, RE_PLUS_DISPLAY_VERSION " unhandled exception");
         WriteLine(file, "Report=%s", reportPath);
         WriteExceptionDetails(file, exceptionInfo);
         const bool dumped = exceptionInfo

@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "Version.h"
 #include "MapRecovery.h"
 #include "RecoveredBspGeometry.h"
 #include "RecoveredSurfacePartition.h"
@@ -1818,7 +1819,7 @@ namespace
 
         g_recoveredPath = target;
         SetWindowTextA(owner,
-            ("Reloaded Chaos Theory Editor - [v1.2] - [RECOVERED: "
+            (RE_PLUS_WINDOW_TITLE " - [RECOVERED: "
              + target.stem().string() + "]").c_str());
         MessageBoxA(owner,
             ("Recovered map saved to:\n" + target.string()
@@ -3001,7 +3002,7 @@ namespace
             MapRecovery::ArmViewportExceptionDiagnostic();
             return;
         }
-        SetWindowTextA(owner, ("Reloaded Chaos Theory Editor - [v1.2] - [" + destination.stem().string() + "]").c_str());
+        SetWindowTextA(owner, (RE_PLUS_WINDOW_TITLE " - [" + destination.stem().string() + "]").c_str());
         std::string completion = "Created and verified a normal editable map:\n\n" + destination.string()
             + "\n\nUse regular File > Open for this map. Its reconstructed brushes can be edited and rebuilt. "
               "Test gameplay after making your changes.";
