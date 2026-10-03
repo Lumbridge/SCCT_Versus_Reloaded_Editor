@@ -23,6 +23,7 @@
     <ClInclude Include="MapPackageDialog.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="LevelSnapshot.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="LevelSnapshotModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MeshFavoritesModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="SelfUpdater.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="SelfUpdaterModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="Version.h"><Filter>Header Files</Filter></ClInclude>

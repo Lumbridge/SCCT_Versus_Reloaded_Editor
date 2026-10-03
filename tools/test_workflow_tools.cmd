@@ -15,6 +15,10 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\SelfUpdaterModelTests.cpp /Fo"
 if errorlevel 1 goto failed
 "%TEMP%\ReleaseModelTests.exe"
 if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\MeshFavoritesModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MeshFavoritesModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\MeshFavoritesModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\BrushGridSnapTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\BrushGridSnapTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\BrushGridSnapTests.exe"
