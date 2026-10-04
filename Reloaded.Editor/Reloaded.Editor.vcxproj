@@ -237,6 +237,9 @@
     <ClInclude Include="UndoHistory.h" />
     <ClInclude Include="UndoHistoryModel.h" />
     <ClInclude Include="StaticMeshBrowserFavorites.h" />
+    <ClInclude Include="AssetNameGloss.h" />
+    <ClInclude Include="AssetNameGlossModel.h" />
+    <ClInclude Include="AssetNameDictionary.gen.h" />
     <ClInclude Include="DdsImportFix.h" />
     <ClInclude Include="LightCullFix.h" />
     <ClInclude Include="BspLeafLightFix.h" />
@@ -330,6 +333,7 @@
     <ClCompile Include="StoreyFilter.cpp" />
     <ClCompile Include="UndoHistory.cpp" />
     <ClCompile Include="StaticMeshBrowserFavorites.cpp" />
+    <ClCompile Include="AssetNameGloss.cpp" />
     <ClCompile Include="DdsImportFix.cpp" />
     <ClCompile Include="LightCullFix.cpp" />
     <ClCompile Include="BspLeafLightFix.cpp" />

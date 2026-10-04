@@ -34,6 +34,9 @@
     <ClInclude Include="UndoHistory.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="UndoHistoryModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="AnimImportOptionsModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="AssetNameGloss.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="AssetNameGlossModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="AssetNameDictionary.gen.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="SelfUpdater.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="SelfUpdaterModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CrashRecovery.h"><Filter>Header Files</Filter></ClInclude>
@@ -338,6 +341,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="StaticMeshBrowserFavorites.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="AssetNameGloss.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="DdsImportFix.cpp">

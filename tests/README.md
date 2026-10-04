@@ -281,6 +281,30 @@ all six compressed-collision bounds accessors using the September 13 crash's
 exact finite bounds while all eight x87 registers are occupied. Each must return
 the correct endpoint pointer and preserve the complete x87 state.
 
+## English for French asset names
+
+`tools/test_workflow_tools.cmd` runs `AssetNameGlossModelTests.cpp`: splitting
+names at separators, digits, CamelCase and acronyms with Windows-1252 accents
+folded; the dictionary format (sections, comments, a later file winning, `word =`
+removing); token-by-token glosses that keep unknown words and numbers, give
+English names no gloss, and translate words that are also English (Sale,
+Carton, Grand) only beside another French word; French plurals in s and
+au/eu/ou + x without turning `vertex` into *green* or `bass` into *low*; glued
+words (`boisplanche`, `BetonWall`) split only into known parts with at least one
+French one; and the search rule (the whole query against the name as the stock
+filter does, or every word against the name or its English). It also loads the
+built-in dictionary and checks names from the stock packages.
+
+`tools/asset_names/scan_names.py` lists every name in an install's packages and
+counts their words; it is how `fr-en.txt` was built and measured (96% of the
+French word uses in the stock names are translated). After editing `fr-en.txt`,
+run `tools/asset_names/build_dictionary.py` to regenerate
+`Reloaded.Editor/AssetNameDictionary.gen.h`.
+
+Not covered by the native suite: the glosses drawn in the browser lists, the
+Texture Browser label, caption and Filter hooks, the hover tooltip and the
+Reloaded Options checkbox were checked by hand in a disposable installation.
+
 ## Map packaging and selective Tag renaming
 
 Run `tools\test_map_package.cmd` from an x86 Visual Studio developer prompt after installing the manifest dependencies. The packaging suite covers compressed and raw SCCT package tables, older name encodings, transitive/cyclic dependencies, missing and ambiguous packages, texture counterparts, byte-identical base comparisons, exclusions, stale files, archive paths, and no-overwrite publication. `MapPackageTests.exe <game-root> <playable-map> [new-zip]` also supports read-only inspection or packaging of real maps.

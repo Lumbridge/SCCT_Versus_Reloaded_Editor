@@ -53,6 +53,11 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\PropertyFilterModelTests.cpp /
 if errorlevel 1 goto failed
 "%TEMP%\PropertyFilterModelTests.exe"
 if errorlevel 1 goto failed
+if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\AssetNameGlossModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\AssetNameGlossModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\AssetNameGlossModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\BrushGridSnapTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\BrushGridSnapTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\BrushGridSnapTests.exe"

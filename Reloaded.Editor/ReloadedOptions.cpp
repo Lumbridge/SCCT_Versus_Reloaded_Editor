@@ -2,6 +2,7 @@
 #include "ReloadedOptions.h"
 #include "RealtimeFix.h"
 #include "GEKeybindSwap.h"
+#include "AssetNameGloss.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cctype>
@@ -18,6 +19,7 @@
 #define IDC_CHECK_MUTE_SOUNDS       1008
 #define IDC_CHECK_NO_DUPE_OFFSET    1009
 #define IDC_CHECK_MIN_PLAY          1010
+#define IDC_CHECK_ENGLISH_NAMES     1011
 
 // In-memory DLGTEMPLATE builder
 struct OptionsDialogBuf
@@ -79,9 +81,9 @@ static std::vector<uint8_t> BuildReloadedOptionsDlgTemplate()
 
     b.dw(WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | DS_CENTER | DS_SETFONT);
     b.dw(0);
-    b.w(24);              // number of controls
+    b.w(25);              // number of controls
     b.w(0);  b.w(0);      // x, y (DS_CENTER overrides)
-    b.w(290); b.w(206);   // width, height
+    b.w(290); b.w(218);   // width, height
     b.w(0);               // no menu
     b.w(0);               // default class
     b.ws(L"Reloaded Options");
@@ -158,20 +160,24 @@ static std::vector<uint8_t> BuildReloadedOptionsDlgTemplate()
                 | ES_LEFT | ES_UPPERCASE | ES_AUTOHSCROLL,
              214, 126, 20, 12, IDC_EDIT_GE_FENCE);
 
-    // General group (y = 150 to 180)
+    // General group (y = 150 to 192)
     EmitButton(b, WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-               5, 150, 280, 30, 0xFFFF, L"General");
+               5, 150, 280, 42, 0xFFFF, L"General");
 
     EmitButton(b, WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | WS_TABSTOP,
                13, 163, 265, 10, IDC_CHECK_MIN_PLAY,
                L"Minimize Unreal Editor on Play Map");
 
+    EmitButton(b, WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | WS_TABSTOP,
+               13, 175, 265, 10, IDC_CHECK_ENGLISH_NAMES,
+               L"Show English for French asset names");
+
     // OK and Cancel buttons (right-aligned to the wider dialog)
     EmitButton(b, WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON | WS_TABSTOP,
-               180, 186, 50, 14, IDOK, L"OK");
+               180, 198, 50, 14, IDOK, L"OK");
 
     EmitButton(b, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
-               235, 186, 50, 14, IDCANCEL, L"Cancel");
+               235, 198, 50, 14, IDCANCEL, L"Cancel");
 
     return b.buf;
 }
@@ -303,6 +309,8 @@ static INT_PTR CALLBACK ReloadedOptionsDlgProc(
         CheckDlgButton(hDlg, IDC_CHECK_NO_DUPE_OFFSET,
                        g_ReloadedNoDuplicateOffset ? BST_CHECKED : BST_UNCHECKED);
 
+        CheckDlgButton(hDlg, IDC_CHECK_ENGLISH_NAMES,
+                       AssetNameGloss::Enabled() ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hDlg, IDC_CHECK_MIN_PLAY,
                        g_ReloadedMinimizeOnPlay ? BST_CHECKED : BST_UNCHECKED);
 
@@ -406,6 +414,10 @@ static INT_PTR CALLBACK ReloadedOptionsDlgProc(
                 GEKeybindSwap::ApplyGEKeybinds();
 
                 SaveSettings();
+                // Saves its own key in [AssetNames].
+                const bool englishNames = IsDlgButtonChecked(hDlg, IDC_CHECK_ENGLISH_NAMES) == BST_CHECKED;
+                if (englishNames != AssetNameGloss::Enabled())
+                    AssetNameGloss::SetEnabled(englishNames);
                 EndDialog(hDlg, IDOK);
             }
             return TRUE;
