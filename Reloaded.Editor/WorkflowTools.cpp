@@ -20,6 +20,7 @@
 #include "SecurityModel.h"
 #include "StageModel.h"
 #include "EmitterPreview.h"
+#include "MeasureTool.h"
 #include <commdlg.h>
 #include <windowsx.h>
 #include <objidl.h>
@@ -797,6 +798,7 @@ namespace
                 AppendMenuA(builder,MF_STRING,kPlaceBuilderBrush,"&Place Here");
                 AppendMenuA(builder,MF_STRING,kRebuildPlaceBuilderBrush,"&Rebuild and Place Here");
                 AppendMenuA(sub,MF_POPUP,reinterpret_cast<UINT_PTR>(builder),"&Builder Brush");
+                MeasureTool::AddMenu(sub,id==108);
             }
         }
         return menu;
@@ -845,6 +847,7 @@ bool HandleCommand(UINT command)
         try{UndoHistory::Open();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Undo History",MB_OK|MB_ICONERROR);}
         return true;
     }
+    if(MeasureTool::HandleCommand(command))return true;
     if(command==StoreyFilter::kOpen)
     {
         try{StoreyFilter::Open();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Storeys",MB_OK|MB_ICONERROR);}

@@ -59,6 +59,8 @@
     <ClInclude Include="MapAuthoringModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapAuthoringNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapDesignModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MeasureModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MeasureTool.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapDesignNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapDesignPanel.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapAuthoringDialog.h"><Filter>Header Files</Filter></ClInclude>
@@ -285,6 +287,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="DeintersectFix.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="MeasureTool.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="MapUnlock.cpp">
