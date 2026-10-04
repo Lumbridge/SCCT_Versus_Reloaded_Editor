@@ -713,6 +713,11 @@ bool RebuildAllMaps::Available()
     return g_unlocked;
 }
 
+bool RebuildAllMaps::Running()
+{
+    return g_running != 0;
+}
+
 void RebuildAllMaps::Show(HWND hParent)
 {
     if (!g_unlocked)

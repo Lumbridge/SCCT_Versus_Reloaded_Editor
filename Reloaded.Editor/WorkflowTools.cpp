@@ -5,6 +5,7 @@
 #include "EmitterLibraryWindow.h"
 #include "EditorExtras.h"
 #include "StoreyFilter.h"
+#include "LightingBudget.h"
 #include "WorkflowEditor.h"
 #include "EmitterLibraryModel.h"
 #include "WorkflowGraph.h"
@@ -839,6 +840,7 @@ void RunObjectiveCommand(UINT command,const Json& snapshot)
 bool HandleCommand(UINT command)
 {
     if(EditorExtras::HandleCommand(command))return true;
+    if(LightingBudget::HandleCommand(command))return true;
     if(command==StoreyFilter::kOpen)
     {
         try{StoreyFilter::Open();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Storeys",MB_OK|MB_ICONERROR);}

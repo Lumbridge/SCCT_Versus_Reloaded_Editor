@@ -50,6 +50,7 @@ Looking for maps to open? Recovered, enhanced and community maps are in [SCCT-Ma
 | **Recover Compiled Map** (File menu) | Turns a compiled `.sdc` into an editable map with brushes, actors and extracted meshes. Takes a few minutes; the original file is untouched. |
 | **Recalculate Selected Lighting** (Build menu) | Re-bakes lighting only for the selected faces, brushes and meshes, keeping the recovered lighting everywhere else. |
 | **Match Selected BSP Lighting** (Build menu) | Experimental: blends new BSP faces into the surrounding original lighting. |
+| **Lighting Budget** (Build menu) | Lists every zone's lights (static, in-game, dynamic), the most in-game lights reaching one BSP leaf and the largest group of in-game lights that all overlap, measured the way the editor's own **Check InGame / Dynamic Lights** tools do, with the zones and hotspots over budget. Click a row to select its lights, double-click to frame them. **Build All** and the lighting rebuilds warn first when a map is far over budget (**Build anyway / Open Lighting Budget / Cancel**, or don't warn again for that map this session). Limits are in `Reloaded_Editor.ini` under `[LightingBudget]`. |
 | **Package Map for Sharing** (File menu) | Builds a ZIP of the map with all its dependencies and an install readme. |
 
 Recovered maps keep their original baked lighting through ordinary builds. Recovery is experimental: brush history cannot be restored and geometry may come back fragmented, so check the result in the editor and in game.
