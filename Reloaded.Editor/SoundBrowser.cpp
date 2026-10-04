@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "SoundBrowser.h"
+#include "SoundBrowserFavorites.h"
 #include "Hooks.h"
 #include "MemoryWriter.h"
 #include "dllmain.h"   // g_hReloadedDll
@@ -78,6 +79,7 @@ INIT_HOOKS;
 #define CMD_SEQ_PROPS    0x9D3Cu
 #define CMD_BUILD_UAS    0x9DA8u
 #define CMD_EXPORT_UAS   0x9DA9u
+#define CMD_TOGGLE_FAVORITE 41030u   // SoundBrowserFavorites::kToggleFavorite
 
 // GEditor at 0x1165dfa0; FExec sub-object at GEditor+0x28; vtable[0] = FExec::Exec.
 // AUDIO IMPORT / OBJ EXPORT / OBJ SAVEPACKAGE all route through FExec::Exec.
@@ -378,6 +380,7 @@ static INT_PTR CALLBACK  SurroundPropsDlgProc (HWND, UINT, WPARAM, LPARAM);
 static void __cdecl      SB_HandleSurroundProps(void* this_ptr);
 // Enumerate all sounds in the current package (including delisted ones).
 static void __cdecl      SB_ShowFlagsDump     (void* this_ptr);
+static void __cdecl      SB_HandleToggleFavorite() { SoundBrowserFavorites::ToggleSelected(); }
 
 static HWND GetParentHWND    (void* t) { return *reinterpret_cast<HWND*>(static_cast<char*>(t) + 0x04); }
 static HWND GetPackageComboHWND(void* t)
@@ -394,6 +397,41 @@ static HWND GetListHWND(void* t)
 {
     void* obj = *reinterpret_cast<void**>(static_cast<char*>(t) + 0x94);
     return *reinterpret_cast<HWND*>(static_cast<char*>(obj) + 4);
+}
+
+// The package, group and name of list item `item`. A search or Favorites row
+// names its own sound (false when that sound is not loaded); a native row is
+// the browser's package and group with the row's text.
+static bool SB_ItemParts(void* t, int item, char* pkg, char* grp, char* name, size_t size)
+{
+    pkg[0] = grp[0] = name[0] = '\0';
+    std::string path;
+    if (SoundBrowserFavorites::RowPath(item, path))
+    {
+        LVITEMA lvi = {};
+        lvi.mask    = LVIF_PARAM;
+        lvi.iItem   = item;
+        SendMessageA(GetListHWND(t), LVM_GETITEMA, 0, reinterpret_cast<LPARAM>(&lvi));
+        if (!lvi.lParam)
+            return false;
+        const size_t first = path.find('.'), last = path.rfind('.');
+        if (first == std::string::npos)
+            return false;
+        strncpy_s(pkg, size, path.substr(0, first).c_str(), _TRUNCATE);
+        if (last > first)
+            strncpy_s(grp, size, path.substr(first + 1, last - first - 1).c_str(), _TRUNCATE);
+        strncpy_s(name, size, path.substr(last + 1).c_str(), _TRUNCATE);
+        return name[0] != '\0';
+    }
+    GetWindowTextA(GetPackageComboHWND(t), pkg, static_cast<int>(size));
+    GetWindowTextA(GetGroupComboHWND(t), grp, static_cast<int>(size));
+    LVITEMA lvi    = {};
+    lvi.mask       = LVIF_TEXT;
+    lvi.iItem      = item;
+    lvi.pszText    = name;
+    lvi.cchTextMax = static_cast<int>(size);
+    SendMessageA(GetListHWND(t), LVM_GETITEMA, 0, reinterpret_cast<LPARAM>(&lvi));
+    return name[0] != '\0';
 }
 
 
@@ -462,6 +500,8 @@ JMP_HOOK(0x10E7E690, SoundBrowserCommands) {
         je   do_export_uas
         cmp  eax, CMD_SURROUND_PROPS
         je   do_surround_props
+        cmp  eax, CMD_TOGGLE_FAVORITE
+        je   do_toggle_favorite
 
         // Pass-through: re-execute displaced block, call parent handler
         push eax                        // displaced: PUSH EAX (cmd_id)
@@ -539,6 +579,10 @@ JMP_HOOK(0x10E7E690, SoundBrowserCommands) {
         push esi
         call SB_HandleSurroundProps
         add  esp, 4
+        jmp  dword ptr [Return]
+
+    do_toggle_favorite:
+        call SB_HandleToggleFavorite
         jmp  dword ptr [Return]
     }
 }
@@ -2595,21 +2639,13 @@ static void __cdecl SB_HandleExport(void* this_ptr)
         return;
     }
 
-    char pkgName[256] = {};
-    GetWindowTextA(GetPackageComboHWND(this_ptr), pkgName, sizeof(pkgName));
-
     for (int i = 0; i < selCount; ++i)
     {
+        char pkgName[256] = {};
+        char grpName[256] = {};
         char soundName[256] = {};
-        LVITEMA lvi    = {};
-        lvi.mask       = LVIF_TEXT;
-        lvi.iItem      = selItems[i];
-        lvi.iSubItem   = 0;
-        lvi.pszText    = soundName;
-        lvi.cchTextMax = sizeof(soundName);
-        SendMessageA(hList, LVM_GETITEMA, 0, reinterpret_cast<LPARAM>(&lvi));
-
-        if (soundName[0] == '\0') continue;
+        if (!SB_ItemParts(this_ptr, selItems[i], pkgName, grpName, soundName, sizeof(soundName)))
+            continue;
 
         // Pre-fill the save path with SoundName.wav
         char filePath[MAX_PATH * 2] = {};
@@ -2778,34 +2814,17 @@ static void __cdecl SB_HandleDelete(void* this_ptr)
 {
     HWND hParent   = GetParentHWND(this_ptr);
     HWND hList     = GetListHWND(this_ptr);
-    HWND hPkgCombo = GetPackageComboHWND(this_ptr);
-    HWND hGrpCombo = GetGroupComboHWND(this_ptr);
 
     LRESULT sel = SendMessageA(hList, LVM_GETNEXTITEM,
                                static_cast<WPARAM>(-1), LVNI_SELECTED);
     if (sel < 0)
         return;
 
-    char soundName[256] = {};
-    LVITEMA lvi    = {};
-    lvi.mask       = LVIF_TEXT;
-    lvi.iItem      = static_cast<int>(sel);
-    lvi.iSubItem   = 0;
-    lvi.pszText    = soundName;
-    lvi.cchTextMax = sizeof(soundName);
-    SendMessageA(hList, LVM_GETITEMA, 0, reinterpret_cast<LPARAM>(&lvi));
-
-    if (soundName[0] == '\0')
-        return;
-
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "DELETE CLASS=SOUND OBJECT=\"%s\"", soundName);
-    CallEditorGet("OBJ", cmd);
-
     char pkgName[256] = {};
     char grpName[256] = {};
-    GetWindowTextA(hPkgCombo, pkgName, sizeof(pkgName));
-    GetWindowTextA(hGrpCombo, grpName, sizeof(grpName));
+    char soundName[256] = {};
+    if (!SB_ItemParts(this_ptr, static_cast<int>(sel), pkgName, grpName, soundName, sizeof(soundName)))
+        return;
 
     char fullName[768] = {};
     if (grpName[0])
@@ -2813,7 +2832,25 @@ static void __cdecl SB_HandleDelete(void* this_ptr)
     else
         snprintf(fullName, sizeof(fullName), "%s.%s", pkgName, soundName);
 
+    // A search or Favorites row may come from any package: name it in full.
+    const bool customRows = SoundBrowserFavorites::CustomRows();
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "DELETE CLASS=SOUND OBJECT=\"%s\"", customRows ? fullName : soundName);
+    CallEditorGet("OBJ", cmd);
+
     RefreshList(this_ptr);
+
+    if (customRows)
+    {
+        if (SoundBrowserFavorites::HasLoadedRow(fullName))
+        {
+            char errMsg[1024];
+            snprintf(errMsg, sizeof(errMsg),
+                     "Can't delete sound.\n\nSound %s is in use.", fullName);
+            MessageBoxA(hParent, errMsg, "Message", MB_OK);
+        }
+        return;
+    }
 
     LRESULT count = SendMessageA(hList, LVM_GETITEMCOUNT, 0, 0);
     for (LRESULT i = 0; i < count; i++)
@@ -2843,8 +2880,6 @@ static void __cdecl SB_HandleRename(void* this_ptr)
 {
     HWND hParent   = GetParentHWND(this_ptr);
     HWND hList     = GetListHWND(this_ptr);
-    HWND hPkgCombo = GetPackageComboHWND(this_ptr);
-    HWND hGrpCombo = GetGroupComboHWND(this_ptr);
 
     LRESULT sel = SendMessageA(hList, LVM_GETNEXTITEM,
                                static_cast<WPARAM>(-1), LVNI_SELECTED);
@@ -2853,22 +2888,10 @@ static void __cdecl SB_HandleRename(void* this_ptr)
         return;
     }
 
-    char soundName[256] = {};
-    LVITEMA lvi    = {};
-    lvi.mask       = LVIF_TEXT;
-    lvi.iItem      = static_cast<int>(sel);
-    lvi.iSubItem   = 0;
-    lvi.pszText    = soundName;
-    lvi.cchTextMax = sizeof(soundName);
-    SendMessageA(hList, LVM_GETITEMA, 0, reinterpret_cast<LPARAM>(&lvi));
-
-    if (soundName[0] == '\0')
-        return;
-
     RenameSoundData data = {};
-    strncpy_s(data.oldName,    sizeof(data.oldName),    soundName, _TRUNCATE);
-    GetWindowTextA(hPkgCombo, data.oldPackage, sizeof(data.oldPackage));
-    GetWindowTextA(hGrpCombo, data.oldGroup,   sizeof(data.oldGroup));
+    if (!SB_ItemParts(this_ptr, static_cast<int>(sel), data.oldPackage, data.oldGroup, data.oldName,
+                      sizeof(data.oldName)))
+        return;
 
     HINSTANCE hExeInst = GetModuleHandleA(NULL);
     INT_PTR result = DialogBoxParamA(hExeInst,
@@ -5320,7 +5343,10 @@ static HMENU WINAPI SB_LoadMenuA_Hook(HINSTANCE hInst, LPCSTR lpMenuName)
     {
         HMENU ctx = GetSubMenu(m, 0);
         if (ctx && SB_MenuPos(ctx, 159) < 0)
+        {
             SB_AppendSoundItems(ctx);
+            SoundBrowserFavorites::AddContextItems(ctx);
+        }
         break;
     }
     case 15103: // menu bar: File popup (0) gets file ops, Edit popup (1) gets sound items

@@ -200,6 +200,8 @@
     <ClInclude Include="MagicEventNative.inl" />
     <ClInclude Include="StringOperations.h" />
     <ClInclude Include="SoundBrowser.h" />
+    <ClInclude Include="SoundBrowserFavorites.h" />
+    <ClInclude Include="SoundFavoritesModel.h" />
     <ClInclude Include="TextureBrowser.h" />
     <ClInclude Include="UI.h" />
     <ClInclude Include="GEWireframeFix.h" />
@@ -276,6 +278,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="SoundBrowser.cpp" />
+    <ClCompile Include="SoundBrowserFavorites.cpp" />
     <ClCompile Include="TextureBrowser.cpp" />
     <ClCompile Include="UI.cpp" />
     <ClCompile Include="GEWireframeFix.cpp" />
