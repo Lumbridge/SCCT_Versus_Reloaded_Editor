@@ -1,7 +1,8 @@
 #pragma once
 // The pure part of the self-updater: release versions and their order, the
 // choice of release from the GitHub releases list, the zip directory of the
-// release archive and the checks on the files taken out of it. No network,
+// release archive and the checks on the files taken out of it, the What's
+// New record and what a start keeps of the version an update replaced. No network,
 // no zlib and no Windows, so the tests compile it alone.
 #include "Include/nlohmann/json.hpp"
 #include <algorithm>
@@ -10,6 +11,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Updater
@@ -194,6 +196,134 @@ namespace Updater
             out += "...";
         }
         return out;
+    }
+
+    // The title and Markdown notes of one release object, as GitHub's
+    // /releases/tags/<tag> answers it. The title falls back to the tag.
+    inline std::pair<std::string, std::string> TitleAndNotes(const Json& release)
+    {
+        if (!release.is_object()) throw std::runtime_error("GitHub returned an unexpected release.");
+        auto text = [&](const char* key) { return release.contains(key) && release[key].is_string() ? release[key].get<std::string>() : std::string{}; };
+        auto title = text("name");
+        if (title.empty()) title = text("tag_name");
+        return {title, text("body")};
+    }
+
+    // What's new: the notes of the release the updater installed, kept
+    // beside the editor until the first start that runs that version shows
+    // them. Stored as a few "Key=value" lines, a blank line, then the notes.
+    struct WhatsNew
+    {
+        std::string version, title, notes; // notes: plain text, CRLF line ends
+        bool shown = false;
+
+        static constexpr size_t kNotesLimit = 30000; // an EDIT control holds this comfortably
+
+        std::string Format() const
+        {
+            auto oneLine = [](const std::string& s) {
+                std::string out;
+                for (size_t i = 0; i < s.size(); ++i)
+                    if (s[i] == '\r' && i + 1 < s.size() && s[i + 1] == '\n') continue;
+                    else out += s[i] == '\r' || s[i] == '\n' ? ' ' : s[i];
+                return out;
+            };
+            return "RE+ What's New\r\nVersion=" + oneLine(version) + "\r\nTitle=" + oneLine(title)
+                   + "\r\nShown=" + (shown ? "1" : "0") + "\r\n\r\n" + notes;
+        }
+
+        static std::optional<WhatsNew> Parse(const std::string& text)
+        {
+            WhatsNew out;
+            size_t at = 0;
+            bool header = false;
+            while (at < text.size())
+            {
+                const auto end = text.find('\n', at);
+                std::string line = text.substr(at, end == std::string::npos ? std::string::npos : end - at);
+                at = end == std::string::npos ? text.size() : end + 1;
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (line.empty()) break; // the notes follow
+                if (!header) { if (line != "RE+ What's New") return std::nullopt; header = true; continue; }
+                const auto eq = line.find('=');
+                if (eq == std::string::npos) continue;
+                const auto key = line.substr(0, eq), value = line.substr(eq + 1);
+                if (key == "Version") out.version = value;
+                else if (key == "Title") out.title = value;
+                else if (key == "Shown") out.shown = value == "1";
+            }
+            if (!header || !Version::Parse(out.version)) return std::nullopt;
+            out.notes = text.substr((std::min)(at, text.size()));
+            return out;
+        }
+
+        // Whether these are the notes of the version running now.
+        bool For(const std::string& running) const
+        {
+            const auto a = Version::Parse(version), b = Version::Parse(running);
+            return a && b && *a == *b;
+        }
+        // Shown once, at the first start of the version they describe.
+        bool ShowAtStart(const std::string& running) const { return !shown && For(running); }
+    };
+
+    // The version in a DLL's VERSIONINFO ProductVersion. RE+ writes
+    // "RE+ 2.0.0"; the 1.x builds wrote "2.0.0.1" and the like, which does
+    // not say which release it was, so anything else is unknown.
+    inline std::optional<Version> ProductVersion(const std::string& text)
+    {
+        const std::string prefix = "RE+ ";
+        if (text.rfind(prefix, 0) != 0) return std::nullopt;
+        return Version::Parse(text.substr(prefix.size()));
+    }
+
+    // The tag to record as skipped after rolling back from running to
+    // previous, so the start-up check does not offer the version just left
+    // straight away; empty to leave the setting alone (rolling forward).
+    inline std::string SkipAfterRollBack(const std::string& running, const std::optional<Version>& previous)
+    {
+        const auto current = Version::Parse(running);
+        if (!current) return {};
+        if (previous && !(*previous < *current)) return {};
+        return "v" + current->ToString();
+    }
+
+    // What a start does with the files the last update or roll back left.
+    // Installing renames the running DLL (and a replaced launcher) to .old;
+    // the next start keeps it as the previous version, which Roll Back puts
+    // back. A previous launcher that does not go with the new previous DLL
+    // (the update kept the launcher) is removed so the pair stays matched.
+    enum class CleanUpAction
+    {
+        KeepOldDll,          // Reloaded.Editor.dll.old -> Reloaded.Editor.previous.dll
+        KeepOldLauncher,     // Reloaded_Editor.exe.old -> Reloaded_Editor.previous.exe
+        RemovePreviousLauncher,
+        RemoveOldLauncher,
+        RemoveStagedDll,     // .update files an interrupted install left
+        RemoveStagedLauncher,
+    };
+    struct Leftovers
+    {
+        bool oldDll = false, oldLauncher = false, previousLauncher = false, stagedDll = false, stagedLauncher = false;
+    };
+    struct CleanUpStep
+    {
+        CleanUpAction action;
+        bool needsDll; // skipped when keeping the old DLL failed, so the pair stays together
+    };
+    inline std::vector<CleanUpStep> CleanUpPlan(const Leftovers& found)
+    {
+        std::vector<CleanUpStep> steps;
+        if (found.oldDll)
+        {
+            steps.push_back({CleanUpAction::KeepOldDll, false});
+            if (found.oldLauncher) steps.push_back({CleanUpAction::KeepOldLauncher, true});
+            else if (found.previousLauncher) steps.push_back({CleanUpAction::RemovePreviousLauncher, true});
+        }
+        else if (found.oldLauncher) steps.push_back({CleanUpAction::RemoveOldLauncher, false});
+        if (found.stagedDll) steps.push_back({CleanUpAction::RemoveStagedDll, false});
+        if (found.stagedLauncher) steps.push_back({CleanUpAction::RemoveStagedLauncher, false});
+        return steps;
     }
 
     inline std::uint32_t Crc32(const std::uint8_t* data, size_t size)

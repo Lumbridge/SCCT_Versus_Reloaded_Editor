@@ -8,18 +8,27 @@
 // it offers to install it. Installing downloads the release archive, checks
 // it, and swaps Reloaded.Editor.dll (and the launcher) in place: a loaded DLL
 // cannot be overwritten but can be renamed, so the running one becomes
-// Reloaded.Editor.dll.old, which the next start deletes. The new version runs
-// after the editor is restarted.
+// Reloaded.Editor.dll.old. The new version runs after the editor is
+// restarted; that start keeps the .old files as Reloaded.Editor.previous.dll
+// (and Reloaded_Editor.previous.exe), which Help > Roll Back puts back, and
+// shows the installed release's notes once (Help > What's New shows them on
+// demand).
 namespace SelfUpdater
 {
     constexpr UINT kCheckNow = 40984;
     constexpr UINT kToggleStartupCheck = 40985;
     constexpr UINT kAbout = 40986;
+    constexpr UINT kWhatsNew = 41000;
+    constexpr UINT kRollBack = 41001;
+    // Posted to the frame by the worker that fetched the notes for What's New.
+    constexpr UINT kShowFetchedNotes = 41002;
 
     // From DLL start-up, with the path of this DLL.
     void Initialize(const std::wstring& dllPath);
-    // The Help menu entries: the update checks and About RE+.
-    void AppendHelpMenu(HMENU help);
+    // The Help menu entries: the update checks, What's New, Roll Back and
+    // About RE+. From the frame's thread once its menu bar is up; it also
+    // schedules the one-time What's New window after an update.
+    void AppendHelpMenu(HMENU help, HWND frame);
     // From the frame's command dispatcher. True when the command was ours.
     bool HandleCommand(UINT command);
 }
