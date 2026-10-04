@@ -93,6 +93,15 @@ namespace Workflow::Editor
     Json DesignClearances();
     void DesignPlay(const Json& start,const Pose& pose,bool launch = true);
     Json DesignTemporaryStart(const std::string& type,const std::string& team,const Pose& pose);
+    // Lighting Budget: every light with the raw flags the stock light checks
+    // read, the in-game render sphere of those that count, each BSP leaf's
+    // in-game light list (regenerated as Tools > Check InGame / Dynamic Lights
+    // in Leaves does, then restored to the build's lists) and the zone names.
+    // See LightingBudgetModel.h.
+    Json LightingBudgetScene();
+    // Selects exactly the live actors with these paths, one pass over the
+    // level; focus frames them in the viewports. Returns how many were found.
+    size_t SelectActorPaths(const std::vector<std::string>& paths, bool focus);
     // Security devices: creation, the motion sensor with its volume, and wiring.
     Json SecurityActors();
     Json Lights();

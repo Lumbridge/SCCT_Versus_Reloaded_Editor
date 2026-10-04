@@ -12,6 +12,8 @@
 #include "SecurityModel.h"
 #include "StageModel.h"
 #include "EntryThumbnailModel.h"
+#include "LightingBudgetModel.h"
+#include "logger.h"
 #include "MapRecovery.h"
 #include "BspDiagnostics.h"
 #include "MemoryWriter.h"
@@ -1418,4 +1420,5 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "SecurityNative.inl"
 #include "StageNative.inl"
 #include "EmitterLibraryNative.inl"
+#include "LightingBudgetNative.inl"
 }

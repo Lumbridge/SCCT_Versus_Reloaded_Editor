@@ -248,6 +248,19 @@ and cleared with Esc (categories opened before filtering open again), Tag and
 DrawScale set once for both, Undo and Redo restoring and reapplying both actors
 in one step, and the filter kept across a change to a single selected actor.
 
+## Lighting Budget
+
+`tools/test_workflow_tools.cmd` includes `LightingBudgetModelTests.cpp`: the
+editor's light classification (Off, Unflagged, Static, InGame, Static/InGame,
+Dynamic, with its dynamic test on bDynamicLight, LightEffect 22 and the two heat
+values), which lights count in game, the stock intersection test including
+bAffectOwnZoneOnly, per-zone totals, the worst leaf by the BSP's own leaf
+number with duplicate and unknown list entries ignored, the largest overlapping
+group as a maximal clique (a chain is not a group; a group straddling zones counts
+each zone's own share and is listed under the zone holding most of it), hotspot
+order and de-duplication, threshold clamping, the build warning's own limits, an
+unbuilt BSP, and the warning text.
+
 ## Local BSP lighting matching
 
 Compile and run `tests/LocalLightingMatchTests.cpp` with C++17 or later. It tests

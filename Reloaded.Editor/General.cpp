@@ -12,6 +12,7 @@
 #include "MapRecovery.h"
 #include "WindowDriftFix.h"
 #include "RebuildAllMaps.h"
+#include "LightingBudget.h"
 #include "BspTextureClipboard.h"
 #include "WorkflowTools.h"
 #include "GridSizeShortcut.h"
@@ -208,6 +209,13 @@ static bool __cdecl HandleRecoveredMapSave(UINT commandId)
 static bool __cdecl IsControlKeyDown()
 {
     return (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+}
+
+// Build All and the lighting rebuilds go through the Lighting Budget check
+// first; false cancels the command.
+static bool __cdecl LightingBudgetAllowsBuild(UINT command)
+{
+    return LightingBudget::AllowBuild(command);
 }
 
 static void __cdecl OpenRebuildAllMaps()
@@ -651,6 +659,7 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
 {
     static int s_continue = 0x10e57b35;
     static bool s_recoverySaveHandled = false;
+    static bool s_lightingBuildAllowed = true;
 
     __asm {
         cmp dword ptr [esp+4], 40927
@@ -728,6 +737,12 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         je   maybe_save_recovered_map
         cmp  dword ptr [esp+4], 40008 // File > Save As
         je   maybe_save_recovered_map
+        cmp  dword ptr [esp+4], 40038 // Build All
+        je   maybe_check_lighting_budget
+        cmp  dword ptr [esp+4], 40162 // Rebuild Lighting Only
+        je   maybe_check_lighting_budget
+        cmp  dword ptr [esp+4], 30000 // Rebuild Changed Lighting Only
+        je   maybe_check_lighting_budget
 
         // Fallthrough: replay overwritten prologue then continue
     continue_stock_command:
@@ -806,6 +821,18 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         popad
         cmp  byte ptr [s_recoverySaveHandled], 0
         je   continue_stock_command
+        retn 4
+
+    maybe_check_lighting_budget:
+        pushad
+        mov  eax, dword ptr [esp+36]
+        push eax
+        call LightingBudgetAllowsBuild
+        add  esp, 4
+        mov  byte ptr [s_lightingBuildAllowed], al
+        popad
+        cmp  byte ptr [s_lightingBuildAllowed], 0
+        jne  continue_stock_command
         retn 4
     }
 }
