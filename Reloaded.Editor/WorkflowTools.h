@@ -25,6 +25,8 @@ namespace WorkflowTools
     void RunObjectiveCommand(UINT command,const Workflow::Json& snapshot);
     void Initialize();
     void FindUsages(HWND owner, void* asset, bool mesh);
+    // Find Usages in All Maps for the browser's current material or mesh.
+    void FindUsagesInAllMaps(HWND owner, bool mesh);
     void RenameActorTag(HWND owner,std::string path,std::string type);
     // Save the selected emitters as a new Emitter Library entry: asks for the
     // name, category and description. Returns the saved entry, or null when

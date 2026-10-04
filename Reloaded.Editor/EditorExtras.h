@@ -31,4 +31,8 @@ namespace EditorExtras
     bool HandleCommand(UINT command);
     // The Reloaded selection and visibility entries of the actor right-click menu.
     void AppendActorMenu(HMENU menu);
+    // Opens a saved map as Open Recent does: asks first when the open map has
+    // unsaved changes (false when declined), then loads it and lists it in
+    // Open Recent. Throws when the editor cannot load it.
+    bool OpenMap(const std::string& path, HWND owner, const char* title);
 }
