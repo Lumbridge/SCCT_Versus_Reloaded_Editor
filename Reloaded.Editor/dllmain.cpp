@@ -44,6 +44,7 @@
 #include "PasteFix.h"
 #include "EmitterPreview.h"
 #include "SelfUpdater.h"
+#include "AssetNameGloss.h"
 
 INIT_ONCE g_InitOnce = INIT_ONCE_STATIC_INIT;
 HINSTANCE g_hReloadedDll = nullptr;
@@ -163,6 +164,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     SoundBrowser::Initialize();
     TextureBrowser::Initialize();
     StaticMeshBrowserFavorites::Initialize();
+    AssetNameGloss::Initialize();
     BspTextureClipboard::Initialize();
     GEWireframeFix::Initialize();
     LightmapFix::Initialize();

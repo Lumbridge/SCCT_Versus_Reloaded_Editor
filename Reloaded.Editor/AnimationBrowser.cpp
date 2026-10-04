@@ -2,6 +2,7 @@
 #include "AnimationBrowser.h"
 #include "PropertyGrid.h"
 #include "SoundBrowser.h"     // PeekSelectedSound for "Use" button
+#include "AssetNameGloss.h"
 #include "logger.h"
 #include <shellapi.h>         // ExtractIconExA for window icon
 #pragma comment(lib, "shell32.lib")
@@ -6195,6 +6196,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         // Copy Shortcut).  Subclass so we intercept WM_RBUTTONDOWN before
         // the listbox's default handler eats it.
         SetWindowSubclass(g_hSeqList, SeqListSubclassProc, 1, 0);
+        AssetNameGloss::AttachBrowser(hWnd); // English after French names
 
         // Property panel: tab control with five pages, mirroring UT2004
         // WBrowserAnimation's PropSheet (Mesh / Animation Set / Sequence /
