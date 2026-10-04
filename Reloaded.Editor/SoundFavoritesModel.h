@@ -5,6 +5,7 @@
 // add/remove merge. No engine and no Windows, so the tests compile it alone.
 #include <algorithm>
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -29,11 +30,19 @@ namespace SoundFavorites
     }
     inline bool SameName(const std::string& a, const std::string& b) { return Lower(a) == Lower(b); }
 
+    // The text a search looks in for a sound: its path, unless the editor
+    // adds more (the English for French names).
+    inline std::function<std::string(const std::string&)>& SearchText()
+    {
+        static std::function<std::string(const std::string&)> text;
+        return text;
+    }
+
     // A search matches when every space-separated word of it appears in the
-    // path, ignoring case; an empty search matches everything.
+    // path (or its SearchText), ignoring case; an empty search matches everything.
     inline bool Matches(const std::string& path, const std::string& query)
     {
-        const std::string haystack = Lower(path);
+        const std::string haystack = Lower(SearchText() ? SearchText()(path) : path);
         size_t at = 0;
         while (at < query.size())
         {

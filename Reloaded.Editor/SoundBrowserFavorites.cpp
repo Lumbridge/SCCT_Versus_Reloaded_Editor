@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "SoundBrowserFavorites.h"
 #include "SoundFavoritesModel.h"
+#include "AssetNameGloss.h"
 #include "MemoryWriter.h"
 #include <commctrl.h>
 #pragma comment(lib, "comctl32.lib")
@@ -1417,6 +1418,14 @@ static LRESULT CALLBACK SBF_BrowserSubclassProc(HWND window, UINT message, WPARA
 
 void SoundBrowserFavorites::Initialize()
 {
+    // Searches match the English for French names too: "drop" finds goutte_01.
+    SoundFavorites::SearchText() = [](const std::string& path) {
+        std::string text = path;
+        const auto parts = SoundFavorites::Split(path);
+        for (const auto* part : {&parts.package, &parts.group, &parts.name})
+            if (!part->empty()) text += " " + AssetNameGloss::GlossFor(part->c_str());
+        return text;
+    };
     SBF_LoadFavorites();
     SBF_LoadView();
 
