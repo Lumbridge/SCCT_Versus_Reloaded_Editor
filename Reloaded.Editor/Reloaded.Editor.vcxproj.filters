@@ -46,6 +46,7 @@
     <ClInclude Include="WorkflowEditor.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="WorkflowTools.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="EmitterPreview.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="CharacterSkinsImage.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CharacterSkinsModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CharacterSkinsWindow.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="EmitterLibraryWindow.h"><Filter>Header Files</Filter></ClInclude>

@@ -106,6 +106,10 @@ namespace Workflow::Editor
     Json CharacterSkinSettings();
     Json ApplyCharacterSkins(const Json& slots);
     void RemoveCharacterSkins();
+    // Writes the stock textures of the four slots as 32-bit TGA files (SpyBody.tga, ...).
+    Json ExportDefaultCharacterSkins(const std::filesystem::path& folder);
+    // Imports an edited image into MyLevel.CharacterSkins for a slot; returns its path.
+    std::string ImportCharacterSkin(const std::string& property, const std::filesystem::path& file);
     // Selects exactly the live actors with these paths, one pass over the
     // level; focus frames them in the viewports. Returns how many were found.
     size_t SelectActorPaths(const std::vector<std::string>& paths, bool focus);

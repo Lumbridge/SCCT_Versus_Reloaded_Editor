@@ -198,3 +198,55 @@ void RemoveCharacterSkins()
     for(const auto& kept:previous)if(std::none_of(doomed.begin(),doomed.end(),[&](const Json& d){return d.at("path")==kept.at("path");}))remaining.push_back(kept);
     Select(remaining);Redraw();
 }
+
+// The stock textures behind the four slots as 32-bit TGA files in folder, named after
+// their slots (SpyBody.tga, ...). Read from SPersoTextures.utx; the editor is not used.
+Json ExportDefaultCharacterSkins(const std::filesystem::path& folder)
+{
+    const auto source=Directory().parent_path().parent_path()/"Packages"/"Textures"/"SPersoTextures.utx";
+    std::ifstream input(source,std::ios::binary);
+    if(!input)throw std::runtime_error("Cannot read "+source.string());
+    CharacterSkins::Bytes package((std::istreambuf_iterator<char>(input)),std::istreambuf_iterator<char>());
+    std::error_code error;std::filesystem::create_directories(folder,error);
+    Json written=Json::array();
+    for(const auto& slot:CharacterSkins::Slots)
+    {
+        const auto image=CharacterSkins::Decode(CharacterSkins::ReadMip(package,slot.texture));
+        const auto tga=CharacterSkins::Tga(image);
+        const auto file=folder/(std::string(slot.property)+".tga");
+        std::ofstream out(file,std::ios::binary);
+        out.write(reinterpret_cast<const char*>(tga.data()),static_cast<std::streamsize>(tga.size()));
+        if(!out)throw std::runtime_error("Cannot write "+file.string());
+        written.push_back({{"slot",slot.property},{"file",file.u8string()},{"width",image.width},{"height",image.height}});
+    }
+    return written;
+}
+
+// Imports an edited image into the map package (group CharacterSkins, named after the
+// slot) and compresses it the way the stock texture is. Returns its object path.
+std::string ImportCharacterSkin(const std::string& property,const std::filesystem::path& file)
+{
+    auto slot=std::find_if(CharacterSkins::Slots.begin(),CharacterSkins::Slots.end(),[&](const CharacterSkins::Slot& s){return property==s.property;});
+    if(slot==CharacterSkins::Slots.end())throw std::runtime_error("Unknown Character Skins slot "+property);
+    const auto extension=Authoring::Extension(file.string());
+    if(!CharacterSkins::Importable(extension))throw std::runtime_error("Import a .tga, .bmp, .pcx or .dds image.");
+    std::ifstream input(file,std::ios::binary);if(!input)throw std::runtime_error("Cannot read "+file.string());
+    std::string header(64,'\0');input.read(header.data(),header.size());header.resize(static_cast<size_t>(input.gcount()));
+    std::pair<uint32_t,uint32_t> size;
+    try{size=Authoring::ImageSize(header,extension);}catch(const std::exception& e){throw std::runtime_error(file.string()+": "+e.what());}
+    const auto package=Path(Read<Address>(Level()+0x18));
+    std::string name=slot->property;
+    for(int suffix=2;Find(package+".CharacterSkins."+name);++suffix)name=std::string(slot->property)+std::to_string(suffix);
+    const auto path=package+".CharacterSkins."+name;
+    Exec("TEXTURE IMPORT FILE=\""+file.string()+"\" NAME=\""+name+"\" PACKAGE=\""+package+"\" GROUP=\"CharacterSkins\" MIPS=1");
+    auto texture=Find(path);
+    if(!texture || !IsA(texture,"Texture"))throw std::runtime_error("The editor's texture importer refused "+file.string());
+    if(extension!=".dds")
+    {
+        int chain=1;for(auto side=(std::max)(size.first,size.second);side>1;side>>=1)++chain;
+        Exec("TEXTURE COMPRESS NAME="+path+" FORMAT="+slot->format+" MaxMips="+std::to_string(chain));
+    }
+    if(AuthoringValue(texture,"USize")!=static_cast<int>(size.first) || AuthoringValue(texture,"VSize")!=static_cast<int>(size.second))
+        throw std::runtime_error(path+" did not import at the file's "+std::to_string(size.first)+"x"+std::to_string(size.second)+".");
+    return path;
+}

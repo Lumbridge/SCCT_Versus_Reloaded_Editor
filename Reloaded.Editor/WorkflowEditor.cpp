@@ -14,6 +14,7 @@
 #include "EntryThumbnailModel.h"
 #include "LightingBudgetModel.h"
 #include "CharacterSkinsModel.h"
+#include "CharacterSkinsImage.h"
 #include "logger.h"
 #include "MapRecovery.h"
 #include "BspDiagnostics.h"

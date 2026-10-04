@@ -19,14 +19,16 @@ struct Slot
     const char* property; // var() on ReloadedCharacterSkins
     const char* label;    // panel row
     const char* stock;    // stock heat layer whose heat and EMF masks are reused
+    const char* texture;  // the stock diffuse in SPersoTextures, exported for painting over
+    const char* format;   // its compression, used again for an imported replacement
 };
 // Slot 0 is the body and slot 1 the head on both stock character meshes
 // (SPerso.ATT_01, SPerso.DEF_01); see the chains in SPersoTextures.
 inline constexpr std::array<Slot, 4> Slots = {{
-    {"SpyBody", "Spy body", "SPersoTextures.alpha_ATT02.HEAT_SN02"},
-    {"SpyHead", "Spy head", "SPersoTextures.alpha_ATT02.HEAT_SN02_2"},
-    {"MercBody", "Merc body", "SPersoTextures.alpha_DEF01.DEF01_heat_bodu"},
-    {"MercHead", "Merc head", "SPersoTextures.alpha_DEF01.def01_heat_face"},
+    {"SpyBody", "Spy body", "SPersoTextures.alpha_ATT02.HEAT_SN02", "Shadw_agent", "DXT3"},
+    {"SpyHead", "Spy head", "SPersoTextures.alpha_ATT02.HEAT_SN02_2", "Shadw_agent_2", "DXT1"},
+    {"MercBody", "Merc body", "SPersoTextures.alpha_DEF01.DEF01_heat_bodu", "DEF_01_A_Body", "DXT5"},
+    {"MercHead", "Merc head", "SPersoTextures.alpha_DEF01.def01_heat_face", "DEF_01_A_Face", "DXT5"},
 }};
 
 // The UnrealScript compiled into the map. The stock skins are heat vision layer ->
