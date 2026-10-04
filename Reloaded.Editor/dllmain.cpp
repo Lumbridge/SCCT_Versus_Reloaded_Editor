@@ -26,6 +26,7 @@
 #include "MeasureTool.h"
 #include "StaticMeshCollisionFix.h"
 #include "StaticMeshBrowserFavorites.h"
+#include "SoundBrowserFavorites.h"
 #include "BspTextureClipboard.h"
 #include "DdsImportFix.h"
 #include "LightCullFix.h"
@@ -167,6 +168,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     General::Initialize();
     Shadows::Initialize();
     SoundBrowser::Initialize();
+    SoundBrowserFavorites::Initialize();
     TextureBrowser::Initialize();
     StaticMeshBrowserFavorites::Initialize();
     AssetNameGloss::Initialize();
