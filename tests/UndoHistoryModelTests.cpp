@@ -1,0 +1,116 @@
+#include "../Reloaded.Editor/UndoHistoryModel.h"
+#include <iostream>
+#include <source_location>
+#include <stdexcept>
+#include <string>
+using namespace UndoHistory;
+int checks = 0;
+void Check(bool value, const char* message, std::source_location where = std::source_location::current())
+{
+    ++checks;
+    if (!value) throw std::runtime_error(std::string(message) + " (line " + std::to_string(where.line()) + ")");
+}
+
+// A stand-in for the editor's buffer: Undo and Redo move UndoCount, and a
+// refusal (an operation recording, or nothing left) leaves it alone.
+struct Buffer
+{
+    Snapshot s;
+    int refuseAfter = 1 << 30;
+    int calls = 0;
+    bool Step(bool redo)
+    {
+        if (calls++ >= refuseAfter || s.recording) return false;
+        if (redo) { if (s.undoCount == 0) return false; --s.undoCount; }
+        else { if (s.undoCount >= Count(s)) return false; ++s.undoCount; }
+        return true;
+    }
+};
+
+int main()
+{
+    try
+    {
+        Snapshot s;
+        s.titles = {"Move actors", "Add actor", "Change property", "Create or resize blockout", "Turn actors"};
+
+        // Rows: one before the oldest step, then one per step.
+        Check(Rows(s) == 6 && Current(s) == 5, "all applied: current is the last row");
+        Check(!Undone(s, 5) && !Undone(s, 0), "nothing undone");
+        Check(RowText(s, 0) == "Start (before the oldest step)", "start row");
+        Check(RowText(s, 1) == "1.  Move actors" && RowText(s, 5) == "5.  Turn actors", "numbered titles");
+        Check(RowText(s, 6).empty(), "past the end");
+
+        // Two undone: they are below the current point and greyed.
+        s.undoCount = 2;
+        Check(Current(s) == 3 && Undone(s, 4) && Undone(s, 5) && !Undone(s, 3), "undone rows follow the current one");
+        Check(StepsTo(s, 1) == -2 && StepsTo(s, 5) == 2 && StepsTo(s, 3) == 0 && StepsTo(s, 0) == -3, "steps to a row");
+        Check(StepsTo(s, 99) == 2 && StepsTo(s, -4) == -3, "rows outside the list clamp");
+
+        // A count the editor reports past the list never goes below the start.
+        Snapshot odd = s; odd.undoCount = 9;
+        Check(Current(odd) == 0, "undo count beyond the list");
+
+        // Jumping walks one step at a time and lands on the row.
+        Buffer b; b.s = s;
+        auto r = Jump(StepsTo(b.s, 1), [&](bool redo) { return b.Step(redo); });
+        Check(r.done == 2 && !r.stopped && Current(b.s) == 1 && b.calls == 2, "undo two steps");
+        Check(JumpReport(r) == "Undid 2 steps.", "undo report");
+        r = Jump(StepsTo(b.s, 5), [&](bool redo) { return b.Step(redo); });
+        Check(r.done == 4 && Current(b.s) == 5 && JumpReport(r) == "Redid 4 steps.", "redo to the end");
+        r = Jump(StepsTo(b.s, 4), [&](bool redo) { return b.Step(redo); });
+        Check(r.done == 1 && Current(b.s) == 4 && JumpReport(r) == "Undid 1 step.", "one step");
+
+        // A refusal stops the walk where it is, without trying further.
+        b.calls = 0; b.refuseAfter = 2;
+        r = Jump(StepsTo(b.s, 0), [&](bool redo) { return b.Step(redo); });
+        Check(r.stopped && r.done == 2 && Current(b.s) == 2 && b.calls == 3, "stopped after two");
+        Check(JumpReport(r) == "Undid 2 of 4 steps; the editor would not go further.", "stopped report");
+        b.calls = 0; b.refuseAfter = 1 << 30; b.s.recording = true;
+        r = Jump(StepsTo(b.s, 5), [&](bool redo) { return b.Step(redo); });
+        Check(r.stopped && r.done == 0 && Current(b.s) == 2, "refused while recording");
+        Check(JumpReport(r) == "The editor would not redo that step; nothing changed.", "refusal report");
+        r = Jump(0, [&](bool) { Check(false, "no step for zero"); return true; });
+        Check(r.done == 0 && !r.stopped && JumpReport(r) == "Already at that step.", "zero steps");
+
+        // Long lists: a thousand steps undo to the start in a thousand calls.
+        Buffer longer;
+        for (int i = 0; i < 1000; ++i) longer.s.titles.push_back("Step " + std::to_string(i));
+        r = Jump(StepsTo(longer.s, 0), [&](bool redo) { return longer.Step(redo); });
+        Check(r.done == 1000 && Current(longer.s) == 0 && longer.calls == 1000, "a thousand steps");
+        Check(RowText(longer.s, 1000) == "1000.  Step 999", "last of a thousand");
+
+        // Titles.
+        Check(CleanTitle("  Move\tactors\r\n") == "Move actors", "control characters and ends");
+        Check(CleanTitle("") == "(untitled)" && CleanTitle(" \t ") == "(untitled)", "empty title");
+        Check(CleanTitle(std::string(400, 'x')).size() == 160 && CleanTitle(std::string(400, 'x')).ends_with("..."), "long title");
+
+        // Memory.
+        Check(Bytes(512) == "512 B" && Bytes(1536) == "1.5 KB" && Bytes(3 * 1024 * 1024) == "3.0 MB", "byte sizes");
+        Check(MemoryText(4 * 1024 * 1024, 16 * 1024 * 1024) == "Memory 4.0 MB of 16.0 MB (25%)", "memory against the limit");
+        Check(MemoryText(2048, 0) == "Memory 2.0 KB", "limit unknown");
+
+        // Status line.
+        Check(StatusText(s).starts_with("5 steps, 2 can be redone.\r\nMemory 0 B."), "status with redo");
+        Snapshot empty;
+        Check(StatusText(empty).starts_with("No undo steps yet."), "empty buffer");
+        empty.resetReason = "Map load";
+        Check(StatusText(empty).starts_with("History cleared: Map load."), "reset reason");
+        Snapshot one; one.titles = {"Add actor"}; one.recording = true; one.limit = 100;
+        Check(StatusText(one) == "1 step. An operation is recording.\r\nMemory 0 B of 100 B (0%).", "one step, recording");
+
+        // Snapshots compare by value, so an unchanged buffer is not redrawn.
+        Snapshot copy = s;
+        Check(copy == s, "equal snapshots");
+        copy.titles.back() = "Other";
+        Check(!(copy == s), "a changed title differs");
+
+        std::cout << checks << " undo history checks passed\n";
+        return 0;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "FAIL: " << e.what() << "\n";
+        return 1;
+    }
+}

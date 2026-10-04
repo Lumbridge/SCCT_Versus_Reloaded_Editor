@@ -25,6 +25,8 @@
     <ClInclude Include="LevelSnapshotModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="FavoritesModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MeshFavoritesModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="UndoHistory.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="UndoHistoryModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="SelfUpdater.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="SelfUpdaterModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CrashRecovery.h"><Filter>Header Files</Filter></ClInclude>
@@ -249,6 +251,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="UI.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="UndoHistory.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="General.cpp">
