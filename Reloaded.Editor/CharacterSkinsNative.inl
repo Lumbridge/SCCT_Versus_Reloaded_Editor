@@ -92,26 +92,27 @@ namespace
         }
     };
 
-    void CompileSkinClass()
+    // Compiles one class of the map package from its source unless it already is.
+    void CompileMapClass(const char* name,const std::string& script,const char* parentName,bool(*compiled)(Address))
     {
-        auto c=SkinClass();
-        if(c && SkinClassCompiled(c))return;
+        auto c=Find(LevelPath()+"."+name);
+        if(c && compiled(c))return;
         // A class left uncompiled by a failed attempt is imported again over itself.
         {
             char folder[MAX_PATH]{};GetTempPathA(MAX_PATH,folder);
-            auto file=std::filesystem::path(folder)/(std::string(CharacterSkins::ClassName)+".uc_");
-            {std::ofstream out(file,std::ios::binary);out<<CharacterSkins::Script();if(!out)throw std::runtime_error("Cannot write the Character Skins script to "+file.string());}
-            Exec("CLASS LOAD FILE=\""+file.string()+"\" PACKAGE="+Path(Read<Address>(Level()+0x18))+" NAME="+CharacterSkins::ClassName);
+            auto file=std::filesystem::path(folder)/(std::string(name)+".uc_");
+            {std::ofstream out(file,std::ios::binary);out<<script;if(!out)throw std::runtime_error("Cannot write the "+std::string(name)+" script to "+file.string());}
+            Exec("CLASS LOAD FILE=\""+file.string()+"\" PACKAGE="+Path(Read<Address>(Level()+0x18))+" NAME="+name);
             std::error_code ignored;std::filesystem::remove(file,ignored);
-            c=SkinClass();
-            if(!c)throw std::runtime_error("The editor did not import the Character Skins script.");
+            c=Find(LevelPath()+"."+name);
+            if(!c)throw std::runtime_error("The editor did not import the "+std::string(name)+" script.");
         }
         auto parent=Read<Address>(c+0x28);
-        if(!parent || NameOf(parent)!="Info")throw std::runtime_error("The map's ReloadedCharacterSkins class is not an Info. Remove it from the map package first.");
+        if(!parent || NameOf(parent)!=parentName)throw std::runtime_error("The map's "+std::string(name)+" class is not a "+parentName+". Remove it from the map package first.");
         if(!Read<Address>(c+0xb0))
         {
             auto data=Read<Address>(parent+0xb0);int count=Read<int>(parent+0xb4);
-            if(!data || count<=0 || count>0x10000 || count!=Read<int>(parent+0x34))throw std::runtime_error("Unexpected Info class layout.");
+            if(!data || count<=0 || count>0x10000 || count!=Read<int>(parent+0x34))throw std::runtime_error("Unexpected "+std::string(parentName)+" class layout.");
             auto malloc=Read<Address>(kMalloc);
             auto copy=reinterpret_cast<void*(__thiscall*)(void*,unsigned,const char*)>(Read<Address>(Read<Address>(malloc)))(reinterpret_cast<void*>(malloc),count,"CharacterSkins");
             if(!copy)throw std::runtime_error("Out of memory.");
@@ -150,14 +151,21 @@ namespace
             }
         } restore{slot,captured};
         Exec("SCRIPT MAKE");
-        if(!SkinClassCompiled(c))
+        if(!compiled(c))
         {
             // Never save an uncompiled class with the map: RF_Transient on, RF_Standalone off.
             Write(c+0x1c,(Read<unsigned>(c+0x1c)&~0x80000u)|0x4000u);
-            throw std::runtime_error("The Character Skins script did not compile."+(SkinCompile::errors.empty()?std::string(" See the editor log."):"\n"+SkinCompile::errors));
+            throw std::runtime_error("The "+std::string(name)+" script did not compile."+(SkinCompile::errors.empty()?std::string(" See the editor log."):"\n"+SkinCompile::errors));
         }
         // A compiled class is saved with the map even if an earlier attempt marked it transient.
         Write(c+0x1c,(Read<unsigned>(c+0x1c)&~0x4000u)|0x80000u);
+    }
+    bool BotsClassCompiled(Address c) { return c && (Read<unsigned>(c+0x8c)&2); }
+    // The console commands first: the actor's script refers to their class.
+    void CompileSkinClass()
+    {
+        CompileMapClass(CharacterSkins::BotsClassName,CharacterSkins::BotsScript(),"Interaction",BotsClassCompiled);
+        CompileMapClass(CharacterSkins::ClassName,CharacterSkins::Script(),"Info",SkinClassCompiled);
     }
 }
 

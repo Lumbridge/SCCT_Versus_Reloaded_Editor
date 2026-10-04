@@ -21,9 +21,10 @@ int main()
     {
         const auto script = Script();
         // The stock compiler wants the class declaration first and CRLF text.
-        Check(Contains(script, "class ReloadedCharacterSkins2 extends Info\r\n\tplaceable;"), "class header");
-        Check(std::string(ClassName) == "ReloadedCharacterSkins2" && Version == 2, "versioned class name");
-        Check(std::string(LegacyClassNames[0]) == "ReloadedCharacterSkins", "version 1 is migrated");
+        Check(Contains(script, "class ReloadedCharacterSkins3 extends Info\r\n\tplaceable;"), "class header");
+        Check(std::string(ClassName) == "ReloadedCharacterSkins3" && Version == 3, "versioned class name");
+        Check(std::string(LegacyClassNames[0]) == "ReloadedCharacterSkins2" && std::string(LegacyClassNames[1]) == "ReloadedCharacterSkins",
+              "versions 1 and 2 are migrated");
         Check(script.find("\n") == script.find("\r\n") + 1, "CRLF line ends");
         for (const auto& slot : Slots)
         {
@@ -46,7 +47,22 @@ int main()
         Check(Contains(script, "Known[i].bDeleteMe"), "slots of gone pawns reused");
         Check(Contains(script, "Version=" + std::to_string(Version)), "version default");
         Check(!Contains(script, "replication"), "no replication block");
-        Check(!Contains(script, "var bool"), "no bool arrays: the compiler refuses them");
+        Check(!Contains(script, "var bool Dressed") && !Contains(script, "var bool Swapped"), "no bool arrays: the compiler refuses them");
+
+        // AddBot and KillBots: attached once, to editor Play Level sessions only.
+        Check(Contains(script, "InStr(Caps(Level.GetLocalURL()), \"?EDITEUR=TRUE\") < 0"), "editor launches only");
+        Check(Contains(script, "AddInteraction(class'ReloadedTestBots'.Outer.Name, 'ReloadedTestBots', PC.Player)"), "commands attached");
+        Check(Contains(script, "ReloadedTestBots(PC.Player.LocalInteractions[i]) != None"), "commands attached once");
+        const auto bots = BotsScript();
+        Check(Contains(bots, "class ReloadedTestBots extends Interaction;\r\n"), "commands class header");
+        Check(bots.find("\n") == bots.find("\r\n") + 1, "commands CRLF");
+        Check(Contains(bots, "exec function AddBot(optional string Team)") && Contains(bots, "exec function KillBots()"), "commands");
+        // Typed lines never reach an interaction; the entered line is read off the console.
+        Check(Contains(bots, "C.CmdHistoryTop != Entered") && Contains(bots, "Typed = C.TypedStr;") && Contains(bots, "bRequiresTick=True"),
+              "console lines watched");
+        Check(Contains(bots, "BotClass = class'SPawnAttaque_1Mesh'") && Contains(bots, "BotClass = class'SPawnDefense_1Mesh'"), "bot classes");
+        Check(Contains(bots, "PC.Spawn(BotClass, , 'ReloadedTestBot',") && Contains(bots, "DynamicActors(class'Pawn', P, 'ReloadedTestBot')"),
+              "KillBots removes only the tagged bots");
 
         Check(ValidPath(""), "empty keeps stock");
         Check(ValidPath("MyLevel.Snow.SpyCamo") && ValidPath("Arctic_TXT.SpyCamo"), "package paths");

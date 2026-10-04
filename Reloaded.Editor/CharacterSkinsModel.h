@@ -15,10 +15,14 @@ namespace CharacterSkins
 {
 // Raise with every change to Script(). Each version is its own class, so a map's
 // older actor can be read and replaced instead of recompiling a class in use.
-constexpr int Version = 2;
-constexpr const char* ClassName = "ReloadedCharacterSkins2";
+constexpr int Version = 3;
+constexpr const char* ClassName = "ReloadedCharacterSkins3";
 // Earlier versions' classes, newest first, whose actors the panel migrates.
-inline constexpr std::array<const char*, 1> LegacyClassNames = {{"ReloadedCharacterSkins"}};
+inline constexpr std::array<const char*, 2> LegacyClassNames = {{"ReloadedCharacterSkins2", "ReloadedCharacterSkins"}};
+// The console commands for previewing the look in an editor Play Level: an
+// Interaction, compiled into the map beside the actor. Rename it with any change.
+constexpr const char* BotsClassName = "ReloadedTestBots";
+constexpr const char* BotTag = "ReloadedTestBot";
 
 struct Slot
 {
@@ -107,6 +111,7 @@ inline std::string Script()
         "var Pawn Known[32];\r\n"
         "var Material Stock[64];\r\n"
         "var byte Swapped[32];\r\n"
+        "var bool bCommandsChecked;\r\n"
         "\r\n"
         "function PostBeginPlay()\r\n"
         "{\r\n";
@@ -144,6 +149,8 @@ inline std::string Script()
         "{\r\n"
         "\tlocal Pawn P;\r\n"
         "\r\n"
+        "\tif (!bCommandsChecked)\r\n"
+        "\t\tAddCommands();\r\n"
         "\tforeach DynamicActors(class'Pawn', P)\r\n"
         "\t{\r\n"
         "\t\tif (P.IsA('SPawnAttaque') || P.IsA('SPawnAttaque_1Mesh'))\r\n"
@@ -153,6 +160,24 @@ inline std::string Script()
         "\t\t\tOutfit(P, " + std::string(Models[1].property) + ", MeshAnimation'" + Models[1].animation + "', " +
         Models[1].goggles + ", 2);\r\n"
         "\t}\r\n"
+        "}\r\n"
+        "\r\n"
+        "// The AddBot and KillBots console commands, in editor Play Level sessions only.\r\n"
+        "function AddCommands()\r\n"
+        "{\r\n"
+        "\tlocal PlayerController PC;\r\n"
+        "\tlocal int i;\r\n"
+        "\r\n"
+        "\tPC = Level.GetLocalPlayerController();\r\n"
+        "\tif (PC == None || PC.Player == None || PC.Player.InteractionMaster == None)\r\n"
+        "\t\treturn;\r\n"
+        "\tbCommandsChecked = true;\r\n"
+        "\tif (InStr(Caps(Level.GetLocalURL()), \"?EDITEUR=TRUE\") < 0)\r\n"
+        "\t\treturn;\r\n"
+        "\tfor (i = 0; i < PC.Player.LocalInteractions.Length; i++)\r\n"
+        "\t\tif (" + BotsClassName + "(PC.Player.LocalInteractions[i]) != None)\r\n"
+        "\t\t\treturn;\r\n"
+        "\tPC.Player.InteractionMaster.AddInteraction(class'" + BotsClassName + "'.Outer.Name, '" + BotsClassName + "', PC.Player);\r\n"
         "}\r\n"
         "\r\n"
         "// A team's model, keeping the team's own animations so its moves still play, with\r\n"
@@ -232,6 +257,102 @@ inline std::string Script()
         "\tVersion=" + std::to_string(Version) + "\r\n"
         "}\r\n";
     return s;
+}
+
+// Console commands to look at the other team in an editor Play Level, where the
+// player cannot see their own character: AddBot [spy|merc] stands a character,
+// without a controller, in front of the player (a merc unless spy is asked for);
+// KillBots removes them. The actor attaches this only to editor launches.
+inline std::string BotsScript()
+{
+    const std::string tag = BotTag;
+    return
+        "//=============================================================================\r\n"
+        "// " + std::string(BotsClassName) + ": AddBot [spy|merc] and KillBots console commands,\r\n"
+        "// attached by " + ClassName + " when the map is played from the editor.\r\n"
+        "//=============================================================================\r\n"
+        "class " + BotsClassName + " extends Interaction;\r\n"
+        "\r\n"
+        "var string Typed;\r\n"
+        "var int Entered;\r\n"
+        "var bool bWatching;\r\n"
+        "\r\n"
+        "// The console runs a typed line as a player command, which never reaches an\r\n"
+        "// interaction. Watch it instead: the line it held when its command history moves\r\n"
+        "// is the one just entered.\r\n"
+        "function Tick(float DeltaTime)\r\n"
+        "{\r\n"
+        "\tlocal Console C;\r\n"
+        "\tlocal string Line;\r\n"
+        "\r\n"
+        "\tC = Console(Master.Console);\r\n"
+        "\tif (C == None)\r\n"
+        "\t\treturn;\r\n"
+        "\tif (bWatching && C.CmdHistoryTop != Entered)\r\n"
+        "\t{\r\n"
+        "\t\tLine = Typed;\r\n"
+        "\t\tif (Caps(Line) == \"ADDBOT\" || Left(Caps(Line), 7) == \"ADDBOT \")\r\n"
+        "\t\t\tAddBot(Mid(Line, 7));\r\n"
+        "\t\telse if (Caps(Line) == \"KILLBOTS\")\r\n"
+        "\t\t\tKillBots();\r\n"
+        "\t}\r\n"
+        "\tbWatching = true;\r\n"
+        "\tEntered = C.CmdHistoryTop;\r\n"
+        "\tTyped = C.TypedStr;\r\n"
+        "}\r\n"
+        "\r\n"
+        "exec function AddBot(optional string Team)\r\n"
+        "{\r\n"
+        "\tlocal PlayerController PC;\r\n"
+        "\tlocal class<Pawn> BotClass;\r\n"
+        "\tlocal Pawn Bot;\r\n"
+        "\tlocal rotator Facing;\r\n"
+        "\tlocal float Distance;\r\n"
+        "\r\n"
+        "\tPC = ViewportOwner.Actor;\r\n"
+        "\tif (PC == None)\r\n"
+        "\t\treturn;\r\n"
+        "\tif (PC.Pawn == None)\r\n"
+        "\t{\r\n"
+        "\t\tPC.ClientMessage(\"AddBot: spawn into the map first.\");\r\n"
+        "\t\treturn;\r\n"
+        "\t}\r\n"
+        "\tif (Team ~= \"spy\")\r\n"
+        "\t\tBotClass = class'SPawnAttaque_1Mesh';\r\n"
+        "\telse\r\n"
+        "\t\tBotClass = class'SPawnDefense_1Mesh';\r\n"
+        "\tFacing = PC.Rotation;\r\n"
+        "\tFacing.Pitch = 0;\r\n"
+        "\tFacing.Roll = 0;\r\n"
+        "\tfor (Distance = 160; Distance >= 80 && Bot == None; Distance -= 40)\r\n"
+        "\t\tBot = PC.Spawn(BotClass, , '" + tag + "', PC.Pawn.Location + vector(Facing) * Distance, Facing + rot(0, 32768, 0));\r\n"
+        "\tif (Bot == None)\r\n"
+        "\t\tPC.ClientMessage(\"AddBot: no room in front of you.\");\r\n"
+        "\telse\r\n"
+        "\t\tPC.ClientMessage(\"AddBot: added \" $ Bot.Class.Name $ \". KillBots removes it.\");\r\n"
+        "}\r\n"
+        "\r\n"
+        "exec function KillBots()\r\n"
+        "{\r\n"
+        "\tlocal PlayerController PC;\r\n"
+        "\tlocal Pawn P;\r\n"
+        "\tlocal int Count;\r\n"
+        "\r\n"
+        "\tPC = ViewportOwner.Actor;\r\n"
+        "\tif (PC == None)\r\n"
+        "\t\treturn;\r\n"
+        "\tforeach PC.DynamicActors(class'Pawn', P, '" + tag + "')\r\n"
+        "\t{\r\n"
+        "\t\tP.Destroy();\r\n"
+        "\t\tCount++;\r\n"
+        "\t}\r\n"
+        "\tPC.ClientMessage(\"KillBots: removed \" $ Count $ \".\");\r\n"
+        "}\r\n"
+        "\r\n"
+        "defaultproperties\r\n"
+        "{\r\n"
+        "\tbRequiresTick=True\r\n"
+        "}\r\n";
 }
 
 // An object path the panel may write into a slot: Package[.Group].Name, made of the
