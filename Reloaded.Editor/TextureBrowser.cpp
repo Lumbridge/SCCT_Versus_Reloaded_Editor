@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "TextureBrowser.h"
+#include "FavoritesModel.h"
 #include "WorkflowTools.h"
 #include "Hooks.h"
 #include "MemoryWriter.h"
@@ -57,7 +58,11 @@ typedef void (__fastcall *FArrayLoadFn)(void* lazyLoaderSubobj);
 // Texture Browser favorites.  The editor already has a native thumbnail
 // renderer for the Recent page (REN_TexBrowserMRU).  The fourth tab reuses that
 // page and substitutes this persisted list only while Favorites is selected;
-// the editor's real MRU list is never modified.
+// the editor's real MRU list is never modified.  Favourites come from every
+// package, whichever map is open: their packages are loaded as needed.  While
+// Favorites is shown, a package filter and a sort order sit above the
+// thumbnails, and favourites that cannot be loaded (so have no thumbnail) are
+// listed below them, where their right-click menu can still remove them.
 #define HOOK_MRU_LIST_BUILD         0x10ECA1E8u
 #define RESUME_MRU_LIST_BUILD       0x10ECA1EEu
 #define CONTINUE_AFTER_LIST_BUILD   0x10EC9D19u
@@ -71,22 +76,61 @@ typedef void (__fastcall *FArrayLoadFn)(void* lazyLoaderSubobj);
 
 #define UOBJECT_OUTER_OFFSET        0x18
 #define UOBJECT_FNAME_OFFSET        0x20
+#define UOBJECT_CLASS_OFFSET        0x24
+#define UCLASS_SUPER_OFFSET         0x28
 #define GEDITOR_CURRENT_MATERIAL    0x138
 
 #define TEXTURE_CONTEXT_MENU_ID     15109
 #define IDMN_TB_TOGGLE_FAVORITE     40908
+// Child controls of the browser's tab control; their notifications go there.
+#define IDC_TB_FAVORITES_PACKAGE    40916
+#define IDC_TB_FAVORITES_SORT       40917
+#define IDC_TB_FAVORITES_NOT_LOADED 40918
+#define WM_TB_REFRESH_FAVORITES     (WM_APP + 0x5C)
+#define WM_TB_LAYOUT_FAVORITES      (WM_APP + 0x5D)
+#define TIMER_TB_FAVORITES_REFRESH  0x5AF2
 
 static constexpr const char* kFavoritesIniSection = "TextureBrowserFavorites";
+// Kept apart: saving the favourites rewrites their whole section.
+static constexpr const char* kViewIniSection = "TextureBrowserFavoritesView";
 static constexpr int kMaxFavorites = 4096;
 static constexpr int kMaxRenderedMaterials = 16384;
+static constexpr int kMaxNotLoadedRows = 4;
 
+// g_FavoritePaths is in the order the favourites were added (the ini order);
+// g_FavoriteObjects holds each one's material while it is loaded, else nullptr.
 static std::vector<std::string> g_FavoritePaths;
-static std::vector<void*> g_ResolvedFavoriteMaterials;
+static std::vector<void*> g_FavoriteObjects;
+static size_t g_LastResolvedCount = 0;
+// Packages already loaded (or found missing) for unloaded favourites; cleared
+// when favourites drop out of memory, as they do when another map is opened.
+static std::unordered_set<std::string> g_AttemptedPackages;
+// What the Favorites page shows: the thumbnails' favourites in drawing order,
+// and the rows of the ones that are not loaded.
+static std::vector<size_t> g_TileFavorites;
+static std::vector<Favorites::Row> g_NotLoadedRows;
+static std::string g_PackageFilter; // empty: every package
+static Favorites::Sort g_Sort = Favorites::Sort::Package;
+// The favourite a right-click on the not-loaded list was over, while its menu is open.
+static std::string g_ContextPath;
 static std::string g_FavoritesIniPath;
 static volatile LONG g_FavoritesActive = FALSE;
 static HWND g_TextureTab = nullptr;
 static int g_LastNativeTab = 0;
 static int g_LastGObjectsCount = -1;
+static void* g_MaterialClass = nullptr;
+
+// The Recent page the Favorites tab borrows, and the controls added around it.
+// While Favorites is shown the page is moved down by g_TopStrip and shortened
+// by g_BottomStrip as well, so the native layout fits the thumbnails between.
+static HWND g_MruPage = nullptr;
+static RECT g_MruNativeRect = {};
+static RECT g_LaidOutRect = {}; // the native place the controls were last put around
+static int g_TopStrip = 0;
+static int g_BottomStrip = 0;
+static HWND g_PackageFilterCombo = nullptr;
+static HWND g_SortCombo = nullptr;
+static HWND g_NotLoadedList = nullptr;
 
 typedef HWND(WINAPI* CreateWindowExAFn)(DWORD, LPCSTR, LPCSTR, DWORD,
                                         int, int, int, int, HWND, HMENU,
@@ -191,6 +235,54 @@ static bool TB_ReadObjectIdentity(void* object, void** outer,
         *outer = nullptr;
         return false;
     }
+}
+
+static bool TB_ReadPointerAt(void* object, size_t offset, void** value)
+{
+    __try
+    {
+        *value = *reinterpret_cast<void**>(static_cast<char*>(object) + offset);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        *value = nullptr;
+        return false;
+    }
+}
+
+// Engine.Material, found by name the first time a material is met.
+static bool TB_IsMaterialClass(void* objectClass)
+{
+    if (g_MaterialClass)
+        return objectClass == g_MaterialClass;
+
+    char name[64] = {};
+    char package[64] = {};
+    void* outer = nullptr;
+    void* packageOuter = nullptr;
+    if (!TB_ReadObjectIdentity(objectClass, &outer, name, std::size(name)) ||
+        _stricmp(name, "Material") != 0 || !outer ||
+        !TB_ReadObjectIdentity(outer, &packageOuter, package, std::size(package)) ||
+        _stricmp(package, "Engine") != 0 || packageOuter)
+        return false;
+    g_MaterialClass = objectClass;
+    return true;
+}
+
+static bool TB_IsMaterial(void* object)
+{
+    void* objectClass = nullptr;
+    if (!object || !TB_ReadPointerAt(object, UOBJECT_CLASS_OFFSET, &objectClass))
+        return false;
+    for (int depth = 0; objectClass && depth < 64; ++depth)
+    {
+        if (TB_IsMaterialClass(objectClass))
+            return true;
+        if (!TB_ReadPointerAt(objectClass, UCLASS_SUPER_OFFSET, &objectClass))
+            return false;
+    }
+    return false;
 }
 
 static bool TB_BuildObjectPath(void* object, std::string& path)
@@ -316,6 +408,8 @@ static void TB_LoadFavorites()
     }
     if (migrated)
         TB_SaveFavorites();
+    // Paths re-read from the ini start unresolved; the next refresh finds them.
+    g_FavoriteObjects.assign(g_FavoritePaths.size(), nullptr);
 }
 
 static void TB_SaveFavorites()
@@ -342,9 +436,28 @@ static void TB_SaveFavorites()
     }
 }
 
+static void TB_LoadView()
+{
+    const std::string ini = TB_GetIniPath();
+    char value[256] = {};
+    GetPrivateProfileStringA(kViewIniSection, "Sort", "", value,
+                             static_cast<DWORD>(std::size(value)), ini.c_str());
+    g_Sort = Favorites::SortFromKey(value);
+    GetPrivateProfileStringA(kViewIniSection, "Package", "", value,
+                             static_cast<DWORD>(std::size(value)), ini.c_str());
+    g_PackageFilter = value;
+}
+
+static void TB_SaveView()
+{
+    const std::string ini = TB_GetIniPath();
+    WritePrivateProfileStringA(kViewIniSection, "Sort", Favorites::SortKey(g_Sort), ini.c_str());
+    WritePrivateProfileStringA(kViewIniSection, "Package", g_PackageFilter.c_str(), ini.c_str());
+}
+
 static void TB_RefreshResolvedFavorites()
 {
-    g_ResolvedFavoriteMaterials.clear();
+    g_FavoriteObjects.assign(g_FavoritePaths.size(), nullptr);
     void** objects = nullptr;
     INT objectCount = 0;
     if (!TB_ReadGObjects(&objects, &objectCount))
@@ -352,7 +465,10 @@ static void TB_RefreshResolvedFavorites()
 
     g_LastGObjectsCount = objectCount;
     if (g_FavoritePaths.empty())
+    {
+        g_LastResolvedCount = 0;
         return;
+    }
 
     std::unordered_map<std::string, size_t> wanted;
     wanted.reserve(g_FavoritePaths.size());
@@ -364,7 +480,7 @@ static void TB_RefreshResolvedFavorites()
     for (INT i = 0; i < objectCount && remaining > 0; ++i)
     {
         void* object = nullptr;
-        if (!TB_ReadGObjectAt(objects, i, &object) || !object)
+        if (!TB_ReadGObjectAt(objects, i, &object) || !TB_IsMaterial(object))
             continue;
 
         std::string path;
@@ -379,12 +495,28 @@ static void TB_RefreshResolvedFavorites()
         }
     }
 
-    g_ResolvedFavoriteMaterials.reserve(resolved.size());
-    for (void* material : resolved)
-    {
-        if (material)
-            g_ResolvedFavoriteMaterials.push_back(material);
-    }
+    g_FavoriteObjects = resolved;
+    const size_t resolvedCount = static_cast<size_t>(
+        std::count_if(resolved.begin(), resolved.end(), [](void* o) { return o != nullptr; }));
+    // Opening another map unloads the texture packages it does not use; let
+    // their favourites' packages be loaded again.
+    if (resolvedCount < g_LastResolvedCount)
+        g_AttemptedPackages.clear();
+    g_LastResolvedCount = resolvedCount;
+}
+
+// The favourite's material, if it is still the object it was resolved to: a
+// map change can free it and reuse its memory before the next refresh.
+static void* TB_LiveFavorite(size_t favorite)
+{
+    if (favorite >= g_FavoriteObjects.size() || !g_FavoriteObjects[favorite])
+        return nullptr;
+    void* object = g_FavoriteObjects[favorite];
+    std::string path;
+    if (!TB_IsMaterial(object) || !TB_BuildObjectPath(object, path) ||
+        TB_ToLower(path) != TB_ToLower(g_FavoritePaths[favorite]))
+        return nullptr;
+    return object;
 }
 
 static bool __cdecl TB_ExecEditorCommand(const char* command)
@@ -419,7 +551,7 @@ static bool __cdecl TB_ExecEditorCommand(const char* command)
     }
 }
 
-static std::string TB_GetTextureDirectory()
+static std::string TB_GetPackageDirectory(const char* folder)
 {
     char executable[MAX_PATH] = {};
     if (!GetModuleFileNameA(nullptr, executable,
@@ -431,7 +563,7 @@ static std::string TB_GetTextureDirectory()
     *(slash + 1) = '\0';
 
     const std::string relative = std::string(executable) +
-        "..\\Packages\\Textures\\";
+        "..\\Packages\\" + folder + "\\";
     char fullPath[MAX_PATH] = {};
     const DWORD length = GetFullPathNameA(relative.c_str(),
         static_cast<DWORD>(std::size(fullPath)), fullPath, nullptr);
@@ -440,56 +572,53 @@ static std::string TB_GetTextureDirectory()
     return fullPath;
 }
 
-static std::string TB_FavoritePackage(const std::string& path)
+// Package files by lower-case name. An earlier folder wins a name clash.
+static void TB_FindPackageFiles(const char* folder, const char* pattern,
+                                std::unordered_map<std::string, std::string>& files)
 {
-    const size_t dot = path.find('.');
-    return dot == std::string::npos ? path : path.substr(0, dot);
+    const std::string directory = TB_GetPackageDirectory(folder);
+    if (directory.empty())
+        return;
+
+    WIN32_FIND_DATAA data = {};
+    HANDLE search = FindFirstFileA((directory + pattern).c_str(), &data);
+    if (search == INVALID_HANDLE_VALUE)
+        return;
+    do
+    {
+        if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            continue;
+        std::string fileName = data.cFileName;
+        const size_t dot = fileName.rfind('.');
+        const std::string baseName = dot == std::string::npos
+            ? fileName : fileName.substr(0, dot);
+        files.emplace(TB_ToLower(baseName), directory + fileName);
+    } while (FindNextFileA(search, &data));
+    FindClose(search);
 }
 
 static void TB_LoadMissingFavoritePackages()
 {
-    std::unordered_set<std::string> resolved;
-    resolved.reserve(g_ResolvedFavoriteMaterials.size());
-    for (void* material : g_ResolvedFavoriteMaterials)
-    {
-        std::string path;
-        if (TB_BuildObjectPath(material, path))
-            resolved.insert(TB_ToLower(path));
-    }
-
     std::unordered_map<std::string, std::string> wantedPackages;
-    for (const auto& path : g_FavoritePaths)
+    for (size_t i = 0; i < g_FavoritePaths.size(); ++i)
     {
-        if (resolved.find(TB_ToLower(path)) != resolved.end())
+        if (i < g_FavoriteObjects.size() && g_FavoriteObjects[i])
             continue;
-        const std::string package = TB_FavoritePackage(path);
-        if (!package.empty())
+        const std::string package = Favorites::Split(g_FavoritePaths[i]).package;
+        // Each package is tried once until favourites are unloaded again, so
+        // one that is missing or is a map's own package is not retried every
+        // second.
+        if (!package.empty() && g_AttemptedPackages.insert(TB_ToLower(package)).second)
             wantedPackages.emplace(TB_ToLower(package), package);
     }
     if (wantedPackages.empty())
         return;
 
-    const std::string directory = TB_GetTextureDirectory();
-    if (directory.empty())
-        return;
-
+    // Materials live in texture packages, and in static mesh packages that
+    // carry their own.
     std::unordered_map<std::string, std::string> packageFiles;
-    WIN32_FIND_DATAA data = {};
-    HANDLE search = FindFirstFileA((directory + "*.utx").c_str(), &data);
-    if (search != INVALID_HANDLE_VALUE)
-    {
-        do
-        {
-            if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-                continue;
-            std::string fileName = data.cFileName;
-            const size_t dot = fileName.rfind('.');
-            const std::string baseName = dot == std::string::npos
-                ? fileName : fileName.substr(0, dot);
-            packageFiles.emplace(TB_ToLower(baseName), directory + fileName);
-        } while (FindNextFileA(search, &data));
-        FindClose(search);
-    }
+    TB_FindPackageFiles("Textures", "*.utx", packageFiles);
+    TB_FindPackageFiles("StaticMeshes", "*.usx", packageFiles);
 
     int loaded = 0;
     int unavailable = 0;
@@ -530,21 +659,160 @@ static void TB_RedrawFavoritesPage()
                  RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
 }
 
-static int __cdecl TB_CopyFavoriteMaterials(void** destination, int capacity)
+static std::vector<Favorites::Favorite> TB_FavoriteStates()
 {
-    if (!destination || capacity <= 0)
-        return 0;
+    std::vector<Favorites::Favorite> favorites;
+    favorites.reserve(g_FavoritePaths.size());
+    for (size_t i = 0; i < g_FavoritePaths.size(); ++i)
+        favorites.push_back({ g_FavoritePaths[i], i < g_FavoriteObjects.size() && g_FavoriteObjects[i] });
+    return favorites;
+}
 
+// The package filter's entries: every package, then each one with its count.
+// A filter naming a package with no favourites left falls back to every package.
+static void TB_FillPackageFilter(const std::vector<Favorites::Favorite>& favorites)
+{
+    const auto packages = Favorites::Packages(favorites);
+    if (!g_PackageFilter.empty() &&
+        std::none_of(packages.begin(), packages.end(), [](const Favorites::Package& p)
+            { return TB_ToLower(p.name) == TB_ToLower(g_PackageFilter); }))
+        g_PackageFilter.clear();
+    if (!g_PackageFilterCombo)
+        return;
+
+    SendMessageA(g_PackageFilterCombo, WM_SETREDRAW, FALSE, 0);
+    SendMessageA(g_PackageFilterCombo, CB_RESETCONTENT, 0, 0);
+    SendMessageA(g_PackageFilterCombo, CB_ADDSTRING, 0,
+                 reinterpret_cast<LPARAM>(Favorites::AllLabel(favorites.size()).c_str()));
+    int selected = 0;
+    for (size_t i = 0; i < packages.size(); ++i)
+    {
+        SendMessageA(g_PackageFilterCombo, CB_ADDSTRING, 0,
+                     reinterpret_cast<LPARAM>(Favorites::PackageLabel(packages[i]).c_str()));
+        if (TB_ToLower(packages[i].name) == TB_ToLower(g_PackageFilter))
+            selected = static_cast<int>(i) + 1;
+    }
+    SendMessageA(g_PackageFilterCombo, CB_SETCURSEL, selected, 0);
+    SendMessageA(g_PackageFilterCombo, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(g_PackageFilterCombo, nullptr, TRUE);
+}
+
+// The package the filter's entry at index names (0 is every package).
+static std::string TB_PackageAt(int index)
+{
+    const auto packages = Favorites::Packages(TB_FavoriteStates());
+    return index > 0 && static_cast<size_t>(index) <= packages.size() ? packages[index - 1].name : std::string{};
+}
+
+static int TB_ControlHeight(HWND control, int fallback)
+{
+    RECT rect = {};
+    return control && GetWindowRect(control, &rect) && rect.bottom > rect.top
+        ? static_cast<int>(rect.bottom - rect.top) : fallback;
+}
+
+// Places the Favorites controls around the borrowed Recent page and moves the
+// page between them; with Favorites off, the page gets its native place back.
+static void TB_ApplyFavoritesLayout()
+{
+    if (!g_MruPage || !IsWindow(g_MruPage))
+        return;
+
+    const bool active = InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE) != FALSE;
+    constexpr int gap = 3;
+    const int comboHeight = TB_ControlHeight(g_SortCombo, 21);
+    const RECT native = g_MruNativeRect;
+    g_LaidOutRect = native;
+    const int width = static_cast<int>(native.right - native.left);
+    const int height = static_cast<int>(native.bottom - native.top);
+
+    int listHeight = 0;
+    if (active && g_NotLoadedList && !g_NotLoadedRows.empty())
+    {
+        const int itemHeight = (std::max)(1, static_cast<int>(
+            SendMessage(g_NotLoadedList, LB_GETITEMHEIGHT, 0, 0)));
+        const int rows = (std::min)(static_cast<int>(g_NotLoadedRows.size()), kMaxNotLoadedRows);
+        listHeight = rows * itemHeight + 2 * GetSystemMetrics(SM_CYEDGE);
+        // Never leave the thumbnails less than half the page.
+        listHeight = (std::min)(listHeight, (std::max)(0, height / 2 - gap));
+    }
+
+    g_TopStrip = active ? 2 * (comboHeight + gap) : 0;
+    g_BottomStrip = listHeight > 0 ? listHeight + gap : 0;
+
+    // The drop-down height includes its list.
+    constexpr int dropHeight = 320;
+    if (g_PackageFilterCombo)
+        SetWindowPos(g_PackageFilterCombo, HWND_TOP, native.left, native.top,
+                     width, dropHeight, SWP_NOACTIVATE | (active ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+    if (g_SortCombo)
+        SetWindowPos(g_SortCombo, HWND_TOP, native.left, native.top + comboHeight + gap,
+                     width, dropHeight, SWP_NOACTIVATE | (active ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+    if (g_NotLoadedList)
+        SetWindowPos(g_NotLoadedList, HWND_TOP, native.left, native.bottom - listHeight,
+                     width, (std::max)(listHeight, 1),
+                     SWP_NOACTIVATE | (listHeight > 0 ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+
+    // TB_MruPageSubclassProc applies the strips to this native placement.
+    SetWindowPos(g_MruPage, nullptr, native.left, native.top, width, height,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+// Rebuilds what the Favorites page shows from the favourites' current state.
+static void TB_UpdateFavoritesView()
+{
     void** objects = nullptr;
     INT objectCount = 0;
     if (TB_ReadGObjects(&objects, &objectCount) &&
         objectCount != g_LastGObjectsCount)
         TB_RefreshResolvedFavorites();
 
-    const int count = (std::min)(capacity,
-        static_cast<int>(g_ResolvedFavoriteMaterials.size()));
-    for (int i = 0; i < count; ++i)
-        destination[i] = g_ResolvedFavoriteMaterials[i];
+    const auto favorites = TB_FavoriteStates();
+    TB_FillPackageFilter(favorites);
+    auto view = Favorites::Tiles(favorites, g_PackageFilter, g_Sort);
+    g_TileFavorites = std::move(view.tiles);
+    g_NotLoadedRows = std::move(view.notLoaded);
+
+    if (g_NotLoadedList)
+    {
+        SendMessageA(g_NotLoadedList, WM_SETREDRAW, FALSE, 0);
+        SendMessageA(g_NotLoadedList, LB_RESETCONTENT, 0, 0);
+        for (const auto& row : g_NotLoadedRows)
+            SendMessageA(g_NotLoadedList, LB_ADDSTRING, 0,
+                         reinterpret_cast<LPARAM>(row.label.c_str()));
+        SendMessageA(g_NotLoadedList, WM_SETREDRAW, TRUE, 0);
+        InvalidateRect(g_NotLoadedList, nullptr, TRUE);
+    }
+
+    if (InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
+    {
+        TB_ApplyFavoritesLayout();
+        TB_RedrawFavoritesPage();
+    }
+}
+
+static int __cdecl TB_CopyFavoriteMaterials(void** destination, int capacity)
+{
+    if (!destination || capacity <= 0)
+        return 0;
+
+    // Each thumbnail's material is checked before the native draw uses it.
+    // New objects are left to the refresh timer: drawing may create some.
+    bool stale = false;
+    int count = 0;
+    for (size_t favorite : g_TileFavorites)
+    {
+        if (count >= capacity)
+            break;
+        void* material = TB_LiveFavorite(favorite);
+        if (material)
+            destination[count++] = material;
+        else
+            stale = true;
+    }
+    // Rebuild the page once this draw is over.
+    if (stale && g_TextureTab)
+        PostMessage(g_TextureTab, WM_TB_REFRESH_FAVORITES, 0, 0);
     return count;
 }
 
@@ -579,15 +847,20 @@ __declspec(naked) static void TB_FavoritesRenderHook()
 static bool TB_CurrentMaterialPath(std::string& path)
 {
     void* material = TB_GetCurrentMaterial();
-    return material && TB_BuildObjectPath(material, path);
+    return material && TB_IsMaterial(material) && TB_BuildObjectPath(material, path);
 }
 
 static void TB_ToggleCurrentFavorite()
 {
-    std::string path;
-    if (!TB_CurrentMaterialPath(path))
+    // A right-click in the not-loaded list names its row; anywhere else it is
+    // the browser's current material.
+    std::string path = g_ContextPath;
+    if (path.empty() && !TB_CurrentMaterialPath(path))
         return;
 
+    // Start from the saved list, so favourites added in another open editor
+    // are not dropped by this one's save.
+    TB_LoadFavorites();
     size_t index = 0;
     if (TB_FindFavorite(path, &index))
         g_FavoritePaths.erase(g_FavoritePaths.begin() + index);
@@ -603,8 +876,7 @@ static void TB_ToggleCurrentFavorite()
 
     TB_SaveFavorites();
     TB_RefreshResolvedFavorites();
-    if (InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
-        TB_RedrawFavoritesPage();
+    TB_UpdateFavoritesView();
 }
 
 static int TB_MenuPosition(HMENU menu, UINT command)
@@ -633,17 +905,174 @@ static HMENU WINAPI TB_LoadMenuA_Hook(HINSTANCE instance, LPCSTR menuName)
 
     std::string path;
     const bool hasMaterial = TB_CurrentMaterialPath(path);
-    const bool isFavorite = hasMaterial && TB_FindFavorite(path);
+    // A not-loaded favourite can only be removed: every other command acts
+    // on the browser's current material, which is not this row.
+    const bool notLoaded = !g_ContextPath.empty();
+    const bool isFavorite = notLoaded || (hasMaterial && TB_FindFavorite(path));
     const char* label = isFavorite
         ? "Remove from &Favorites"
         : "Add to &Favorites";
-    const UINT flags = MF_BYPOSITION | MF_STRING |
-        (hasMaterial ? MF_ENABLED : MF_GRAYED);
+    const UINT toggleFlags = MF_BYPOSITION | MF_STRING |
+        (hasMaterial || notLoaded ? MF_ENABLED : MF_GRAYED);
+    const UINT materialFlags = MF_BYPOSITION | MF_STRING |
+        (hasMaterial && !notLoaded ? MF_ENABLED : MF_GRAYED);
 
     // Stock positions 0-2 are Properties, Duplicate and Rename.
-    InsertMenuA(context, 3, flags, IDMN_TB_TOGGLE_FAVORITE, label);
-    InsertMenuA(context, 4, flags, WorkflowTools::kFindMaterial, "Find &Usages...");
+    InsertMenuA(context, 3, toggleFlags, IDMN_TB_TOGGLE_FAVORITE, label);
+    InsertMenuA(context, 4, materialFlags, WorkflowTools::kFindMaterial, "Find &Usages...");
+    if (notLoaded)
+        for (int i = 0; i < GetMenuItemCount(context); ++i)
+            if (GetMenuItemID(context, i) != IDMN_TB_TOGGLE_FAVORITE)
+                EnableMenuItem(context, i, MF_BYPOSITION | MF_GRAYED);
     return menu;
+}
+
+// The right-click menu of a not-loaded favourite, at a screen point (or under
+// the selected row for the keyboard's menu key).
+static void TB_ShowNotLoadedMenu(HWND list, LPARAM screenPosition)
+{
+    POINT screenPoint = { GET_X_LPARAM(screenPosition), GET_Y_LPARAM(screenPosition) };
+    int item = -1;
+    if (screenPosition == -1)
+    {
+        item = static_cast<int>(SendMessage(list, LB_GETCURSEL, 0, 0));
+        RECT itemRect = {};
+        if (item < 0 || SendMessage(list, LB_GETITEMRECT, item,
+                                    reinterpret_cast<LPARAM>(&itemRect)) == LB_ERR)
+            return;
+        screenPoint = { itemRect.left, itemRect.bottom };
+        ClientToScreen(list, &screenPoint);
+    }
+    else
+    {
+        POINT clientPoint = screenPoint;
+        ScreenToClient(list, &clientPoint);
+        const LRESULT hit = SendMessage(list, LB_ITEMFROMPOINT, 0,
+                                        MAKELPARAM(clientPoint.x, clientPoint.y));
+        if (HIWORD(hit))
+            return; // outside every row
+        item = LOWORD(hit);
+    }
+    if (item < 0 || static_cast<size_t>(item) >= g_NotLoadedRows.size())
+        return;
+    SendMessage(list, LB_SETCURSEL, item, 0);
+
+    g_ContextPath = g_FavoritePaths[g_NotLoadedRows[item].favorite];
+    struct ClearContext { ~ClearContext() { g_ContextPath.clear(); } } clearContext;
+
+    HMENU menu = TB_LoadMenuA_Hook(GetModuleHandleA(nullptr),
+                                   MAKEINTRESOURCEA(TEXTURE_CONTEXT_MENU_ID));
+    if (!menu)
+        return;
+    HMENU context = GetSubMenu(menu, 0);
+    UINT command = 0;
+    if (context)
+    {
+        command = TrackPopupMenu(context, TPM_RIGHTBUTTON | TPM_RETURNCMD,
+                                 screenPoint.x, screenPoint.y, 0, list, nullptr);
+        PostMessage(list, WM_NULL, 0, 0);
+    }
+    DestroyMenu(menu);
+    if (command == IDMN_TB_TOGGLE_FAVORITE)
+        TB_ToggleCurrentFavorite();
+}
+
+static LRESULT CALLBACK TB_MruPageSubclassProc(HWND page, UINT message,
+                                               WPARAM wParam, LPARAM lParam,
+                                               UINT_PTR, DWORD_PTR)
+{
+    if (message == WM_WINDOWPOSCHANGING)
+    {
+        // Track where the property sheet puts the page, and while Favorites
+        // is shown move it between the Favorites controls.
+        WINDOWPOS* position = reinterpret_cast<WINDOWPOS*>(lParam);
+        if (position && (!(position->flags & SWP_NOMOVE) || !(position->flags & SWP_NOSIZE)))
+        {
+            RECT& native = g_MruNativeRect;
+            if (!(position->flags & SWP_NOMOVE))
+                OffsetRect(&native, position->x - native.left, position->y - native.top);
+            if (!(position->flags & SWP_NOSIZE))
+            {
+                native.right = native.left + position->cx;
+                native.bottom = native.top + position->cy;
+            }
+            position->x = native.left;
+            position->y = native.top + g_TopStrip;
+            position->cx = native.right - native.left;
+            position->cy = (std::max)(0, static_cast<int>(native.bottom - native.top) - g_TopStrip - g_BottomStrip);
+            position->flags &= ~(SWP_NOMOVE | SWP_NOSIZE);
+        }
+    }
+    else if (message == WM_WINDOWPOSCHANGED &&
+             InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
+    {
+        // The property sheet moved the page (the browser was resized): bring
+        // the Favorites controls along once this move is over.
+        if (!EqualRect(&g_LaidOutRect, &g_MruNativeRect) && g_TextureTab)
+            PostMessage(g_TextureTab, WM_TB_LAYOUT_FAVORITES, 0, 0);
+    }
+    else if (message == WM_NCDESTROY)
+    {
+        if (page == g_MruPage)
+            g_MruPage = nullptr;
+        RemoveWindowSubclass(page, TB_MruPageSubclassProc, 4);
+    }
+    return DefSubclassProc(page, message, wParam, lParam);
+}
+
+// Finds the Recent page and adds the Favorites controls beside it, once per
+// browser window.
+static bool TB_AttachFavoritesPage(HWND tab)
+{
+    if (g_MruPage && IsWindow(g_MruPage) && g_SortCombo && IsWindow(g_SortCombo))
+        return true;
+
+    HWND page = FindWindowExA(tab, nullptr, "SplinterCell2UnrealWPageMRU", nullptr);
+    if (!page)
+        return false;
+    if (page != g_MruPage)
+    {
+        RECT rect = {};
+        GetWindowRect(page, &rect);
+        MapWindowPoints(nullptr, tab, reinterpret_cast<POINT*>(&rect), 2);
+        g_MruNativeRect = rect;
+        g_TopStrip = 0;
+        g_BottomStrip = 0;
+        if (!SetWindowSubclass(page, TB_MruPageSubclassProc, 4, 0))
+            return false;
+        g_MruPage = page;
+    }
+
+    HFONT font = reinterpret_cast<HFONT>(SendMessage(tab, WM_GETFONT, 0, 0));
+    if (!font)
+        font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+    auto create = [tab, font](const char* className, DWORD style, int id) {
+        HWND control = CreateWindowExA(
+            0, className, "", WS_CHILD | WS_TABSTOP | style,
+            0, 0, 120, 120, tab,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+            GetModuleHandleA(nullptr), nullptr);
+        if (control)
+            SendMessage(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        return control;
+    };
+    if (!g_PackageFilterCombo || !IsWindow(g_PackageFilterCombo))
+        g_PackageFilterCombo = create("COMBOBOX", WS_VSCROLL | CBS_DROPDOWNLIST,
+                                      IDC_TB_FAVORITES_PACKAGE);
+    if (!g_SortCombo || !IsWindow(g_SortCombo))
+    {
+        g_SortCombo = create("COMBOBOX", WS_VSCROLL | CBS_DROPDOWNLIST,
+                             IDC_TB_FAVORITES_SORT);
+        for (auto sort : Favorites::kSorts)
+            SendMessageA(g_SortCombo, CB_ADDSTRING, 0,
+                         reinterpret_cast<LPARAM>(Favorites::SortLabel(sort)));
+    }
+    if (g_SortCombo)
+        SendMessage(g_SortCombo, CB_SETCURSEL, static_cast<WPARAM>(g_Sort), 0);
+    if (!g_NotLoadedList || !IsWindow(g_NotLoadedList))
+        g_NotLoadedList = create("LISTBOX", WS_VSCROLL | WS_BORDER | LBS_NOTIFY |
+                                 LBS_NOINTEGRALHEIGHT, IDC_TB_FAVORITES_NOT_LOADED);
+    return g_SortCombo != nullptr;
 }
 
 static void TB_SendNativeTabChanged(HWND tab)
@@ -661,12 +1090,19 @@ static void TB_ActivateFavorites(HWND tab)
     if (!tab || !IsWindow(tab))
         return;
 
+    // Subclass the Recent page first, so it is moved into place as the
+    // property sheet shows it.
+    TB_AttachFavoritesPage(tab);
     if (!InterlockedCompareExchange(&g_FavoritesActive, TRUE, FALSE))
     {
         const int current = static_cast<int>(
             SendMessage(tab, TCM_GETCURSEL, 0, 0));
         if (current >= 0 && current < 3)
             g_LastNativeTab = current;
+        // Pick up favourites another open editor saved, and retry every
+        // package: switching to Favorites is the way to ask again.
+        TB_LoadFavorites();
+        g_AttemptedPackages.clear();
         TB_RefreshResolvedFavorites();
         TB_LoadMissingFavoritePackages();
     }
@@ -678,12 +1114,19 @@ static void TB_ActivateFavorites(HWND tab)
     TB_SendNativeTabChanged(tab);
     SendMessage(tab, TCM_SETCURSEL, 3, 0);
     SetFocus(tab);
-    TB_RedrawFavoritesPage();
+    TB_UpdateFavoritesView();
+}
+
+// Favorites gives the Recent page back; the caller shows the page it wants.
+static void TB_DeactivateFavorites()
+{
+    InterlockedExchange(&g_FavoritesActive, FALSE);
+    TB_ApplyFavoritesLayout();
 }
 
 static void TB_LeaveFavoritesForRecent(HWND tab)
 {
-    InterlockedExchange(&g_FavoritesActive, FALSE);
+    TB_DeactivateFavorites();
     g_LastNativeTab = 2;
     SendMessage(tab, TCM_SETCURSEL, 2, 0);
     SendMessage(tab, TCM_SETCURFOCUS, 2, 0);
@@ -720,7 +1163,7 @@ static LRESULT CALLBACK TB_TabSubclassProc(HWND tab, UINT message,
         {
             if (InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
             {
-                InterlockedExchange(&g_FavoritesActive, FALSE);
+                TB_DeactivateFavorites();
                 SendMessage(tab, TCM_SETCURSEL, 2, 0);
                 SendMessage(tab, TCM_SETCURFOCUS, 2, 0);
                 TB_RedrawFavoritesPage();
@@ -760,10 +1203,93 @@ static LRESULT CALLBACK TB_TabSubclassProc(HWND tab, UINT message,
         }
         break;
 
+    case WM_COMMAND:
+        if (HIWORD(wParam) == CBN_SELCHANGE &&
+            (LOWORD(wParam) == IDC_TB_FAVORITES_PACKAGE || LOWORD(wParam) == IDC_TB_FAVORITES_SORT))
+        {
+            const int choice = static_cast<int>(SendMessage(reinterpret_cast<HWND>(lParam), CB_GETCURSEL, 0, 0));
+            if (choice >= 0)
+            {
+                if (LOWORD(wParam) == IDC_TB_FAVORITES_PACKAGE)
+                    g_PackageFilter = TB_PackageAt(choice);
+                else if (static_cast<size_t>(choice) < std::size(Favorites::kSorts))
+                    g_Sort = Favorites::kSorts[choice];
+                TB_SaveView();
+                TB_UpdateFavoritesView();
+            }
+            return 0;
+        }
+        if (LOWORD(wParam) == IDC_TB_FAVORITES_NOT_LOADED)
+            return 0;
+        break;
+
+    case WM_CONTEXTMENU:
+        if (g_NotLoadedList && reinterpret_cast<HWND>(wParam) == g_NotLoadedList)
+        {
+            TB_ShowNotLoadedMenu(g_NotLoadedList, lParam);
+            return 0;
+        }
+        break;
+
+    case WM_TB_REFRESH_FAVORITES:
+        TB_RefreshResolvedFavorites();
+        TB_UpdateFavoritesView();
+        return 0;
+
+    case WM_TB_LAYOUT_FAVORITES:
+        if (InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
+            TB_ApplyFavoritesLayout();
+        return 0;
+
+    case WM_TIMER:
+        if (wParam == TIMER_TB_FAVORITES_REFRESH)
+        {
+            // Ticks since the object count last changed.
+            static int steadyTicks = 0;
+            if (InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
+            {
+                void** objects = nullptr;
+                INT objectCount = 0;
+                if (TB_ReadGObjects(&objects, &objectCount) &&
+                    objectCount != g_LastGObjectsCount)
+                {
+                    steadyTicks = 0;
+                    TB_RefreshResolvedFavorites();
+                    TB_UpdateFavoritesView();
+                }
+                else if (++steadyTicks == 2)
+                {
+                    // Opening another map unloads the packages it does not
+                    // use. Load the favourites' packages back once nothing
+                    // has loaded for two ticks and no modal dialog has the
+                    // editor, so this never lands in the middle of a map load.
+                    HWND top = GetAncestor(tab, GA_ROOTOWNER);
+                    if (!top || IsWindowEnabled(top))
+                    {
+                        const size_t before = g_LastResolvedCount;
+                        TB_LoadMissingFavoritePackages();
+                        if (g_LastResolvedCount != before)
+                            TB_UpdateFavoritesView();
+                    }
+                }
+            }
+            return 0;
+        }
+        break;
+
     case WM_NCDESTROY:
         if (tab == g_TextureTab)
         {
+            KillTimer(tab, TIMER_TB_FAVORITES_REFRESH);
             g_TextureTab = nullptr;
+            g_MruPage = nullptr;
+            g_PackageFilterCombo = nullptr;
+            g_SortCombo = nullptr;
+            g_NotLoadedList = nullptr;
+            g_TileFavorites.clear();
+            g_NotLoadedRows.clear();
+            g_TopStrip = 0;
+            g_BottomStrip = 0;
             InterlockedExchange(&g_FavoritesActive, FALSE);
         }
         RemoveWindowSubclass(tab, TB_TabSubclassProc, 1);
@@ -869,6 +1395,7 @@ static void TB_AttachFavoritesTab(HWND tab)
     SetWindowSubclass(tab, TB_TabSubclassProc, 1, 0);
     for (HWND parent = GetParent(tab); parent; parent = GetParent(parent))
         SetWindowSubclass(parent, TB_BrowserSubclassProc, 2, 0);
+    SetTimer(tab, TIMER_TB_FAVORITES_REFRESH, 1000, nullptr);
 
     Logger::log("TextureBrowser: Favorites tab attached");
 }
@@ -1153,6 +1680,7 @@ JMP_HOOK(HOOK_EXPORT_DISPATCH, TB_ExportDispatchHook)
 void TextureBrowser::Initialize()
 {
     TB_LoadFavorites();
+    TB_LoadView();
     INSTALL_HOOKS;
 
     static const BYTE expectedMruListLoad[] = { 0x8B, 0x0D, 0xEC, 0xDF, 0x65, 0x11 };
