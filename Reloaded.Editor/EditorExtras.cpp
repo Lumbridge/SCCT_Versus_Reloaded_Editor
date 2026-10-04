@@ -221,7 +221,7 @@ namespace
             if (GetMenuState(help, EditorExtras::kShortcuts, MF_BYCOMMAND) == UINT(-1))
             {
                 changed = true;
-                AppendMenuA(help, MF_STRING, EditorExtras::kShortcuts, "Reloaded &Shortcuts...");
+                AppendMenuA(help, MF_STRING, EditorExtras::kShortcuts, "RE+ &Shortcuts...");
             }
             if (GetMenuState(help, SelfUpdater::kCheckNow, MF_BYCOMMAND) == UINT(-1))
             {
@@ -313,23 +313,23 @@ namespace
         auto key = [](uint8_t k) { return std::string("Shift+") + static_cast<char>(k); };
         return "EVERYWHERE IN THE EDITOR\r\n"
                "Ctrl + mouse wheel over a viewport: change the grid size (the plan's snapping follows).\r\n"
-               "Ctrl+D in a viewport: duplicate the selection (Reloaded Options can drop the offset).\r\n"
+               "Ctrl+D in a viewport: duplicate the selection (RE+ Options can drop the offset).\r\n"
                "J in a viewport: Game View, hiding editor icons and sprites the game does not draw.\r\n"
                "M in a viewport: measure from the last measured point to the mouse (in the 3D view, across the floor at its height).\r\n"
-               "F12: Reloaded Options.   F7: disabled (the stock script compiler would crash).\r\n"
+               "F12: RE+ Options.   F7: disabled (the stock script compiler would crash).\r\n"
                "\r\n"
                "PROPERTIES WINDOWS (F4 Actor Properties, F6 Level Properties)\r\n"
                "Filter box: lists only properties whose name or category contains the typed words.   Esc in the box: clear it.\r\n"
                "Several actors, even of different classes: their shared properties, one value for all in one Undo step;\r\n"
                "(multiple values) where they differ.\r\n"
                "\r\n"
-               "GEOMETRIC EVENTS (set in Reloaded Options)\r\n"
+               "GEOMETRIC EVENTS (set in RE+ Options)\r\n"
                + key(g_KeyLedgeGrab) + ": ledge grab   " + key(g_KeyHandOverHand) + ": hand-over-hand   " + key(g_KeyPipe) + ": pipe\r\n"
                + key(g_KeyLadder) + ": ladder   " + key(g_KeyZipline) + ": zip line   " + key(g_KeyFence) + ": fence\r\n"
                "\r\n"
                "RIGHT-CLICK MENUS\r\n"
-               "Actor: Reloaded: Select (all of this class, all with this Tag, same static mesh, invert) and\r\n"
-               "Reloaded: Visibility (hide selected, isolate selected, unhide all); Save Selection as Assembly;\r\n"
+               "Actor: RE+: Select (all of this class, all with this Tag, same static mesh, invert) and\r\n"
+               "RE+: Visibility (hide selected, isolate selected, unhide all); Save Selection as Assembly;\r\n"
                "Edit SMagicEvent; Add SObjective / triggers on a mission or objective; position the builder brush around meshes.\r\n"
                "Brush face or vertices: snap to the grid per axis.   Texture / mesh browser: Favorites, Find Usages and Find Usages in All Maps.\r\n"
                "Any viewport: Builder Brush > Place Here; Measure > Start Here / To Here / Clear Measurement (distance,\r\n"
@@ -337,7 +337,7 @@ namespace
                "\r\n"
                "BROWSERS\r\n"
                "French asset names show their English: Porte_Metal01 (door metal 01). Hover a narrow list for the\r\n"
-               "whole name; the Texture Browser's Filter box finds either language. Reloaded Options turns it off.\r\n"
+               "whole name; the Texture Browser's Filter box finds either language. RE+ Options turns it off.\r\n"
                "\r\n"
                "MENUS\r\n"
                "Edit: Undo History lists every undo step, oldest first, with redo steps greyed below the current one;\r\n"
@@ -351,7 +351,7 @@ namespace
                "Help: Check for RE+ Updates offers the newest release; Check for Updates at Startup turns the automatic check on or off;\r\n"
                "What's New in RE+ shows this version's release notes (also shown once after an update); Roll Back puts the version\r\n"
                "an update replaced back in place (and the newer one stays kept, to switch again); About RE+ shows the version.\r\n"
-               "View > Reloaded Tools: Map Design (its own Keys... window lists the plan's shortcuts), Brush Visibility,\r\n"
+               "RE+ Tools: Map Design (its own Keys... window lists the plan's shortcuts), Brush Visibility,\r\n"
                "Gameplay Connections, SMagicEvent Workbench, SCamNetwork Manager, Working Views, Assemblies, JSON.\r\n";
     }
     LRESULT CALLBACK ShortcutsProc(HWND window, UINT message, WPARAM w, LPARAM l)
@@ -380,7 +380,7 @@ namespace
             wc.lpfnWndProc = ShortcutsProc;
             wc.lpszClassName = "ReloadedShortcuts";
             RegisterClassA(&wc);
-            shortcutsWindow = CreateWindowExA(WS_EX_TOOLWINDOW, wc.lpszClassName, "Reloaded Shortcuts", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            shortcutsWindow = CreateWindowExA(WS_EX_TOOLWINDOW, wc.lpszClassName, "RE+ Shortcuts", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                                               CW_USEDEFAULT, CW_USEDEFAULT, 740, 470, frameWindow, nullptr, wc.hInstance, nullptr);
             if (!shortcutsWindow) throw std::runtime_error("Cannot open the shortcut legend.");
         }
@@ -550,8 +550,8 @@ void EditorExtras::AppendActorMenu(HMENU menu)
     AppendMenuA(visibility, MF_STRING, kHideSelected, "&Hide selected");
     AppendMenuA(visibility, MF_STRING, kIsolateSelected, "&Isolate selected (hide the rest)");
     AppendMenuA(visibility, MF_STRING, kUnhideAll, "&Unhide all");
-    AppendMenuA(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(select), "Reloaded: &Select");
-    AppendMenuA(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(visibility), "Reloaded: &Visibility");
+    AppendMenuA(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(select), "RE+: &Select");
+    AppendMenuA(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(visibility), "RE+: &Visibility");
 }
 
 bool EditorExtras::HandleCommand(UINT command)

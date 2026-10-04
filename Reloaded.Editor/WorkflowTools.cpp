@@ -756,7 +756,7 @@ namespace
         catch(const std::exception& e)
         {
             if(message==WM_TIMER) { if(s->status) Status(*s,e.what()); }
-            else MessageBoxA(window,e.what(),"Reloaded Editing Tools",MB_OK|MB_ICONERROR);
+            else MessageBoxA(window,e.what(),"RE+ Tools",MB_OK|MB_ICONERROR);
             return message==WM_CREATE?-1:0;
         }
         if(message==WM_NCDESTROY) {KillTimer(window,1);windows.erase(std::remove(windows.begin(),windows.end(),s),windows.end());SetWindowLongPtr(window,GWLP_USERDATA,0);delete s;}
@@ -1015,7 +1015,7 @@ bool HandleCommand(UINT command)
         auto window=Open(kind,GetActiveWindow());
         if(command==kSaveAssembly && window) SendMessage(window,WM_COMMAND,Secondary,0);
     }
-    catch(const std::exception& e) {MessageBoxA(GetActiveWindow(),e.what(),"Reloaded Editing Tools",MB_OK|MB_ICONERROR);}
+    catch(const std::exception& e) {MessageBoxA(GetActiveWindow(),e.what(),"RE+ Tools",MB_OK|MB_ICONERROR);}
     return true;
 }
 void FindUsages(HWND owner,void*,bool mesh)

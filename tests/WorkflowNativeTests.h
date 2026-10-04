@@ -1105,7 +1105,7 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 J one=J::array();
                 for(auto& a:actors)if(a["class"]==cls){one.push_back(a);break;}
                 call({{"op","select"},{"actors",one}});
-                SendMessage(frameWindow,WM_COMMAND,40954,0); // Reloaded: Select > All of this class.
+                SendMessage(frameWindow,WM_COMMAND,40954,0); // RE+: Select > All of this class.
                 auto selected=call({{"op","actors"},{"selected",true}});
                 require(static_cast<int>(selected.size())==best,("Select all of this class selects every actor of the class ("+std::to_string(selected.size())+" of "+std::to_string(best)+" "+cls+")").c_str());
                 for(auto& a:selected)require(a["class"]==cls,"Select all of this class selects nothing else");

@@ -174,9 +174,9 @@ static void InjectReloadedMenuItems(HWND frame)
 
         pos = MenuPosByCommand(view, 40065);     // after "Advanced Options"
         if (pos >= 0 && MenuPosByCommand(view, 40066) < 0)
-            InsertMenuA(view, pos + 1, MF_BYPOSITION | MF_STRING, 40066, "Reloaded Options\tF12");
+            InsertMenuA(view, pos + 1, MF_BYPOSITION | MF_STRING, 40066, "RE+ Options\tF12");
 
-        pos = MenuPosByCommand(view, 40066);     // after "Reloaded Options"
+        pos = MenuPosByCommand(view, 40066);     // after "RE+ Options"
         if (pos >= 0
             && MenuPosByCommand(view,
                                 WindowDriftFix::kResetPropertyWindowsCommandId) < 0)

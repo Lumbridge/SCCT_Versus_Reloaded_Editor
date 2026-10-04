@@ -6,7 +6,7 @@
 // (door metal 01)" and searches that match either language. Assets are
 // never renamed. The dictionary is built in (tools/asset_names/fr-en.txt) and
 // extended by System\ReloadedEditor\Translations\fr-en.txt; the
-// "Show English for French asset names" option in Reloaded Options turns the
+// "Show English for French asset names" option in RE+ Options turns the
 // glosses on and off ([AssetNames] ShowEnglish in Reloaded_Editor.ini).
 namespace AssetNameGloss
 {

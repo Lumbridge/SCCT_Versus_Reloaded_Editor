@@ -303,7 +303,7 @@ run `tools/asset_names/build_dictionary.py` to regenerate
 
 Not covered by the native suite: the glosses drawn in the browser lists, the
 Texture Browser label, caption and Filter hooks, the hover tooltip and the
-Reloaded Options checkbox were checked by hand in a disposable installation.
+RE+ Options checkbox were checked by hand in a disposable installation.
 
 ## Map packaging and selective Tag renaming
 

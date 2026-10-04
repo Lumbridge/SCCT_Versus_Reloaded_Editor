@@ -705,7 +705,7 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         add esp, 4
         retn 4
     workflow_continue:
-        cmp  dword ptr [esp+4], 40066 // Reloaded Options
+        cmp  dword ptr [esp+4], 40066 // RE+ Options
         je   do_reloaded_options
         cmp  dword ptr [esp+4], 40067 // Show Animation Browser
         je   do_anim_browser
@@ -1306,7 +1306,7 @@ JMP_HOOK(0x10f00d10, ViewportKeyUpHook)
         jnz  do_duplicate
 
     check_f12:
-        // F12: Reloaded Options
+        // F12: RE+ Options
         cmp  dword ptr [esp + 4], 0x7B
         je   do_f12
 

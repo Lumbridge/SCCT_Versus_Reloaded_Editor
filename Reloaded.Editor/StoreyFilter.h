@@ -11,7 +11,7 @@ namespace StoreyFilter
 {
     constexpr UINT kOpen = 40966;
 
-    // The Reloaded Tools entry: brings the palette up beside the viewports.
+    // The RE+ Tools entry: brings the palette up beside the viewports.
     void Open();
     // From the frame's command dispatcher. True when the command was ours.
     bool HandleCommand(UINT command);

@@ -1,6 +1,6 @@
 # Map Design
 
-Open **View > Reloaded Tools > Map Design...** while a source map is open. The workspace has its
+Open **RE+ Tools > Map Design...** while a source map is open. The workspace has its
 own top (XY), front (XZ) and side (YZ) design views, showing native brush wireframes
 and actor origins. Wheel zooms; middle-drag pans. **Refresh from editor** updates
 selection and geometry. Native transactions refresh automatically. These views
@@ -144,8 +144,7 @@ up to **All**, and **Page Down** from **All** drops onto that highest storey and
 keeps descending. In the top view the chosen storey is also where new pieces are
 placed.
 
-The same storeys are available to the editor's own viewports through **View >
-Reloaded Tools > Storeys**, which opens a slim palette holding this slider. It
+The same storeys are available to the editor's own viewports through **RE+ Tools > Storeys**, which opens a slim palette holding this slider. It
 cannot draw one floor the way the plan does, because the viewports draw the map
 themselves, so it hides everything standing on the other floors instead: actors,
 lights, movers, meshes and brush wireframes all go, and surfaces already built

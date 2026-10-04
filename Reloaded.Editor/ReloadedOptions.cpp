@@ -86,7 +86,7 @@ static std::vector<uint8_t> BuildReloadedOptionsDlgTemplate()
     b.w(290); b.w(218);   // width, height
     b.w(0);               // no menu
     b.w(0);               // default class
-    b.ws(L"Reloaded Options");
+    b.ws(L"RE+ Options");
     b.w(8);
     b.ws(L"MS Sans Serif");
 
@@ -352,7 +352,7 @@ static INT_PTR CALLBACK ReloadedOptionsDlgProc(
                         snprintf(msg, sizeof(msg),
                                  "\"%s\" is empty or not a letter (A-Z).",
                                  kNames[i]);
-                        MessageBoxA(hDlg, msg, "Reloaded Options", MB_OK | MB_ICONWARNING);
+                        MessageBoxA(hDlg, msg, "RE+ Options", MB_OK | MB_ICONWARNING);
                         return TRUE;
                     }
                 }
@@ -376,7 +376,7 @@ static INT_PTR CALLBACK ReloadedOptionsDlgProc(
                                      "Shift+%c cannot be used because UnrealEd uses it for \"%s\".\n\n"
                                      "Please choose a different key for \"%s\".",
                                      keys[i], r.action, kNames[i]);
-                            MessageBoxA(hDlg, msg, "Reloaded Options", MB_OK | MB_ICONWARNING);
+                            MessageBoxA(hDlg, msg, "RE+ Options", MB_OK | MB_ICONWARNING);
                             return TRUE;
                         }
                     }
@@ -392,7 +392,7 @@ static INT_PTR CALLBACK ReloadedOptionsDlgProc(
                                      "\"%s\" and \"%s\" share the same key (Shift+%c).\n"
                                      "Each GE type must use a different key.",
                                      kNames[i], kNames[j], keys[i]);
-                            MessageBoxA(hDlg, msg, "Reloaded Options", MB_OK | MB_ICONWARNING);
+                            MessageBoxA(hDlg, msg, "RE+ Options", MB_OK | MB_ICONWARNING);
                             return TRUE;
                         }
 
