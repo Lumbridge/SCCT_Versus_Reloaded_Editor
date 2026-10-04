@@ -19,6 +19,10 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\MeshFavoritesModelTests.cpp /F
 if errorlevel 1 goto failed
 "%TEMP%\MeshFavoritesModelTests.exe"
 if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\PropertyFilterModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\PropertyFilterModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\PropertyFilterModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\BrushGridSnapTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\BrushGridSnapTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\BrushGridSnapTests.exe"
