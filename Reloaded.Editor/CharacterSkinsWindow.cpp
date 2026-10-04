@@ -21,8 +21,9 @@ namespace
 using Workflow::Json;
 namespace Editor = Workflow::Editor;
 // Per slot row i: edit 200+i, Use Selected 210+i, Clear 220+i, Import 230+i.
-constexpr int kEdit = 200, kUse = 210, kClear = 220, kImport = 230, kStatus = 101, kApply = IDOK, kRemove = 102,
-              kDownload = 103;
+// Per model row m: model box 240+m, goggle offset X/Y/Z 250+3m..252+3m.
+constexpr int kEdit = 200, kUse = 210, kClear = 220, kImport = 230, kModel = 240, kGoggle = 250, kStatus = 101,
+              kApply = IDOK, kRemove = 102, kDownload = 103;
 std::wstring lastFolder;
 
 std::filesystem::path PickFolder(HWND owner)
@@ -80,15 +81,44 @@ std::string Text(HWND window, int id)
     return first == std::string::npos ? std::string{} : text.substr(first, last - first + 1);
 }
 void Status(HWND window, const std::string& text) { SetDlgItemTextA(window, kStatus, text.c_str()); }
+std::string Number(double v) { return CharacterSkins::Number(v); }
+void SetGoggles(HWND window, size_t model, const CharacterSkins::Offset& o)
+{
+    const double values[3] = {o.x, o.y, o.z};
+    for (int k = 0; k < 3; ++k)
+        SetDlgItemTextA(window, kGoggle + static_cast<int>(model) * 3 + k, Number(values[k]).c_str());
+}
+CharacterSkins::Offset Goggles(HWND window, size_t model)
+{
+    double values[3]{};
+    for (int k = 0; k < 3; ++k)
+    {
+        const auto text = Text(window, kGoggle + static_cast<int>(model) * 3 + k);
+        size_t used = 0;
+        try { values[k] = text.empty() ? 0 : std::stod(text, &used); }
+        catch (const std::exception&) { used = std::string::npos; }
+        if (!text.empty() && used != text.size())
+            throw std::runtime_error(std::string(CharacterSkins::Models[model].label) + ": goggle light offsets must be numbers.");
+    }
+    return CharacterSkins::CheckOffset({values[0], values[1], values[2]});
+}
 void Show(HWND window, const Json& settings)
 {
     for (size_t i = 0; i < CharacterSkins::Slots.size(); ++i)
         SetDlgItemTextA(window, kEdit + static_cast<int>(i),
             settings.at("slots").value(CharacterSkins::Slots[i].property, std::string{}).c_str());
+    for (size_t m = 0; m < CharacterSkins::Models.size(); ++m)
+    {
+        const auto& model = CharacterSkins::Models[m];
+        SetDlgItemTextA(window, kModel + static_cast<int>(m), settings.at("models").value(model.property, std::string{}).c_str());
+        const auto& g = settings.at("goggles").at(model.goggles);
+        SetGoggles(window, m, {g[0].get<double>(), g[1].get<double>(), g[2].get<double>()});
+    }
     EnableWindow(GetDlgItem(window, kRemove), settings.at("placed").get<bool>());
     std::string status = settings.at("placed").get<bool>()
-        ? "This map has character skins. Change the slots and Apply, or Remove them."
-        : "This map uses the stock character materials.";
+        ? "This map has character skins. Change them and Apply, or Remove them."
+        : "This map uses the stock characters.";
+    if (settings.at("legacy").get<bool>()) status += " They were made by an earlier RE+; Apply updates them.";
     if (settings.at("extra").get<bool>()) status += " It has more than one Character Skins actor; only the first is shown.";
     Status(window, status);
 }
@@ -104,7 +134,7 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
             GetClientRect(window, &r);
             const int width = r.right - 24;
             Control(window, "STATIC",
-                "Dress this map's spies and mercs in its own materials, for example snow camo. Download Default "
+                "Dress this map's spies and mercs in its own materials or models, for example snow camo. Download Default "
                 "Skins saves the stock textures as TGA files to paint over in Photoshop or any paint program; "
                 "keep their layout, since thermal and EMF vision reuse the stock masks. Import... loads an edited "
                 "image into the map itself, or Use Selected takes the Texture Browser's texture. An empty slot "
@@ -120,12 +150,43 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
                 Control(window, "BUTTON", "Use Selected", WS_TABSTOP, kUse + id, width - 146, y, 92, 23);
                 Control(window, "BUTTON", "Clear", WS_TABSTOP, kClear + id, width - 48, y, 60, 23);
             }
+            Control(window, "STATIC",
+                "Models: any loaded skeletal mesh; the team keeps its own animations. Goggle lights move "
+                "by X, Y, Z along the head bone onto the new head (the merc model on a spy: 4, 0, 0).",
+                0, kStatus + 51, 12, y + 4, width, 30);
+            y += 38;
+            const auto meshes = Editor::LoadedSkeletalMeshes();
+            for (size_t m = 0; m < CharacterSkins::Models.size(); ++m, y += 30)
+            {
+                const int id = static_cast<int>(m);
+                Control(window, "STATIC", CharacterSkins::Models[m].label, SS_CENTERIMAGE, -1, 12, y, 70, 23);
+                auto box = Control(window, "COMBOBOX", "", CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL | WS_TABSTOP,
+                                   kModel + id, 86, y, width - 318, 300);
+                for (const auto& mesh : meshes)
+                    SendMessageA(box, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(mesh.get<std::string>().c_str()));
+                Control(window, "STATIC", "Goggle lights X Y Z", SS_CENTERIMAGE | SS_RIGHT, -1, width - 226, y, 104, 23);
+                for (int k = 0; k < 3; ++k)
+                    Control(window, "EDIT", "0", ES_AUTOHSCROLL | WS_TABSTOP, kGoggle + id * 3 + k, width - 116 + k * 44, y, 40, 23);
+            }
             Control(window, "STATIC", "", 0, kStatus, 12, y + 6, width, 44);
             Control(window, "BUTTON", "Remove from Map", WS_TABSTOP, kRemove, 12, r.bottom - 38, 125, 27);
             Control(window, "BUTTON", "Download Default Skins...", WS_TABSTOP, kDownload, 145, r.bottom - 38, 175, 27);
             Control(window, "BUTTON", "Apply", BS_DEFPUSHBUTTON | WS_TABSTOP, kApply, r.right - 215, r.bottom - 38, 95, 27);
             Control(window, "BUTTON", "Close", WS_TABSTOP, IDCANCEL, r.right - 110, r.bottom - 38, 95, 27);
             Show(window, Editor::CharacterSkinSettings());
+            return TRUE;
+        }
+        if (message == WM_COMMAND && HIWORD(w) == CBN_SELCHANGE && LOWORD(w) >= kModel &&
+            LOWORD(w) < kModel + static_cast<int>(CharacterSkins::Models.size()))
+        {
+            // Choosing a model suggests the goggle light offset seen to fit it, if there is one.
+            const size_t m = LOWORD(w) - kModel;
+            const auto box = GetDlgItem(window, LOWORD(w));
+            const auto index = SendMessageA(box, CB_GETCURSEL, 0, 0);
+            char mesh[512]{};
+            if (index != CB_ERR) SendMessageA(box, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(mesh));
+            const auto suggested = CharacterSkins::SuggestedGoggles(CharacterSkins::Models[m].property, mesh);
+            if (suggested.x || suggested.y || suggested.z) SetGoggles(window, m, suggested);
             return TRUE;
         }
         if (message != WM_COMMAND || HIWORD(w) != BN_CLICKED)
@@ -190,6 +251,16 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
                 any = any || !path.empty();
                 slots[CharacterSkins::Slots[i].property] = path;
             }
+            Json models = Json::object(), goggles = Json::object();
+            for (size_t m = 0; m < CharacterSkins::Models.size(); ++m)
+            {
+                const auto& model = CharacterSkins::Models[m];
+                auto path = Text(window, kModel + static_cast<int>(m));
+                any = any || !path.empty();
+                models[model.property] = path;
+                const auto o = Goggles(window, m);
+                goggles[model.goggles] = Json::array({o.x, o.y, o.z});
+            }
             if (!any)
             {
                 Status(window, "Every slot is empty. Use Remove from Map to go back to the stock characters.");
@@ -197,15 +268,15 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
             }
             Status(window, "Compiling and applying...");
             UpdateWindow(window);
-            Show(window, Editor::ApplyCharacterSkins(slots));
-            Status(window, "Applied. Save the map, then play it to see the skins; the editor viewports show the stock look.");
+            Show(window, Editor::ApplyCharacterSkins(slots, models, goggles));
+            Status(window, "Applied. Save the map, then play it to see the result; the editor viewports show the stock look.");
             return TRUE;
         }
         if (id == kRemove)
         {
             Editor::RemoveCharacterSkins();
             Show(window, Editor::CharacterSkinSettings());
-            Status(window, "Removed. The map uses the stock character materials again.");
+            Status(window, "Removed. The map uses the stock characters again.");
             return TRUE;
         }
         if (id == IDCANCEL)
@@ -231,7 +302,7 @@ void Open(HWND owner)
     auto dialog = reinterpret_cast<DLGTEMPLATE*>(bytes.data());
     dialog->style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | DS_CENTER;
     dialog->cx = 420;
-    dialog->cy = 255;
+    dialog->cy = 315;
     if (DialogBoxIndirectParamW(GetModuleHandle(nullptr), dialog, owner, Proc, 0) == -1)
         throw std::runtime_error("Cannot open the Character Skins window.");
 }

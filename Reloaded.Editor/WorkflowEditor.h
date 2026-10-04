@@ -99,12 +99,15 @@ namespace Workflow::Editor
     // in Leaves does, then restored to the build's lists) and the zone names.
     // See LightingBudgetModel.h.
     Json LightingBudgetScene();
-    // Character Skins (CharacterSkinsModel.h): the map's ReloadedCharacterSkins actor.
-    // Settings: {placed, extra, compiled, slots:{SpyBody,...: material path or ""}}.
-    // Apply compiles the class into the map package when needed, places the actor
-    // once and sets the slots in one Undo step; Remove deletes the actor.
+    // Character Skins (CharacterSkinsModel.h): the map's Character Skins actor.
+    // Settings: {placed, legacy, extra, compiled, slots:{SpyBody,...: material path or ""},
+    // models:{SpyModel,...: skeletal mesh path or ""}, goggles:{SpyGoggleOffset,...: [x,y,z]}}.
+    // Apply compiles the class into the map package when needed, replaces an earlier
+    // version's actor, places the actor once and sets its values in one Undo step;
+    // Remove deletes the actor (of any version).
     Json CharacterSkinSettings();
-    Json ApplyCharacterSkins(const Json& slots);
+    Json LoadedSkeletalMeshes();
+    Json ApplyCharacterSkins(const Json& slots, const Json& models, const Json& goggles);
     void RemoveCharacterSkins();
     // Writes the stock textures of the four slots as 32-bit TGA files (SpyBody.tga, ...).
     Json ExportDefaultCharacterSkins(const std::filesystem::path& folder);

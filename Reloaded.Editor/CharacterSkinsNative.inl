@@ -33,13 +33,39 @@ namespace
     {
         if(!c || !(Read<unsigned>(c+0x8c)&2))return false;
         for(const auto& slot:CharacterSkins::Slots)if(!StructField(c,slot.property))return false;
+        for(const auto& model:CharacterSkins::Models)if(!StructField(c,model.property) || !StructField(c,model.goggles))return false;
         return true;
     }
-    std::vector<Address> SkinActors()
+    std::vector<Address> ActorsOf(Address c)
     {
-        std::vector<Address> out;auto c=SkinClass();
+        std::vector<Address> out;
         if(c)for(auto a:LiveActors())if(Read<Address>(a+0x24)==c)out.push_back(a);
         return out;
+    }
+    std::vector<Address> SkinActors() { return ActorsOf(SkinClass()); }
+    // Actors of an earlier version's class: read for the panel, replaced on Apply.
+    std::vector<Address> LegacySkinActors()
+    {
+        std::vector<Address> out;
+        for(const auto* name:CharacterSkins::LegacyClassNames)
+            for(auto a:ActorsOf(Find(LevelPath()+"."+name)))out.push_back(a);
+        return out;
+    }
+    std::string ObjectSlot(Address actor,const char* property)
+    {
+        auto p=Property(actor,property);
+        return p?Path(Read<Address>(actor+Read<int>(p+0x3c))):std::string{};
+    }
+    void DeleteActors(const std::vector<Address>& actors)
+    {
+        if(actors.empty())return;
+        Json doomed=Json::array();for(auto a:actors)doomed.push_back(Identity(a));
+        auto previous=SelectedIdentities();
+        Select(doomed);
+        if(!Exec("ACTOR DELETE"))throw std::runtime_error("The editor refused to delete the Character Skins actor.");
+        Json remaining=Json::array();
+        for(const auto& kept:previous)if(std::none_of(doomed.begin(),doomed.end(),[&](const Json& d){return d.at("path")==kept.at("path");}))remaining.push_back(kept);
+        Select(remaining);
     }
 
     struct SkinCompile
@@ -69,7 +95,8 @@ namespace
     void CompileSkinClass()
     {
         auto c=SkinClass();
-        if(!c)
+        if(c && SkinClassCompiled(c))return;
+        // A class left uncompiled by a failed attempt is imported again over itself.
         {
             char folder[MAX_PATH]{};GetTempPathA(MAX_PATH,folder);
             auto file=std::filesystem::path(folder)/(std::string(CharacterSkins::ClassName)+".uc_");
@@ -79,7 +106,6 @@ namespace
             c=SkinClass();
             if(!c)throw std::runtime_error("The editor did not import the Character Skins script.");
         }
-        if(SkinClassCompiled(c))return;
         auto parent=Read<Address>(c+0x28);
         if(!parent || NameOf(parent)!="Info")throw std::runtime_error("The map's ReloadedCharacterSkins class is not an Info. Remove it from the map package first.");
         if(!Read<Address>(c+0xb0))
@@ -125,30 +151,49 @@ namespace
         } restore{slot,captured};
         Exec("SCRIPT MAKE");
         if(!SkinClassCompiled(c))
+        {
+            // Never save an uncompiled class with the map: RF_Transient on, RF_Standalone off.
+            Write(c+0x1c,(Read<unsigned>(c+0x1c)&~0x80000u)|0x4000u);
             throw std::runtime_error("The Character Skins script did not compile."+(SkinCompile::errors.empty()?std::string(" See the editor log."):"\n"+SkinCompile::errors));
+        }
+        // A compiled class is saved with the map even if an earlier attempt marked it transient.
+        Write(c+0x1c,(Read<unsigned>(c+0x1c)&~0x4000u)|0x80000u);
     }
 }
 
 Json CharacterSkinSettings()
 {
-    Json slots=Json::object();
-    auto actors=SkinActors();
-    for(const auto& slot:CharacterSkins::Slots)
+    auto actors=SkinActors();auto legacy=LegacySkinActors();
+    const Address actor=!actors.empty()?actors[0]:(!legacy.empty()?legacy[0]:0);
+    Json slots=Json::object(),models=Json::object(),goggles=Json::object();
+    for(const auto& slot:CharacterSkins::Slots)slots[slot.property]=actor?ObjectSlot(actor,slot.property):std::string{};
+    for(const auto& model:CharacterSkins::Models)
     {
-        std::string path;
-        if(!actors.empty())
-        {
-            auto p=Property(actors[0],slot.property);
-            if(p)path=Path(Read<Address>(actors[0]+Read<int>(p+0x3c)));
-        }
-        slots[slot.property]=path;
+        models[model.property]=actor?ObjectSlot(actor,model.property):std::string{};
+        std::array<float,3> offset{};
+        if(actor)if(auto p=Property(actor,model.goggles))offset=Read<std::array<float,3>>(actor+Read<int>(p+0x3c));
+        goggles[model.goggles]=Json::array({offset[0],offset[1],offset[2]});
     }
-    return {{"placed",!actors.empty()},{"extra",actors.size()>1},{"compiled",SkinClassCompiled(SkinClass())},{"slots",slots}};
+    return {{"placed",actor!=0},{"legacy",actors.empty() && !legacy.empty()},{"extra",actors.size()+legacy.size()>1},
+            {"compiled",SkinClassCompiled(SkinClass())},{"slots",slots},{"models",models},{"goggles",goggles}};
 }
 
-Json ApplyCharacterSkins(const Json& slots)
+// The skeletal meshes loaded in the editor, for the model slots.
+Json LoadedSkeletalMeshes()
 {
-    std::vector<std::pair<const CharacterSkins::Slot*,std::string>> values;
+    std::vector<std::string> out;
+    for(auto at:Array(0x11697B70))
+    {
+        auto o=Read<Address>(at);
+        if(o && NameOf(Read<Address>(o+0x24))=="SkeletalMesh")out.push_back(Path(o));
+    }
+    std::sort(out.begin(),out.end());
+    return out;
+}
+
+Json ApplyCharacterSkins(const Json& slots,const Json& models,const Json& goggles)
+{
+    std::vector<std::pair<std::string,std::string>> values; // property, import text
     for(const auto& slot:CharacterSkins::Slots)
     {
         auto path=slots.value(slot.property,std::string{});
@@ -161,9 +206,33 @@ Json ApplyCharacterSkins(const Json& slots)
             if(!IsA(material,"Material"))throw std::runtime_error(std::string(slot.label)+": "+path+" is not a material.");
             text=CharacterSkins::PropertyText(NameOf(Read<Address>(material+0x24)),Path(material));
         }
-        values.push_back({&slot,text});
+        values.push_back({slot.property,text});
+    }
+    for(const auto& model:CharacterSkins::Models)
+    {
+        auto path=models.value(model.property,std::string{});
+        if(!CharacterSkins::ValidPath(path))throw std::runtime_error(std::string(model.label)+": not a model path: "+path);
+        std::string text="None";
+        if(!path.empty())
+        {
+            auto mesh=Find(path);
+            if(!mesh)throw std::runtime_error(std::string(model.label)+": "+path+" is not loaded. Open its package in the Animation Browser first.");
+            if(NameOf(Read<Address>(mesh+0x24))!="SkeletalMesh")throw std::runtime_error(std::string(model.label)+": "+path+" is not a skeletal mesh.");
+            text=CharacterSkins::PropertyText("SkeletalMesh",Path(mesh));
+        }
+        values.push_back({model.property,text});
+        CharacterSkins::Offset offset;
+        if(goggles.contains(model.goggles))
+        {
+            const auto& v=goggles.at(model.goggles);
+            if(!v.is_array() || v.size()!=3 || !v[0].is_number() || !v[1].is_number() || !v[2].is_number())
+                throw std::runtime_error(std::string(model.label)+": the goggle light offset needs numbers for X, Y and Z.");
+            offset={v[0].get<double>(),v[1].get<double>(),v[2].get<double>()};
+        }
+        values.push_back({model.goggles,CharacterSkins::OffsetText(offset)});
     }
     CompileSkinClass();
+    DeleteActors(LegacySkinActors());
     auto actors=SkinActors();
     if(actors.empty())
     {
@@ -174,10 +243,10 @@ Json ApplyCharacterSkins(const Json& slots)
     auto actor=actors[0];
     Transaction transaction("Character skins");
     Modify(actor);
-    for(const auto& [slot,text]:values)
+    for(const auto& [property,text]:values)
     {
-        auto p=Property(actor,slot->property);
-        if(!p)throw std::runtime_error(std::string("The map's Character Skins class has no ")+slot->property+".");
+        auto p=Property(actor,property);
+        if(!p)throw std::runtime_error("The map's Character Skins class has no "+property+".");
         MagicImport(p,actor+Read<int>(p+0x3c),Json(text));
     }
     Call(actor,0x44);
@@ -189,14 +258,9 @@ Json ApplyCharacterSkins(const Json& slots)
 void RemoveCharacterSkins()
 {
     auto actors=SkinActors();
-    if(actors.empty())return;
-    Json doomed=Json::array();for(auto a:actors)doomed.push_back(Identity(a));
-    auto previous=SelectedIdentities();
-    Select(doomed);
-    if(!Exec("ACTOR DELETE"))throw std::runtime_error("The editor refused to delete the Character Skins actor.");
-    Json remaining=Json::array();
-    for(const auto& kept:previous)if(std::none_of(doomed.begin(),doomed.end(),[&](const Json& d){return d.at("path")==kept.at("path");}))remaining.push_back(kept);
-    Select(remaining);Redraw();
+    for(auto a:LegacySkinActors())actors.push_back(a);
+    DeleteActors(actors);
+    Redraw();
 }
 
 // The stock textures behind the four slots as 32-bit TGA files in folder, named after

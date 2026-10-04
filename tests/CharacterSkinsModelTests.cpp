@@ -21,7 +21,9 @@ int main()
     {
         const auto script = Script();
         // The stock compiler wants the class declaration first and CRLF text.
-        Check(Contains(script, "class ReloadedCharacterSkins extends Info\r\n\tplaceable;"), "class header");
+        Check(Contains(script, "class ReloadedCharacterSkins2 extends Info\r\n\tplaceable;"), "class header");
+        Check(std::string(ClassName) == "ReloadedCharacterSkins2" && Version == 2, "versioned class name");
+        Check(std::string(LegacyClassNames[0]) == "ReloadedCharacterSkins", "version 1 is migrated");
         Check(script.find("\n") == script.find("\r\n") + 1, "CRLF line ends");
         for (const auto& slot : Slots)
         {
@@ -29,13 +31,22 @@ int main()
             Check(Contains(script, std::string("HeatTextureModifier'") + slot.stock + "'"), "stock heat layer");
         }
         Check(Contains(script, "Dressed[3] = Wrap(MercHead"), "merc head wraps last");
-        Check(Contains(script, "Dress(P, i, 1, Dressed[1])") && Contains(script, "Dress(P, i, 1, Dressed[3])"), "head slots");
+        Check(Contains(script, "Dress(P, i, 1, Dressed[First + 1])"), "head slots");
+        Check(Contains(script, "Outfit(P, SpyModel, MeshAnimation'SPerso.PRO', SpyGoggleOffset, 0)"), "spy outfit");
+        Check(Contains(script, "Outfit(P, MercModel, MeshAnimation'SPerso.Def', MercGoggleOffset, 2)"), "merc outfit");
+        // LinkMesh alone drops the animation set and stalls the pawn; relink the team's own.
+        const auto link = script.find("P.LinkMesh(Model);");
+        Check(link != std::string::npos && script.find("P.LinkSkelAnim(Moves);") > link, "animations relinked after the mesh");
+        Check(Contains(script, "B.GoggleBeam.SetRelativeLocation(Goggles);"), "goggle lights moved");
+        Check(Contains(script, "var() SkeletalMesh SpyModel;") && Contains(script, "var() vector MercGoggleOffset;"), "model variables");
+        Check(Contains(script, "Swapped[Free] = 0;"), "a reused pawn slot swaps again");
         // Local per machine, never replicated; game effect skins are left alone.
         Check(Contains(script, "RemoteRole=ROLE_None") && Contains(script, "bNoDelete=True"), "local actor");
         Check(Contains(script, "Now == None || Now == Stock[Index * 2 + Slot]"), "effect skins left alone");
         Check(Contains(script, "Known[i].bDeleteMe"), "slots of gone pawns reused");
         Check(Contains(script, "Version=" + std::to_string(Version)), "version default");
         Check(!Contains(script, "replication"), "no replication block");
+        Check(!Contains(script, "var bool"), "no bool arrays: the compiler refuses them");
 
         Check(ValidPath(""), "empty keeps stock");
         Check(ValidPath("MyLevel.Snow.SpyCamo") && ValidPath("Arctic_TXT.SpyCamo"), "package paths");
@@ -84,6 +95,16 @@ int main()
         Check(tga[18] == 7 && tga[19] == 6 && tga[20] == 5 && tga[21] == 8 && tga[22] == 3 && tga[25] == 4, "TGA bottom-up BGRA");
         Check(Importable(".TGA") && Importable(".dds") && !Importable(".png") && !Importable(".psd"), "importable types");
         Check(std::string(Slots[0].texture) == "Shadw_agent" && std::string(Slots[3].format) == "DXT5", "stock textures");
+
+        // Goggle light offsets.
+        Check(OffsetText({4, 0, 0}) == "(X=4,Y=0,Z=0)" && OffsetText({-2.5, 1, 0.25}) == "(X=-2.5,Y=1,Z=0.25)", "offset text");
+        threw = false;
+        try { OffsetText({65, 0, 0}); } catch (const std::exception&) { threw = true; }
+        Check(threw, "offset range");
+        auto suggested = SuggestedGoggles("SpyModel", "SPerso.DEF_01");
+        Check(suggested.x == 4 && suggested.y == 0 && suggested.z == 0, "merc model on a spy");
+        suggested = SuggestedGoggles("MercModel", "SPerso.DEF_01");
+        Check(suggested.x == 0 && suggested.y == 0 && suggested.z == 0, "no suggestion for a merc's own model");
     }
     catch (const std::exception& e)
     {
