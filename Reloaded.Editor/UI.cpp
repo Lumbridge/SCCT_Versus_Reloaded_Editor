@@ -7,6 +7,7 @@
 #include "RebuildAllMaps.h"
 #include "LightingBudget.h"
 #include "WorkflowTools.h"
+#include "CharacterSkinsWindow.h"
 #include "EmitterLibraryWindow.h"
 #include "StoreyFilter.h"
 #include "UndoHistory.h"
@@ -148,6 +149,7 @@ static void InjectReloadedMenuItems(HWND frame)
         AppendMenuA(reTools, MF_STRING, WorkflowTools::kSaveAssembly, "&Save Selection as Assembly...");
         AppendMenuA(reTools, MF_STRING, EmitterLibraryWindow::Command, "Emitter &Library...");
         AppendMenuA(reTools, MF_STRING, WorkflowTools::kSaveToEmitterLibrary, "Save Selected Emitters to Emitter L&ibrary...");
+        AppendMenuA(reTools, MF_STRING, CharacterSkinsWindow::Command, "C&haracter Skins...");
         AppendMenuA(reTools, MF_SEPARATOR, 0, nullptr);
         AppendMenuA(reTools, MF_STRING, 40934, "&Export Map to JSON...");
         AppendMenuA(reTools, MF_STRING, 40935, "&Import Map from JSON...");

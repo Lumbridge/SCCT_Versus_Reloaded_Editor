@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "WorkflowTools.h"
+#include "CharacterSkinsWindow.h"
 #include "EmitterLibraryWindow.h"
 #include "EditorExtras.h"
 #include "StoreyFilter.h"
@@ -1006,6 +1007,7 @@ bool HandleCommand(UINT command)
     if(command==MapAuthoringDialog::Export || command==MapAuthoringDialog::Import){MapAuthoringDialog::Open(GetActiveWindow(),command==MapAuthoringDialog::Export);return true;}
     if(command==MagicEventWorkbench::Command){try{MagicEventWorkbench::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"SMagicEvent Workbench",MB_OK|MB_ICONERROR);}return true;}
     if(command==CameraNetworkPanel::Command){try{CameraNetworkPanel::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"SCamNetwork Manager",MB_OK|MB_ICONERROR);}return true;}
+    if(command==CharacterSkinsWindow::Command){try{CharacterSkinsWindow::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Character Skins",MB_OK|MB_ICONERROR);}return true;}
     if(command==EmitterLibraryWindow::Command){try{EmitterLibraryWindow::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Emitter Library",MB_OK|MB_ICONERROR);}return true;}
     if(command==kSaveToEmitterLibrary){try{SaveEmitterSelection(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Save to Emitter Library",MB_OK|MB_ICONERROR);}return true;}
     if(command<kConnections || command>kSaveAssembly) return false;

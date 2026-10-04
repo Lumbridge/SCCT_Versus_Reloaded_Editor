@@ -99,6 +99,13 @@ namespace Workflow::Editor
     // in Leaves does, then restored to the build's lists) and the zone names.
     // See LightingBudgetModel.h.
     Json LightingBudgetScene();
+    // Character Skins (CharacterSkinsModel.h): the map's ReloadedCharacterSkins actor.
+    // Settings: {placed, extra, compiled, slots:{SpyBody,...: material path or ""}}.
+    // Apply compiles the class into the map package when needed, places the actor
+    // once and sets the slots in one Undo step; Remove deletes the actor.
+    Json CharacterSkinSettings();
+    Json ApplyCharacterSkins(const Json& slots);
+    void RemoveCharacterSkins();
     // Selects exactly the live actors with these paths, one pass over the
     // level; focus frames them in the viewports. Returns how many were found.
     size_t SelectActorPaths(const std::vector<std::string>& paths, bool focus);
