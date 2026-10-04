@@ -19,8 +19,13 @@ namespace EmitterPreview
     // entry = {"actors":[{"text":"Begin Actor ... End Actor","position":[x,y,z],"rotation":[p,y,r],...}],
     //          "preview":{optional starting camera: target, distance or radius, pitch, yaw}}
     // Replaces the current content, runs it for a second and frames what its particles
-    // cover. Throws std::runtime_error with a user-facing message.
-    void Show(const Workflow::Json& entry);
+    // cover. keepCamera (an edited version of the entry shown) keeps the current view,
+    // which still pulls back for a growing effect unless the user moved it. Throws
+    // std::runtime_error with a user-facing message.
+    void Show(const Workflow::Json& entry,bool keepCamera=false);
+    // The texture selected in the editor's texture browser as "Class'Package.Group.Name'";
+    // throws a sentence when none is selected or the selection is not a texture.
+    std::string SelectedTexture();
     void Clear();
     bool Active();                                      // attached and showing an entry
     void Step(double seconds);                          // advance the simulation synchronously (tests; no drawing)

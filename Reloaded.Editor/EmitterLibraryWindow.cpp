@@ -2,11 +2,13 @@
 #undef min
 #undef max
 #include "EmitterLibraryWindow.h"
+#include "EmitterEditModel.h"
 #include "EmitterLibraryModel.h"
 #include "EmitterPreview.h"
 #include "WorkflowEditor.h"
 #include "WorkflowTools.h"
 #include <commctrl.h>
+#include <commdlg.h>
 #include <windowsx.h>
 #include <uxtheme.h>
 #include <algorithm>
@@ -14,6 +16,7 @@
 #include <map>
 #include <set>
 #pragma comment(lib,"uxtheme.lib")
+#pragma comment(lib,"comdlg32.lib")
 
 namespace EmitterLibraryWindow
 {
@@ -21,7 +24,14 @@ using namespace Workflow;
 namespace
 {
 constexpr COLORREF Background=RGB(240,240,240),Panel=RGB(255,255,255),Ink=RGB(0,0,0),Muted=RGB(96,96,96),Stage=RGB(26,26,26);
-enum Id { Search=100,Tree,Preview,Hint,Name,Category,Description,Details,Place,SaveSelection,Edit,Delete,Restore,Status,Loop,LoopWait,LoopMin,LoopTo,LoopMax,LoopUnit,MenuPlace=300,MenuEdit,MenuDelete };
+enum Id { Search=100,Tree,Preview,Hint,Name,Category,Description,Details,Place,SaveSelection,Edit,Delete,Restore,Status,Loop,LoopWait,LoopMin,LoopTo,LoopMax,LoopUnit,MenuPlace=300,MenuEdit,MenuDelete,MenuEditEffect,
+    // The edit panel: Tint and the colour keys are swatches, FieldBase+4*row+k the k-th box of a row, LabelBase+row its label.
+    EditEffect=400,EditSystem,EditSystemLabel,TextureUse,Revert,SaveEdit,SaveNew,Done,EditHint,Tint=410,Colour0,FieldBase=420,LabelBase=480 };
+// The edit panel's rows of boxes: label, EmitterEdit field, number of boxes.
+struct Row { const char* label;const char* field;int boxes; };
+constexpr Row Rows[]={{"Particles","maxParticles",1},{"Rate / second","particlesPerSecond",1},{"Initial rate","initialParticlesPerSecond",1},{"Lifetime (s)","lifetime",2},
+    {"Size","size",2},{"Height","height",2},{"Velocity X","velocityX",2},{"Velocity Y","velocityY",2},{"Velocity Z","velocityZ",2},{"Acceleration","acceleration",3},{"Texture","texture",1}};
+constexpr int RowCount=static_cast<int>(std::size(Rows)),TintRow=RowCount,ColourRow=RowCount+1,Swatches=8;
 struct State
 {
     HWND window{},tree{},preview{};HFONT font{},heading{};HBRUSH background{},panel{},stage{};
@@ -40,6 +50,12 @@ struct State
     // Loop places (and previews) the selection repeating itself; it is cleared when
     // another effect is selected, the wait is kept.
     bool loop=false;double loopMin=5,loopMax=10;
+    // Edit panel: draft is the effect draftId with the panel's changes, original as it was
+    // when editing began (or last saved); settings are EmitterEdit::Settings of the draft
+    // and system the particle system shown. shown holds each box's text as last filled, so
+    // a box left unchanged changes nothing. keepView keeps the camera for the next ShowEntry.
+    bool editing=false,dirty=false,keepView=false;Json draft,original,settings=Json::array();std::string draftId;int system=0,colours=0;
+    std::map<int,std::string> shown;COLORREF swatch[1+Swatches]{};
 };
 HWND window=nullptr;
 int Px(const State& s,int n){return MulDiv(n,s.dpi,96);}
@@ -71,6 +87,8 @@ const Json* Current(const State& s)
     for(const auto& entry:Entries(s))if(entry.at("id").get<std::string>()==s.selected)return &entry;
     return nullptr;
 }
+// The selection as the preview and Place use it: the edited draft while editing it.
+const Json* Shown(const State& s){return s.editing && s.draftId==s.selected && s.draft.is_object()?&s.draft:Current(s);}
 bool ReadOnly(const Json& entry){return entry.value("readonly",entry.value("builtin",false));}
 std::string PackId(const Json& entry){return entry.contains("pack") && entry.at("pack").is_string()?entry.at("pack").get<std::string>():std::string{};}
 std::string PackName(const State& s,const Json& entry){auto found=s.packNames.find(PackId(entry));return found==s.packNames.end()?PackId(entry):found->second;}
@@ -86,8 +104,28 @@ void Layout(State& s)
     Bounds(s,Name,rx,10,rw,30);Bounds(s,Category,rx,42,rw,20);Bounds(s,Description,rx,68,rw,108);Bounds(s,Details,rx,184,rw,std::max(60,h-184-284));
     Bounds(s,Loop,rx,h-286,rw,22);
     Bounds(s,LoopWait,rx+18,h-257,36,20);Bounds(s,LoopMin,rx+56,h-260,52,24);Bounds(s,LoopTo,rx+112,h-257,20,20);Bounds(s,LoopMax,rx+134,h-260,52,24);Bounds(s,LoopUnit,rx+192,h-257,rw-192,20);
-    Bounds(s,Place,rx,h-218,rw,34);Bounds(s,SaveSelection,rx,h-176,rw,28);Bounds(s,Edit,rx,h-142,rw,28);
+    const int pw=s.editing?rw:(rw-6)*3/5;
+    Bounds(s,Place,rx,h-218,pw,34);Bounds(s,EditEffect,rx+pw+6,h-218,rw-pw-6,34);Bounds(s,SaveSelection,rx,h-176,rw,28);Bounds(s,Edit,rx,h-142,rw,28);
     Bounds(s,Delete,rx,h-108,(rw-6)/2,28);Bounds(s,Restore,rx+(rw-6)/2+6,h-108,rw-(rw-6)/2-6,28);
+    // The edit panel replaces the description, details, loop and library buttons.
+    const int fx=rx+98,fw=rw-98;
+    Bounds(s,EditSystemLabel,rx,73,96,20);Bounds(s,EditSystem,fx,70,fw,300);
+    for(int r=0;r<RowCount;++r)
+    {
+        const int y=96+r*24,n=Rows[r].boxes,bw=(fw-(n-1)*6)/n;
+        Bounds(s,LabelBase+r,rx,y+3,96,20);
+        for(int k=0;k<n;++k)Bounds(s,FieldBase+4*r+k,fx+k*(bw+6),y,k+1==n?fw-k*(bw+6):bw,22);
+    }
+    Bounds(s,TextureUse,fx,96+RowCount*24,fw,22);
+    Bounds(s,LabelBase+TintRow,rx,99+(RowCount+1)*24,96,20);Bounds(s,Tint,fx,96+(RowCount+1)*24,40,22);
+    Bounds(s,LabelBase+ColourRow,rx,99+(RowCount+2)*24,96,20);
+    for(int i=0;i<Swatches;++i)Bounds(s,Colour0+i,fx+i*std::max(20,(fw+4)/Swatches),96+(RowCount+2)*24,std::max(16,(fw+4)/Swatches-4),22);
+    Bounds(s,EditHint,rx,124+(RowCount+2)*24,rw,std::max(20,h-218-(124+(RowCount+2)*24)-6));
+    Bounds(s,Revert,rx,h-176,(rw-6)/2,28);Bounds(s,SaveEdit,rx+(rw-6)/2+6,h-176,rw-(rw-6)/2-6,28);Bounds(s,SaveNew,rx,h-142,rw,28);Bounds(s,Done,rx,h-108,rw,28);
+    for(int id:std::initializer_list<int>{Description,Details,Loop,LoopWait,LoopMin,LoopTo,LoopMax,LoopUnit,SaveSelection,Edit,Delete,Restore,EditEffect})ShowWindow(Item(s,id),s.editing?SW_HIDE:SW_SHOW);
+    for(int id:std::initializer_list<int>{EditSystemLabel,EditSystem,TextureUse,Revert,SaveEdit,SaveNew,Done,EditHint,Tint,LabelBase+TintRow,LabelBase+ColourRow})ShowWindow(Item(s,id),s.editing?SW_SHOW:SW_HIDE);
+    for(int r=0;r<RowCount;++r){ShowWindow(Item(s,LabelBase+r),s.editing?SW_SHOW:SW_HIDE);for(int k=0;k<Rows[r].boxes;++k)ShowWindow(Item(s,FieldBase+4*r+k),s.editing?SW_SHOW:SW_HIDE);}
+    for(int i=0;i<Swatches;++i)ShowWindow(Item(s,Colour0+i),s.editing && i<s.colours?SW_SHOW:SW_HIDE);
     Bounds(s,Status,12,h-36,w-24,28);
     EmitterPreview::Resize();
 }
@@ -156,16 +194,43 @@ std::string DetailText(const State& s,const Json& entry,const Json& missing)
     return Ansi(out);
 }
 void Paint(State& s,const std::string& message){s.message=message;InvalidateRect(s.preview,nullptr,TRUE);}
+std::string Heading(const State& s,const Json& entry){return Ansi(entry.at("name").get<std::string>())+(s.editing && s.dirty && s.draftId==entry.value("id",std::string{})?"  (edited)":"");}
+// Shows the selection (the draft while editing it) in the preview; false with the reason in error.
+bool ShowPreview(State& s,bool keepView,std::string& error)
+{
+    const auto* entry=Shown(s);if(!entry){error="Select an effect to preview it.";return false;}
+    try
+    {
+        // One viewport per panel: closing hides the window, so the viewport is only
+        // created again after the editor destroys the window on exit.
+        if(!s.attached){if(!EmitterPreview::Attach(s.preview,error))throw std::runtime_error(error.empty()?"The preview is not available.":error);s.attached=true;}
+        // Looping, the preview plays the effect as it will repeat in the map.
+        EmitterPreview::Show(Placed(s,*entry),keepView);
+        return true;
+    }
+    catch(const std::exception& e){error=e.what();EmitterPreview::Clear();Paint(s,std::string("No preview: ")+e.what());return false;}
+}
+void FillEdit(State& s);
+void Select(State& s,const std::string& id);
+// Starts editing entry: the draft is a copy until it is saved.
+void BeginEdit(State& s,const Json& entry)
+{
+    s.editing=true;s.dirty=false;s.original=s.draft=entry;s.draftId=entry.at("id").get<std::string>();s.system=0;
+}
 void ShowEntry(State& s)
 {
-    const auto* entry=Current(s);
-    EnableWindow(Item(s,Place),entry!=nullptr);EnableWindow(Item(s,Edit),entry!=nullptr);EnableWindow(Item(s,Delete),entry!=nullptr);EnableWindow(Item(s,Loop),entry!=nullptr);
+    const auto* entry=Current(s);const bool keepView=s.keepView;s.keepView=false;
+    EnableWindow(Item(s,Place),entry!=nullptr);EnableWindow(Item(s,Edit),entry!=nullptr);EnableWindow(Item(s,Delete),entry!=nullptr);EnableWindow(Item(s,Loop),entry!=nullptr);EnableWindow(Item(s,EditEffect),entry!=nullptr);
+    // Editing follows the selection; another effect starts from its own values.
+    if(s.editing && !entry){s.editing=s.dirty=false;s.draft=s.original=Json();s.draftId.clear();Layout(s);}
+    else if(s.editing && s.draftId!=s.selected)BeginEdit(s,*entry);
+    if(s.editing)FillEdit(s);
     if(!entry)
     {
         Set(s,Name,"");Set(s,Category,"");Set(s,Description,"");Set(s,Details,"");
         EmitterPreview::Clear();Paint(s,"Select an effect to preview it.");return;
     }
-    Set(s,Name,Ansi(entry->at("name").get<std::string>()));Set(s,Category,Ansi(entry->at("category").get<std::string>()));
+    Set(s,Name,Heading(s,*entry));Set(s,Category,Ansi(entry->at("category").get<std::string>()));
     auto description=Ansi(entry->value("description",std::string{}));
     for(size_t at=description.find('\n');at!=std::string::npos;at=description.find('\n',at+2))if(!at || description[at-1]!='\r')description.insert(at,"\r");
     const auto missing=Editor::MissingEmitterPackages(*entry);
@@ -181,17 +246,140 @@ void ShowEntry(State& s)
     }
     // Showing may load texture packages, which can take a moment.
     StatusText(s,"Loading the preview of "+Ansi(entry->at("name").get<std::string>())+"...");UpdateWindow(Item(s,Status));
+    std::string error;
+    if(!ShowPreview(s,keepView,error))StatusText(s,"No preview: "+error);
+    else if(s.editing)StatusText(s,"Editing "+Ansi(entry->at("name").get<std::string>())+": change a value and press Enter or leave the box, and the preview updates at once.");
+    else StatusText(s,"Previewing "+Ansi(entry->at("name").get<std::string>())+(s.loop?", looping":"")+". Place puts it at the builder brush; double-click an effect does the same.");
+}
+// The edit panel's boxes, swatches and buttons for the draft's selected particle system.
+void Field(State& s,int id,const std::string& text){s.shown[id]=text;SetWindowTextA(Item(s,id),text.c_str());}
+void FillEdit(State& s)
+{
+    try{s.settings=EmitterEdit::Settings(s.draft);}catch(const std::exception&){s.settings=Json::array();}
+    if(s.system<0 || s.system>=static_cast<int>(s.settings.size()))s.system=0;
+    auto combo=Item(s,EditSystem);SendMessageA(combo,CB_RESETCONTENT,0,0);
+    for(const auto& row:s.settings)SendMessageA(combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(Ansi(row.at("label").get<std::string>()).c_str()));
+    SendMessageA(combo,CB_SETCURSEL,s.system,0);
+    const bool any=!s.settings.empty();const Json row=any?s.settings[s.system]:Json::object();
+    auto number=[](const Json& v){return v.is_number()?EmitterEdit::Shown(v.get<double>()):std::string{};};
+    for(int r=0;r<RowCount;++r)
+    {
+        const std::string field=Rows[r].field;Json values=Json::array();
+        if(!any){}
+        else if(field=="velocityX" || field=="velocityY" || field=="velocityZ")values=row.at("velocity")[static_cast<size_t>(field.back()-'X')];
+        else if(field=="texture")values.push_back(row.at("texture"));
+        else if(row.at(field).is_array())values=row.at(field);
+        else values.push_back(row.at(field));
+        const bool enabled=any && !(field=="height" && row.at("height").is_null());
+        for(int k=0;k<Rows[r].boxes;++k)
+        {
+            const Json v=k<static_cast<int>(values.size())?values[k]:Json();
+            Field(s,FieldBase+4*r+k,v.is_string()?Ansi(v.get<std::string>()):number(v));EnableWindow(Item(s,FieldBase+4*r+k),enabled);
+        }
+    }
+    Set(s,LabelBase+5,any && row.at("height").is_null()?"Height (= size)":"Height");
+    s.colours=any?static_cast<int>(std::min<size_t>(Swatches,row.at("colours").size())):0;
+    const bool scaled=any && row.at("useColorScale").get<bool>();
+    if(any){const auto& t=row.at("tint");s.swatch[0]=RGB(t[0].get<int>(),t[1].get<int>(),t[2].get<int>());}
+    for(int i=0;i<s.colours;++i){const auto& c=row.at("colours")[i];s.swatch[1+i]=RGB(c[0].get<int>(),c[1].get<int>(),c[2].get<int>());}
+    Set(s,LabelBase+ColourRow,!any || row.at("colours").empty()?"Colours: none":scaled?"Colours":"Colours (off)");
+    EnableWindow(Item(s,Tint),any);EnableWindow(Item(s,TextureUse),any);
+    for(int i=0;i<Swatches;++i){EnableWindow(Item(s,Colour0+i),scaled);ShowWindow(Item(s,Colour0+i),s.editing && i<s.colours?SW_SHOW:SW_HIDE);InvalidateRect(Item(s,Colour0+i),nullptr,TRUE);}
+    InvalidateRect(Item(s,Tint),nullptr,TRUE);
+    const bool readOnly=s.original.is_object() && ReadOnly(s.original);
+    EnableWindow(Item(s,Revert),s.dirty);EnableWindow(Item(s,SaveEdit),s.dirty && !readOnly);
+    Set(s,EditHint,readOnly?"Built-in and pack effects never change: Save as New Effect keeps your version in Your effects. Place puts the edited effect in the map."
+        :"Save updates your effect; Save as New Effect keeps this one as it is. Place puts the edited effect in the map.");
+    if(s.draft.is_object() && s.draftId==s.selected)Set(s,Name,Heading(s,s.draft));
+}
+// Applies one change to the draft and shows it. A change the preview cannot show (a
+// texture that is not installed) is undone, with the reason.
+void Apply(State& s,const std::string& field,const Json& value)
+{
+    const auto previous=s.draft;
+    s.draft=EmitterEdit::Edit(s.draft,static_cast<size_t>(s.system),field,value);
+    s.dirty=EmitterEdit::Changed(s.original,s.draft);
+    std::string error;
+    if(!ShowPreview(s,true,error))
+    {
+        s.draft=previous;s.dirty=EmitterEdit::Changed(s.original,s.draft);FillEdit(s);
+        std::string ignored;ShowPreview(s,true,ignored);
+        throw std::runtime_error("Not changed: "+error);
+    }
+    FillEdit(s);
+    StatusText(s,"Changed "+Ansi(s.settings[s.system].at("label").get<std::string>())+". "+(s.original.is_object() && ReadOnly(s.original)?"Save as New Effect keeps it; the original stays as it was.":"Save keeps the change; Revert undoes every change."));
+}
+// Reads the boxes of row r and applies them when they differ from what was shown; Escape
+// (restore) puts the shown values back.
+void Commit(State& s,int r,bool restore)
+{
+    if(!s.editing || r<0 || r>=RowCount)return;
+    bool changed=false;
+    for(int k=0;k<Rows[r].boxes;++k)changed=changed || Text(Item(s,FieldBase+4*r+k))!=s.shown[FieldBase+4*r+k];
+    if(!changed)return;
+    if(restore){FillEdit(s);return;}
     try
     {
-        std::string error;
-        // One viewport per panel: closing hides the window, so the viewport is only
-        // created again after the editor destroys the window on exit.
-        if(!s.attached){if(!EmitterPreview::Attach(s.preview,error))throw std::runtime_error(error.empty()?"The preview is not available.":error);s.attached=true;}
-        // Looping, the preview plays the effect as it will repeat in the map.
-        EmitterPreview::Show(Placed(s,*entry));
-        StatusText(s,"Previewing "+Ansi(entry->at("name").get<std::string>())+(s.loop?", looping":"")+". Place puts it at the builder brush; double-click an effect does the same.");
+        const std::string field=Rows[r].field,label=Lower(Rows[r].label);
+        auto read=[&](int k){return EmitterEdit::ParseNumber(Text(Item(s,FieldBase+4*r+k)),label);};
+        Json value;
+        if(field=="texture")value=Recode(EmitterLibrary::Detail::Trimmed(Text(Item(s,FieldBase+4*r))),CP_ACP,CP_UTF8);
+        else if(field=="initialParticlesPerSecond")value=EmitterLibrary::Detail::Trimmed(Text(Item(s,FieldBase+4*r))).empty()?Json():Json(read(0));
+        else if(Rows[r].boxes==1)value=read(0);
+        else{value=Json::array();for(int k=0;k<Rows[r].boxes;++k)value.push_back(read(k));}
+        Apply(s,field,value);
     }
-    catch(const std::exception& e){EmitterPreview::Clear();Paint(s,std::string("No preview: ")+e.what());StatusText(s,std::string("No preview: ")+e.what());}
+    catch(const std::exception& e){MessageBeep(MB_ICONWARNING);FillEdit(s);StatusText(s,Ansi(e.what()));}
+}
+void PickColour(State& s,int id)
+{
+    if(!s.editing || s.settings.empty())return;
+    static COLORREF custom[16]={RGB(255,255,255),RGB(255,200,120),RGB(255,128,0),RGB(255,60,20),RGB(120,170,255),RGB(60,90,255),RGB(140,255,140),RGB(160,160,160),
+        RGB(255,255,255),RGB(255,255,255),RGB(255,255,255),RGB(255,255,255),RGB(255,255,255),RGB(255,255,255),RGB(255,255,255),RGB(255,255,255)};
+    CHOOSECOLORA choose{};choose.lStructSize=sizeof(choose);choose.hwndOwner=s.window;choose.rgbResult=s.swatch[id-Tint];choose.lpCustColors=custom;choose.Flags=CC_RGBINIT|CC_FULLOPEN|CC_ANYCOLOR;
+    if(!ChooseColorA(&choose))return;
+    const Json rgb={static_cast<int>(GetRValue(choose.rgbResult)),static_cast<int>(GetGValue(choose.rgbResult)),static_cast<int>(GetBValue(choose.rgbResult))};
+    try{if(id==Tint)Apply(s,"tint",rgb);else Apply(s,"colour",{{"index",id-Colour0},{"rgb",rgb}});}
+    catch(const std::exception& e){MessageBeep(MB_ICONWARNING);StatusText(s,Ansi(e.what()));}
+}
+void DrawSwatch(const State& s,const DRAWITEMSTRUCT& item)
+{
+    RECT r=item.rcItem;const bool enabled=!(item.itemState&ODS_DISABLED);
+    auto frame=CreateSolidBrush(item.itemState&ODS_FOCUS?RGB(0,120,215):Muted);FillRect(item.hDC,&r,frame);DeleteObject(frame);
+    InflateRect(&r,-2,-2);
+    auto fill=enabled?CreateSolidBrush(s.swatch[item.CtlID-Tint]):CreateHatchBrush(HS_BDIAGONAL,s.swatch[item.CtlID-Tint]);
+    SetBkColor(item.hDC,Background);FillRect(item.hDC,&r,fill);DeleteObject(fill);
+}
+// Leaves the edit panel; unsaved changes are discarded after asking.
+bool EndEdit(State& s)
+{
+    if(!s.editing)return true;
+    if(s.dirty)
+    {
+        const auto question="Discard your changes to '"+Ansi(s.original.value("name",std::string{}))+"'?";
+        if(MessageBoxA(s.window,question.c_str(),"Emitter Library",MB_OKCANCEL|MB_ICONQUESTION)!=IDOK)return false;
+    }
+    s.editing=s.dirty=false;s.draft=s.original=Json();s.draftId.clear();s.colours=0;Layout(s);
+    return true;
+}
+void SaveDraft(State& s,bool asNew)
+{
+    if(!s.editing || !s.draft.is_object())throw std::runtime_error("Edit an effect first.");
+    const auto name=Ansi(s.original.value("name",std::string{}));const bool readOnly=ReadOnly(s.original);
+    Json saved;
+    if(!asNew)
+    {
+        if(readOnly)throw std::runtime_error("Built-in and effect pack effects never change. Use Save as New Effect to keep your version.");
+        saved=Editor::SaveEmitterEntry(s.draft);
+    }
+    else
+    {
+        auto suggested=s.draft;suggested["name"]=s.draft.value("name",std::string{})+" (edited)";
+        auto details=WorkflowTools::AskEmitterDetails(s.window,suggested,"Save as new effect");if(details.is_null())return;
+        saved=Editor::SaveEmitterEntry(EmitterEdit::NewEffect(s.draft,details));
+    }
+    BeginEdit(s,saved);s.keepView=true;Select(s,saved.at("id"));s.keepView=false;FillEdit(s);
+    StatusText(s,asNew?"Saved "+Ansi(saved.at("name").get<std::string>())+" as your own effect"+(readOnly?"; "+name+" is unchanged.":"."):"Saved your changes to "+Ansi(saved.at("name").get<std::string>())+".");
 }
 // Takes the current snapshot when the library has a new revision.
 void Refresh(State& s)
@@ -352,12 +540,20 @@ void Fill(State& s)
     else if(!problem.empty())StatusText(s,problem);
     else if(!shown)StatusText(s,"The library is empty. Restore hidden effects, or select emitters in the map and save them.");
 }
-void Select(State& s,const std::string& id){s.selected=id;s.reveal=true;Fill(s);}
+void Select(State& s,const std::string& id)
+{
+    s.selected=id;s.reveal=true;Refresh(s);
+    // An effect the search hides (a copy saved under a new name) is shown by clearing the search.
+    const auto filter=Lower(Text(Item(s,Search)));
+    for(size_t i=0;i<Entries(s).size() && !filter.empty();++i)if(Entries(s)[i].at("id")==id && !Matches(s,i,filter)){SetWindowTextA(Item(s,Search),"");break;}
+    Fill(s);
+}
 void PlaceCurrent(State& s)
 {
-    const auto* entry=Current(s);if(!entry)throw std::runtime_error("Select an effect to place.");
+    // While editing, the edited version is placed, saved or not.
+    const auto* entry=Shown(s);if(!entry)throw std::runtime_error("Select an effect to place.");
     auto members=Editor::PlaceEmitterEntry(Placed(s,*entry),Editor::BuilderPose());
-    StatusText(s,"Placed "+Ansi(entry->at("name").get<std::string>())+(s.loop?", looping,":"")+" at the builder brush ("+std::to_string(members.size())+(members.size()==1?" actor, selected). Undo removes it.":" actors, selected). Undo removes them."));
+    StatusText(s,"Placed "+Ansi(entry->at("name").get<std::string>())+(s.editing && s.dirty?", as edited,":"")+(s.loop?", looping,":"")+" at the builder brush ("+std::to_string(members.size())+(members.size()==1?" actor, selected). Undo removes it.":" actors, selected). Undo removes them."));
 }
 void EditCurrent(State& s)
 {
@@ -398,6 +594,30 @@ void Command(State& s,int id)
     else if(id==Edit)EditCurrent(s);
     else if(id==Delete)DeleteCurrent(s);
     else if(id==Restore){Editor::RestoreBuiltinEmitters();Fill(s);StatusText(s,"Hidden effects are listed again.");}
+    else if(id==EditEffect)
+    {
+        const auto* entry=Current(s);if(!entry)throw std::runtime_error("Select an effect to edit.");
+        BeginEdit(s,*entry);Layout(s);FillEdit(s);SetFocus(Item(s,FieldBase));
+        StatusText(s,"Editing "+Ansi(entry->at("name").get<std::string>())+": change a value and press Enter or leave the box, and the preview updates at once.");
+    }
+    else if(id==Revert)
+    {
+        if(!s.editing)return;
+        s.draft=s.original;s.dirty=false;std::string error;ShowPreview(s,true,error);FillEdit(s);
+        StatusText(s,error.empty()?"Reverted to the effect's saved values.":"Reverted. No preview: "+error);
+    }
+    else if(id==SaveEdit || id==SaveNew)SaveDraft(s,id==SaveNew);
+    else if(id==Done)
+    {
+        if(!EndEdit(s))return;
+        s.keepView=true;ShowEntry(s);
+    }
+    else if(id==TextureUse)
+    {
+        if(!s.editing)return;
+        try{Apply(s,"texture",Recode(EmitterPreview::SelectedTexture(),CP_ACP,CP_UTF8));}
+        catch(const std::exception& e){MessageBeep(MB_ICONWARNING);StatusText(s,Ansi(e.what()));}
+    }
 }
 LRESULT CALLBACK PreviewProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
 {
@@ -413,6 +633,13 @@ LRESULT CALLBACK PreviewProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
         EndPaint(w,&paint);return 0;
     }
     return DefWindowProcA(w,message,wp,lp);
+}
+// An edit panel box: Enter applies it, Escape restores it (WM_APP+1 to the window).
+LRESULT CALLBACK FieldProc(HWND w,UINT message,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR)
+{
+    if(message==WM_KEYDOWN && (wp==VK_RETURN || wp==VK_ESCAPE)){SendMessageA(GetParent(w),WM_APP+1,GetDlgCtrlID(w),wp==VK_ESCAPE);return 0;}
+    if(message==WM_CHAR && (wp=='\r' || wp==27))return 0;
+    return DefSubclassProc(w,message,wp,lp);
 }
 LRESULT CALLBACK SearchProc(HWND w,UINT message,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR)
 {
@@ -452,11 +679,28 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
             Add(*s,"STATIC","to",LoopTo,SS_CENTER);Add(*s,"EDIT",Short(s->loopMax).c_str(),LoopMax,ES_AUTOHSCROLL|WS_TABSTOP,WS_EX_CLIENTEDGE);
             Add(*s,"STATIC","seconds between plays",LoopUnit,SS_ENDELLIPSIS);EnableLoop(*s);
             Button(*s,"Place at builder brush",Place);Button(*s,"Save selected emitters as new effect...",SaveSelection);Button(*s,"Edit name, category, description...",Edit);Button(*s,"Delete...",Delete);Button(*s,"Restore hidden",Restore);
+            // The edit panel, hidden until Edit effect.
+            Button(*s,"Edit effect...",EditEffect);
+            Add(*s,"STATIC","Particle system",EditSystemLabel,SS_NOPREFIX);Add(*s,WC_COMBOBOXA,"",EditSystem,CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP);
+            for(int r=0;r<RowCount;++r)
+            {
+                Add(*s,"STATIC",Rows[r].label,LabelBase+r,SS_NOPREFIX|SS_ENDELLIPSIS);
+                for(int k=0;k<Rows[r].boxes;++k)SetWindowSubclass(Add(*s,"EDIT","",FieldBase+4*r+k,ES_AUTOHSCROLL|WS_TABSTOP,WS_EX_CLIENTEDGE),FieldProc,1,0);
+            }
+            Button(*s,"Use texture browser selection",TextureUse);
+            Add(*s,"STATIC","Tint",LabelBase+TintRow,SS_NOPREFIX);Add(*s,"BUTTON","Tint",Tint,BS_OWNERDRAW|WS_TABSTOP);
+            Add(*s,"STATIC","Colours",LabelBase+ColourRow,SS_NOPREFIX|SS_ENDELLIPSIS);
+            for(int i=0;i<Swatches;++i)Add(*s,"BUTTON",("Colour "+std::to_string(i+1)).c_str(),Colour0+i,BS_OWNERDRAW|WS_TABSTOP);
+            Add(*s,"STATIC","",EditHint,SS_NOPREFIX);
+            Button(*s,"Revert",Revert);Button(*s,"Save",SaveEdit);Button(*s,"Save as New Effect...",SaveNew);Button(*s,"Done editing",Done);
             Add(*s,"STATIC","",Status,SS_ENDELLIPSIS|SS_NOPREFIX);
             Layout(*s);Fill(*s);SetTimer(w,1,500,nullptr);SetFocus(s->tree);return 0;
         }
         if(message==WM_SIZE){Layout(*s);return 0;}
-        if(message==WM_GETMINMAXINFO){auto m=reinterpret_cast<MINMAXINFO*>(lp);m->ptMinTrackSize={Px(*s,900),Px(*s,560)};return 0;}
+        // Tall enough for the edit panel above Place.
+        if(message==WM_GETMINMAXINFO){auto m=reinterpret_cast<MINMAXINFO*>(lp);m->ptMinTrackSize={Px(*s,900),Px(*s,740)};return 0;}
+        if(message==WM_APP+1){Commit(*s,(static_cast<int>(wp)-FieldBase)/4,lp!=0);return 0;}
+        if(message==WM_DRAWITEM && wp>=Tint && wp<static_cast<WPARAM>(Colour0+Swatches)){DrawSwatch(*s,*reinterpret_cast<DRAWITEMSTRUCT*>(lp));return TRUE;}
         if(message==WM_DPICHANGED)
         {
             s->dpi=HIWORD(wp);auto r=reinterpret_cast<RECT*>(lp);SetWindowPos(w,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER);
@@ -471,8 +715,11 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
         {
             const int id=LOWORD(wp),notification=HIWORD(wp);
             if(id==Search && notification==EN_CHANGE){Fill(*s);return 0;}
-            if(id==MenuPlace || id==MenuEdit || id==MenuDelete){Command(*s,id==MenuPlace?Place:id==MenuEdit?Edit:Delete);return 0;}
-            if(notification==BN_CLICKED && id>=Place && id<=Restore){Command(*s,id);return 0;}
+            if(id==MenuPlace || id==MenuEdit || id==MenuDelete || id==MenuEditEffect){Command(*s,id==MenuPlace?Place:id==MenuEdit?Edit:id==MenuDelete?Delete:EditEffect);return 0;}
+            if(notification==BN_CLICKED && ((id>=Place && id<=Restore) || (id>=EditEffect && id<=Done && id!=EditSystem && id!=EditSystemLabel))){Command(*s,id);return 0;}
+            if(notification==BN_CLICKED && id>=Tint && id<Colour0+Swatches){PickColour(*s,id);return 0;}
+            if(id>=FieldBase && id<FieldBase+4*RowCount && notification==EN_KILLFOCUS){Commit(*s,(id-FieldBase)/4,false);return 0;}
+            if(id==EditSystem && notification==CBN_SELCHANGE){s->system=static_cast<int>(SendMessageA(Item(*s,EditSystem),CB_GETCURSEL,0,0));FillEdit(*s);return 0;}
             if(id==Loop && notification==BN_CLICKED){s->loop=Button_GetCheck(Item(*s,Loop))==BST_CHECKED;EnableLoop(*s);ShowEntry(*s);return 0;}
             // A changed wait shows in the preview when the box is left.
             if((id==LoopMin || id==LoopMax) && notification==EN_KILLFOCUS && s->loop){ShowEntry(*s);return 0;}
@@ -485,6 +732,14 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
                 auto change=reinterpret_cast<NMTREEVIEWA*>(lp);
                 if(change->action==TVE_EXPAND)Populate(*s,change->itemNew.hItem);
                 return 0;
+            }
+            // Unsaved edits are only discarded after asking.
+            if(header->idFrom==Tree && header->code==TVN_SELCHANGINGA && !s->filling && s->editing && s->dirty)
+            {
+                auto change=reinterpret_cast<NMTREEVIEWA*>(lp);
+                if(change->itemNew.lParam<0 || change->itemNew.lParam>=static_cast<LPARAM>(Entries(*s).size()) || Entries(*s)[change->itemNew.lParam].at("id")==s->draftId)return FALSE;
+                const auto question="Discard your changes to '"+Ansi(s->original.value("name",std::string{}))+"'?";
+                return MessageBoxA(w,question.c_str(),"Emitter Library",MB_OKCANCEL|MB_ICONQUESTION)==IDOK?FALSE:TRUE;
             }
             if(header->idFrom==Tree && header->code==TVN_SELCHANGEDA && !s->filling)
             {
@@ -506,6 +761,7 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
                 if(header->code==NM_DBLCLK){Command(*s,Place);return 1;}
                 const bool readOnly=ReadOnly(Entries(*s)[row.lParam]);
                 auto menu=CreatePopupMenu();AppendMenuA(menu,MF_STRING,MenuPlace,"&Place at builder brush");AppendMenuA(menu,MF_SEPARATOR,0,nullptr);
+                AppendMenuA(menu,MF_STRING,MenuEditEffect,"Edit e&ffect...");
                 AppendMenuA(menu,MF_STRING,MenuEdit,readOnly?"Save a &copy to edit...":"&Edit name, category, description...");AppendMenuA(menu,MF_STRING,MenuDelete,readOnly?"&Hide":"&Delete...");
                 auto command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,w,nullptr);DestroyMenu(menu);
                 if(command)SendMessage(w,WM_COMMAND,command,0);return 1;
@@ -530,7 +786,7 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
         }
         if(message==WM_ERASEBKGND){RECT r{};GetClientRect(w,&r);FillRect(reinterpret_cast<HDC>(wp),&r,s->background);return 1;}
         // Closing hides the window and empties the preview; the editor destroys it on exit.
-        if(message==WM_CLOSE){try{WriteDocument(Editor::Directory()/"emitter-library-window.json",{{"version",1},{"left",s->left},{"right",s->right},{"loopMin",s->loopMin},{"loopMax",s->loopMax}});}catch(...){}EmitterPreview::Clear();ShowWindow(w,SW_HIDE);return 0;}
+        if(message==WM_CLOSE){if(!EndEdit(*s))return 0;try{WriteDocument(Editor::Directory()/"emitter-library-window.json",{{"version",1},{"left",s->left},{"right",s->right},{"loopMin",s->loopMin},{"loopMax",s->loopMax}});}catch(...){}EmitterPreview::Clear();ShowWindow(w,SW_HIDE);return 0;}
         // Children are destroyed after this: delete the preview viewport first.
         if(message==WM_DESTROY){KillTimer(w,1);EmitterPreview::Detach();return 0;}
         if(message==WM_NCDESTROY){window=nullptr;DeleteObject(s->font);DeleteObject(s->heading);DeleteObject(s->background);DeleteObject(s->panel);SetWindowLongPtr(w,GWLP_USERDATA,0);delete s;return DefWindowProcA(w,message,wp,lp);}
