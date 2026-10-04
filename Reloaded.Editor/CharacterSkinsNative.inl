@@ -160,11 +160,11 @@ namespace
         // A compiled class is saved with the map even if an earlier attempt marked it transient.
         Write(c+0x1c,(Read<unsigned>(c+0x1c)&~0x4000u)|0x80000u);
     }
-    bool BotsClassCompiled(Address c) { return c && (Read<unsigned>(c+0x8c)&2); }
-    // The console commands first: the actor's script refers to their class.
+    bool BotControllerCompiled(Address c) { return c && (Read<unsigned>(c+0x8c)&2); }
+    // The bot controller first: the actor's script refers to its class.
     void CompileSkinClass()
     {
-        CompileMapClass(CharacterSkins::BotsClassName,CharacterSkins::BotsScript(),"Interaction",BotsClassCompiled);
+        CompileMapClass(CharacterSkins::BotControllerClassName,CharacterSkins::BotControllerScript(),"Controller",BotControllerCompiled);
         CompileMapClass(CharacterSkins::ClassName,CharacterSkins::Script(),"Info",SkinClassCompiled);
     }
 }

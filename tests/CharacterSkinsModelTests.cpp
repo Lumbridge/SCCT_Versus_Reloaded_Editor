@@ -21,10 +21,10 @@ int main()
     {
         const auto script = Script();
         // The stock compiler wants the class declaration first and CRLF text.
-        Check(Contains(script, "class ReloadedCharacterSkins3 extends Info\r\n\tplaceable;"), "class header");
-        Check(std::string(ClassName) == "ReloadedCharacterSkins3" && Version == 3, "versioned class name");
-        Check(std::string(LegacyClassNames[0]) == "ReloadedCharacterSkins2" && std::string(LegacyClassNames[1]) == "ReloadedCharacterSkins",
-              "versions 1 and 2 are migrated");
+        Check(Contains(script, "class ReloadedCharacterSkins4 extends Info\r\n\tplaceable;"), "class header");
+        Check(std::string(ClassName) == "ReloadedCharacterSkins4" && Version == 4, "versioned class name");
+        Check(std::string(LegacyClassNames[0]) == "ReloadedCharacterSkins3" && std::string(LegacyClassNames[2]) == "ReloadedCharacterSkins",
+              "versions 1 to 3 are migrated");
         Check(script.find("\n") == script.find("\r\n") + 1, "CRLF line ends");
         for (const auto& slot : Slots)
         {
@@ -49,20 +49,22 @@ int main()
         Check(!Contains(script, "replication"), "no replication block");
         Check(!Contains(script, "var bool Dressed") && !Contains(script, "var bool Swapped"), "no bool arrays: the compiler refuses them");
 
-        // AddBot and KillBots: attached once, to editor Play Level sessions only.
-        Check(Contains(script, "InStr(Caps(Level.GetLocalURL()), \"?EDITEUR=TRUE\") < 0"), "editor launches only");
-        Check(Contains(script, "AddInteraction(class'ReloadedTestBots'.Outer.Name, 'ReloadedTestBots', PC.Player)"), "commands attached");
-        Check(Contains(script, "ReloadedTestBots(PC.Player.LocalInteractions[i]) != None"), "commands attached once");
-        const auto bots = BotsScript();
-        Check(Contains(bots, "class ReloadedTestBots extends Interaction;\r\n"), "commands class header");
-        Check(bots.find("\n") == bots.find("\r\n") + 1, "commands CRLF");
-        Check(Contains(bots, "exec function AddBot(optional string Team)") && Contains(bots, "exec function KillBots()"), "commands");
-        // Typed lines never reach an interaction; the entered line is read off the console.
-        Check(Contains(bots, "C.CmdHistoryTop != Entered") && Contains(bots, "Typed = C.TypedStr;") && Contains(bots, "bRequiresTick=True"),
-              "console lines watched");
-        Check(Contains(bots, "BotClass = class'SPawnAttaque_1Mesh'") && Contains(bots, "BotClass = class'SPawnDefense_1Mesh'"), "bot classes");
-        Check(Contains(bots, "PC.Spawn(BotClass, , 'ReloadedTestBot',") && Contains(bots, "DynamicActors(class'Pawn', P, 'ReloadedTestBot')"),
-              "KillBots removes only the tagged bots");
+        // addbot and killbots: editor Play Level sessions only, read off the console by the
+        // actor itself (an interaction of the map's crashed a merc's game with the console open).
+        Check(Contains(script, "bCommands = InStr(Caps(Level.GetLocalURL()), \"?EDITEUR=TRUE\") >= 0;"), "editor launches only");
+        Check(!Contains(script, "Interaction("), "no interaction");
+        Check(Contains(script, "C.CmdHistoryTop != Entered") && Contains(script, "Typed = C.TypedStr;"), "console lines watched");
+        Check(Contains(script, "BotClass = class'SPawnAttaque_1Mesh'") && Contains(script, "BotClass = class'SPawnDefense_1Mesh'"), "bot classes");
+        Check(Contains(script, "Spawn(BotClass, , 'ReloadedTestBot',") && Contains(script, "DynamicActors(class'Pawn', P, 'ReloadedTestBot')"),
+              "killbots removes only the tagged bots");
+        Check(Contains(script, "GRI.PRIArray[i].PlayerName = \"Test bot\"") && Contains(script, "\tNameBots(PC);\r\n\tC = Console("),
+              "names kept: the Reloaded patch crashes on an empty one");
+        // A merc's game crashes on a character without a controller; Controller is abstract.
+        Check(Contains(script, "BotClass.default.Controller = Ctl;") && Contains(script, "BotClass.default.Controller = None;") &&
+                  Contains(BotControllerScript(), "class ReloadedBotController extends Controller;\r\n"),
+              "bots have a controller");
+        Check(Contains(script, "Bot.AttachToBone(Gun, 'B R Hand');"), "a merc bot holds its gun");
+        Check(Contains(script, "only the other team can be added"), "own team refused");
 
         Check(ValidPath(""), "empty keeps stock");
         Check(ValidPath("MyLevel.Snow.SpyCamo") && ValidPath("Arctic_TXT.SpyCamo"), "package paths");
