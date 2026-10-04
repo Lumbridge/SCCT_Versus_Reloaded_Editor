@@ -145,6 +145,21 @@ This also checks the vertex right-click popup, selection preservation on cancel,
 world-space selected-corner alignment, exact preservation of unselected vertices,
 shared polygon corners, and vertex Undo/Redo.
 
+## Animation import options
+
+`tools/test_workflow_tools.cmd` runs `AnimImportOptionsModelTests.cpp`: which of
+Merge / Overwrite / Keep Notifies apply together, case-insensitive sequence and
+bone names, the skeleton check (bone count, names and order), what happens to each
+sequence of the file (added, replaced keeping or discarding notifies, skipped as
+already present or repeated in the file), a whole-set replace carrying notifies by
+name, and the confirmation, nothing-to-merge and log texts.
+
+There is no native suite test yet. It was checked by hand in a disposable
+installation by importing generated `.psa` files (SCCT's extended format and a
+standard ActorX one) into `MAL_anm.ventilateur_anm` with every option combination,
+reading the live `UMeshAnimation` arrays back after each, saving the package to a
+scratch folder and reopening it in a fresh editor.
+
 ## Local BSP lighting matching
 
 Compile and run `tests/LocalLightingMatchTests.cpp` with C++17 or later. It tests
