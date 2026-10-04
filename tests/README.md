@@ -232,6 +232,22 @@ standard ActorX one) into `MAL_anm.ventilateur_anm` with every option combinatio
 reading the live `UMeshAnimation` arrays back after each, saving the package to a
 scratch folder and reopening it in a fresh editor.
 
+## Property filter and multi-edit
+
+`tools/test_workflow_tools.cmd` runs `PropertyFilterModelTests.cpp`: the filter's
+words (blank-separated, case folded, all required), which rows of a Properties
+window stay for a filter (a category name keeps its properties, a property keeps
+its category and expanded members, `events tag` matches across the path, unnamed
+rows follow their parent, paths reset at the next category), where the list goes
+under the filter bar without running into the button below it, and when a row of
+a selection shows "(multiple values)".
+
+Not covered by the native suite. It was checked by hand in a disposable install:
+a light and a static mesh actor selected together, the filter narrowed, widened
+and cleared with Esc (categories opened before filtering open again), Tag and
+DrawScale set once for both, Undo and Redo restoring and reapplying both actors
+in one step, and the filter kept across a change to a single selected actor.
+
 ## Local BSP lighting matching
 
 Compile and run `tests/LocalLightingMatchTests.cpp` with C++17 or later. It tests

@@ -202,6 +202,12 @@
     <ClInclude Include="PasteFix.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="PropertyFilterModel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="PropertySearch.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="RebuildAllMaps.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -353,6 +359,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="PasteFix.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="PropertySearch.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="RebuildAllMaps.cpp">

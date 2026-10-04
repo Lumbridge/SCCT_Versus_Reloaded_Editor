@@ -44,6 +44,7 @@
 #include "MapCheckLog.h"
 #include "WorkflowTools.h"
 #include "PasteFix.h"
+#include "PropertySearch.h"
 #include "EmitterPreview.h"
 #include "SelfUpdater.h"
 
@@ -198,6 +199,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     EmitterPreview::Initialize();
     BspDiagnostics::Initialize(dllPath);
     PasteFix::Initialize();
+    PropertySearch::Initialize();
     SelfUpdater::Initialize(dllPath);
 
 #ifdef _DEBUG
