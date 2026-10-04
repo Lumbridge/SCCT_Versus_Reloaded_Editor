@@ -27,6 +27,7 @@
     <ClInclude Include="MeshFavoritesModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="UndoHistory.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="UndoHistoryModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="AnimImportOptionsModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="SelfUpdater.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="SelfUpdaterModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CrashRecovery.h"><Filter>Header Files</Filter></ClInclude>

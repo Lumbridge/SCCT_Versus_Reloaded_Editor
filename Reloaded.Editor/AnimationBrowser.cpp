@@ -1,8 +1,10 @@
 #include "pch.h"
 #include "AnimationBrowser.h"
+#include "AnimImportOptionsModel.h"
 #include "PropertyGrid.h"
 #include "SoundBrowser.h"     // PeekSelectedSound for "Use" button
 #include "logger.h"
+#include "MemoryWriter.h"
 #include <shellapi.h>         // ExtractIconExA for window icon
 #pragma comment(lib, "shell32.lib")
 #include <commctrl.h>
@@ -2184,11 +2186,13 @@ static void FArray_Insert(void* farray, int index, int count, int elementSize)
     void* self = farray;
     int   idx  = index;
     int   cnt  = count;
-    int   es   = elementSize;
+    // Not `es`: inside __asm that names the ES segment register, so
+    // `push es` passed 0x2B as the element size whatever the caller asked.
+    int   elemBytes = elementSize;
     int   fn   = FARRAY_INSERT_ADDR;
     __asm
     {
-        push es
+        push elemBytes
         push cnt
         push idx
         mov  ecx, self
@@ -5281,9 +5285,9 @@ static void ComboAddSelect(HWND hCombo, const char* str)
 //  File menu handlers - mirror UT2004 WBrowserAnimation::OnCommand
 //  (cases IDMN_FileOpen / IDMN_FileSave / IDMN_FILE_IMPORTMESH /
 //   IDMN_FILE_IMPORTANIM / IDMN_FILE_IMPORTANIMMORE).
-//  We strip out the Maya/Merge/Overwrite/KeepNotifies prompt for now;
-//  a later pass will pop the surviving Import dialog (resource 140) and
-//  read those flags from it.
+//  Imports pop the surviving Import dialog (resource 140); its Merge /
+//  Overwrite / Keep Notifies flags are applied by
+//  ImportAnimationWithOptions.
 // ---------------------------------------------------------------------
 static void OnFileOpen(HWND hParent)
 {
@@ -5363,6 +5367,455 @@ static void OnFileSave(HWND hParent)
 }
 
 // =====================================================================
+//  Import options: Merge / Overwrite / Keep Notifies
+// =====================================================================
+//  The engine's NEWANIM IMPORT (UEditorEngine::Exec_Anim, .PSA branch at
+//  0x110137df) has no merge flags: it looks the NAME= up in ANY package,
+//  destroys whatever MeshAnimation it finds, imports the file as a new
+//  object through UEditorEngine::animationImport (vtable +0x20C), digests
+//  it (vtable +0x210) and re-points the meshes that used the old one.
+//  UnrealEd's merge/overwrite/keep-notifies options lived in the browser,
+//  so they are done here the same way: the file is imported under a
+//  throw-away name in TempAnimPackage, then its sequences are moved into
+//  the existing set and the temporary set is deleted.
+//
+//  UMeshAnimation (UMeshAnimation::Serialize at 0x111136d0; checked on
+//  live objects - MAL_anm.ventilateur_anm, 5 bones, 2 sequences):
+//    +0x28  INT                    InternalVersion
+//    +0x2C  TArray<FNamedBone>     RefBones   12 bytes: FName, Flags, Parent
+//    +0x38  TArray<MotionChunk>    Moves      0x68 bytes (has a vtable)
+//    +0x44  TArray<FMeshAnimSeq>   AnimSeqs   0x2C bytes, Notifys at +0x1C
+//    +0x50  raw import data (transient; set only on a fresh import)
+//  Moves[i] holds the keys of AnimSeqs[i], one track per reference bone in
+//  bone order, which is why a merge needs identical skeletons.
+//
+//  Elements are moved, never copied: the bytes of a sequence and its motion
+//  chunk change owner, and whatever the existing set loses (an overwritten
+//  sequence, or the whole old contents on a replace) is swapped into the
+//  temporary set so the engine frees it when that set is deleted.  The set
+//  keeps its identity, so meshes that use it stay linked.
+#define UMA_OFF_VERSION     0x28
+#define UMA_OFF_REFBONES    0x2C
+#define UMA_OFF_MOVES       0x38
+#define UMA_OFF_ANIMSEQS    0x44
+#define UMA_BONE_STRIDE     12
+#define UMA_MOVE_STRIDE     0x68
+#define UMA_SEQ_STRIDE      0x2C
+#define UMA_SEQ_NOTIFYS     0x1C
+#define UMA_LAYOUT_CLASSOFF 0x24        // the layout above assumes 4-byte FNames
+#define UPACKAGE_OFF_DIRTY  0x30        // Exec_Anim sets this after an import
+#define TEMP_ANIM_PACKAGE   "TempAnimPackage"
+
+struct AnimSnapshotRaw
+{
+    enum { MAX_BONES = 512, MAX_SEQS = 2048, MAX_LEN = 64 };
+    int  bones, seqs, moves;
+    char boneNames[MAX_BONES][MAX_LEN];
+    char seqNames [MAX_SEQS][MAX_LEN];
+    int  notifyCounts[MAX_SEQS];
+};
+static AnimSnapshotRaw s_snapExisting;
+static AnimSnapshotRaw s_snapIncoming;
+
+static const char* GO_NameOrNull(int idx)
+{
+    void** gNamesData = *(void***)GNAMES_DATA;
+    int    gNamesNum  = *(int*)   GNAMES_NUM;
+    if (!gNamesData || idx < 0 || idx >= gNamesNum || !gNamesData[idx]) return nullptr;
+    return (char*)gNamesData[idx] + FNAME_ENTRY_STR_OFFSET;
+}
+
+// SEH-protected: the MeshAnimation called `animName`.  With `package` set,
+// only one whose outermost package is `package`; with `package` null, one
+// in any package except `excludePackage` (whose package name is copied to
+// `foundPackage`).  Uses the probed Class offset like the other walkers.
+static void* GO_FindMeshAnimRaw(const char* package, const char* animName,
+                                const char* excludePackage,
+                                char* foundPackage, int foundPackageSize)
+{
+    if (foundPackage && foundPackageSize > 0) foundPackage[0] = '\0';
+    if (g_uobjClassOffset == 0 || !animName || !*animName) return nullptr;
+    __try
+    {
+        void** gObjData = *(void***)GOBJECTS_DATA;
+        int    gObjNum  = *(int*)   GOBJECTS_NUM;
+        if (!gObjData || gObjNum <= 0) return nullptr;
+        for (int i = 0; i < gObjNum; ++i)
+        {
+            void* obj = gObjData[i];
+            if (!obj) continue;
+            void* cls = *(void**)((char*)obj + g_uobjClassOffset);
+            if (!cls) continue;
+            const char* clsName = GO_NameOrNull(*(int*)((char*)cls + UOBJ_FNAME_OFFSET));
+            if (!clsName || _stricmp(clsName, "MeshAnimation") != 0) continue;
+            const char* objName = GO_NameOrNull(*(int*)((char*)obj + UOBJ_FNAME_OFFSET));
+            if (!objName || _stricmp(objName, animName) != 0) continue;
+
+            void* top = obj;
+            for (int s = 0; s < 16; ++s)
+            {
+                void* nxt = *(void**)((char*)top + UOBJ_OUTER_OFFSET);
+                if (!nxt) break;
+                top = nxt;
+            }
+            const char* pkgName = GO_NameOrNull(*(int*)((char*)top + UOBJ_FNAME_OFFSET));
+            if (!pkgName) continue;
+            if (package && _stricmp(pkgName, package) != 0) continue;
+            if (!package && excludePackage && _stricmp(pkgName, excludePackage) == 0) continue;
+            if (foundPackage && foundPackageSize > 0)
+                strncpy_s(foundPackage, foundPackageSize, pkgName, _TRUNCATE);
+            return obj;
+        }
+        return nullptr;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+}
+
+// SEH-protected: bone names, sequence names and notify counts of `anim`.
+// Returns false when anything looks unlike the verified layout (array
+// counts out of range, Moves and AnimSeqs of different lengths).
+static bool GO_SnapshotAnimRaw(void* anim, AnimSnapshotRaw* out)
+{
+    out->bones = out->seqs = out->moves = 0;
+    if (!anim) return false;
+    __try
+    {
+        char* a = (char*)anim;
+        char* bones = *(char**)(a + UMA_OFF_REFBONES);
+        int   nb    = *(int*)  (a + UMA_OFF_REFBONES + 4);
+        char* seqs  = *(char**)(a + UMA_OFF_ANIMSEQS);
+        int   ns    = *(int*)  (a + UMA_OFF_ANIMSEQS + 4);
+        int   nm    = *(int*)  (a + UMA_OFF_MOVES + 4);
+        if (nb < 0 || nb > AnimSnapshotRaw::MAX_BONES || (nb && !bones)) return false;
+        if (ns < 0 || ns > AnimSnapshotRaw::MAX_SEQS  || (ns && !seqs))  return false;
+        if (nm != ns) return false;
+        for (int i = 0; i < nb; ++i)
+        {
+            const char* n = GO_NameOrNull(*(int*)(bones + i * UMA_BONE_STRIDE));
+            strncpy_s(out->boneNames[i], AnimSnapshotRaw::MAX_LEN, n ? n : "", _TRUNCATE);
+        }
+        for (int i = 0; i < ns; ++i)
+        {
+            char* seq = seqs + i * UMA_SEQ_STRIDE;
+            const char* n = GO_NameOrNull(*(int*)seq);
+            strncpy_s(out->seqNames[i], AnimSnapshotRaw::MAX_LEN, n ? n : "", _TRUNCATE);
+            int nn = *(int*)(seq + UMA_SEQ_NOTIFYS + 4);
+            out->notifyCounts[i] = (nn > 0 && nn < 8192) ? nn : 0;
+        }
+        out->bones = nb;
+        out->seqs  = ns;
+        out->moves = nm;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+static AnimImportOptions::Set SnapshotToSet(const AnimSnapshotRaw& s)
+{
+    AnimImportOptions::Set set;
+    for (int i = 0; i < s.bones; ++i) set.bones.emplace_back(s.boneNames[i]);
+    for (int i = 0; i < s.seqs; ++i)
+    {
+        set.sequences.emplace_back(s.seqNames[i]);
+        set.notifyCounts.push_back(s.notifyCounts[i]);
+    }
+    return set;
+}
+
+static void SwapBytes(char* x, char* y, int size)
+{
+    for (int i = 0; i < size; ++i)
+    {
+        char t = x[i];
+        x[i] = y[i];
+        y[i] = t;
+    }
+}
+
+// SEH-protected merge.  Per incoming sequence i: actions[i] is 0 = skip,
+// 1 = append, 2 = replace existing sequence targets[i]; keep[i] keeps the
+// replaced sequence's notifies.  Replacements swap the sequence and its
+// motion chunk with the temporary set's; appends grow the existing arrays
+// through the engine's FArray::Insert (engine GMalloc, so save and the
+// destructor accept the storage) and then drop the moved elements from the
+// temporary set without destructing them.
+static bool GO_ApplyMergeRaw(void* dest, void* temp, const int* actions,
+                             const int* targets, const int* keep, int count)
+{
+    __try
+    {
+        char* d = (char*)dest;
+        char* t = (char*)temp;
+        int destSeqs = *(int*)(d + UMA_OFF_ANIMSEQS + 4);
+        if (*(int*)(t + UMA_OFF_ANIMSEQS + 4) != count || *(int*)(t + UMA_OFF_MOVES + 4) != count) return false;
+        if (*(int*)(d + UMA_OFF_MOVES + 4) != destSeqs) return false;
+
+        int appends = 0;
+        for (int i = 0; i < count; ++i)
+        {
+            if (actions[i] == 1) ++appends;
+            if (actions[i] == 2 && (targets[i] < 0 || targets[i] >= destSeqs)) return false;
+        }
+
+        for (int i = 0; i < count; ++i)
+        {
+            if (actions[i] != 2) continue;
+            char* ds = *(char**)(d + UMA_OFF_ANIMSEQS) + targets[i] * UMA_SEQ_STRIDE;
+            char* ts = *(char**)(t + UMA_OFF_ANIMSEQS) + i * UMA_SEQ_STRIDE;
+            SwapBytes(ds, ts, UMA_SEQ_STRIDE);
+            SwapBytes(*(char**)(d + UMA_OFF_MOVES) + targets[i] * UMA_MOVE_STRIDE,
+                      *(char**)(t + UMA_OFF_MOVES) + i * UMA_MOVE_STRIDE, UMA_MOVE_STRIDE);
+            // Keep Notifies: the old TArray<FMeshAnimNotify> goes back onto
+            // the re-imported sequence; its notify objects already belong to
+            // this package.
+            if (keep[i]) SwapBytes(ds + UMA_SEQ_NOTIFYS, ts + UMA_SEQ_NOTIFYS, 12);
+        }
+
+        if (appends > 0)
+        {
+            FArray_Insert(d + UMA_OFF_ANIMSEQS, destSeqs, appends, UMA_SEQ_STRIDE);
+            FArray_Insert(d + UMA_OFF_MOVES,    destSeqs, appends, UMA_MOVE_STRIDE);
+            if (*(int*)(d + UMA_OFF_ANIMSEQS + 4) != destSeqs + appends ||
+                *(int*)(d + UMA_OFF_MOVES + 4)    != destSeqs + appends) return false;
+            int at = destSeqs;
+            for (int i = 0; i < count; ++i)
+            {
+                if (actions[i] != 1) continue;
+                memcpy(*(char**)(d + UMA_OFF_ANIMSEQS) + at * UMA_SEQ_STRIDE,
+                       *(char**)(t + UMA_OFF_ANIMSEQS) + i * UMA_SEQ_STRIDE, UMA_SEQ_STRIDE);
+                memcpy(*(char**)(d + UMA_OFF_MOVES) + at * UMA_MOVE_STRIDE,
+                       *(char**)(t + UMA_OFF_MOVES) + i * UMA_MOVE_STRIDE, UMA_MOVE_STRIDE);
+                ++at;
+            }
+            // The temporary set keeps only what it still owns.
+            char* tSeqs  = *(char**)(t + UMA_OFF_ANIMSEQS);
+            char* tMoves = *(char**)(t + UMA_OFF_MOVES);
+            int kept = 0;
+            for (int i = 0; i < count; ++i)
+            {
+                if (actions[i] == 1) continue;
+                if (kept != i)
+                {
+                    memcpy(tSeqs  + kept * UMA_SEQ_STRIDE,  tSeqs  + i * UMA_SEQ_STRIDE,  UMA_SEQ_STRIDE);
+                    memcpy(tMoves + kept * UMA_MOVE_STRIDE, tMoves + i * UMA_MOVE_STRIDE, UMA_MOVE_STRIDE);
+                }
+                ++kept;
+            }
+            *(int*)(t + UMA_OFF_ANIMSEQS + 4) = kept;
+            *(int*)(t + UMA_OFF_MOVES + 4)    = kept;
+        }
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+// SEH-protected replace-all: optionally move notifies onto same-named new
+// sequences, then swap the whole contents (version, bones, motion chunks,
+// sequences) so the set holds the file's animation and the temporary set
+// holds the old one.
+static bool GO_ApplyReplaceAllRaw(void* dest, void* temp, const int* carryIncoming,
+                                  const int* carryExisting, int carryCount)
+{
+    __try
+    {
+        char* d = (char*)dest;
+        char* t = (char*)temp;
+        int destSeqs = *(int*)(d + UMA_OFF_ANIMSEQS + 4);
+        int tempSeqs = *(int*)(t + UMA_OFF_ANIMSEQS + 4);
+        for (int c = 0; c < carryCount; ++c)
+        {
+            if (carryIncoming[c] < 0 || carryIncoming[c] >= tempSeqs ||
+                carryExisting[c] < 0 || carryExisting[c] >= destSeqs) return false;
+        }
+        for (int c = 0; c < carryCount; ++c)
+        {
+            SwapBytes(*(char**)(d + UMA_OFF_ANIMSEQS) + carryExisting[c] * UMA_SEQ_STRIDE + UMA_SEQ_NOTIFYS,
+                      *(char**)(t + UMA_OFF_ANIMSEQS) + carryIncoming[c] * UMA_SEQ_STRIDE + UMA_SEQ_NOTIFYS, 12);
+        }
+        SwapBytes(d + UMA_OFF_VERSION,  t + UMA_OFF_VERSION,  4);
+        SwapBytes(d + UMA_OFF_REFBONES, t + UMA_OFF_REFBONES, 12);
+        SwapBytes(d + UMA_OFF_MOVES,    t + UMA_OFF_MOVES,    12);
+        SwapBytes(d + UMA_OFF_ANIMSEQS, t + UMA_OFF_ANIMSEQS, 12);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+// SEH-protected: flags the set's package as modified, as Exec_Anim does
+// for the package it imports into.
+static void GO_MarkPackageDirtyRaw(void* obj)
+{
+    __try
+    {
+        void* top = obj;
+        for (int s = 0; s < 16; ++s)
+        {
+            void* nxt = *(void**)((char*)top + UOBJ_OUTER_OFFSET);
+            if (!nxt) break;
+            top = nxt;
+        }
+        void* cls = *(void**)((char*)top + g_uobjClassOffset);
+        const char* clsName = cls ? GO_NameOrNull(*(int*)((char*)cls + UOBJ_FNAME_OFFSET)) : nullptr;
+        if (clsName && _stricmp(clsName, "Package") == 0)
+            *(int*)((char*)top + UPACKAGE_OFF_DIRTY) = 1;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+
+static void RunEngineAnimImport(const char* file, const char* package,
+                                const char* name, const char* extra)
+{
+    char cmd[8192 + 1024];
+    _snprintf_s(cmd, sizeof(cmd), _TRUNCATE,
+        "NEWANIM IMPORT FILE=\"%s\" PACKAGE=\"%s\" NAME=\"%s\" %sBROWSER",
+        file, package, name, extra);
+    ExecEditorCommand(cmd);
+}
+
+static void DeleteTempAnim(const char* tempName)
+{
+    char cmd[256];
+    _snprintf_s(cmd, sizeof(cmd), _TRUNCATE,
+                "DELETE CLASS=MeshAnimation OBJECT=\"%s\"", tempName);
+    CallEditorGet("OBJ", cmd);
+    if (GO_FindMeshAnimRaw(TEMP_ANIM_PACKAGE, tempName, nullptr, nullptr, 0))
+    {
+        // It only holds what the set gave up; leaving it costs memory, not data.
+        std::string msg = std::string("AnimationBrowser: could not delete temporary animation ") +
+                          TEMP_ANIM_PACKAGE + "." + tempName;
+        Logger::log(msg);
+    }
+}
+
+// Imports an animation file honouring the dialog's Merge / Overwrite /
+// Keep Notifies options.  Returns false when nothing was imported.
+static bool ImportAnimationWithOptions(HWND hParent, const char* file,
+                                       const char* package, const char* name,
+                                       const AnimImportOptions::Options& requested,
+                                       const char* extra)
+{
+    using namespace AnimImportOptions;
+    const char* title = "Import Animation";
+    if (g_uobjClassOffset == 0) g_uobjClassOffset = GO_ProbeClassOffset();
+
+    void* dest = GO_FindMeshAnimRaw(package, name, nullptr, nullptr, 0);
+    if (!dest)
+    {
+        // The engine looks NAME= up in every package and destroys what it
+        // finds, so a same-named set elsewhere would be lost.
+        char otherPkg[256];
+        if (GO_FindMeshAnimRaw(nullptr, name, package, otherPkg, sizeof(otherPkg)))
+        {
+            std::string msg = std::string("An animation set named '") + name + "' already exists in package '" +
+                              otherPkg + "'.\n\nThe engine's import finds sets by name in every package and would "
+                              "replace that one. Choose another name, or import into '" + otherPkg + "'.";
+            MessageBoxA(hParent, msg.c_str(), title, MB_OK | MB_ICONWARNING);
+            return false;
+        }
+        RunEngineAnimImport(file, package, name, extra);
+        return true;
+    }
+
+    if (g_uobjClassOffset != UMA_LAYOUT_CLASSOFF)
+    {
+        MessageBoxA(hParent, "Importing into an existing animation set is not supported with this "
+                    "editor's object layout. Nothing was changed.", title, MB_OK | MB_ICONWARNING);
+        return false;
+    }
+
+    // Import the file beside the set under a name nothing else uses.
+    char tempName[64] = "";
+    for (int attempt = 0; attempt < 16; ++attempt)
+    {
+        _snprintf_s(tempName, sizeof(tempName), _TRUNCATE, "REImport_%08X",
+                    static_cast<unsigned>(GetTickCount() + attempt));
+        if (!GO_FindMeshAnimRaw(nullptr, tempName, nullptr, nullptr, 0)) break;
+    }
+    RunEngineAnimImport(file, TEMP_ANIM_PACKAGE, tempName, extra);
+    void* temp = GO_FindMeshAnimRaw(TEMP_ANIM_PACKAGE, tempName, nullptr, nullptr, 0);
+    if (!temp)
+    {
+        MessageBoxA(hParent, "The engine could not import the file. Nothing was changed.",
+                    title, MB_OK | MB_ICONWARNING);
+        return false;
+    }
+
+    if (!GO_SnapshotAnimRaw(dest, &s_snapExisting) || !GO_SnapshotAnimRaw(temp, &s_snapIncoming))
+    {
+        DeleteTempAnim(tempName);
+        MessageBoxA(hParent, "The animation set could not be read safely. Nothing was changed.",
+                    title, MB_OK | MB_ICONWARNING);
+        return false;
+    }
+    const Set existing = SnapshotToSet(s_snapExisting);
+    const Set incoming = SnapshotToSet(s_snapIncoming);
+    const Plan plan = MakePlan(true, existing, incoming, requested);
+
+    if (plan.Refused())
+    {
+        DeleteTempAnim(tempName);
+        std::string msg = std::string("Can't merge into animation set '") + name + "'.\n\n" + plan.error +
+                          "\n\nMerged sequences must use the same skeleton (bone count and names, in "
+                          "order). Nothing was changed.";
+        MessageBoxA(hParent, msg.c_str(), title, MB_OK | MB_ICONWARNING);
+        return false;
+    }
+    if (!plan.ChangesSomething())
+    {
+        DeleteTempAnim(tempName);
+        MessageBoxA(hParent, NothingToMergeText(plan, name).c_str(), title, MB_OK | MB_ICONINFORMATION);
+        return false;
+    }
+    if (plan.Destructive() &&
+        MessageBoxA(hParent, ConfirmText(plan, name, incoming).c_str(), title,
+                    MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+    {
+        DeleteTempAnim(tempName);
+        return false;
+    }
+
+    bool applied = false;
+    if (plan.mode == Mode::ReplaceAll)
+    {
+        std::vector<int> from, to;
+        for (const Carry& c : plan.carries) { from.push_back(c.incoming); to.push_back(c.existing); }
+        applied = GO_ApplyReplaceAllRaw(dest, temp, from.data(), to.data(), static_cast<int>(from.size()));
+    }
+    else
+    {
+        std::vector<int> actions, targets, keep;
+        for (const Step& s : plan.steps)
+        {
+            actions.push_back(s.action == Action::Append ? 1 : s.action == Action::Replace ? 2 : 0);
+            targets.push_back(s.action == Action::Replace ? s.existing : -1);
+            keep.push_back(s.keepNotifies ? 1 : 0);
+        }
+        applied = GO_ApplyMergeRaw(dest, temp, actions.data(), targets.data(), keep.data(),
+                                   static_cast<int>(actions.size()));
+    }
+    GO_MarkPackageDirtyRaw(dest);
+    DeleteTempAnim(tempName);
+
+    // Check the set holds what the plan says.
+    const std::vector<std::string> expected = MergedSequences(plan, existing, incoming);
+    bool matches = applied && GO_SnapshotAnimRaw(dest, &s_snapExisting) &&
+                   s_snapExisting.seqs == static_cast<int>(expected.size());
+    for (int i = 0; matches && i < s_snapExisting.seqs; ++i)
+        matches = SameName(s_snapExisting.seqNames[i], expected[static_cast<size_t>(i)]);
+
+    std::string log = std::string("AnimationBrowser: import ") + file + " into " + package + "." + name + ": " +
+                      Summary(plan) + (matches ? "" : " - RESULT CHECK FAILED");
+    Logger::log(log);
+    if (!matches)
+    {
+        MessageBoxA(hParent, "The import did not complete as planned and the animation set may be "
+                    "inconsistent. Do not save this package; reload it from disk.",
+                    title, MB_OK | MB_ICONERROR);
+    }
+    return true;
+}
+
+// =====================================================================
 //  Import dialog 140 (surviving in the EXE's resources)
 // =====================================================================
 //  Layout (decoded from the EXE):
@@ -5398,6 +5851,21 @@ struct ImportDlgData
     BOOL  isAppend;
 };
 
+// Overwrite only applies when merging, Keep Notifies only when a sequence
+// can be replaced (see AnimImportOptions::Normalize).
+static void UpdateImportOptionStates(HWND hDlg, bool isAnim)
+{
+    if (!isAnim) return;
+    const bool merge = IsDlgButtonChecked(hDlg, IDC_IMP_MERGE) == BST_CHECKED;
+    const bool overwriteOn = AnimImportOptions::OverwriteApplies(merge);
+    EnableWindow(GetDlgItem(hDlg, IDC_IMP_OVERWRITE), overwriteOn);
+    if (!overwriteOn) CheckDlgButton(hDlg, IDC_IMP_OVERWRITE, BST_UNCHECKED);
+    const bool overwrite = IsDlgButtonChecked(hDlg, IDC_IMP_OVERWRITE) == BST_CHECKED;
+    const bool keepOn = AnimImportOptions::KeepNotifiesApplies(merge, overwrite);
+    EnableWindow(GetDlgItem(hDlg, IDC_IMP_KEEPNOTIFY), keepOn);
+    if (!keepOn) CheckDlgButton(hDlg, IDC_IMP_KEEPNOTIFY, BST_UNCHECKED);
+}
+
 static INT_PTR CALLBACK ImportDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     static ImportDlgData* d = nullptr;
@@ -5422,12 +5890,18 @@ static INT_PTR CALLBACK ImportDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM
         EnableWindow(GetDlgItem(hDlg, IDC_IMP_MERGE),       d->isAnim);
         EnableWindow(GetDlgItem(hDlg, IDC_IMP_OVERWRITE),   d->isAnim);
         EnableWindow(GetDlgItem(hDlg, IDC_IMP_KEEPNOTIFY),  d->isAnim);
+        UpdateImportOptionStates(hDlg, d->isAnim != FALSE);
 
         return TRUE;
     }
     case WM_COMMAND:
         switch (LOWORD(wParam))
         {
+        case IDC_IMP_MERGE:
+        case IDC_IMP_OVERWRITE:
+            if (HIWORD(wParam) == BN_CLICKED)
+                UpdateImportOptionStates(hDlg, d && d->isAnim);
+            break;
         case IDOK:
             GetDlgItemTextA(hDlg, IDC_IMP_PACKAGE, d->package, sizeof(d->package));
             GetDlgItemTextA(hDlg, IDC_IMP_GROUP,   d->group,   sizeof(d->group));
@@ -5545,11 +6019,26 @@ static void OnImport(HWND hParent, bool isAnim, bool append)
         strncat_s(extra, sizeof(extra), compBuf, _TRUNCATE);
     }
 
-    char cmd[8192 + 1024];
-    _snprintf_s(cmd, sizeof(cmd), _TRUNCATE,
-        "NEWANIM IMPORT FILE=\"%s\" PACKAGE=\"%s\" NAME=\"%s\" %sBROWSER",
-        d.file, d.package, d.name, extra);
-    ExecEditorCommand(cmd);
+    if (isAnim)
+    {
+        // Merge / Overwrite / Keep Notifies only matter when the set exists;
+        // ImportAnimationWithOptions falls back to the engine's import
+        // otherwise.
+        AnimImportOptions::Options options;
+        options.merge        = d.bMergeSeqs     != FALSE;
+        options.overwrite    = d.bOverwriteSeqs != FALSE;
+        options.keepNotifies = d.bKeepNotifies  != FALSE;
+        if (!ImportAnimationWithOptions(hParent, d.file, d.package, d.name, options, extra))
+            return;
+    }
+    else
+    {
+        char cmd[8192 + 1024];
+        _snprintf_s(cmd, sizeof(cmd), _TRUNCATE,
+            "NEWANIM IMPORT FILE=\"%s\" PACKAGE=\"%s\" NAME=\"%s\" %sBROWSER",
+            d.file, d.package, d.name, extra);
+        ExecEditorCommand(cmd);
+    }
 
     // GObjects now contains the freshly imported objects - rebuild combos
     // and select what we just brought in.
@@ -5563,10 +6052,7 @@ static void OnImport(HWND hParent, bool isAnim, bool append)
         ComboAddSelect(g_hMeshCombo, d.name);
     RefreshSequenceList();
     RefreshSequenceTab();
-
-    // TODO: if d.bMergeSeqs / d.bOverwriteSeqs / d.bKeepNotifies,
-    // post-process the imported UMeshAnimation to merge sequences into
-    // the destination animation set (mirrors UT2004 WDlgNewMesh logic).
+    RefreshNotifyTab();
 }
 
 static void OnLoadEntirePackage(HWND /*hParent*/)
@@ -6429,11 +6915,53 @@ static bool EnsureWndClassRegistered()
     return a != 0;
 }
 
+// UEditorEngine::animationImport reads a standard ActorX .psa (chunk
+// TypeFlag below 2004422) through a 168-byte AnimInfoBinary and widens
+// each record into SCCT's 196-byte raw sequence info.  The copy leaves two
+// TArray headers at +0xA8 and +0xB4 of each record with only their Num
+// zeroed; Data and Max keep whatever the fresh allocation held, and the
+// cleanup after the digest frees those garbage pointers - "General
+// protection fault" in FMallocWindows::Free under Exec_Anim on any
+// standard .psa.  SCCT's own exporter format reads the whole record from
+// the file and is unaffected.  This rewrites the widening loop's tail
+// (0x11073866..0x1107389C) to zero both headers and the INT after them.
+static void PatchLegacyPsaImport()
+{
+    static const unsigned char original[] = {
+        0x33, 0xD2, 0x33, 0xC9, 0x8D, 0x9B, 0x00, 0x00, 0x00, 0x00,
+        0x3B, 0x88, 0xAC, 0x00, 0x00, 0x00, 0x7D, 0x03, 0x41, 0xEB, 0xF5,
+        0x89, 0x90, 0xAC, 0x00, 0x00, 0x00, 0x33, 0xC9,
+        0x3B, 0x88, 0xB8, 0x00, 0x00, 0x00, 0x7D, 0x03, 0x41, 0xEB, 0xF5,
+        0x8B, 0x75, 0xEC,
+        0x89, 0x90, 0xB8, 0x00, 0x00, 0x00, 0x89, 0x90, 0xC0, 0x00, 0x00, 0x00,
+    };
+    unsigned char patched[sizeof(original)];
+    memset(patched, 0x90, sizeof(patched));                // nop padding
+    size_t at = 0;
+    patched[at++] = 0x33; patched[at++] = 0xD2;            // xor edx, edx
+    for (unsigned off = 0xA8; off <= 0xC0; off += 4)       // mov [eax+off], edx
+    {
+        patched[at++] = 0x89; patched[at++] = 0x90;
+        patched[at++] = static_cast<unsigned char>(off);
+        patched[at++] = 0; patched[at++] = 0; patched[at++] = 0;
+    }
+    patched[at++] = 0x8B; patched[at++] = 0x75; patched[at++] = 0xEC;   // mov esi, [ebp-0x14]
+
+    const uintptr_t address = 0x11073866u;
+    if (memcmp(reinterpret_cast<const void*>(address), original, sizeof(original)) != 0)
+    {
+        Logger::log("AnimationBrowser: animationImport bytes differ; legacy .psa fix not applied");
+        return;
+    }
+    MemoryWriter::WriteBytes(address, patched, sizeof(patched));
+}
+
 void AnimationBrowser::Initialize()
 {
     // Intentionally minimal: no USER32 calls here because Initialize
     // runs from DllMain's InitOnce.  Window-class registration and
     // common-control init happen lazily on the first Show().
+    PatchLegacyPsaImport();
 }
 
 void AnimationBrowser::Show(HWND hParent)

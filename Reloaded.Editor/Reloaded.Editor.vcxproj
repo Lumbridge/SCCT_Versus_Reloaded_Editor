@@ -167,6 +167,7 @@
     <ClInclude Include="LevelSnapshotModel.h" />
     <ClInclude Include="FavoritesModel.h" />
     <ClInclude Include="MeshFavoritesModel.h" />
+    <ClInclude Include="AnimImportOptionsModel.h" />
     <ClInclude Include="SelfUpdater.h" />
     <ClInclude Include="SelfUpdaterModel.h" />
     <ClInclude Include="Version.h" />
