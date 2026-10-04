@@ -673,7 +673,17 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         je workflow_dispatch
         cmp dword ptr [esp+4], 40936 // Brush/surface edge snap commands
         jb workflow_legacy_range
-        cmp dword ptr [esp+4], 40986 // Through brush fitting, vertex portals, Builder Brush > Place Here, the update checks and About RE+
+        // Through brush fitting, vertex portals, Builder Brush > Place Here, the
+        // update checks and About RE+ (up to 40986), then blocks reserved for
+        // tools in progress (the stock menus stop at 40668):
+        //   40987-40999 crash recovery        41000-41014 what's new / roll back
+        //   41015-41029 texture favourites    41030-41044 sound browser
+        //   41045-41059 animation import      41060-41074 find usages in MapsEd
+        //   41075-41089 property search       41090-41104 measure tool
+        //   41105-41119 undo history          41120-41134 assembly/view thumbnails
+        //   41135-41149 emitter editing       41150-41164 lighting budget
+        //   41165-41179 RE+ menu names        41180-41199 spare
+        cmp dword ptr [esp+4], 41199
         jbe workflow_dispatch
     workflow_legacy_range:
         cmp dword ptr [esp+4], 40920
