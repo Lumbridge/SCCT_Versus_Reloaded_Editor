@@ -11,6 +11,7 @@
 #include "MapDesignModel.h"
 #include "SecurityModel.h"
 #include "StageModel.h"
+#include "EntryThumbnailModel.h"
 #include "MapRecovery.h"
 #include "BspDiagnostics.h"
 #include "MemoryWriter.h"
@@ -628,6 +629,31 @@ std::string RestoreView(const Json& view)
         reinterpret_cast<void*(__thiscall*)(void*,const char*)>(0x10e03770)(reinterpret_cast<void*>(actors[0]+0x41c),groups.c_str());
     }
     Redraw(); return "View restored. Skipped "+std::to_string(skipped)+" unavailable actors/viewports.";
+}
+CameraState FrameCamera(uintptr_t camera,const Json& identities,double aspect)
+{
+    if(!camera) throw std::runtime_error("No perspective camera to frame the selection with.");
+    std::array<double,3> low{},high{}; size_t count=0;
+    for(const auto& identity:identities) if(auto a=ResolveIdentity(identity))
+    {
+        auto p=Position(a);
+        for(int axis=0;axis<3;++axis) { low[axis]=count?std::min(low[axis],p[axis]):p[axis]; high[axis]=count?std::max(high[axis],p[axis]):p[axis]; }
+        ++count;
+    }
+    if(!count) throw std::runtime_error("None of the actors to frame are in the map.");
+    auto rotationField=Field(camera,"Rotation");
+    float fov=90; if(auto p=Property(camera,"FovAngle")) fov=Read<float>(camera+Read<int>(p+0x3c));
+    auto shot=Thumbnail::FrameBox(low,high,Read<Rotation>(rotationField)[1],fov,aspect);
+    CameraState saved{camera};
+    using Raw=std::array<unsigned char,12>; saved.location=Read<Raw>(camera+0x80); saved.rotation=Read<Raw>(rotationField);
+    SetPosition(camera,shot.location); Write(rotationField,Rotation{shot.rotation[0],shot.rotation[1],shot.rotation[2]});
+    return saved;
+}
+void RestoreCamera(const CameraState& state)
+{
+    if(!state.camera) return;
+    Write(state.camera+0x80,state.location); Write(Field(state.camera,"Rotation"),state.rotation);
+    Redraw();
 }
 std::string CurrentAsset(bool mesh) { return Path(Read<Address>(Engine()+(mesh?0x13c:0x138))); }
 bool Compatible(const std::string& actorPath,const std::string& type) { auto a=Find(actorPath); return a && IsA(a,type); }

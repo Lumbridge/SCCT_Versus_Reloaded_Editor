@@ -107,6 +107,16 @@ Latest Autosave...** were checked by hand in a disposable installation; the
 native runner turns the offer off (`[CrashRecovery] OfferAtStartup=0`) because
 the workflow suite stops and restarts the editor.
 
+`EntryThumbnailModelTests.cpp` covers the Working Views and Actor Assemblies
+thumbnails' pure parts: file names taken from the entry id (lower case, one
+per kind, ids that could leave the folder refused), parsing them back, the
+sweep of pictures no saved entry owns (deleted entries and interrupted writes,
+never foreign files), the saved size (256 wide with the viewport's aspect, a
+tall viewport fitted by height), letterboxing into the list's cells, and the
+camera pose that frames an assembly's actor locations (yaw kept, a fixed
+three-quarter pitch, far enough for the narrower field of view, a minimum
+distance for one actor, bad FOV or bounds handled).
+
 `StageModelTests.cpp` covers the zone model: generated Tag names and their
 parsing, plan validation (including refusing a plan from the earlier
 counting-event version), building the change batch for a fresh map (a mission

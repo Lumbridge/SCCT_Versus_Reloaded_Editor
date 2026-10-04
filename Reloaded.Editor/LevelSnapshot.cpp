@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "LevelSnapshot.h"
 #include "LevelSnapshotModel.h"
+#include "EntryThumbnailModel.h"
 #include "WorkflowEditor.h"
 #include "logger.h"
 #include <windows.h>
@@ -15,6 +16,7 @@ using std::min;
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -51,13 +53,13 @@ namespace
 
     struct Image { Bytes bgr; }; // kSize x kSize, top-down BGR.
 
-    // The largest visible perspective level viewport's window.
-    HWND PerspectiveViewport()
+    // The largest visible perspective level viewport's window and camera.
+    LevelSnapshot::Perspective PerspectiveViewport()
     {
         const auto configs = Read<uintptr_t>(kViewportConfigs);
         const int count = Read<int>(kViewportCount);
         if (!configs || count <= 0 || count > 64) throw std::runtime_error("No level viewports are open.");
-        HWND best = nullptr;
+        LevelSnapshot::Perspective best;
         long bestArea = 0;
         for (int i = 0; i < count; ++i)
         {
@@ -73,9 +75,9 @@ namespace
             RECT rc{};
             GetClientRect(hwnd, &rc);
             const long area = static_cast<long>(rc.right - rc.left) * (rc.bottom - rc.top);
-            if (area > bestArea) { best = hwnd; bestArea = area; }
+            if (area > bestArea) { best = { hwnd, camera, view }; bestArea = area; }
         }
-        if (!best) throw std::runtime_error("No perspective viewport is open to take the snapshot from.");
+        if (!best.window) throw std::runtime_error("No perspective viewport is open to take the snapshot from.");
         return best;
     }
 
@@ -100,34 +102,136 @@ namespace
         return image;
     }
 
-    Image CaptureViewport()
+    // A screen BitBlt from this DPI-unaware editor reads physical pixels
+    // while its window coordinates are logical, which shifted and cropped the
+    // shot on a scaled monitor. Per-monitor awareness for the thread makes
+    // both physical. Loaded by name: SetThreadDpiAwarenessContext is Windows 10+.
+    class PhysicalPixels
     {
-        EnsureGdiplus();
-        const HWND hwnd = PerspectiveViewport();
-        // What is on screen is what is captured: the frame in front, freshly drawn.
-        if (frameWindow) SetForegroundWindow(frameWindow);
+    public:
+        PhysicalPixels()
+        {
+            if (const HMODULE user = GetModuleHandleA("user32.dll"))
+                set = reinterpret_cast<Set>(GetProcAddress(user, "SetThreadDpiAwarenessContext"));
+            if (set) previous = set(reinterpret_cast<HANDLE>(static_cast<INT_PTR>(-4))); // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+        }
+        ~PhysicalPixels() { if (set && previous) set(previous); }
+        PhysicalPixels(const PhysicalPixels&) = delete;
+        PhysicalPixels& operator=(const PhysicalPixels&) = delete;
+    private:
+        using Set = HANDLE(WINAPI*)(HANDLE);
+        Set set = nullptr;
+        HANDLE previous = nullptr;
+    };
+
+    // The viewport's client area, freshly drawn. The window renders its own
+    // picture first (PrintWindow with full content, which includes Direct3D
+    // output), so windows over it, this editor's or any other program's, are
+    // never in the shot; the screen is only the fallback. The caller owns
+    // the returned bitmap.
+    // UWindowsViewport::Repaint (vtable +0xc8, as the emitter preview calls
+    // it): draws and presents now, so a camera moved a moment ago is in the
+    // picture. A window repaint only marks the viewport for the main loop.
+    bool RepaintNow(uintptr_t viewport)
+    {
+        if (!viewport) return false;
+        __try
+        {
+            const auto table = *reinterpret_cast<uintptr_t*>(viewport);
+            reinterpret_cast<void(__thiscall*)(uintptr_t, int)>(*reinterpret_cast<uintptr_t*>(table + 0xc8))(viewport, 1);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+
+    HBITMAP GrabViewport(HWND hwnd, uintptr_t viewport, int& width, int& height)
+    {
         Editor::Redraw();
         RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+        if (viewport && !RepaintNow(viewport)) Logger::log("Viewport capture: the synchronous repaint faulted; capturing the last drawn frame.");
         Sleep(60);
         RECT rc{};
         GetClientRect(hwnd, &rc);
-        POINT origin{ 0, 0 };
-        ClientToScreen(hwnd, &origin);
-        const int width = rc.right - rc.left, height = rc.bottom - rc.top;
+        width = rc.right - rc.left;
+        height = rc.bottom - rc.top;
         if (width < 16 || height < 16) throw std::runtime_error("The perspective viewport is too small to capture.");
         const HDC screen = GetDC(nullptr);
         const HDC memory = CreateCompatibleDC(screen);
-        const HBITMAP bitmap = CreateCompatibleBitmap(screen, width, height);
-        const HGDIOBJ previous = SelectObject(memory, bitmap);
-        const BOOL copied = BitBlt(memory, 0, 0, width, height, screen, origin.x, origin.y, SRCCOPY | CAPTUREBLT);
+        HBITMAP bitmap = CreateCompatibleBitmap(screen, width, height);
+        HGDIOBJ previous = SelectObject(memory, bitmap);
+        constexpr UINT kClientOnly = 1, kRenderFullContent = 2;
+        BOOL copied = PrintWindow(hwnd, memory, kClientOnly | kRenderFullContent);
+        if (!copied)
+        {
+            PhysicalPixels physical;
+            GetClientRect(hwnd, &rc);
+            POINT origin{ 0, 0 };
+            ClientToScreen(hwnd, &origin);
+            width = rc.right - rc.left;
+            height = rc.bottom - rc.top;
+            SelectObject(memory, previous);
+            DeleteObject(bitmap);
+            bitmap = CreateCompatibleBitmap(screen, width, height);
+            previous = SelectObject(memory, bitmap);
+            copied = bitmap && BitBlt(memory, 0, 0, width, height, screen, origin.x, origin.y, SRCCOPY | CAPTUREBLT);
+        }
         SelectObject(memory, previous);
         DeleteDC(memory);
         ReleaseDC(nullptr, screen);
-        if (!copied) { DeleteObject(bitmap); throw std::runtime_error("The viewport could not be captured from the screen."); }
-        Gdiplus::Bitmap source(bitmap, nullptr);
-        Image image = Resample(source);
+        if (!copied) { if (bitmap) DeleteObject(bitmap); throw std::runtime_error("The viewport could not be captured."); }
+        return bitmap;
+    }
+
+    Image CaptureViewport()
+    {
+        EnsureGdiplus();
+        const auto perspective = PerspectiveViewport();
+        const HWND hwnd = perspective.window;
+        // What is on screen is what is captured: the frame in front, freshly drawn.
+        if (frameWindow) SetForegroundWindow(frameWindow);
+        int width = 0, height = 0;
+        const HBITMAP bitmap = GrabViewport(hwnd, perspective.viewport, width, height);
+        Image image;
+        try
+        {
+            Gdiplus::Bitmap source(bitmap, nullptr);
+            image = Resample(source);
+        }
+        catch (...) { DeleteObject(bitmap); throw; }
         DeleteObject(bitmap);
         return image;
+    }
+
+    bool PngEncoder(CLSID& clsid)
+    {
+        UINT count = 0, bytes = 0;
+        if (Gdiplus::GetImageEncodersSize(&count, &bytes) != Gdiplus::Ok || !bytes) return false;
+        std::vector<std::uint8_t> buffer(bytes);
+        auto* encoders = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buffer.data());
+        if (Gdiplus::GetImageEncoders(count, bytes, encoders) != Gdiplus::Ok) return false;
+        for (UINT i = 0; i < count; ++i)
+            if (encoders[i].MimeType && wcscmp(encoders[i].MimeType, L"image/png") == 0) { clsid = encoders[i].Clsid; return true; }
+        return false;
+    }
+
+    // A cell-sized 32-bit bitmap, opaque, with the window colour behind
+    // whatever draw() puts on it.
+    HBITMAP Cell(int width, int height, const std::function<void(Gdiplus::Graphics&)>& draw)
+    {
+        EnsureGdiplus();
+        Gdiplus::Bitmap target(width, height, PixelFormat32bppARGB);
+        if (target.GetLastStatus() != Gdiplus::Ok) return nullptr;
+        {
+            Gdiplus::Graphics graphics(&target);
+            const COLORREF window = GetSysColor(COLOR_WINDOW);
+            graphics.Clear(Gdiplus::Color(255, GetRValue(window), GetGValue(window), GetBValue(window)));
+            graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+            graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+            draw(graphics);
+        }
+        HBITMAP result = nullptr;
+        if (target.GetHBITMAP(Gdiplus::Color(255, 255, 255, 255), &result) != Gdiplus::Ok) return nullptr;
+        return result;
     }
 
     Image LoadImageFile(const std::string& path)
@@ -354,4 +458,96 @@ void LevelSnapshot::FromImageFile()
     dialog.Flags = OFN_FILEMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
     if (!GetOpenFileNameA(&dialog)) return;
     Finish(LoadImageFile(file));
+}
+
+LevelSnapshot::Perspective LevelSnapshot::FindPerspective() { return PerspectiveViewport(); }
+
+void LevelSnapshot::SaveViewportThumbnail(const Perspective& perspective, const fs::path& file)
+{
+    EnsureGdiplus();
+    const HWND viewport = perspective.window;
+    if (!viewport || !IsWindow(viewport)) throw std::runtime_error("The perspective viewport is gone.");
+    CLSID png{};
+    if (!PngEncoder(png)) throw std::runtime_error("GDI+ has no PNG encoder.");
+    int width = 0, height = 0;
+    const HBITMAP bitmap = GrabViewport(viewport, perspective.viewport, width, height);
+    const auto size = Thumbnail::Fit(width, height);
+    std::error_code error;
+    fs::create_directories(file.parent_path(), error);
+    fs::path temporary = file;
+    temporary += ".tmp";
+    Gdiplus::Status status = Gdiplus::GenericError;
+    {
+        Gdiplus::Bitmap source(bitmap, nullptr);
+        Gdiplus::Bitmap target(size.width, size.height, PixelFormat24bppRGB);
+        if (source.GetLastStatus() == Gdiplus::Ok && target.GetLastStatus() == Gdiplus::Ok)
+        {
+            {
+                Gdiplus::Graphics graphics(&target);
+                graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+                graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+                graphics.DrawImage(&source, Gdiplus::Rect(0, 0, size.width, size.height), 0, 0, width, height, Gdiplus::UnitPixel);
+            }
+            status = target.Save(temporary.c_str(), &png, nullptr);
+        }
+    }
+    DeleteObject(bitmap);
+    if (status != Gdiplus::Ok || !MoveFileExW(temporary.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING))
+    {
+        fs::remove(temporary, error);
+        throw std::runtime_error("Cannot write the thumbnail " + file.string());
+    }
+}
+
+HBITMAP LevelSnapshot::LoadThumbnail(const fs::path& file, int width, int height)
+{
+    try
+    {
+        std::error_code error;
+        const auto bytes = fs::file_size(file, error);
+        if (error || bytes == 0 || bytes > Thumbnail::kMaxFileBytes) return nullptr;
+        const Bytes data = ReadFile(file);
+        EnsureGdiplus();
+        const HGLOBAL global = GlobalAlloc(GMEM_MOVEABLE, data.size());
+        if (!global) return nullptr;
+        if (void* at = GlobalLock(global)) { memcpy(at, data.data(), data.size()); GlobalUnlock(global); }
+        else { GlobalFree(global); return nullptr; }
+        IStream* stream = nullptr;
+        if (FAILED(CreateStreamOnHGlobal(global, TRUE, &stream)) || !stream) { GlobalFree(global); return nullptr; }
+        HBITMAP result = nullptr;
+        {
+            std::unique_ptr<Gdiplus::Bitmap> source(Gdiplus::Bitmap::FromStream(stream));
+            if (source && source->GetLastStatus() == Gdiplus::Ok && source->GetWidth() && source->GetHeight() && source->GetWidth() <= 8192 && source->GetHeight() <= 8192)
+            {
+                const int sourceWidth = static_cast<int>(source->GetWidth()), sourceHeight = static_cast<int>(source->GetHeight());
+                const auto box = Thumbnail::Letterbox(sourceWidth, sourceHeight, width, height);
+                result = Cell(width, height, [&](Gdiplus::Graphics& graphics) {
+                    graphics.DrawImage(source.get(), Gdiplus::Rect(box.x, box.y, box.width, box.height), 0, 0, sourceWidth, sourceHeight, Gdiplus::UnitPixel);
+                });
+            }
+        }
+        stream->Release();
+        return result;
+    }
+    catch (const std::exception& e)
+    {
+        Logger::log("Thumbnail: could not read " + file.string() + ": " + e.what());
+        return nullptr;
+    }
+}
+
+HBITMAP LevelSnapshot::ThumbnailPlaceholder(int width, int height)
+{
+    return Cell(width, height, [&](Gdiplus::Graphics& graphics) {
+        Gdiplus::SolidBrush fill(Gdiplus::Color(255, 200, 200, 200));
+        Gdiplus::Pen border(Gdiplus::Color(255, 150, 150, 150));
+        graphics.FillRectangle(&fill, 2, 2, width - 5, height - 5);
+        graphics.DrawRectangle(&border, 2, 2, width - 5, height - 5);
+        Gdiplus::Font font(L"Segoe UI", 8.0f);
+        Gdiplus::SolidBrush text(Gdiplus::Color(255, 90, 90, 90));
+        Gdiplus::StringFormat format;
+        format.SetAlignment(Gdiplus::StringAlignmentCenter);
+        format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+        graphics.DrawString(L"No thumbnail", -1, &font, Gdiplus::RectF(0, 0, static_cast<Gdiplus::REAL>(width), static_cast<Gdiplus::REAL>(height)), &format, &text);
+    });
 }

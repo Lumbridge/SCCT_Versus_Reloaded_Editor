@@ -24,6 +24,7 @@
     <ClInclude Include="LevelSnapshot.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="LevelSnapshotModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="FavoritesModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="EntryThumbnailModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MeshFavoritesModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="UndoHistory.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="UndoHistoryModel.h"><Filter>Header Files</Filter></ClInclude>

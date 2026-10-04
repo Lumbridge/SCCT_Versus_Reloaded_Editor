@@ -38,6 +38,11 @@ namespace Workflow::Editor
     void SnapBrushesToGrid(unsigned axes, bool surfaces = false);
     Json CaptureView();
     std::string RestoreView(const Json& view);
+    // Thumbnail framing: a viewport camera moved so the identities' locations
+    // fill the shot (Thumbnail::FrameBox), and put back byte for byte.
+    struct CameraState { uintptr_t camera = 0; std::array<unsigned char, 12> location{}, rotation{}; };
+    CameraState FrameCamera(uintptr_t camera, const Json& identities, double aspect);
+    void RestoreCamera(const CameraState& state);
     std::string CurrentAsset(bool mesh);
     Json FindUsages(const std::string& asset);
     void ReplaceUsages(const Json& usages, const std::string& source, const std::string& replacement);

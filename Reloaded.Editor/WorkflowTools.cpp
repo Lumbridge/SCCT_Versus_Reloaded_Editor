@@ -21,6 +21,9 @@
 #include "StageModel.h"
 #include "EmitterPreview.h"
 #include "MeasureTool.h"
+#include "EntryThumbnailModel.h"
+#include "LevelSnapshot.h"
+#include "logger.h"
 #include <commdlg.h>
 #include <windowsx.h>
 #include <objidl.h>
@@ -40,7 +43,8 @@ using namespace Workflow;
 namespace
 {
     constexpr int kList=100,kName=101,kStatus=102,kFollow=103,kScope=104;
-    enum Button { Refresh=200,Primary,Secondary,Third,Fourth,Fifth,Sixth,Seventh,Eighth,Ninth,Tenth,Eleventh };
+    enum Button { Refresh=200,Primary,Secondary,Third,Fourth,Fifth,Sixth,Seventh,Eighth,Ninth,Tenth,Eleventh,Twelfth };
+    constexpr int UpdateThumbnail=Twelfth; // List right-click menu only.
     enum class Kind { Assets,Connections,Views,Assemblies };
     Json ObjectiveOwner(const std::string& path = "")
     {
@@ -73,6 +77,26 @@ namespace
     Json document; uintptr_t level=0; std::string mapKey; bool loaded=false; unsigned mapEpoch=0,nativeMapGeneration=0,documentRevision=0;
     std::filesystem::path LibraryPath() { return Editor::Directory()/"library.json"; }
     Json EmptyMap() { return {{"views",Json::array()},{"instances",Json::array()}}; }
+    std::filesystem::path ThumbnailFolder() { return Editor::Directory()/Thumbnail::Folder(); }
+    // Named by id, so a rename keeps its picture. Throws for an id that is not one.
+    std::filesystem::path ThumbnailPath(bool view,const std::string& id) { return ThumbnailFolder()/Thumbnail::FileName(view?Thumbnail::Kind::View:Thumbnail::Kind::Assembly,id); }
+    // Pictures no saved entry owns: deleted elsewhere, views of a map that
+    // was never saved, interrupted writes. Never allowed to stop a load.
+    void SweepThumbnails()
+    {
+        try
+        {
+            std::error_code error; std::vector<std::string> files;
+            for(std::filesystem::directory_iterator it(ThumbnailFolder(),error),end;!error && it!=end;it.increment(error)) files.push_back(it->path().filename().string());
+            std::set<std::string> views,assemblies;
+            for(const auto& a:document.at("assemblies")) if(a.is_object() && a.contains("id") && a.at("id").is_string()) assemblies.insert(a.at("id").get<std::string>());
+            for(auto map=document.at("maps").begin();map!=document.at("maps").end();++map)
+                if(map->is_object() && map->contains("views") && map->at("views").is_array())
+                    for(const auto& v:map->at("views")) if(v.is_object() && v.contains("id") && v.at("id").is_string()) views.insert(v.at("id").get<std::string>());
+            for(const auto& file:Thumbnail::Orphans(files,views,assemblies)) std::filesystem::remove(ThumbnailFolder()/file,error);
+        }
+        catch(const std::exception&) {}
+    }
     void Save(Json next)
     {
         Json disk=next;
@@ -85,7 +109,7 @@ namespace
         {
             document=ReadDocument(LibraryPath(),{{"version",1},{"assemblies",Json::array()},{"maps",Json::object()}}); ++documentRevision;
             if(!document.at("assemblies").is_array() || !document.at("maps").is_object()) throw std::runtime_error("Invalid workflow library; restore a valid copy before editing it.");
-            loaded=true;
+            loaded=true; SweepThumbnails();
         }
         auto current=Editor::LevelIdentity(); auto key=Editor::MapKey();auto generation=Editor::MapGeneration(); bool changed=current!=level || key!=mapKey || generation!=nativeMapGeneration;
         if(!changed) return false;
@@ -301,9 +325,9 @@ namespace
         int row=Selected(s); if(row<0 || row>=static_cast<int>(s.rows.size())) throw std::runtime_error("Select an entry first.");
         auto entry=s.rows[row]; if(entry.contains("id")) s.selectedId=entry.at("id").get<std::string>(); return entry;
     }
-    void Row(State& s,int index,const std::vector<std::string>& values,bool checked=false)
+    void Row(State& s,int index,const std::vector<std::string>& values,bool checked=false,int image=-1)
     {
-        LVITEMA item{}; item.mask=LVIF_TEXT; item.iItem=index; item.pszText=const_cast<char*>(values[0].c_str()); SendMessageA(s.list,LVM_INSERTITEMA,0,reinterpret_cast<LPARAM>(&item));
+        LVITEMA item{}; item.mask=LVIF_TEXT|(image>=0?LVIF_IMAGE:0); item.iItem=index; item.iImage=image; item.pszText=const_cast<char*>(values[0].c_str()); SendMessageA(s.list,LVM_INSERTITEMA,0,reinterpret_cast<LPARAM>(&item)); item.mask=LVIF_TEXT;
         for(size_t i=1;i<values.size();++i) { item.iSubItem=static_cast<int>(i); item.pszText=const_cast<char*>(values[i].c_str()); SendMessageA(s.list,LVM_SETITEMTEXTA,index,reinterpret_cast<LPARAM>(&item)); }
         if(s.kind==Kind::Assets) ListView_SetCheckState(s.list,index,checked);
     }
@@ -336,15 +360,27 @@ namespace
         else
         {
             s.rows=Entries(s); int i=0;
+            // Image 0 is the placeholder for entries without a readable picture.
+            auto images=ImageList_Create(Thumbnail::kCellWidth,Thumbnail::kCellHeight,ILC_COLOR32,static_cast<int>(s.rows.size())+1,4);
+            auto add=[&](HBITMAP bitmap){int index=-1;if(images && bitmap)index=ImageList_Add(images,bitmap,nullptr);if(bitmap)DeleteObject(bitmap);return index;};
+            const int placeholder=add(LevelSnapshot::ThumbnailPlaceholder(Thumbnail::kCellWidth,Thumbnail::kCellHeight));
+            if(auto old=ListView_SetImageList(s.list,images,LVSIL_SMALL)) ImageList_Destroy(old);
             for(const auto& j:s.rows)
             {
                 std::string info=s.kind==Kind::Views?std::to_string(j.at("cameras").size())+" viewports":std::to_string(j.at("actors").size())+" actors / "+std::to_string(j.at("bindings").size())+" external bindings";
-                Row(s,i,{j.at("name"),info,j.value("modified",std::string{})});
+                int image=placeholder;
+                try
+                {
+                    auto file=ThumbnailPath(s.kind==Kind::Views,j.at("id").get<std::string>()); std::error_code error;
+                    if(std::filesystem::is_regular_file(file,error)) {int loaded=add(LevelSnapshot::LoadThumbnail(file,Thumbnail::kCellWidth,Thumbnail::kCellHeight)); if(loaded>=0) image=loaded;}
+                }
+                catch(const std::exception&) {}
+                Row(s,i,{j.at("name"),info,j.value("modified",std::string{})},false,image);
                 if(j.at("id")==s.selectedId) ListView_SetItemState(s.list,i,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED);
                 ++i;
             }
             if(s.editing.is_object() && !s.editing.empty()) Status(s,"Editing "+s.editing.at("name").get<std::string>()+" — "+std::to_string(s.members.size())+" members. Add/Remove Selected changes membership; Save Changes updates the library.");
-            else Status(s,s.kind==Kind::Views?"Restore a view, adjust the workspace, then Update Selected from Current.":"Edit Contents to add/remove members. Saving affects future placements; other placed copies stay independent.");
+            else Status(s,s.kind==Kind::Views?"Restore a view, adjust the workspace, then Update Selected from Current. Right-click an entry to update its thumbnail.":"Edit Contents to add/remove members. Saving affects future placements; other placed copies stay independent. Right-click an entry to update its thumbnail.");
         }
     }
     void StoreEntry(State& s,Json value,bool update)
@@ -354,6 +390,30 @@ namespace
         if(update) UpdateEntry(entries,s.selectedId,value);
         else { value["id"]=Id(); value["modified"]=Timestamp(); s.selectedId=value.at("id"); entries.push_back(value); }
         Save(next); Populate(s);
+    }
+    // The entry's picture from the perspective viewport, framed on the
+    // given actors when there are any (the camera is put back exactly
+    // afterwards). A failure never undoes the save it belongs to.
+    bool CaptureThumbnail(State& s,const std::string& id,const Json& frame=Json{})
+    {
+        std::string problem;
+        try
+        {
+            auto view=LevelSnapshot::FindPerspective(); Editor::CameraState moved;
+            if(frame.is_array() && !frame.empty())
+            {
+                RECT r{}; GetClientRect(view.window,&r);
+                try { moved=Editor::FrameCamera(view.camera,frame,r.bottom>0?static_cast<double>(r.right)/r.bottom:4.0/3); }
+                catch(const std::exception& e) { moved={}; Logger::log(std::string("Thumbnail: captured unframed: ")+e.what()); } // Captured as it is instead.
+            }
+            try { LevelSnapshot::SaveViewportThumbnail(view,ThumbnailPath(s.kind==Kind::Views,id)); }
+            catch(...) { Editor::RestoreCamera(moved); throw; }
+            Editor::RestoreCamera(moved);
+        }
+        catch(const std::exception& e) { problem=e.what(); }
+        Populate(s);
+        if(!problem.empty()) Status(s,"Saved, but the thumbnail was not captured: "+problem);
+        return problem.empty();
     }
     void SaveAssembly(State& s,bool update,bool session)
     {
@@ -443,7 +503,8 @@ namespace
             UpdateEntry(next["assemblies"],s.selectedId,captured);Save(next);Populate(s);
         }
         else StoreEntry(s,captured,update);
-        if(session) { s.editing=Json{}; s.members=Json::array(); s.editLevel=0; Populate(s); }
+        if(session) { s.editing=Json{}; s.members=Json::array(); s.editLevel=0; }
+        CaptureThumbnail(s,s.selectedId,members);
     }
     Json Place(State& s,const Json& entry)
     {
@@ -561,8 +622,14 @@ namespace
         if(s.kind==Kind::Views)
         {
             if(command==Primary) { Activate(s); return; }
-            if(command==Secondary) { std::string name="New view"; if(GetName(s.window,"Save New Working View",name)) { auto view=Editor::CaptureView(); view["name"]=name; StoreEntry(s,view,false); } return; }
-            if(command==Third) { Entry(s); StoreEntry(s,Editor::CaptureView(),true); Status(s,"Updated the selected view from the current workspace. Its name and identity are unchanged."); return; }
+            if(command==Secondary) { std::string name="New view"; if(GetName(s.window,"Save New Working View",name)) { auto view=Editor::CaptureView(); view["name"]=name; StoreEntry(s,view,false); CaptureThumbnail(s,s.selectedId); } return; }
+            if(command==Third) { Entry(s); StoreEntry(s,Editor::CaptureView(),true); if(CaptureThumbnail(s,s.selectedId)) Status(s,"Updated the selected view and its thumbnail from the current workspace. Its name and identity are unchanged."); return; }
+        }
+        if(command==UpdateThumbnail && (s.kind==Kind::Views || s.kind==Kind::Assemblies))
+        {
+            // A view is pictured as the viewport is now; an assembly is framed
+            // on the current selection when there is one.
+            Entry(s); CaptureThumbnail(s,s.selectedId,s.kind==Kind::Assemblies?Editor::SelectedIdentities():Json{}); return;
         }
         if(s.kind==Kind::Assemblies)
         {
@@ -600,7 +667,9 @@ namespace
                 if(MessageBoxA(s.window,"Delete this saved entry? Placed actors are kept.","Delete Entry",MB_OKCANCEL|MB_ICONQUESTION)!=IDOK) return;
                 entries.erase(std::remove_if(entries.begin(),entries.end(),[&](const Json& j){return j.at("id")==s.selectedId;}),entries.end());
             }
-            Save(next); Populate(s);
+            Save(next);
+            if(command==Fifth) { try { std::error_code error; std::filesystem::remove(ThumbnailPath(s.kind==Kind::Views,s.selectedId),error); } catch(const std::exception&) {} }
+            Populate(s);
         }
     }
     void Layout(State& s)
@@ -638,10 +707,24 @@ namespace
             }
             if(message==WM_SIZE) { if(s->list) Layout(*s); return 0; }
             if(message==WM_CONTEXTMENU && s->kind==Kind::Connections) {Command(*s,Secondary);return 0;}
+            if(message==WM_CONTEXTMENU && (s->kind==Kind::Views || s->kind==Kind::Assemblies) && reinterpret_cast<HWND>(w)==s->list)
+            {
+                int row=Selected(*s); if(row<0) return 0;
+                POINT point{GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+                if(point.x==-1 && point.y==-1) {RECT r{};ListView_GetItemRect(s->list,row,&r,LVIR_LABEL);point={r.left,r.bottom};ClientToScreen(s->list,&point);}
+                auto menu=CreatePopupMenu(); if(!menu) return 0;
+                AppendMenuA(menu,MF_STRING,UpdateThumbnail,"Update &Thumbnail");
+                AppendMenuA(menu,MF_SEPARATOR,0,nullptr);
+                AppendMenuA(menu,MF_STRING,Fourth,"&Rename...");
+                AppendMenuA(menu,MF_STRING,Fifth,"&Delete...");
+                auto choice=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,point.x,point.y,0,window,nullptr); DestroyMenu(menu);
+                if(choice) Command(*s,static_cast<int>(choice));
+                return 0;
+            }
             if(message==WM_GETMINMAXINFO) {auto m=reinterpret_cast<MINMAXINFO*>(l);m->ptMinTrackSize={680,430};return 0;}
             if(message==WM_COMMAND)
             {
-                if(LOWORD(w)>=Refresh && LOWORD(w)<=Eleventh) {Command(*s,LOWORD(w));return 0;}
+                if(LOWORD(w)>=Refresh && LOWORD(w)<=Twelfth) {Command(*s,LOWORD(w));return 0;}
                 if(LOWORD(w)==kScope || LOWORD(w)==kFollow) {Populate(*s);return 0;}
             }
             if(message==WM_NOTIFY)
