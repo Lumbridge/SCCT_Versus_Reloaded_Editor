@@ -41,6 +41,7 @@
     <ClInclude Include="StageModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="StageNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="EmitterLibraryModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="EmitterEditModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="EmitterLibraryDefaults.gen.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="EmitterLibraryNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="StagePanel.inl"><Filter>Header Files</Filter></ClInclude>

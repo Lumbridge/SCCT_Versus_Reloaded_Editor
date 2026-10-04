@@ -775,9 +775,13 @@ void Detach()
     catch(const std::exception& e){Logger::log(std::string("Emitter preview: ")+e.what());state.viewport=0;wireExempt=0;}
     state.host=nullptr;state.drag=0;
 }
-void Show(const Json& entry)
+void Show(const Json& entry,bool keepCamera)
 {
     if(!entry.is_object() || !entry.contains("actors") || !entry.at("actors").is_array() || entry.at("actors").empty())throw std::runtime_error("This entry has no actors to preview.");
+    // The view of the version shown, restored after the edited one has warmed up.
+    struct View{Vector target,goal,homeTarget;double distance,goalDistance,homeDistance,extent[2];int pitch,yaw,homePitch,homeYaw;bool user,measured;};
+    const bool keep=keepCamera && !state.actors.empty();
+    const View kept{state.target,state.goal,state.homeTarget,state.distance,state.goalDistance,state.homeDistance,{state.extent[0],state.extent[1]},state.pitch,state.yaw,state.homePitch,state.homeYaw,state.user,state.measured};
     if(Read<Address>(kUndo))throw std::runtime_error("Finish the current editor operation before previewing an emitter.");
     EnsureLevel();
     const auto prefix="PV"+std::to_string(++state.serial)+"_";
@@ -857,9 +861,29 @@ void Show(const Json& entry)
     // them; continuous emitters stay warmed up.
     for(auto& p:state.actors)if(!state.faulted && Alive(p.actor)){bool dead=true;p.dead=0;Restart(Bursts(p.actor,dead));}
     if(state.faulted)throw std::runtime_error(state.fault);
-    Reframe(true);
+    if(keep)
+    {
+        state.target=kept.target;state.goal=kept.goal;state.homeTarget=kept.homeTarget;state.distance=kept.distance;state.goalDistance=kept.goalDistance;state.homeDistance=kept.homeDistance;
+        state.extent[0]=kept.extent[0];state.extent[1]=kept.extent[1];state.pitch=kept.pitch;state.yaw=kept.yaw;state.homePitch=kept.homePitch;state.homeYaw=kept.homeYaw;
+        state.user=kept.user;state.measured=kept.measured;state.shrinkSince=-1;
+    }
+    else Reframe(true);
     if(state.viewport && ViewportAlive())ApplyCamera();
     state.idle=1;
+}
+std::string SelectedTexture()
+{
+    CheckEngine();
+    // GEditor->CurrentMaterial (+0x138), the texture browser's selection (BspTextureClipboard.cpp).
+    const Address material=Read<Address>(Editor()+0x138);
+    if(!material || !Alive(material))throw std::runtime_error("Select a texture in the texture browser first.");
+    bool texture=false;std::string type=NameOf(Read<Address>(material+0x24));std::set<Address> seen;
+    for(Address c=Read<Address>(material+0x24);c && seen.insert(c).second && seen.size()<64;c=Read<Address>(c+0x28))if(NameOf(c)=="Texture"){texture=true;break;}
+    if(!texture)throw std::runtime_error("The texture browser's selection ("+type+") is not a texture. Particle systems draw textures only.");
+    std::string path;
+    for(Address o=material;o && path.size()<512;o=Read<Address>(o+0x18))path=NameOf(o)+(path.empty()?"":"."+path);
+    if(Fold(path).rfind(MapPackage()+".",0)==0 || Fold(path).rfind("mylevel.",0)==0)throw std::runtime_error("The selected texture is stored inside the map. Choose one from a shared package.");
+    return type+"'"+path+"'";
 }
 void Clear()
 {

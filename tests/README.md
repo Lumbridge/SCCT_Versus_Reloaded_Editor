@@ -259,6 +259,16 @@ menu's conditions, places it with a live sub-emitter in one Undo step and saves 
 again without its names growing; it then places every built-in entry, checks its sub-emitters
 and that a capture of the placed actors resolves every asset the entry lists, and undoes each
 placement. The suite moves an existing `library.json` and `emitter_library.json` aside first.
+`EmitterEditModelTests.cpp` covers the Emitter Library edit panel's model: reading, replacing,
+adding and removing one property line of one particle system with every other byte (CRLF,
+nested blocks, the actor's own lines) kept; struct members; the values the panel shows,
+including the class defaults for lines and members the editor's export leaves out; each
+field's edit and refusal (whole, capped particle counts, non-negative capped rates, ordered
+ranges, uniform size without a height, capped velocities and acceleration, 0-255 colours,
+package textures outside the map); colour keys that keep their time and alpha; tint as
+`ColorMultiplierRange`; a new texture's dependency replacing the old one's; saving an edited
+copy as a new user entry or over the user's own; and an edit of every built-in system
+changing only its line.
 The graph suite checks separate islands, cyclic/self/parallel links, unresolved targets,
 relationship/class filters, bounded neighbourhood expansion, isolated actors, deterministic
 layout and a 600-actor fan-out without overlapping nodes. Radial layout checks cover
