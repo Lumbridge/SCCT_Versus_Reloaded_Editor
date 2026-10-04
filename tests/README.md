@@ -93,6 +93,20 @@ or foreign files rejected). The editor side imports the BMP with `TEXTURE
 IMPORT` into the loaded `<Map>-i` package and saves it with the stock
 `SAVEMAPPROP`, so it is exercised in the editor rather than here.
 
+`CrashRecoveryModelTests.cpp` covers the crash-recovery offer's pure parts:
+the session marker read back (an `=` in the map path, LF endings, unknown
+keys) and rejected without its pid or creation time, a marker of a live
+editor told from one whose process is gone or whose pid was reused, the
+latest of several abandoned sessions, the stock autosave names (not
+`Autoplay.sdc` or `Auto0.sdc.bak`), the newest autosave of a session with
+older ones ignored, the session's crash report by pid and time (not
+`pid12345` for `pid1234`, nor an earlier process's report), and the offer's
+choices and text with and without an autosave, the map or a crash report. The
+start-up offer itself, the marker's clean-exit removal and **File > Open
+Latest Autosave...** were checked by hand in a disposable installation; the
+native runner turns the offer off (`[CrashRecovery] OfferAtStartup=0`) because
+the workflow suite stops and restarts the editor.
+
 `StageModelTests.cpp` covers the zone model: generated Tag names and their
 parsing, plan validation (including refusing a plan from the earlier
 counting-event version), building the change batch for a fresh map (a mission

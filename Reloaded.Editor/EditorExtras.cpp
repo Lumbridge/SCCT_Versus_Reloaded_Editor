@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "EditorExtras.h"
 #include "EditorConfigBits.h"
+#include "CrashRecovery.h"
+#include "CrashRecoveryModel.h"
 #include "WorkflowEditor.h"
 #include "GEKeybindSwap.h"
 #include "LevelSnapshot.h"
@@ -40,6 +42,7 @@ namespace
     std::string lastMap;
     unsigned lastCleanRevision = 0;
     constexpr UINT_PTR kTimer = 0x5245;
+    constexpr UINT_PTR kOfferTimer = 0x5246; // the crash-recovery offer, until it has been made
     constexpr int kRecentMax = 10;
     constexpr UINT kFileSave = 40007, kFileSaveAs = 40008;
 
@@ -110,7 +113,9 @@ namespace
             if (map == lastMap) return;
             lastMap = map;
             lastCleanRevision = Editor::Revision();
-            NoteMap(map);
+            CrashRecovery::NoteMap(map);
+            // An opened autosave is a moment, not a map to come back to.
+            if (!Sessions::IsAutosaveName(map)) NoteMap(map);
         }
         catch (const std::exception&) { /* The engine may not be ready yet. */ }
     }
@@ -118,6 +123,14 @@ namespace
     LRESULT CALLBACK FrameProc(HWND window, UINT message, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR)
     {
         if (message == WM_TIMER && w == kTimer) { Tick(); return 0; }
+        if (message == WM_TIMER && w == kOfferTimer)
+        {
+            if (CrashRecovery::OfferWhenIdle(window)) KillTimer(window, kOfferTimer);
+            return 0;
+        }
+        // The frame goes only when the editor is closing: the session ended
+        // cleanly, unless the engine is going down with an error.
+        if (message == WM_DESTROY) CrashRecovery::EndSession();
         if (message == WM_INITMENUPOPUP && reinterpret_cast<HMENU>(w) == recentMenu) { RebuildRecentMenu(); return 0; }
         if (message == WM_COMMAND && (LOWORD(w) == kFileSave || LOWORD(w) == kFileSaveAs))
         {
@@ -185,6 +198,14 @@ namespace
             InsertMenuA(file, 2, MF_BYPOSITION | MF_POPUP, reinterpret_cast<UINT_PTR>(recentMenu), "Open &Recent");
             RebuildRecentMenu();
         }
+        if (file && recentMenu && GetMenuState(file, EditorExtras::kOpenLatestAutosave, MF_BYCOMMAND) == UINT(-1))
+        {
+            changed = true;
+            // Right after Open Recent.
+            int position = 0;
+            while (position < GetMenuItemCount(file) && GetSubMenu(file, position) != recentMenu) ++position;
+            InsertMenuA(file, position + 1, MF_BYPOSITION | MF_STRING, EditorExtras::kOpenLatestAutosave, "Open Latest A&utosave...");
+        }
         if (HMENU build = MenuWithCommand(bar, 40038); build && GetMenuState(build, EditorExtras::kPlayFromCameraSpy, MF_BYCOMMAND) == UINT(-1))
         {
             changed = true;
@@ -211,6 +232,7 @@ namespace
         if (changed) DrawMenuBar(frameWindow);
         HMENU build = MenuWithCommand(bar, 40038), help = MenuWithCommand(bar, 40480);
         return file && recentMenu && HasSubMenu(file, recentMenu)
+            && GetMenuState(file, EditorExtras::kOpenLatestAutosave, MF_BYCOMMAND) != UINT(-1)
             && build && GetMenuState(build, EditorExtras::kPlayFromCameraSpy, MF_BYCOMMAND) != UINT(-1)
             && help && GetMenuState(help, EditorExtras::kShortcuts, MF_BYCOMMAND) != UINT(-1)
             && GetMenuState(help, SelfUpdater::kCheckNow, MF_BYCOMMAND) != UINT(-1);
@@ -233,6 +255,7 @@ namespace
             if (!SetWindowSubclass(frameWindow, FrameProc, 1, 0)) { error = "SetWindowSubclass failed"; return false; }
             installStep = "SetTimer";
             if (!SetTimer(frameWindow, kTimer, 10000, nullptr)) { error = "SetTimer failed"; return false; }
+            if (!SetTimer(frameWindow, kOfferTimer, 1000, nullptr)) { error = "SetTimer failed"; return false; }
             installStep = "InstallMenus";
             if (!InstallMenus()) { error = "menu bar not ready"; return false; }
             return true;
@@ -306,7 +329,8 @@ namespace
                "\r\n"
                "MENUS\r\n"
                "File: Open Recent lists the last ten maps. The editor's own autosave (View > Advanced Options,\r\n"
-               "Editor.EditorEngine: AutoSave, AutoSaveTimeMinutes) writes Auto0 to Auto9.sdc into MapsEd.\r\n"
+               "Editor.EditorEngine: AutoSave, AutoSaveTimeMinutes) writes Auto0 to Auto9.sdc into MapsEd;\r\n"
+               "File: Open Latest Autosave opens the newest of them. After a crash, the next start offers that session's autosave.\r\n"
                "Build: Play From Camera as Spy / Merc starts a playtest at the perspective viewport's camera.\r\n"
                "Build: Set Level Snapshot from Viewport / Image File puts the picture the game shows in map selection\r\n"
                "into the map's <Map>-i package (Packages\\Textures), backing up the old one under ReloadedEditor.\r\n"
@@ -447,23 +471,30 @@ namespace
             RebuildRecentMenu();
             throw std::runtime_error("That map is no longer there:\n" + path);
         }
-        if (Editor::Revision() != lastCleanRevision
-            && MessageBoxA(frameWindow, ("Open " + std::filesystem::path(path).filename().string() + "?\n\nUnsaved changes in the current map will be lost.").c_str(),
-                           "Open Recent", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
-            return;
-        if (!Editor::Exec("MAP LOAD FILE=\"" + path + "\"")) throw std::runtime_error("The editor could not open\n" + path);
-        Editor::SetMapFile(path);
-        lastMap = path;
-        lastCleanRevision = Editor::Revision();
-        NoteMap(path);
-        Editor::Redraw();
+        EditorExtras::OpenMap(path, true);
     }
+}
+
+void EditorExtras::OpenMap(const std::string& path, bool confirmDiscard)
+{
+    if (confirmDiscard && Editor::Revision() != lastCleanRevision
+        && MessageBoxA(frameWindow, ("Open " + std::filesystem::path(path).filename().string() + "?\n\nUnsaved changes in the current map will be lost.").c_str(),
+                       "Open Recent", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+        return;
+    if (!Editor::Exec("MAP LOAD FILE=\"" + path + "\"")) throw std::runtime_error("The editor could not open\n" + path);
+    Editor::SetMapFile(path);
+    lastMap = path;
+    lastCleanRevision = Editor::Revision();
+    CrashRecovery::NoteMap(path);
+    if (!Sessions::IsAutosaveName(path)) NoteMap(path);
+    Editor::Redraw();
 }
 
 void EditorExtras::Attach(HWND frame)
 {
     if (!frame || frameWindow) return;
     frameWindow = frame;
+    CrashRecovery::Start();
     const DWORD thread = GetWindowThreadProcessId(frame, nullptr);
     Logger::log("Editor extras: attaching to the frame's thread " + std::to_string(thread));
     // A hook on another thread belongs to the thread that set it and goes
@@ -506,11 +537,13 @@ void EditorExtras::AppendActorMenu(HMENU menu)
 bool EditorExtras::HandleCommand(UINT command)
 {
     if (SelfUpdater::HandleCommand(command)) return true;
-    const bool ours = (command >= kSelectSameClass && command <= kLevelSnapshotFile) || (command >= kRecentFirst && command <= kRecentLast);
+    const bool ours = (command >= kSelectSameClass && command <= kLevelSnapshotFile) || (command >= kRecentFirst && command <= kRecentLast)
+        || command == kOpenLatestAutosave;
     if (!ours) return false;
     try
     {
         if (command >= kRecentFirst && command <= kRecentLast) OpenRecent(command - kRecentFirst);
+        else if (command == kOpenLatestAutosave) CrashRecovery::OpenLatestAutosave(frameWindow);
         else if (command == kSelectSameClass) SelectMatching("class", "class");
         else if (command == kSelectSameTag) SelectMatching("tag", "Tag");
         else if (command == kSelectSameMesh) Exec("ACTOR SELECT MATCHINGSTATICMESH", "Select a static mesh actor first.");

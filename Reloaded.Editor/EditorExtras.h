@@ -21,6 +21,7 @@ namespace EditorExtras
     constexpr UINT kLevelSnapshotViewport = 40964;
     constexpr UINT kLevelSnapshotFile = 40965;
     constexpr UINT kRecentFirst = 40970, kRecentLast = 40979;
+    constexpr UINT kOpenLatestAutosave = 40987; // first of the crash-recovery block, 40987-40999
 
     // From the menu-injection thread, once the editor frame exists: brings up
     // the timer, the frame subclass and the menu entries on the frame's thread.
@@ -31,4 +32,8 @@ namespace EditorExtras
     bool HandleCommand(UINT command);
     // The Reloaded selection and visibility entries of the actor right-click menu.
     void AppendActorMenu(HMENU menu);
+    // On the frame's thread: opens a map file as Open Recent does, making it
+    // the Save target. confirmDiscard asks first when the open map has
+    // unsaved changes. Throws when the editor cannot open it.
+    void OpenMap(const std::string& path, bool confirmDiscard);
 }

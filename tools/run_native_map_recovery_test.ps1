@@ -178,6 +178,11 @@ public static extern bool WritePrivateProfileString(string section, string key, 
 if (![NativeRecoveryTest.Ini]::WritePrivateProfileString('Updates', 'CheckOnStartup', '0', (Join-Path $testSystem 'Reloaded_Editor.ini'))) {
     throw 'Could not turn off the update check in the test installation.'
 }
+# The workflow suite stops the editor and starts it again; the crash-recovery
+# offer that start would make is a message box the probe does not answer.
+if (![NativeRecoveryTest.Ini]::WritePrivateProfileString('CrashRecovery', 'OfferAtStartup', '0', (Join-Path $testSystem 'Reloaded_Editor.ini'))) {
+    throw 'Could not turn off the crash-recovery offer in the test installation.'
+}
 Write-Output "TestRoot=$testRoot"
 if ($PrepareOnly) { return }
 

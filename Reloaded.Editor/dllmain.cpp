@@ -34,6 +34,7 @@
 #include "SizingBoxFix.h"
 #include "MapRecovery.h"
 #include "CrashDiagnostics.h"
+#include "CrashRecovery.h"
 #include "BspDiagnostics.h"
 #include "LightmapPacker.h"
 #include "RebuildAllMaps.h"
@@ -114,6 +115,8 @@ LONG WINAPI CustomUnhandledExceptionFilter(EXCEPTION_POINTERS* exceptionInfo) {
     // safe fallback for failures raised outside that guarded path.
     BspDiagnostics::LogException(exceptionInfo);
     CrashDiagnostics::LogUnhandledException(exceptionInfo);
+    // The process exits from here; the next start should offer the autosave.
+    CrashRecovery::NoteCrash();
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
@@ -216,6 +219,11 @@ BOOL APIENTRY DllMain( HMODULE hModule,
         case DLL_PROCESS_ATTACH:
             g_hReloadedDll = hModule;
             InitOnceExecuteOnce(&g_InitOnce, InitFunction, hModule, NULL);
+            break;
+        case DLL_PROCESS_DETACH:
+            // The process is exiting normally (lpReserved is set): the frame's
+            // destruction has usually ended the session already.
+            if (lpReserved) CrashRecovery::EndSession();
             break;
     }
     return TRUE;
