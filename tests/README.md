@@ -145,6 +145,24 @@ This also checks the vertex right-click popup, selection preservation on cancel,
 world-space selected-corner alignment, exact preservation of unselected vertices,
 shared polygon corners, and vertex Undo/Redo.
 
+## Undo History
+
+`tools/test_workflow_tools.cmd` runs `UndoHistoryModelTests.cpp`: the rows (one
+before the oldest step, then one per step), the current row from the buffer's
+UndoCount, which rows are greyed for Redo, the signed number of steps to a row
+(clamped at both ends), walking there one Undo or Redo at a time and stopping at
+the first step the editor refuses (an operation recording, nothing left), a
+thousand-step walk, title clean-up, memory sizes against the buffer's limit, the
+status line after a reset, and the reports after a jump.
+
+There is no native suite test yet. It was checked by hand in a disposable
+installation: the UTransBuffer layout read live (vtable, 8 MB MaxMemory, reset
+reason), titles matching the buffer after brush, actor, property, RE+ Hide and
+move edits, jumps back and forth exported to T3D identical to the same stock
+Undo/Redo steps, the list following stock Undo, the memory limit dropping the
+oldest of 7,944 steps, MAP NEW clearing it, and refreshes still arriving while
+the frame's own posted commands starve WM_TIMER.
+
 ## Local BSP lighting matching
 
 Compile and run `tests/LocalLightingMatchTests.cpp` with C++17 or later. It tests

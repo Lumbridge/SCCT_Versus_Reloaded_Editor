@@ -5,6 +5,7 @@
 #include "EmitterLibraryWindow.h"
 #include "EditorExtras.h"
 #include "StoreyFilter.h"
+#include "UndoHistory.h"
 #include "WorkflowEditor.h"
 #include "EmitterLibraryModel.h"
 #include "WorkflowGraph.h"
@@ -839,6 +840,11 @@ void RunObjectiveCommand(UINT command,const Json& snapshot)
 bool HandleCommand(UINT command)
 {
     if(EditorExtras::HandleCommand(command))return true;
+    if(command==UndoHistory::kOpen)
+    {
+        try{UndoHistory::Open();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Undo History",MB_OK|MB_ICONERROR);}
+        return true;
+    }
     if(command==StoreyFilter::kOpen)
     {
         try{StoreyFilter::Open();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Storeys",MB_OK|MB_ICONERROR);}

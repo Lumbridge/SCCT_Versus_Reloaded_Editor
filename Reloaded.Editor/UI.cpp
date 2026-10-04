@@ -8,6 +8,7 @@
 #include "WorkflowTools.h"
 #include "EmitterLibraryWindow.h"
 #include "StoreyFilter.h"
+#include "UndoHistory.h"
 #include "MapPackageDialog.h"
 #include "EditorExtras.h"
 
@@ -151,6 +152,8 @@ static void InjectReloadedMenuItems(HWND frame)
         AppendMenuA(reTools, MF_STRING, 40935, "&Import Map from JSON...");
         AppendMenuA(bar, MF_POPUP, reinterpret_cast<UINT_PTR>(reTools), "RE+ &Tools");
     }
+
+    UndoHistory::InstallMenu(bar); // Edit > Undo History, after Redo
 
     HMENU view = SubMenuWithCommand(bar, 40065); // "Advanced Options" lives in View
     if (view)

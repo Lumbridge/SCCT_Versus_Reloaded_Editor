@@ -305,6 +305,8 @@ namespace
                "Brush face or vertices: snap to the grid per axis.   Texture / mesh browser: Favorites and Find Usages.\r\n"
                "\r\n"
                "MENUS\r\n"
+               "Edit: Undo History lists every undo step, oldest first, with redo steps greyed below the current one;\r\n"
+               "double-click a step (or select it and press Enter) to undo or redo to it. Ctrl+Z / Ctrl+Y step there too.\r\n"
                "File: Open Recent lists the last ten maps. The editor's own autosave (View > Advanced Options,\r\n"
                "Editor.EditorEngine: AutoSave, AutoSaveTimeMinutes) writes Auto0 to Auto9.sdc into MapsEd.\r\n"
                "Build: Play From Camera as Spy / Merc starts a playtest at the perspective viewport's camera.\r\n"
