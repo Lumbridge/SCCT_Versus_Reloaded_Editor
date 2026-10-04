@@ -2,6 +2,7 @@
 #include "StaticMeshBrowserFavorites.h"
 #include "MeshFavoritesModel.h"
 #include "WorkflowTools.h"
+#include "MapUsagesWindow.h"
 #include "MemoryWriter.h"
 #include <commctrl.h>
 #pragma comment(lib, "comctl32.lib")
@@ -1063,6 +1064,7 @@ static HMENU WINAPI SM_LoadMenuA_Hook(HINSTANCE instance, LPCSTR menuName)
     // Stock positions 0-2 are Delete, Copy and Rename; keep Sections last.
     InsertMenuA(context, 3, toggleFlags, IDMN_SM_TOGGLE_FAVORITE, label);
     InsertMenuA(context, 4, meshFlags, WorkflowTools::kFindMesh, "Find &Usages...");
+    InsertMenuA(context, 5, meshFlags, MapUsagesWindow::kFindMesh, "Find Usages in All &Maps...");
     // The stock commands act on the current mesh, which is not this row.
     if (!g_ContextPath.empty() && !hasMesh)
         for (int i = 0; i < GetMenuItemCount(context); ++i)
@@ -1076,6 +1078,11 @@ static bool SM_HandleCommand(WPARAM wParam)
     if (LOWORD(wParam) == WorkflowTools::kFindMesh)
     {
         WorkflowTools::FindUsages(g_BrowserWindow, SM_GetCurrentMesh(), true);
+        return true;
+    }
+    if (LOWORD(wParam) == MapUsagesWindow::kFindMesh)
+    {
+        WorkflowTools::FindUsagesInAllMaps(g_BrowserWindow, true);
         return true;
     }
     if (LOWORD(wParam) == IDMN_SM_TOGGLE_FAVORITE)

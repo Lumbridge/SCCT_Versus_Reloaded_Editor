@@ -19,6 +19,10 @@ if errorlevel 1 goto failed
 "%TEMP%\EntryThumbnailModelTests.exe"
 if errorlevel 1 goto failed
 rem Not named *Update*: Windows would demand elevation for it as an installer.
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\MapUsagesModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MapUsagesModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\MapUsagesModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\SelfUpdaterModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\ReleaseModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\ReleaseModelTests.exe"

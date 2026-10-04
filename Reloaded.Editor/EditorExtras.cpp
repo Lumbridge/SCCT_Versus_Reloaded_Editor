@@ -326,7 +326,7 @@ namespace
                "Actor: Reloaded: Select (all of this class, all with this Tag, same static mesh, invert) and\r\n"
                "Reloaded: Visibility (hide selected, isolate selected, unhide all); Save Selection as Assembly;\r\n"
                "Edit SMagicEvent; Add SObjective / triggers on a mission or objective; position the builder brush around meshes.\r\n"
-               "Brush face or vertices: snap to the grid per axis.   Texture / mesh browser: Favorites and Find Usages.\r\n"
+               "Brush face or vertices: snap to the grid per axis.   Texture / mesh browser: Favorites, Find Usages and Find Usages in All Maps.\r\n"
                "Any viewport: Builder Brush > Place Here; Measure > Start Here / To Here / Clear Measurement (distance,\r\n"
                "dX/dY/dZ, player heights and run time, drawn into every viewport).\r\n"
                "\r\n"
@@ -476,16 +476,16 @@ namespace
             RebuildRecentMenu();
             throw std::runtime_error("That map is no longer there:\n" + path);
         }
-        EditorExtras::OpenMap(path, true);
+        EditorExtras::OpenMap(path, frameWindow, "Open Recent");
     }
 }
 
-void EditorExtras::OpenMap(const std::string& path, bool confirmDiscard)
+bool EditorExtras::OpenMap(const std::string& path, HWND owner, const char* title, bool confirmDiscard)
 {
     if (confirmDiscard && Editor::Revision() != lastCleanRevision
-        && MessageBoxA(frameWindow, ("Open " + std::filesystem::path(path).filename().string() + "?\n\nUnsaved changes in the current map will be lost.").c_str(),
-                       "Open Recent", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
-        return;
+        && MessageBoxA(owner, ("Open " + std::filesystem::path(path).filename().string() + "?\n\nUnsaved changes in the current map will be lost.").c_str(),
+                       title, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+        return false;
     if (!Editor::Exec("MAP LOAD FILE=\"" + path + "\"")) throw std::runtime_error("The editor could not open\n" + path);
     Editor::SetMapFile(path);
     lastMap = path;
@@ -493,6 +493,12 @@ void EditorExtras::OpenMap(const std::string& path, bool confirmDiscard)
     CrashRecovery::NoteMap(path);
     if (!Sessions::IsAutosaveName(path)) NoteMap(path);
     Editor::Redraw();
+    return true;
+}
+
+void EditorExtras::OpenMap(const std::string& path, bool confirmDiscard)
+{
+    OpenMap(path, frameWindow, "Open Recent", confirmDiscard);
 }
 
 void EditorExtras::Attach(HWND frame)

@@ -117,6 +117,24 @@ camera pose that frames an assembly's actor locations (yaw kept, a fixed
 three-quarter pitch, far enough for the narrower field of view, a minimum
 distance for one actor, bad FOV or bounds handled).
 
+`MapUsagesModelTests.cpp` covers Find Usages in All Maps on generated SCCT
+packages: object names (class-quoted, groups with spaces, malformed names
+refused), matching imports by their whole owner chain rather than by name (a
+bare name, a skipped group, a prefix or a same-named object in another
+package is not a match; a package or group matches everything inside), and
+counting references in tagged property lists despite the name numbers SCCT
+writes after every name reference without counting them in tag sizes:
+object properties, tagged structs, arrays of objects, of names and of tagged
+structs, state frames, and the faces of a brush's `Polys` (whose material is
+how a source map names a BSP texture). Unreadable property lists and faces
+that do not fill their export are counted, not misread; truncated or foreign
+data is refused. `MapUsagesFileTests.cpp` (in `tools/test_map_package.cmd`,
+it needs zlib) reads the compressed `tests/maps/OffsE` maps: a mesh placed 71
+times, an editor sprite on 56 lights, a group with a space, a whole package,
+a damaged copy and the folder walk with cancel. `MapUsagesFileTests.exe
+<folder>... <Package.Group.Name> [autosaves]` also prints what the window
+would list for real folders and how long the scan took.
+
 `StageModelTests.cpp` covers the zone model: generated Tag names and their
 parsing, plan validation (including refusing a plan from the earlier
 counting-event version), building the change batch for a fresh map (a mission

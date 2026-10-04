@@ -14,6 +14,7 @@
 #include "MapAuthoringDialog.h"
 #include "MapAuthoringModel.h"
 #include "MapPackageDialog.h"
+#include "MapUsagesWindow.h"
 #include "MapRecovery.h"
 #include "MemoryWriter.h"
 #include "MapDesignModel.h"
@@ -584,6 +585,7 @@ namespace
         if(s.kind==Kind::Assets)
         {
             if(command==Primary) { Activate(s); return; }
+            if(command==Third) { MapUsagesWindow::Open(s.window,s.source); return; }
             if(command==Secondary)
             {
                 if(s.revision!=Editor::Revision()) { Populate(s); throw std::runtime_error("The map changed. Review the refreshed usages before replacing."); }
@@ -695,7 +697,7 @@ namespace
             {
                 auto button=[&](int id,const char* name){s->buttons.push_back(Control(window,"BUTTON",name,0,id,0,0,200,27));};
                 button(Refresh,"Refresh");
-                if(s->kind==Kind::Assets) {button(Primary,"Select and Focus");button(Secondary,"Replace Checked...");Control(window,"BUTTON","Limit to selection captured at Refresh",BS_AUTOCHECKBOX,kScope,0,0,300,24);}
+                if(s->kind==Kind::Assets) {button(Primary,"Select and Focus");button(Secondary,"Replace Checked...");button(Third,"Search All Maps...");Control(window,"BUTTON","Limit to selection captured at Refresh",BS_AUTOCHECKBOX,kScope,0,0,300,24);}
                 if(s->kind==Kind::Connections) {button(Primary,"Select and Focus");button(Secondary,"Add Objective / Trigger...");button(Third,"Graph...");auto f=Control(window,"BUTTON","Follow Selection",BS_AUTOCHECKBOX,kFollow,0,0,200,24);SendMessage(f,BM_SETCHECK,BST_CHECKED,0);}
                 if(s->kind==Kind::Views) {button(Primary,"Restore");button(Secondary,"Save New...");button(Third,"Update Selected from Current");button(Fourth,"Rename...");button(Fifth,"Delete...");}
                 if(s->kind==Kind::Assemblies) {button(Primary,"Place...");button(Secondary,"Save Selection as New...");button(Third,"Edit Contents...");button(Sixth,"Update from Selection...");button(Fourth,"Rename...");button(Fifth,"Delete...");button(Seventh,"Add Selected");button(Eighth,"Remove Selected");button(Ninth,"Select Members");button(Tenth,"Save Changes...");button(Eleventh,"Cancel Editing");}
@@ -951,6 +953,11 @@ bool HandleCommand(UINT command)
         catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Add Objective / Trigger",MB_OK|MB_ICONERROR);}
         return true;
     }
+    if(command==MapUsagesWindow::kFindMaterial || command==MapUsagesWindow::kFindMesh)
+    {
+        FindUsagesInAllMaps(GetActiveWindow(),command==MapUsagesWindow::kFindMesh);
+        return true;
+    }
     if(command==40948){try{OpenDesign(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Map Design",MB_OK|MB_ICONERROR);}return true;}
     if(command==kAddVertexPortal)
     {
@@ -1013,6 +1020,14 @@ void FindUsages(HWND owner,void*,bool mesh)
 {
     try { Open(Kind::Assets,owner,Editor::CurrentAsset(mesh),mesh); }
     catch(const std::exception& e) {MessageBoxA(owner,e.what(),"Find Asset Usages",MB_OK|MB_ICONERROR);}
+}
+void FindUsagesInAllMaps(HWND owner,bool mesh)
+{
+    // The browser's current asset, if any; the window also takes a typed name.
+    std::string asset;
+    try { asset=Editor::CurrentAsset(mesh); } catch(const std::exception&) {}
+    try { MapUsagesWindow::Open(owner,asset); }
+    catch(const std::exception& e) {MessageBoxA(owner,e.what(),"Find Usages in All Maps",MB_OK|MB_ICONERROR);}
 }
 void RenameActorTag(HWND owner,std::string path,std::string type)
 {

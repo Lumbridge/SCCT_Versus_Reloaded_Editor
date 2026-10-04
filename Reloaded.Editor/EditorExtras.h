@@ -36,4 +36,7 @@ namespace EditorExtras
     // the Save target. confirmDiscard asks first when the open map has
     // unsaved changes. Throws when the editor cannot open it.
     void OpenMap(const std::string& path, bool confirmDiscard);
+    // The same, asking in a box owned by owner and titled title. False when
+    // the user keeps the open map. Autosaves are not listed in Open Recent.
+    bool OpenMap(const std::string& path, HWND owner, const char* title, bool confirmDiscard = true);
 }

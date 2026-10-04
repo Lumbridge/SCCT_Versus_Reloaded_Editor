@@ -5,6 +5,10 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 /I vcpkg_installed\x86-windows-stati
 if errorlevel 1 goto failed
 "%TEMP%\MapPackageTests.exe"
 if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 /I vcpkg_installed\x86-windows-static\include tests\MapUsagesFileTests.cpp Reloaded.Editor\MapUsages.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MapUsagesFileTests.exe" /link /LIBPATH:vcpkg_installed\x86-windows-static\lib zlib.lib
+if errorlevel 1 goto failed
+"%TEMP%\MapUsagesFileTests.exe"
+if errorlevel 1 goto failed
 popd
 exit /b 0
 :failed
