@@ -23,6 +23,7 @@
 #include "WindowDriftFix.h"
 #include "DeintersectFix.h"
 #include "MapUnlock.h"
+#include "MeasureTool.h"
 #include "StaticMeshCollisionFix.h"
 #include "StaticMeshBrowserFavorites.h"
 #include "BspTextureClipboard.h"
@@ -176,6 +177,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     WindowDriftFix::Initialize();
     DeintersectFix::Initialize();
     MapUnlock::Initialize();
+    MeasureTool::Initialize();
     StaticMeshCollisionFix::Initialize();
     DdsImportFix::Initialize();
     LightCullFix::Initialize();

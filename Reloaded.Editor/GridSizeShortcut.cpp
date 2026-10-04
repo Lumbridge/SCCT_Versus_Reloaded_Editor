@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "GridSizeShortcut.h"
 #include "StoreyFilter.h"
+#include "MeasureTool.h"
 #include "EmitterPreview.h"
 #include "GridSizeShortcutState.h"
 #include "MemoryWriter.h"
@@ -138,6 +139,9 @@ namespace
         // viewport, so one floor is stepped through where it is being looked
         // at rather than only from the palette itself.
         if (message == WM_KEYDOWN && StoreyFilter::ViewportKey(wParam))
+            return true;
+        // Notes right-clicks for Measure > Start Here / To Here, and takes M.
+        if (MeasureTool::ViewportMessage(viewport, message, wParam, lParam))
             return true;
         if (message != WM_MOUSEWHEEL)
             return false;

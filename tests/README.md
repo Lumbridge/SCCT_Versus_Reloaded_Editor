@@ -145,6 +145,18 @@ This also checks the vertex right-click popup, selection preservation on cancel,
 world-space selected-corner alignment, exact preservation of unselected vertices,
 shared polygon corners, and vertex Undo/Redo.
 
+## Viewport measure tool
+
+`tools/test_workflow_tools.cmd` runs `MeasureModelTests.cpp`: which axis each
+2D view (RendMap 12/13/14) cannot see, grid snapping that spares a surface
+normal and that axis, distance, horizontal run, deltas and the readout lines in
+units and Map Design's player heights and run times (a climb included), ends
+clicked in one 2D view, in two different ones and against a 3D click, rejected
+input, the row-vector screen maths against hand-built orthographic and
+perspective matrices (projection, the mouse in a 2D plane and the mouse ray
+onto a floor), and the Start / To / M chain. There is no native suite check:
+the right-click path was verified by hand in a disposable install.
+
 ## Local BSP lighting matching
 
 Compile and run `tests/LocalLightingMatchTests.cpp` with C++17 or later. It tests
