@@ -23,20 +23,26 @@ drive it with no changes, including the gun on `B R Hand`.
 
 ## Put it on a map
 
-RE+ carries the suit inside `Reloaded.Editor.dll`. With the map open:
+RE+ carries the suit inside `Reloaded.Editor.dll` as a built-in skin preset. With the map open:
 
-1. **RE+ Tools > Character Skins > Hazmat Mercs**. It imports the textures (group `Hazmat`, DXT1)
-   and the mesh (`MyLevel.HazmatMerc`, stood up like the stock merc) into the map, makes it the
-   merc model with the goggle lights on the visor (-0.1, -2.8, -0.8), and applies.
+1. **RE+ Tools > Character Skin Presets** (or **Presets...** in Character Skins), **Merc presets**,
+   category **Models**, **Hazmat Suit**, **Apply to Mercs on This Map**. It imports the textures
+   (group `Models`, DXT1) and the mesh (`MyLevel.HazmatMerc_<hash>`, stood up like the stock merc)
+   into the map, makes it the merc model with the goggle lights on the visor, and applies.
 2. Save the map. Play it (Play Level as a spy, then type `addbot` in the console to see a merc in it).
 
-Pressing it again on a map that already has the suit just puts the mercs back in it. Everything
-lives in the map (MyLevel), so the map works for everyone without an extra package.
+Applying it again reuses what the map already holds. Everything lives in the map (MyLevel), so the
+map works for everyone without an extra package.
 
-By hand instead (for example with a rebuilt suit): import `HazmatSuit.tga` and `HazmatGear.tga` in
-the Texture Browser (Package `MyLevel`, Group `Hazmat`), then `HazmatMerc.psk` with the Animation
-Browser's Import Mesh (Package `MyLevel`, Name `HazmatMerc`), set its Mesh tab Rotation Yaw to
--16384, and pick `MyLevel.HazmatMerc` as the Merc model in Character Skins.
+### More models
+
+Character Skin Presets is the library for models too. **Add Model...** takes a PSK rigged to the
+team's stock skeleton with one TGA per material beside it, named after the material (the PSK's
+material names, letters, digits and underscores), and the goggle light offset from a JSON beside it
+(`"goggles": [x, y, z]`, or this build's `hazmat.json`). The model is kept with the preset, travels
+in an exported `.skinpreset` file, and is imported into a map when the preset is applied. A built-in
+model is a bundle in the DLL (`pack_bundle.py`, an RCDATA entry in `Reloaded.Editor.rc`, and a line in
+`kBuiltinModels` and `Builtins()`).
 
 ## Rebuild it
 
@@ -67,16 +73,17 @@ high-poly parts it was baked from, hidden. The four stages:
 
 To ship a rebuilt suit with RE+, copy it into `assets/`, run `python pack_bundle.py` (it packs the
 PSK and both TGAs into `assets/HazmatMerc.bundle`, which `Reloaded.Editor.rc` embeds), and build the DLL.
+The import names carry the PSK's hash, so maps that hold the old suit keep it and the new one arrives
+beside it.
 
 `pose_preview.py --install ... --out out/blender/assets --merc` poses the result with `SPerso.Def`
 sequences to check the rigging; `blender/look.py` renders quick Workbench views of `parts.npz` or a `.blend`.
 
-Two things only the engine showed (Character Skins' 3D preview draws through it):
-- PSK faces are wound counter-clockwise seen from outside, as Blender's are, not in the order
-  `SPerso.ukx` stores the merc's. In the stored order the suit showed its inside, as if it faced away.
-- The suit drew over the visor wherever they overlapped, even with the visor standing 5 units off
-  the hood, so `build.py` cuts the game mesh's faces under the visor and the valves (`cut_under_gear`);
-  the gasket hides the edge. The gear takes the weights of the suit under it, so it rides the hood.
+The editor's PSK importer mirrors Y on the way in (only Character Skins' 3D preview, which draws
+through the engine, showed it): written in the merc's own coordinates the suit came out back to front
+and inside out. `finish.py` writes the points and bones mirrored, faces in Blender's order, and the
+suit arrives in the merc's space; `pose_preview.py` mirrors the points back. The gear takes the
+weights of the suit under it, so it rides the hood.
 
 The meshes keep the merc's own coordinates. Unreal is left-handed, so seen directly in Blender they are
 a mirror image of the game; the previews and the saved scene mirror them back. Labels are placed for

@@ -1,7 +1,7 @@
 // Character Skin presets (CharacterSkinPresetsModel.h): the library in
-// skin_presets.json beside library.json, each user preset's pictures in
-// skin_presets\<id>\<Slot>.tga, and the built-ins compiled into the DLL, which are
-// painted over the stock textures when shown or applied and never written. Each
+// skin_presets.json beside library.json, each user preset's pictures (and model files)
+// in skin_presets\<id>\, and the built-ins compiled into the DLL, which are painted
+// over the stock textures (or import a model the DLL carries) and never written. Each
 // preset dresses one team. Applying goes through ImportCharacterSkin and
 // ApplyCharacterSkins with the other team's values read back from the map, so a
 // preset lands in the map exactly as the Character Skins window's own Import and
@@ -155,6 +155,192 @@ namespace
     }
 }
 
+// Models a preset carries (CharacterSkinPresetsModel.h "mesh"): a built-in's files come
+// from a zlib bundle in the DLL (tools/models/<model>/pack_bundle.py, RCDATA in
+// Reloaded.Editor.rc), a user preset's from its folder. Applying imports them into the
+// map: the textures into group Models (DXT1), the mesh stood up like the team's stock
+// model, both named with the PSK's hash so the same model is imported once per map.
+namespace
+{
+    struct BuiltinModel { const char* name; int resource; };
+    constexpr BuiltinModel kBuiltinModels[]={{"HazmatMerc",IDR_HAZMAT_BUNDLE}};
+    // Bundle: "RHZ1", uint32 count, then per file uint16 name length, name, uint32 size,
+    // uint32 compressed size, zlib data.
+    std::map<std::string,CharacterSkins::Bytes> BundleFiles(int id)
+    {
+        HMODULE module=nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(&BundleFiles),&module);
+        auto resource=FindResourceW(module,MAKEINTRESOURCEW(id),RT_RCDATA);
+        auto loaded=resource?LoadResource(module,resource):nullptr;
+        auto data=loaded?static_cast<const unsigned char*>(LockResource(loaded)):nullptr;
+        const size_t size=resource?SizeofResource(module,resource):0;
+        if(!data || size<8 || memcmp(data,"RHZ1",4))throw std::runtime_error("This RE+ build does not carry the model.");
+        auto take=[&](size_t& at,size_t n){if(at+n>size)throw std::runtime_error("The built-in model is damaged.");auto p=data+at;at+=n;return p;};
+        size_t at=4;
+        uint32_t count;memcpy(&count,take(at,4),4);
+        std::map<std::string,CharacterSkins::Bytes> files;
+        for(uint32_t i=0;i<count;++i)
+        {
+            uint16_t length;memcpy(&length,take(at,2),2);
+            std::string name(reinterpret_cast<const char*>(take(at,length)),length);
+            uint32_t raw,packed;memcpy(&raw,take(at,4),4);memcpy(&packed,take(at,4),4);
+            auto source=take(at,packed);
+            CharacterSkins::Bytes bytes(raw);
+            uLongf written=raw;
+            if(uncompress(bytes.data(),&written,source,packed)!=Z_OK || written!=raw)throw std::runtime_error("The built-in model is damaged ("+name+").");
+            files[name]=std::move(bytes);
+        }
+        return files;
+    }
+    // Every file of an entry's model by name, checked: the PSK names the entry's materials.
+    std::map<std::string,CharacterSkins::Bytes> PresetModelFiles(const Json& entry)
+    {
+        const auto id=entry.at("id").get<std::string>();
+        const auto names=PresetModel::MeshFiles(entry);
+        std::map<std::string,CharacterSkins::Bytes> files;
+        if(PresetModel::IsBuiltinId(id))
+        {
+            const auto mesh=entry.at("mesh").at("name").get<std::string>();
+            const BuiltinModel* builtin=nullptr;
+            for(const auto& b:kBuiltinModels)if(Fold(b.name)==Fold(mesh))builtin=&b;
+            if(!builtin)throw std::runtime_error("This RE+ build does not carry the model "+mesh+".");
+            auto bundle=BundleFiles(builtin->resource);
+            for(const auto& name:names)
+            {
+                auto found=bundle.find(name);
+                if(found==bundle.end())throw std::runtime_error("The built-in model has no "+name+".");
+                files[name]=std::move(found->second);
+            }
+        }
+        else
+            for(const auto& name:names)files[name]=ReadBytes(SkinPresetFolder(id)/name,256u<<20);
+        const auto materials=PresetModel::PskMaterials(files.at(names[0]));
+        const auto& wanted=entry.at("mesh").at("materials");
+        bool same=materials.size()==wanted.size();
+        for(size_t i=0;same && i<materials.size();++i)same=Fold(materials[i])==Fold(wanted[i].get<std::string>());
+        if(!same)throw std::runtime_error("The preset's model file no longer names the materials it was saved with.");
+        return files;
+    }
+    // Imports an entry's model into the map unless it is there already; returns the mesh's path.
+    std::string ImportPresetModel(const Json& entry,const CharacterSkins::Presets::Team& team)
+    {
+        const auto package=Path(Read<Address>(Level()+0x18));
+        auto files=PresetModelFiles(entry);
+        const auto& psk=files.at(PresetModel::MeshFile(entry));
+        const auto meshPath=package+"."+PresetModel::MeshImportName(entry.at("mesh").at("name").get<std::string>(),psk);
+        if(auto existing=Find(meshPath))
+        {
+            if(NameOf(Read<Address>(existing+0x24))!="SkeletalMesh")throw std::runtime_error(meshPath+" already exists and is not a skeletal mesh.");
+            return meshPath;
+        }
+        char temp[MAX_PATH]{};GetTempPathA(MAX_PATH,temp);
+        const auto folder=std::filesystem::path(temp)/("RE+Model-"+std::to_string(GetCurrentProcessId()));
+        std::error_code error;std::filesystem::create_directories(folder,error);
+        struct Cleanup{std::filesystem::path folder;~Cleanup(){std::error_code e;std::filesystem::remove_all(folder,e);}} cleanup{folder};
+        std::vector<Address> textures;
+        for(const auto& material:entry.at("mesh").at("materials"))
+        {
+            const auto name=PresetModel::MaterialImportName(material.get<std::string>(),psk);
+            const auto path=package+".Models."+name;
+            auto texture=Find(path);
+            if(!texture)
+            {
+                const auto file=folder/(name+".tga");
+                const auto& bytes=files.at(PresetModel::MaterialFile(material.get<std::string>()));
+                WriteBytes(file,bytes.data(),bytes.size());
+                Exec("TEXTURE IMPORT FILE=\""+file.string()+"\" NAME=\""+name+"\" PACKAGE=\""+package+"\" GROUP=\"Models\" MIPS=1");
+                texture=Find(path);
+                if(!texture || !IsA(texture,"Texture"))throw std::runtime_error("The editor's texture importer refused the model's "+material.get<std::string>()+".");
+                int chain=1;for(int side=(std::max)(AuthoringValue(texture,"USize"),AuthoringValue(texture,"VSize"));side>1;side>>=1)++chain;
+                Exec("TEXTURE COMPRESS NAME="+path+" FORMAT=DXT1 MaxMips="+std::to_string(chain));
+            }
+            textures.push_back(texture);
+        }
+        const auto pskFile=folder/PresetModel::MeshFile(entry);
+        WriteBytes(pskFile,psk.data(),psk.size());
+        const auto meshName=PresetModel::ObjectName(meshPath);
+        Exec("NEWANIM IMPORT FILE=\""+pskFile.string()+"\" PACKAGE=\""+package+"\" NAME=\""+meshName+"\" YAW=0 PITCH=0 ROLL=0");
+        auto mesh=Find(meshPath);
+        if(!mesh || NameOf(Read<Address>(mesh+0x24))!="SkeletalMesh")throw std::runtime_error("The editor did not import the preset's model. See the editor log.");
+        // Stand it up the way the team's stock model stands: UMesh::RotOrigin (+0x8c).
+        std::array<int,3> rotation{0,-16384,0};
+        if(const auto* model=PresetModel::FindModel(team.model))if(auto stock=Find(model->stockMesh))rotation=Read<std::array<int,3>>(stock+0x8c);
+        Write(mesh+0x8c,rotation);
+        // Its materials, in the PSK's order, in the native UMesh::Material array (+0x68; the
+        // Animation Browser probes the same offset). The textures' names carry the hash, so
+        // the importer's link by name finds none of them.
+        const auto data=Read<Address>(mesh+0x68);const int count=Read<int>(mesh+0x6c);
+        if(!data || count<static_cast<int>(textures.size()))throw std::runtime_error("The editor imported the model without its materials. See the editor log.");
+        for(size_t i=0;i<textures.size();++i)Write(data+i*4,textures[i]);
+        Logger::log("Skin presets: imported the model "+meshPath);
+        return meshPath;
+    }
+    // Writes a saved user entry's model files into its folder.
+    void WriteModelFiles(const std::string& id,const std::map<std::string,CharacterSkins::Bytes>& files)
+    {
+        for(const auto& [name,bytes]:files)WriteBytes(SkinPresetFolder(id)/name,bytes.data(),bytes.size());
+    }
+}
+
+Json AddSkinPresetModel(const std::string& teamId,const std::filesystem::path& psk,const Json& details)
+{
+    const auto* team=PresetModel::FindTeam(teamId);
+    if(!team)throw std::runtime_error("Choose spies or mercs first.");
+    auto bytes=ReadBytes(psk,256u<<20);
+    std::vector<std::string> materials;
+    try{materials=PresetModel::PskMaterials(bytes);}catch(const std::exception& e){throw std::runtime_error(PathText(psk)+": "+e.what());}
+    const auto name=PresetModel::ModelNameFrom(psk.stem().string());
+    std::map<std::string,CharacterSkins::Bytes> files;
+    files[name+".psk"]=std::move(bytes);
+    // One picture per material, named after it, beside the PSK.
+    const auto folder=psk.parent_path();
+    for(const auto& material:materials)
+    {
+        if(!PresetModel::ValidModelName(material))throw std::runtime_error("The PSK's material '"+material+"' needs a name of letters, digits and underscores.");
+        std::filesystem::path found;
+        std::error_code error;
+        for(const auto& file:std::filesystem::directory_iterator(folder,error))
+            if(Fold(file.path().stem().string())==Fold(material) && Fold(file.path().extension().string())==".tga")found=file.path();
+        if(found.empty())throw std::runtime_error("No "+material+".tga beside "+PathText(psk)+". Each material of the model needs a TGA picture named after it.");
+        auto picture=ReadBytes(found,64u<<20);
+        try{PresetModel::ReadTga(picture);}catch(const std::exception& e){throw std::runtime_error(PathText(found)+": "+e.what());}
+        files[PresetModel::MaterialFile(material)]=std::move(picture);
+    }
+    // Goggle lights from a JSON beside it: "goggles": [x,y,z], or the hazmat build's
+    // "goggle_offset_from_merc_front".
+    Json goggles=Json::object();
+    {
+        std::error_code error;
+        for(const auto& file:std::filesystem::directory_iterator(folder,error))
+        {
+            if(Fold(file.path().extension().string())!=".json")continue;
+            try
+            {
+                const auto text=ReadBytes(file.path(),1u<<20);
+                const auto json=Json::parse(text.begin(),text.end());
+                for(const char* key:{"goggles","goggle_offset_from_merc_front"})
+                    if(json.is_object() && json.contains(key) && json.at(key).is_array() && json.at(key).size()==3)
+                    {
+                        const auto& v=json.at(key);
+                        const auto o=CharacterSkins::CheckOffset({v[0].get<double>(),v[1].get<double>(),v[2].get<double>()});
+                        if(o.x || o.y || o.z)goggles[team->goggles]=Json::array({o.x,o.y,o.z});
+                    }
+            }
+            catch(const std::exception&){}
+            if(!goggles.empty())break;
+        }
+    }
+    Json entry={{"team",team->id},{"name",name},{"category","Models"},{"description",""},{"slots",Json::object()},
+                {"mesh",{{"name",name},{"materials",materials}}},{"goggles",goggles}};
+    for(const char* key:{"name","category","description"})if(details.contains(key))entry[key]=details.at(key);
+    auto file=SkinPresetDocument();
+    auto saved=PresetModel::Save(file,entry);
+    WriteModelFiles(saved.at("id"),files);
+    WriteDocument(SkinPresetFile(),file);
+    return saved;
+}
+
 Json SkinPresets()
 {
     Json file;Json problems=Json::array();
@@ -195,6 +381,21 @@ std::vector<CharacterSkins::Image> MapSkinImages(int size)
 std::vector<CharacterSkins::Image> SkinPresetImages(const Json& entry,int size)
 {
     std::vector<CharacterSkins::Image> out;
+    if(PresetModel::HasMesh(entry))
+    {
+        // A model's own textures, the first two.
+        std::map<std::string,CharacterSkins::Bytes> files;
+        try{files=PresetModelFiles(entry);}catch(const std::exception&){}
+        const auto& materials=entry.at("mesh").at("materials");
+        for(size_t i=0;i<2 && i<materials.size();++i)
+        {
+            CharacterSkins::Image image;
+            try{image=PresetModel::ReadTga(files.at(PresetModel::MaterialFile(materials[i].get<std::string>())));}catch(const std::exception&){image={};}
+            if(size>0 && image.width>0 && (image.width!=size || image.height!=size))image=PresetModel::Shrink(image,size,size);
+            out.push_back(std::move(image));
+        }
+        return out;
+    }
     const auto slots=entry.value("slots",Json::object());
     const auto& team=PresetModel::TeamOf(entry);
     for(const auto& slot:CharacterSkins::Slots)
@@ -259,8 +460,14 @@ Json ApplySkinPreset(const std::string& id)
         }
         if(!path.empty())paths[slot.property]=path;
     }
+    std::string mesh;
+    if(PresetModel::HasMesh(entry))
+    {
+        mesh=ImportPresetModel(entry,team);
+        imported[PresetModel::ObjectName(mesh)]=id;
+    }
     // The other team's values exactly as the map has them.
-    const auto values=PresetModel::Dress(entry,MapSkinValues(),paths);
+    const auto values=PresetModel::Dress(entry,MapSkinValues(),paths,mesh);
     auto settings=ApplyCharacterSkins(values.at("slots"),values.at("models"),values.at("goggles"));
     // Remembered so the browser can name what each team wears; never fails the apply.
     if(!imported.empty())
@@ -290,8 +497,25 @@ Json SaveSkinPreset(const std::string& teamId,const Json& slots,const Json& mode
     }
     auto entry=PresetModel::Capture(*team,slots,models,goggles,local);
     for(const char* key:{"name","category","description"})if(details.contains(key))entry[key]=details.at(key);
+    // A model a preset imported into this map travels as that preset's model files.
+    std::map<std::string,CharacterSkins::Bytes> modelFiles;
+    const auto model=entry.at("models").value(team->model,std::string{});
+    const auto& imports=file.at("imports");
+    if(const auto name=PresetModel::ObjectName(model);!model.empty() && imports.contains(name))
+        try
+        {
+            const auto source=SkinPresetEntry(imports.at(name).get<std::string>());
+            if(PresetModel::HasMesh(source))
+            {
+                modelFiles=PresetModelFiles(source);
+                entry["models"].erase(team->model);
+                entry["mesh"]=source.at("mesh");
+            }
+        }
+        catch(const std::exception&){} // the preset is gone: the path is kept as it is
     auto saved=PresetModel::Save(file,entry);
     WritePictures(saved.at("id"),images);
+    WriteModelFiles(saved.at("id"),modelFiles);
     WriteDocument(SkinPresetFile(),file);
     return saved;
 }
@@ -323,7 +547,9 @@ void ExportSkinPreset(const std::string& id,const std::filesystem::path& target)
 {
     std::map<std::string,CharacterSkins::Bytes> images;
     const auto entry=Painted(SkinPresetEntry(id),images);
-    const auto text=PresetModel::ShareDocument(entry,images).dump(1);
+    std::map<std::string,CharacterSkins::Bytes> files;
+    if(PresetModel::HasMesh(entry))files=PresetModelFiles(SkinPresetEntry(id));
+    const auto text=PresetModel::ShareDocument(entry,images,files).dump(1);
     WriteBytes(target,text.data(),text.size());
 }
 
@@ -334,7 +560,8 @@ Json ImportSkinPreset(const std::filesystem::path& source)
     try{document=Json::parse(bytes.begin(),bytes.end());}catch(const std::exception&){throw std::runtime_error("This is not an RE+ skin preset file.");}
     auto parts=PresetModel::ReadShared(document); // an old two-team file gives a spy and a merc preset
     const auto listed=SkinPresets()["entries"];
-    std::vector<std::pair<Json,std::map<std::string,CharacterSkins::Bytes>>> ready;
+    struct Ready { Json entry; std::map<std::string,CharacterSkins::Bytes> images,files; };
+    std::vector<Ready> ready;
     for(auto& shared:parts)
     {
         // A built-in shared as it is carries recipes: paint them, the user entry keeps pictures.
@@ -346,14 +573,15 @@ Json ImportSkinPreset(const std::filesystem::path& source)
         auto taken=[&](const std::string& name){return std::any_of(listed.begin(),listed.end(),[&](const Json& e){
             return Fold(e.value("name",std::string{}))==Fold(name) && e.value("team",std::string{})==entry.value("team",std::string{});});};
         for(int n=2;taken(entry.value("name",std::string{}));++n)entry["name"]=base+" ("+std::to_string(n)+")";
-        ready.push_back({std::move(entry),std::move(shared.images)});
+        ready.push_back({std::move(entry),std::move(shared.images),std::move(shared.files)});
     }
     auto file=SkinPresetDocument();
     Json saved=Json::array();
-    for(auto& [entry,images]:ready)
+    for(auto& [entry,images,files]:ready)
     {
         auto stored=PresetModel::Save(file,entry);
         WritePictures(stored.at("id"),images);
+        WriteModelFiles(stored.at("id"),files);
         saved.push_back(stored);
     }
     WriteDocument(SkinPresetFile(),file);

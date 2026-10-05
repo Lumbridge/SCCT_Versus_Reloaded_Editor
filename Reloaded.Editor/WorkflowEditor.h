@@ -138,10 +138,6 @@ namespace Workflow::Editor
     // Imports an edited image into MyLevel.CharacterSkins for a slot; returns its path.
     // name, when given, is the texture's name; otherwise the slot's, made unique.
     std::string ImportCharacterSkin(const std::string& property, const std::filesystem::path& file, const std::string& name = {});
-    // Imports the hazmat suit RE+ carries into the map package (textures in group Hazmat,
-    // compressed DXT1; the mesh stood up like the stock merc) unless it is there already.
-    // Returns {mesh: its path, goggles: [x,y,z] for the merc's goggle lights, added}.
-    Json AddHazmatSuit();
     // Character Skin presets (CharacterSkinPresetsModel.h): one-team presets, built-ins
     // painted over the stock textures and the user's in skin_presets.json with their
     // pictures in skin_presets\<id> (a version 1 file is split into team presets when
@@ -172,6 +168,10 @@ namespace Workflow::Editor
     // returns the saved entries (two for an old file that dressed both teams).
     void ExportSkinPreset(const std::string& id, const std::filesystem::path& file);
     Json ImportSkinPreset(const std::filesystem::path& file);
+    // A user preset for a team carrying a model: the PSK (rigged to the team's stock
+    // skeleton), one TGA per material named after it beside it, and the goggle offset
+    // from a JSON beside it when there is one. details: {name, category, description}.
+    Json AddSkinPresetModel(const std::string& team, const std::filesystem::path& psk, const Json& details);
     // Generate Minimap (MinimapModel.h): the built BSP faces, static mesh boxes
     // and the LevelInfo's SnapshotCamera / MapFloors. ApplyMinimap imports one
     // TGA per floor as <map package>.Minimap.Floor<n> and sets SnapshotCamera

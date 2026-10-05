@@ -1,9 +1,9 @@
 #pragma once
 #include <windows.h>
 #include "WorkflowModel.h"
-// Character Skin presets: a library of named skins for one team each (built-in camouflage
-// and the user's own), with Spy and Merc lists, applied to the open map one team at a
-// time. RE+ Tools > Character Skin Presets (41181), or Presets... in the Character Skins
+// Character Skin presets: a library of named skins for one team each (built-in camouflage,
+// built-in models such as the hazmat suit, and the user's own skins and models), with Spy
+// and Merc lists, applied to the open map one team at a time. RE+ Tools > Character Skin Presets (41181), or Presets... in the Character Skins
 // window. See CharacterSkinPresetsModel.h.
 namespace CharacterSkinPresetsWindow
 {
