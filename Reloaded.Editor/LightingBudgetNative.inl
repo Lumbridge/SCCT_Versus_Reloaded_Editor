@@ -54,6 +54,7 @@ Json LightingBudgetScene()
     std::map<Address,int> index;
     std::map<int,Address> zoneActors;
     std::map<Address,bool> lightClasses;
+    std::map<std::string,int> strengthFields; // Actor properties: one offset for every class
     for(auto actor:LiveActors())
     {
         // Every actor's PointRegion names its zone actor and number.
@@ -75,6 +76,13 @@ Json LightingBudgetScene()
         Json item={{"path",Path(actor)},{"name",NameOf(actor)},{"zone",zone},
             {"type",flags.type},{"effect",flags.effect},{"static",flags.staticFlag},{"inGame",flags.inGameFlag},
             {"dynamic",flags.dynamicFlag},{"zoneLimited",flags.zoneLimited},{"animA",flags.animA},{"animB",flags.animB}};
+        // How strong the light is, for the "turn off the weakest" fix.
+        for(const char* name:{"LightBrightness","LightRadius"})
+        {
+            auto& offset=strengthFields[name];
+            if(!offset){auto p=Property(actor,name);offset=p?Read<int>(p+0x3c):-1;}
+            item[name[5]=='B'?"brightness":"lightRadius"]=offset>0?Read<float>(actor+offset):0.0f;
+        }
         if(LightingBudget::CountsInGame(flags))
         {
             // The same render sphere the stock intersection check compares.
@@ -135,4 +143,31 @@ size_t SelectActorPaths(const std::vector<std::string>& paths,bool focus)
     if(focus && selected)Exec("CAMERA ALIGN");
     Call(e,0xe4);Redraw();
     return selected;
+}
+size_t LightingBudgetFix(const std::vector<std::string>& paths,int fix)
+{
+    Engine();
+    std::set<std::string> wanted;for(const auto& path:paths)wanted.insert(Fold(path));
+    std::vector<Address> targets;
+    for(auto actor:LiveActors())if(wanted.count(Fold(Path(actor))))targets.push_back(actor);
+    if(targets.empty())return 0;
+    const auto kind=fix==1?LightingBudget::Fix::TurnOff:LightingBudget::Fix::MakeStatic;
+    Transaction transaction(kind==LightingBudget::Fix::TurnOff?"Lighting Budget: turn off lights":"Lighting Budget: make lights static");
+    for(auto actor:targets)
+    {
+        const auto a=Read<unsigned>(actor+kLightFlagsA),b=Read<unsigned>(actor+kLightFlagsB);
+        LightingBudget::LightFlags flags;
+        flags.type=Read<unsigned char>(actor+kLightType);
+        flags.staticFlag=(b&kStaticBit)!=0;flags.inGameFlag=(b&kInGameBit)!=0;flags.dynamicFlag=(a&kDynamicLightBit)!=0;
+        const auto next=LightingBudget::Applied(flags,kind);
+        Modify(actor);
+        Write(actor+kLightType,next.type);
+        Write(actor+kLightFlagsA,(a&~kDynamicLightBit)|(next.dynamicFlag?kDynamicLightBit:0u));
+        Write(actor+kLightFlagsB,(b&~(kStaticBit|kInGameBit))|(next.staticFlag?kStaticBit:0u)|(next.inGameFlag?kInGameBit:0u));
+        Call(actor,0x44); // PostEditChange: the light's render data follows.
+    }
+    transaction.Commit();
+    Redraw();
+    Logger::log("LightingBudget: "+std::string(kind==LightingBudget::Fix::TurnOff?"turned off ":"made static ")+std::to_string(targets.size())+" light(s)");
+    return targets.size();
 }

@@ -8,6 +8,9 @@
 namespace LightingBudget
 {
     constexpr UINT kOpenCommand = 41150;
+    // Fixes for the open window's chosen row: plan one (shown for Apply or
+    // Cancel in the window), carry it out as one undoable step, or drop it.
+    constexpr UINT kMakeStaticCommand = 41151, kTurnOffCommand = 41152, kApplyFixCommand = 41153, kCancelFixCommand = 41154;
     // Stock Build menu commands the warning runs before.
     constexpr UINT kBuildAll = 40038, kRebuildLighting = 40162, kRebuildChangedLighting = 30000;
 

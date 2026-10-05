@@ -3,6 +3,7 @@
 #undef max
 #include "LightingBudget.h"
 #include "LightingBudgetModel.h"
+#include "BudgetWindow.h"
 #include "RebuildAllMaps.h"
 #include "WorkflowEditor.h"
 #include "logger.h"
@@ -22,47 +23,28 @@ const char kSection[] = "LightingBudget";
 enum : int
 {
     kZoneList = 100, kHotspotList, kStatus, kRefresh, kSelect, kFrame, kIntro,
+    kMakeStatic = 120, kTurnOff, kWeakestCount, kWeakestLabel, kApply, kCancelFix,
     kBuildAnyway = 201, kOpenBudget, kQuiet, kPromptText
 };
-
-std::string IniPath()
-{
-    char exe[MAX_PATH] = {};
-    GetModuleFileNameA(nullptr, exe, MAX_PATH);
-    return (std::filesystem::path(exe).parent_path() / "Reloaded_Editor.ini").string();
-}
 
 // [LightingBudget] in Reloaded_Editor.ini; the defaults are the stock checks'
 // own limits and are written once so the section can be found and edited.
 Thresholds LoadThresholds()
 {
-    const auto ini = IniPath();
     const Thresholds defaults;
-    const struct { const char* key; int value; } keys[] = {
-        {"MaxLightsPerLeaf", defaults.leafLights},
-        {"MaxOverlappingLights", defaults.overlap},
-        {"WarnBeforeBuild", defaults.warnBeforeBuild ? 1 : 0},
-        {"WarnLightsPerLeaf", defaults.warnLeafLights},
-        {"WarnOverlappingLights", defaults.warnOverlap}};
-    for (const auto& key : keys)
-    {
-        char value[32] = {};
-        GetPrivateProfileStringA(kSection, key.key, "", value, sizeof(value), ini.c_str());
-        if (!value[0])
-            WritePrivateProfileStringA(kSection, key.key, std::to_string(key.value).c_str(), ini.c_str());
-    }
     Thresholds t;
-    t.leafLights = GetPrivateProfileIntA(kSection, "MaxLightsPerLeaf", defaults.leafLights, ini.c_str());
-    t.overlap = GetPrivateProfileIntA(kSection, "MaxOverlappingLights", defaults.overlap, ini.c_str());
-    t.warnBeforeBuild = GetPrivateProfileIntA(kSection, "WarnBeforeBuild", 1, ini.c_str()) != 0;
-    t.warnLeafLights = GetPrivateProfileIntA(kSection, "WarnLightsPerLeaf", defaults.warnLeafLights, ini.c_str());
-    t.warnOverlap = GetPrivateProfileIntA(kSection, "WarnOverlappingLights", defaults.warnOverlap, ini.c_str());
+    t.leafLights = Budget::IniInt(kSection, "MaxLightsPerLeaf", defaults.leafLights);
+    t.overlap = Budget::IniInt(kSection, "MaxOverlappingLights", defaults.overlap);
+    t.warnBeforeBuild = Budget::IniInt(kSection, "WarnBeforeBuild", defaults.warnBeforeBuild ? 1 : 0) != 0;
+    t.warnLeafLights = Budget::IniInt(kSection, "WarnLightsPerLeaf", defaults.warnLeafLights);
+    t.warnOverlap = Budget::IniInt(kSection, "WarnOverlappingLights", defaults.warnOverlap);
     return ClampThresholds(t);
 }
 
 struct Snapshot
 {
     Report report;
+    std::vector<Light> lights;
     std::vector<std::string> paths, names;
     std::string map;
     unsigned generation = 0;
@@ -92,6 +74,8 @@ Snapshot Measure(const Thresholds& thresholds)
             light.x = p.at(0).get<double>(); light.y = p.at(1).get<double>(); light.z = p.at(2).get<double>();
             light.radius = item.at("radius").get<double>();
         }
+        light.brightness = item.value("brightness", 0.0);
+        light.lightRadius = item.value("lightRadius", 0.0);
         snapshot.paths.push_back(item.at("path").get<std::string>());
         snapshot.names.push_back(light.name);
         lights.push_back(light);
@@ -109,6 +93,7 @@ Snapshot Measure(const Thresholds& thresholds)
     for (const auto& [number, name] : scene.at("zones").items())
         zones[std::stoi(number)] = name.get<std::string>();
     snapshot.report = Analyse(lights, leaves, zones, thresholds, scene.at("leavesKnown").get<bool>());
+    snapshot.lights = lights;
     snapshot.map = scene.at("map").get<std::string>();
     snapshot.generation = scene.at("generation").get<unsigned>();
     const auto& map = snapshot.report.map;
@@ -121,47 +106,6 @@ Snapshot Measure(const Thresholds& thresholds)
     return snapshot;
 }
 
-HWND Control(HWND window, const char* type, const char* text, DWORD style, int id, int x, int y, int width, int height)
-{
-    auto control = CreateWindowExA(0, type, text, WS_CHILD | WS_VISIBLE | style, x, y, width, height, window,
-                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandle(nullptr), nullptr);
-    SendMessage(control, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-    return control;
-}
-
-void Columns(HWND list, const std::vector<std::pair<const char*, int>>& columns)
-{
-    for (int i = 0; i < static_cast<int>(columns.size()); ++i)
-    {
-        LVCOLUMNA column{};
-        column.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_FMT;
-        // Counts read better right-aligned; names and status stay left.
-        const std::string title = columns[i].first;
-        const bool text = !i || title == "Zone" || title == "Status" || title == "Light names";
-        column.fmt = text ? LVCFMT_LEFT : LVCFMT_RIGHT;
-        column.cx = columns[i].second;
-        column.pszText = const_cast<char*>(columns[i].first);
-        SendMessageA(list, LVM_INSERTCOLUMNA, i, reinterpret_cast<LPARAM>(&column));
-    }
-}
-
-void Row(HWND list, int row, LPARAM data, const std::vector<std::string>& cells)
-{
-    LVITEMA item{};
-    item.mask = LVIF_TEXT | LVIF_PARAM;
-    item.iItem = row;
-    item.lParam = data;
-    item.pszText = const_cast<char*>(cells[0].c_str());
-    SendMessageA(list, LVM_INSERTITEMA, 0, reinterpret_cast<LPARAM>(&item));
-    for (int i = 1; i < static_cast<int>(cells.size()); ++i)
-    {
-        LVITEMA cell{};
-        cell.iSubItem = i;
-        cell.pszText = const_cast<char*>(cells[i].c_str());
-        SendMessageA(list, LVM_SETITEMTEXTA, row, reinterpret_cast<LPARAM>(&cell));
-    }
-}
-
 std::string Intro(const Thresholds& t)
 {
     return "Only in-game lights cost frame time: InGame and Dynamic lights are drawn every frame, Static ones are baked by "
@@ -171,7 +115,8 @@ std::string Intro(const Thresholds& t)
            "are guidelines, which every shipped Versus map exceeds (they reach 44 and 33). Zones are flagged above " + std::to_string(t.leafLights) + " per leaf or "
            + std::to_string(t.overlap) + " overlapping; builds warn above " + std::to_string(t.warnLeafLights) + " or "
            + std::to_string(t.warnOverlap) + ". Change them in Reloaded_Editor.ini [LightingBudget]. Click a row to "
-           "select its lights; double-click to frame them too.";
+           "select its lights, double-click to frame them too; right-click it, or use the buttons, to make its in-game "
+           "lights static or turn off the weakest.";
 }
 
 std::string Status(const ZoneReport& zone)
@@ -184,6 +129,16 @@ std::string Status(const ZoneReport& zone)
     return text;
 }
 
+// A fix waiting for Apply: what it changes and how the row stood before.
+struct Pending
+{
+    FixPlan plan;
+    std::string what;
+    std::vector<std::string> paths, rowPaths;
+    int zone = -2;              // the zone row to select again afterwards; -1 the whole map
+    unsigned generation = 0;
+};
+
 // The budget window. One at a time; it keeps the last measurement.
 struct Window
 {
@@ -191,27 +146,50 @@ struct Window
     Snapshot snapshot;
     bool measured = false;
     int lastList = 0, lastRow = -1;
+    bool hasPending = false;
+    Pending pending;
 } budget;
 
-std::vector<std::string> RowPaths(int list, LPARAM data, std::string& what)
+// The lights of a row (indices into the snapshot's light list) and its name.
+std::vector<int> RowLights(int list, LPARAM data, std::string& what, int* zoneNumber = nullptr)
 {
     const auto& report = budget.snapshot.report;
-    std::vector<int> lights;
     if (list == kZoneList)
     {
         const auto& zone = data < 0 ? report.map : report.zones.at(static_cast<size_t>(data));
-        lights = zone.lights;
         what = zone.name;
+        if (zoneNumber) *zoneNumber = data < 0 ? -1 : zone.zone;
+        return zone.lights;
     }
-    else
-    {
-        const auto& hotspot = report.hotspots.at(static_cast<size_t>(data));
-        lights = hotspot.lights;
-        what = HotspotLabel(hotspot);
-    }
+    const auto& hotspot = report.hotspots.at(static_cast<size_t>(data));
+    std::string zone = "Zone " + std::to_string(hotspot.zone);
+    for (const auto& z : report.zones) if (z.zone == hotspot.zone) zone = z.name;
+    what = HotspotLabel(hotspot) + " in " + zone;
+    if (zoneNumber) *zoneNumber = -2;
+    return hotspot.lights;
+}
+
+std::vector<std::string> PathsOf(const std::vector<int>& lights)
+{
     std::vector<std::string> paths;
     for (int light : lights) paths.push_back(budget.snapshot.paths.at(static_cast<size_t>(light)));
     return paths;
+}
+
+std::vector<std::string> RowPaths(int list, LPARAM data, std::string& what)
+{
+    return PathsOf(RowLights(list, data, what));
+}
+
+// How many of these lights count in game in the current snapshot.
+int InGameCount(const std::vector<std::string>& paths)
+{
+    std::set<std::string> wanted;
+    for (const auto& path : paths) wanted.insert(Workflow::Fold(path));
+    int count = 0;
+    for (size_t i = 0; i < budget.snapshot.paths.size(); ++i)
+        if (wanted.count(Workflow::Fold(budget.snapshot.paths[i])) && CountsInGame(budget.snapshot.lights[i].flags)) ++count;
+    return count;
 }
 
 void SetStatus(const std::string& text)
@@ -245,7 +223,7 @@ void Fill()
     };
     auto zoneRow = [&](int row, LPARAM data, const ZoneReport& zone)
     {
-        Row(zones, row, data, {zone.name, std::to_string(zone.total), std::to_string(zone.inGame),
+        Budget::Row(zones, row, data, {zone.name, std::to_string(zone.total), std::to_string(zone.inGame),
             count(zone, Usage::Static), count(zone, Usage::InGame), count(zone, Usage::StaticInGame),
             count(zone, Usage::Dynamic), count(zone, Usage::Unflagged), count(zone, Usage::Off),
             report.leavesKnown ? std::to_string(zone.worstLeaf) : "-", std::to_string(zone.overlap), Status(zone)});
@@ -258,10 +236,24 @@ void Fill()
         std::string zone = "Zone " + std::to_string(hotspot.zone), names;
         for (const auto& z : report.zones) if (z.zone == hotspot.zone) zone = z.name;
         for (int light : hotspot.lights) names += (names.empty() ? "" : ", ") + budget.snapshot.names.at(static_cast<size_t>(light));
-        Row(hotspots, static_cast<int>(i), static_cast<LPARAM>(i), {HotspotLabel(hotspot), zone, std::to_string(hotspot.lights.size()), names});
+        Budget::Row(hotspots, static_cast<int>(i), static_cast<LPARAM>(i), {HotspotLabel(hotspot), zone, std::to_string(hotspot.lights.size()), names});
     }
     SetDlgItemTextA(budget.window, kIntro, Intro(report.thresholds).c_str());
     SetStatus(ReportStatus());
+}
+
+void ShowFix(bool pending)
+{
+    if (!IsWindow(budget.window)) return;
+    for (int id : {kApply, kCancelFix}) EnableWindow(GetDlgItem(budget.window, id), pending);
+}
+
+void CancelFix(bool quiet = false)
+{
+    const bool had = budget.hasPending;
+    budget.hasPending = false;
+    ShowFix(false);
+    if (had && !quiet) SetStatus("Fix cancelled; nothing changed.");
 }
 
 void Refresh()
@@ -269,6 +261,7 @@ void Refresh()
     budget.snapshot = Measure(LoadThresholds());
     budget.measured = true;
     budget.lastRow = -1;
+    CancelFix(true);
     if (IsWindow(budget.window)) Fill();
 }
 
@@ -281,18 +274,105 @@ void Choose(int list, int row, bool frame)
         SetStatus("Another map was opened, so the budget was measured again. Click the row again.");
         return;
     }
-    LVITEMA item{};
-    item.mask = LVIF_PARAM;
-    item.iItem = row;
-    if (!SendMessageA(GetDlgItem(budget.window, list), LVM_GETITEMA, 0, reinterpret_cast<LPARAM>(&item))) return;
+    LPARAM data = 0;
+    if (!Budget::RowData(GetDlgItem(budget.window, list), row, data)) return;
     budget.lastList = list;
     budget.lastRow = row;
+    CancelFix(true);
     std::string what;
-    const auto paths = RowPaths(list, item.lParam, what);
+    const auto paths = RowPaths(list, data, what);
     const auto found = Workflow::Editor::SelectActorPaths(paths, frame);
     std::string text = "Selected " + std::to_string(found) + " light(s) in " + what + (frame && found ? ", framed in the viewports." : ".");
     if (found < paths.size()) text += " " + std::to_string(paths.size() - found) + " no longer exist; Refresh.";
     SetStatus(text);
+}
+
+int WeakestCount()
+{
+    BOOL ok = FALSE;
+    const int count = IsWindow(budget.window) ? static_cast<int>(GetDlgItemInt(budget.window, kWeakestCount, &ok, FALSE)) : 0;
+    return ok ? std::clamp(count, 1, 255) : 1;
+}
+
+// Plans a fix for the chosen row and asks for it in the status line; Apply
+// carries it out. Nothing changes until then.
+void ProposeFix(Fix fix)
+{
+    if (!budget.measured || budget.lastRow < 0) { SetStatus("Click a zone or a hotspot first."); return; }
+    if (budget.snapshot.generation != Workflow::Editor::MapGeneration())
+    {
+        Refresh();
+        SetStatus("Another map was opened, so the budget was measured again. Choose the row again.");
+        return;
+    }
+    LPARAM data = 0;
+    if (!Budget::RowData(GetDlgItem(budget.window, budget.lastList), budget.lastRow, data)) return;
+    Pending pending;
+    const auto lights = RowLights(budget.lastList, data, pending.what, &pending.zone);
+    pending.plan = fix == Fix::MakeStatic ? PlanMakeStatic(budget.snapshot.lights, lights)
+                                          : PlanTurnOffWeakest(budget.snapshot.lights, lights, WeakestCount());
+    pending.paths = PathsOf(pending.plan.lights);
+    pending.rowPaths = PathsOf(lights);
+    pending.generation = budget.snapshot.generation;
+    const auto question = Confirmation(pending.plan, pending.what, budget.snapshot.lights);
+    budget.hasPending = !pending.plan.Empty();
+    budget.pending = std::move(pending);
+    ShowFix(budget.hasPending);
+    SetStatus(budget.hasPending ? question + " Apply or Cancel." : question);
+}
+
+void ApplyFix()
+{
+    if (!budget.hasPending) { SetStatus("Choose Make Lights Static or Turn Off Weakest first."); return; }
+    const auto pending = budget.pending;
+    CancelFix(true);
+    if (pending.generation != Workflow::Editor::MapGeneration())
+    {
+        Refresh();
+        SetStatus("Another map was opened, so nothing was changed. Choose the row again.");
+        return;
+    }
+    const int before = InGameCount(pending.rowPaths);
+    const auto changed = Workflow::Editor::LightingBudgetFix(pending.paths, pending.plan.fix == Fix::TurnOff ? 1 : 0);
+    Refresh();
+    if (pending.zone >= -1)
+    {
+        // Keep the zone row chosen so the next fix applies to it.
+        LPARAM data = -1;
+        const auto& zones = budget.snapshot.report.zones;
+        for (size_t i = 0; i < zones.size(); ++i) if (zones[i].zone == pending.zone) data = static_cast<LPARAM>(i);
+        auto list = GetDlgItem(budget.window, kZoneList);
+        if ((pending.zone == -1 || data >= 0) && Budget::SelectRowByData(list, data))
+        {
+            budget.lastList = kZoneList;
+            budget.lastRow = ListView_GetNextItem(list, -1, LVNI_SELECTED);
+        }
+    }
+    SetStatus(Done(pending.plan, changed, pending.what, before, InGameCount(pending.rowPaths)));
+}
+
+// Right-click on a row: the same actions as the buttons.
+void RowMenu(HWND window, int list, int row)
+{
+    if (row < 0) return;
+    auto control = GetDlgItem(window, list);
+    ListView_SetItemState(control, row, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+    budget.lastList = list;
+    budget.lastRow = row;
+    HMENU menu = CreatePopupMenu();
+    AppendMenuA(menu, MF_STRING, kSelect, "&Select Lights");
+    AppendMenuA(menu, MF_STRING, kFrame, "Select and &Frame");
+    AppendMenuA(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuA(menu, MF_STRING, kMakeStatic, "Make These Lights S&tatic...");
+    const std::string weakest = "Turn Off the &Weakest " + std::to_string(WeakestCount()) + "...";
+    AppendMenuA(menu, MF_STRING, kTurnOff, weakest.c_str());
+    POINT at{};
+    GetCursorPos(&at);
+    const int choice = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, at.x, at.y, 0, window, nullptr);
+    DestroyMenu(menu);
+    if (choice == kSelect || choice == kFrame) Choose(list, row, choice == kFrame);
+    else if (choice == kMakeStatic) ProposeFix(Fix::MakeStatic);
+    else if (choice == kTurnOff) ProposeFix(Fix::TurnOff);
 }
 
 void Layout(HWND window)
@@ -300,12 +380,19 @@ void Layout(HWND window)
     RECT r{};
     GetClientRect(window, &r);
     const int w = r.right - 24, h = r.bottom;
-    const int top = 82, listsHeight = h - top - 48 - 34;
+    const int top = 82, listsHeight = h - top - 48 - 34 - 34;
     const int zonesHeight = listsHeight * 3 / 5, hotspotTop = top + zonesHeight + 22;
     MoveWindow(GetDlgItem(window, kIntro), 12, 8, w, top - 12, TRUE);
     MoveWindow(GetDlgItem(window, kZoneList), 12, top, w, zonesHeight, TRUE);
     MoveWindow(GetDlgItem(window, 110), 12, top + zonesHeight + 4, w, 16, TRUE);
-    MoveWindow(GetDlgItem(window, kHotspotList), 12, hotspotTop, w, h - 82 - hotspotTop, TRUE);
+    MoveWindow(GetDlgItem(window, kHotspotList), 12, hotspotTop, w, h - 116 - hotspotTop, TRUE);
+    // The fixes for the chosen row.
+    MoveWindow(GetDlgItem(window, kMakeStatic), 12, h - 108, 130, 26, TRUE);
+    MoveWindow(GetDlgItem(window, kTurnOff), 150, h - 108, 120, 26, TRUE);
+    MoveWindow(GetDlgItem(window, kWeakestCount), 274, h - 106, 40, 22, TRUE);
+    MoveWindow(GetDlgItem(window, kWeakestLabel), 320, h - 103, 80, 18, TRUE);
+    MoveWindow(GetDlgItem(window, kApply), 408, h - 108, 80, 26, TRUE);
+    MoveWindow(GetDlgItem(window, kCancelFix), 496, h - 108, 80, 26, TRUE);
     MoveWindow(GetDlgItem(window, kStatus), 12, h - 76, w, 34, TRUE);
     MoveWindow(GetDlgItem(window, kRefresh), 12, h - 36, 90, 26, TRUE);
     MoveWindow(GetDlgItem(window, kSelect), 110, h - 36, 110, 26, TRUE);
@@ -321,20 +408,26 @@ LRESULT CALLBACK BudgetProc(HWND window, UINT message, WPARAM w, LPARAM l)
         {
         case WM_CREATE:
         {
-            Control(window, "STATIC", "", 0, kIntro, 0, 0, 0, 0);
-            auto zones = Control(window, WC_LISTVIEWA, "", WS_TABSTOP | WS_BORDER | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS, kZoneList, 0, 0, 0, 0);
-            ListView_SetExtendedListViewStyle(zones, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
-            Columns(zones, {{"Zone", 170}, {"Lights", 50}, {"In game", 58}, {"Static", 50}, {"InGame", 55}, {"Static/InGame", 84},
-                            {"Dynamic", 58}, {"Unflagged", 64}, {"Off", 36}, {"Worst leaf", 66}, {"Overlap", 56}, {"Status", 100}});
-            Control(window, "STATIC", "Hotspots over budget (worst first): BSP leaves and groups of overlapping in-game lights", 0, 110, 0, 0, 0, 0);
-            auto hotspots = Control(window, WC_LISTVIEWA, "", WS_TABSTOP | WS_BORDER | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS, kHotspotList, 0, 0, 0, 0);
-            ListView_SetExtendedListViewStyle(hotspots, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
-            Columns(hotspots, {{"Hotspot", 110}, {"Zone", 160}, {"Lights", 50}, {"Light names", 520}});
-            Control(window, "STATIC", "", 0, kStatus, 0, 0, 0, 0);
-            Control(window, "BUTTON", "&Refresh", WS_TABSTOP, kRefresh, 0, 0, 0, 0);
-            Control(window, "BUTTON", "&Select Lights", WS_TABSTOP, kSelect, 0, 0, 0, 0);
-            Control(window, "BUTTON", "Select and &Frame", WS_TABSTOP, kFrame, 0, 0, 0, 0);
-            Control(window, "BUTTON", "Close", WS_TABSTOP, IDCANCEL, 0, 0, 0, 0);
+            Budget::Control(window, "STATIC", "", 0, kIntro, 0, 0, 0, 0);
+            Budget::Columns(Budget::ReportList(window, kZoneList),
+                {{"Zone", 170}, {"Lights", 50}, {"In game", 58}, {"Static", 50}, {"InGame", 55}, {"Static/InGame", 84},
+                 {"Dynamic", 58}, {"Unflagged", 64}, {"Off", 36}, {"Worst leaf", 66}, {"Overlap", 56}, {"Status", 100}},
+                {"Zone", "Status"});
+            Budget::Control(window, "STATIC", "Hotspots over budget (worst first): BSP leaves and groups of overlapping in-game lights", 0, 110, 0, 0, 0, 0);
+            Budget::Columns(Budget::ReportList(window, kHotspotList), {{"Hotspot", 110}, {"Zone", 160}, {"Lights", 50}, {"Light names", 520}},
+                {"Zone", "Light names"});
+            Budget::Control(window, "STATIC", "", 0, kStatus, 0, 0, 0, 0);
+            Budget::Control(window, "BUTTON", "&Refresh", WS_TABSTOP, kRefresh, 0, 0, 0, 0);
+            Budget::Control(window, "BUTTON", "&Select Lights", WS_TABSTOP, kSelect, 0, 0, 0, 0);
+            Budget::Control(window, "BUTTON", "Select and &Frame", WS_TABSTOP, kFrame, 0, 0, 0, 0);
+            Budget::Control(window, "BUTTON", "Make Lights S&tatic...", WS_TABSTOP, kMakeStatic, 0, 0, 0, 0);
+            Budget::Control(window, "BUTTON", "Turn Off &Weakest...", WS_TABSTOP, kTurnOff, 0, 0, 0, 0);
+            Budget::Control(window, "EDIT", "1", WS_TABSTOP | WS_BORDER | ES_NUMBER | ES_RIGHT, kWeakestCount, 0, 0, 0, 0);
+            SendDlgItemMessageA(window, kWeakestCount, EM_LIMITTEXT, 3, 0);
+            Budget::Control(window, "STATIC", "light(s)", 0, kWeakestLabel, 0, 0, 0, 0);
+            Budget::Control(window, "BUTTON", "&Apply", WS_TABSTOP | WS_DISABLED, kApply, 0, 0, 0, 0);
+            Budget::Control(window, "BUTTON", "&Cancel", WS_TABSTOP | WS_DISABLED, kCancelFix, 0, 0, 0, 0);
+            Budget::Control(window, "BUTTON", "Close", WS_TABSTOP, IDCANCEL, 0, 0, 0, 0);
             Layout(window);
             return 0;
         }
@@ -342,7 +435,7 @@ LRESULT CALLBACK BudgetProc(HWND window, UINT message, WPARAM w, LPARAM l)
             Layout(window);
             return 0;
         case WM_GETMINMAXINFO:
-            reinterpret_cast<MINMAXINFO*>(l)->ptMinTrackSize = {640, 420};
+            reinterpret_cast<MINMAXINFO*>(l)->ptMinTrackSize = {640, 460};
             return 0;
         case WM_NOTIFY:
         {
@@ -351,6 +444,20 @@ LRESULT CALLBACK BudgetProc(HWND window, UINT message, WPARAM w, LPARAM l)
             {
                 auto activate = reinterpret_cast<NMITEMACTIVATE*>(l);
                 Choose(static_cast<int>(header->idFrom), activate->iItem, header->code == NM_DBLCLK);
+            }
+            else if ((header->idFrom == kZoneList || header->idFrom == kHotspotList) && header->code == NM_RCLICK)
+                RowMenu(window, static_cast<int>(header->idFrom), reinterpret_cast<NMITEMACTIVATE*>(l)->iItem);
+            else if ((header->idFrom == kZoneList || header->idFrom == kHotspotList) && header->code == LVN_ITEMCHANGED)
+            {
+                // A row chosen from the keyboard is the one the buttons act on.
+                auto change = reinterpret_cast<NMLISTVIEW*>(l);
+                if ((change->uNewState & LVIS_SELECTED) && !(change->uOldState & LVIS_SELECTED)
+                    && !(budget.lastList == static_cast<int>(header->idFrom) && budget.lastRow == change->iItem))
+                {
+                    budget.lastList = static_cast<int>(header->idFrom);
+                    budget.lastRow = change->iItem;
+                    CancelFix(true);
+                }
             }
             return 0;
         }
@@ -362,6 +469,10 @@ LRESULT CALLBACK BudgetProc(HWND window, UINT message, WPARAM w, LPARAM l)
                 if (budget.lastRow < 0) SetStatus("Click a zone or a hotspot first.");
                 else Choose(budget.lastList, budget.lastRow, LOWORD(w) == kFrame);
                 return 0;
+            case kMakeStatic: ProposeFix(Fix::MakeStatic); return 0;
+            case kTurnOff: ProposeFix(Fix::TurnOff); return 0;
+            case kApply: ApplyFix(); return 0;
+            case kCancelFix: CancelFix(); return 0;
             case IDCANCEL: DestroyWindow(window); return 0;
             }
             break;
@@ -394,15 +505,9 @@ void Show(HWND owner)
     }
     INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_LISTVIEW_CLASSES | ICC_STANDARD_CLASSES};
     InitCommonControlsEx(&controls);
-    WNDCLASSA wc{};
-    wc.lpfnWndProc = BudgetProc;
-    wc.hInstance = GetModuleHandle(nullptr);
-    wc.lpszClassName = "ReloadedLightingBudget";
-    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
-    RegisterClassA(&wc);
-    budget.window = CreateWindowExA(WS_EX_TOOLWINDOW, wc.lpszClassName, kTitle, WS_OVERLAPPEDWINDOW & ~WS_MINIMIZEBOX,
-                                    CW_USEDEFAULT, CW_USEDEFAULT, 900, 640, owner, nullptr, wc.hInstance, nullptr);
+    Budget::RegisterClassOnce("ReloadedLightingBudget", BudgetProc);
+    budget.window = CreateWindowExA(WS_EX_TOOLWINDOW, "ReloadedLightingBudget", kTitle, WS_OVERLAPPEDWINDOW & ~WS_MINIMIZEBOX,
+                                    CW_USEDEFAULT, CW_USEDEFAULT, 900, 680, owner, nullptr, GetModuleHandle(nullptr), nullptr);
     if (!budget.window) throw std::runtime_error("Could not open the Lighting Budget window.");
     Fill();
     ShowWindow(budget.window, SW_SHOW);
@@ -432,11 +537,11 @@ LRESULT CALLBACK PromptProc(HWND window, UINT message, WPARAM w, LPARAM l)
     {
         RECT r{};
         GetClientRect(window, &r);
-        Control(window, "STATIC", prompt->text.c_str(), 0, kPromptText, 14, 12, r.right - 28, r.bottom - 92);
-        Control(window, "BUTTON", "Don't warn again for this map this session", WS_TABSTOP | BS_AUTOCHECKBOX, kQuiet, 14, r.bottom - 74, r.right - 28, 20);
-        Control(window, "BUTTON", "&Build anyway", WS_TABSTOP | BS_DEFPUSHBUTTON, kBuildAnyway, r.right - 384, r.bottom - 40, 110, 28);
-        Control(window, "BUTTON", "&Open Lighting Budget", WS_TABSTOP, kOpenBudget, r.right - 266, r.bottom - 40, 150, 28);
-        Control(window, "BUTTON", "Cancel", WS_TABSTOP, IDCANCEL, r.right - 108, r.bottom - 40, 94, 28);
+        Budget::Control(window, "STATIC", prompt->text.c_str(), 0, kPromptText, 14, 12, r.right - 28, r.bottom - 92);
+        Budget::Control(window, "BUTTON", "Don't warn again for this map this session", WS_TABSTOP | BS_AUTOCHECKBOX, kQuiet, 14, r.bottom - 74, r.right - 28, 20);
+        Budget::Control(window, "BUTTON", "&Build anyway", WS_TABSTOP | BS_DEFPUSHBUTTON, kBuildAnyway, r.right - 384, r.bottom - 40, 110, 28);
+        Budget::Control(window, "BUTTON", "&Open Lighting Budget", WS_TABSTOP, kOpenBudget, r.right - 266, r.bottom - 40, 150, 28);
+        Budget::Control(window, "BUTTON", "Cancel", WS_TABSTOP, IDCANCEL, r.right - 108, r.bottom - 40, 94, 28);
         SetFocus(GetDlgItem(window, kBuildAnyway));
         return 0;
     }
@@ -523,6 +628,24 @@ void Open(HWND owner)
 
 bool HandleCommand(UINT command)
 {
+    if (command == kMakeStaticCommand || command == kTurnOffCommand || command == kApplyFixCommand || command == kCancelFixCommand)
+    {
+        // The fixes act on the window's chosen row; they report in its
+        // status line, never in a message box.
+        if (!IsWindow(budget.window)) return true;
+        try
+        {
+            if (command == kMakeStaticCommand) ProposeFix(Fix::MakeStatic);
+            else if (command == kTurnOffCommand) ProposeFix(Fix::TurnOff);
+            else if (command == kApplyFixCommand) ApplyFix();
+            else CancelFix();
+        }
+        catch (const std::exception& e)
+        {
+            SetStatus(e.what());
+        }
+        return true;
+    }
     if (command != kOpenCommand) return false;
     try
     {

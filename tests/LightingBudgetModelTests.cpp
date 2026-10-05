@@ -141,5 +141,59 @@ int main()
     assert(shared.Over()); // the map as a whole has a group of three
 
     assert(FoldKey("Maps\\MyMap.SDC") == "maps\\mymap.sdc");
+
+    // Fixes. Make static clears the in-game and dynamic flags and sets the
+    // static one; turning off sets LightType None.
+    LightFlags flags = InGameFlags();
+    flags.dynamicFlag = true;
+    auto made = Applied(flags, Fix::MakeStatic);
+    assert(made.type == 1 && made.staticFlag && !made.inGameFlag && !made.dynamicFlag);
+    assert(Classify(made) == Usage::Static && !CountsInGame(made));
+    auto off = Applied(flags, Fix::TurnOff);
+    assert(off.type == 0 && Classify(off) == Usage::Off && !CountsInGame(off));
+    // LightEffect 22 keeps a light dynamic however its flags are set.
+    flags.effect = 22;
+    assert(CountsInGame(Applied(flags, Fix::MakeStatic)));
+
+    std::vector<Light> row{
+        At("Dim", 1, 0, 100), At("Bright", 1, 0, 100), At("Baked", 1, 0, 100, StaticFlags()),
+        At("Flicker", 1, 0, 100), At("Mid", 1, 0, 100), At("Twin", 1, 0, 100)};
+    row[0].brightness = 10; row[0].lightRadius = 10;   // 100
+    row[1].brightness = 200; row[1].lightRadius = 64;  // 12800
+    row[3].flags.effect = 22;                           // stays dynamic
+    row[3].brightness = 1; row[3].lightRadius = 1;      // weakest of all
+    row[4].brightness = -50; row[4].lightRadius = 20;  // 1000: negative brightness still counts as strength
+    row[5].brightness = 10; row[5].lightRadius = 10;   // 100, ties with Dim
+    const std::vector<int> all{0, 1, 2, 3, 4, 5, 5, 99};
+    auto plan = PlanMakeStatic(row, all);
+    assert(plan.fix == Fix::MakeStatic && (plan.lights == std::vector<int>{0, 1, 4, 5}));
+    assert(plan.stillDynamic == 1 && plan.notInGame == 1 && !plan.Empty());
+    auto question = Confirmation(plan, "Lobby", row);
+    assert(question.find("Make 4 in-game lights in Lobby static") != std::string::npos);
+    assert(question.find("Dim, Bright, Mid, Twin.") != std::string::npos);
+    assert(question.find("1 light stays dynamic") != std::string::npos);
+    auto done = Done(plan, 4, "Lobby", 5, 1);
+    assert(done.find("Made 4 lights static in Lobby as one undoable step") != std::string::npos);
+    assert(done.find("5 -> 1") != std::string::npos && done.find("Rebuild lighting") != std::string::npos);
+    assert(Done(plan, 3, "Lobby", 5, 2).find("1 no longer exist") != std::string::npos);
+
+    // The weakest two in-game lights: Flicker (1), then Dim before Twin on a tie.
+    plan = PlanTurnOffWeakest(row, all, 2);
+    assert(plan.fix == Fix::TurnOff && (plan.lights == std::vector<int>{3, 0}) && plan.notInGame == 1);
+    assert(Confirmation(plan, "Leaf 7", row).find("Turn off the 2 weakest in-game lights in Leaf 7") != std::string::npos);
+    assert(Done(plan, 2, "Leaf 7", 5, 3).find("Turned off 2 lights in Leaf 7") != std::string::npos);
+    assert(Done(plan, 2, "Leaf 7", 5, 3).find("Rebuild") == std::string::npos);
+    assert((PlanTurnOffWeakest(row, all, 9).lights == std::vector<int>{3, 0, 5, 4, 1}));
+    assert(PlanTurnOffWeakest(row, all, -1).Empty());
+    // Nothing to do: only baked lights, or only effect-22 ones.
+    plan = PlanMakeStatic(row, {2});
+    assert(plan.Empty() && Confirmation(plan, "Cellar", row).find("No light here is drawn in game") != std::string::npos);
+    plan = PlanMakeStatic(row, {3});
+    assert(plan.Empty() && Confirmation(plan, "Cellar", row).find("LightEffect 22") != std::string::npos);
+    assert(Strength(row[4]) == 1000);
+    // Long lists name six lights and count the rest.
+    std::vector<Light> many(8, At("L", 1, 0, 100));
+    auto longQuestion = Confirmation(PlanMakeStatic(many, {0, 1, 2, 3, 4, 5, 6, 7}), "Hall", many);
+    assert(longQuestion.find("L, L, L, L, L, L and 2 more.") != std::string::npos);
     return 0;
 }

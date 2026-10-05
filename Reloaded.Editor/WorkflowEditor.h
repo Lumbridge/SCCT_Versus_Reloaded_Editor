@@ -116,6 +116,10 @@ namespace Workflow::Editor
     // Selects exactly the live actors with these paths, one pass over the
     // level; focus frames them in the viewports. Returns how many were found.
     size_t SelectActorPaths(const std::vector<std::string>& paths, bool focus);
+    // Lighting Budget fixes, one undoable transaction: fix 0 makes the lights
+    // static, 1 turns them off (LightingBudget::Applied). Returns how many of
+    // the paths were found and changed.
+    size_t LightingBudgetFix(const std::vector<std::string>& paths, int fix);
     // Security devices: creation, the motion sensor with its volume, and wiring.
     Json SecurityActors();
     Json Lights();
