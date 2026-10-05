@@ -25,6 +25,7 @@
 #include "StageModel.h"
 #include "EmitterPreview.h"
 #include "MeasureTool.h"
+#include "PlacementTools.h"
 #include "EntryThumbnailModel.h"
 #include "LevelSnapshot.h"
 #include "logger.h"
@@ -866,6 +867,7 @@ namespace
                 }
                 catch(const std::exception&) { /* Only available for valid editable-brush selections. */ }
                 EditorExtras::AppendActorMenu(sub);
+                PlacementTools::AppendActorMenu(sub);
             }
             // Brush/surface context resource: the native menu is the useful
             // target when the user right-clicks an existing BSP brush face.
@@ -941,6 +943,7 @@ bool HandleCommand(UINT command)
         return true;
     }
     if(MeasureTool::HandleCommand(command))return true;
+    if(PlacementTools::HandleCommand(command))return true;
     if(LightingBudget::HandleCommand(command))return true;
     if(command==StoreyFilter::kOpen)
     {
@@ -1093,6 +1096,8 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="design.flags"){Editor::DesignSetFlags(q.at("members"),q.value("hidden",-1),q.value("locked",-1));result=true;}
         else if(op=="design.group"){Editor::DesignGroupMembers(q.at("members"),q.at("group"),q.at("action"));result=true;}
         else if(op=="design.translate"){Editor::DesignTranslate(q.at("members"),q.at("delta").get<Vector>());result=true;}
+        else if(op=="placement.selection")result=Editor::PlacementSelection();
+        else if(op=="placement.drop")result=Editor::PlacementDrop(q.value("surface",0),q.value("align",false));
         else if(op=="design.lift")result=Editor::CreateLift(q.at("position").get<Vector>(),q.value("width",192.0),q.value("length",192.0),q.value("thickness",16.0),q.at("rise"),q.value("moveTime",2.0));
         else if(op=="security.actors")result=Editor::SecurityActors();
         else if(op=="light.list")result=Editor::Lights();

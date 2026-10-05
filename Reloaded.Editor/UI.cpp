@@ -14,6 +14,7 @@
 #include "FavoritesWindow.h"
 #include "MapPackageDialog.h"
 #include "EditorExtras.h"
+#include "PlacementTools.h"
 
 #include "Version.h"
 
@@ -158,6 +159,7 @@ static void InjectReloadedMenuItems(HWND frame)
     }
 
     UndoHistory::InstallMenu(bar); // Edit > Undo History, after Redo
+    PlacementTools::InstallMenu(bar); // RE+ Tools > Placement
 
     HMENU view = SubMenuWithCommand(bar, 40065); // "Advanced Options" lives in View
     if (view)

@@ -197,6 +197,9 @@
     <ClInclude Include="MapDesignModel.h" />
     <ClInclude Include="MeasureModel.h" />
     <ClInclude Include="MeasureTool.h" />
+    <ClInclude Include="PlacementModel.h" />
+    <ClInclude Include="PlacementNative.inl" />
+    <ClInclude Include="PlacementTools.h" />
     <ClInclude Include="SecurityModel.h" />
     <ClInclude Include="SecurityNative.inl" />
     <ClInclude Include="SecurityPanel.inl" />
@@ -322,6 +325,7 @@
     <ClCompile Include="DeintersectFix.cpp" />
     <ClCompile Include="MapUnlock.cpp" />
     <ClCompile Include="MeasureTool.cpp" />
+    <ClCompile Include="PlacementTools.cpp" />
     <ClCompile Include="MapRecovery.cpp" />
     <ClCompile Include="RecoveredBspLighting.cpp" />
     <ClCompile Include="RecoveredBspGeometry.cpp">

@@ -53,6 +53,7 @@ namespace
     bool popupSurface = false;
     int popupHidden = -1;
     bool overlayFaulted = false;
+    std::vector<ToolLine> toolLines;
 
     bool Copy(void* destination, const void* source, size_t size)
     {
@@ -243,6 +244,13 @@ namespace
         const auto camera = Read<Address>(viewport + 0x30);
         const auto location = Read<std::array<float, 3>>(camera + 0x80);
         view.camera = { location[0], location[1], location[2] };
+        if (!toolLines.empty() && view.width > 0 && view.height > 0)
+        {
+            std::vector<std::pair<std::pair<Vector, Vector>, uint32_t>> lines;
+            lines.reserve(toolLines.size());
+            for (const auto& line : toolLines) lines.push_back({ { line.from, line.to }, line.colour });
+            DrawLines(viewport, view, lines);
+        }
         if (!session.start || !sessionLevel || CurrentLevel() != sessionLevel || view.width <= 0 || view.height <= 0) return;
 
         std::vector<std::pair<std::pair<Vector, Vector>, uint32_t>> lines;
@@ -361,6 +369,11 @@ bool HandleCommand(UINT command)
     }
     catch (const std::exception& e) { MessageBoxA(GetActiveWindow(), e.what(), "Measure", MB_OK | MB_ICONINFORMATION); }
     return true;
+}
+
+void SetToolLines(std::vector<ToolLine> lines)
+{
+    toolLines = std::move(lines);
 }
 
 bool ViewportMessage(void* viewport, UINT message, WPARAM wParam, LPARAM lParam)
