@@ -17,6 +17,7 @@
 #include "RealtimeFix.h"
 #include "ReloadedOptions.h"
 #include "DialogFix.h"
+#include "BrowserWindowClose.h"
 #include "BrowserOpenDir.h"
 #include "AnimationBrowser.h"
 #include "AmbientSoundZone.h"
@@ -174,6 +175,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     StaticMeshBrowserFavorites::Initialize();
     AssetNameGloss::Initialize();
     FavoritesWindow::Initialize();
+    BrowserWindowClose::Initialize();
     BspTextureClipboard::Initialize();
     GEWireframeFix::Initialize();
     LightmapFix::Initialize();

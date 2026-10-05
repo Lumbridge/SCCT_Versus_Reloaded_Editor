@@ -1863,10 +1863,11 @@ namespace
     }
 
     // Brings the browser window up on its Favorites tab; false when it has no
-    // tabs (every browser floats on its own) or is gone. Once its window has
-    // been closed (destroyed), the stock View > Show ... Browser commands
-    // crash the editor in WBrowserMaster::ShowBrowser, so it is not asked to
-    // come back then.
+    // tabs (every browser floats on its own) or is gone. Closing the window
+    // only hides it (BrowserWindowClose), and a hidden one comes back through
+    // the View menu. Were it ever destroyed, the stock View > Show ... Browser
+    // commands would crash the editor in WBrowserMaster::ShowBrowser, so it is
+    // not asked to come back then.
     bool ShowTab()
     {
         if (!master || !IsWindow(master)) return false;
