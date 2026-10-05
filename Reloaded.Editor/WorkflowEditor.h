@@ -2,6 +2,8 @@
 #include "WorkflowModel.h"
 #include <memory>
 
+namespace MapCheck { struct Scene; struct Settings; }
+
 namespace Workflow::Editor
 {
     void Initialize();
@@ -99,6 +101,12 @@ namespace Workflow::Editor
     // in Leaves does, then restored to the build's lists) and the zone names.
     // See LightingBudgetModel.h.
     Json LightingBudgetScene();
+    // Map Check (MapCheckModel.h): the BSP as last built, zones, zone portals,
+    // actors with the editor's encroachment test, and the stock CheckForErrors
+    // entries (when settings.stockChecks).
+    MapCheck::Scene MapCheckScene(const MapCheck::Settings& settings);
+    // Selects the actors (framing them when asked) and the BSP surfaces of a row.
+    size_t SelectMapCheckRow(const std::vector<std::string>& actors, const std::vector<int>& surfaces, bool frame);
     // Character Skins (CharacterSkinsModel.h): the map's Character Skins actor.
     // Settings: {placed, legacy, extra, compiled, slots:{SpyBody,...: material path or ""},
     // models:{SpyModel,...: skeletal mesh path or ""}, goggles:{SpyGoggleOffset,...: [x,y,z]}}.
