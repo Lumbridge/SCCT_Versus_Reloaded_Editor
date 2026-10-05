@@ -2,6 +2,8 @@
 #include "WorkflowModel.h"
 #include <memory>
 
+namespace Minimap { struct Camera; struct Scene; }
+
 namespace Workflow::Editor
 {
     void Initialize();
@@ -113,6 +115,13 @@ namespace Workflow::Editor
     Json ExportDefaultCharacterSkins(const std::filesystem::path& folder);
     // Imports an edited image into MyLevel.CharacterSkins for a slot; returns its path.
     std::string ImportCharacterSkin(const std::string& property, const std::filesystem::path& file);
+    // Generate Minimap (MinimapModel.h): the built BSP faces, static mesh boxes
+    // and the LevelInfo's SnapshotCamera / MapFloors. ApplyMinimap imports one
+    // TGA per floor as <map package>.Minimap.Floor<n> and sets SnapshotCamera
+    // and MapFloors (FloorZ, texture) in one Undo step; returns {floors:[{z, texture}],
+    // unused:[Floor textures past the new count, left from an earlier run]}.
+    Minimap::Scene MinimapScene();
+    Json ApplyMinimap(const Minimap::Camera& camera, const std::vector<std::pair<double, std::filesystem::path>>& images);
     // Selects exactly the live actors with these paths, one pass over the
     // level; focus frames them in the viewports. Returns how many were found.
     size_t SelectActorPaths(const std::vector<std::string>& paths, bool focus);
