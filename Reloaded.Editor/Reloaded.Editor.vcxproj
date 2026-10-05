@@ -180,6 +180,9 @@
     <ClInclude Include="WorkflowEditor.h" />
     <ClInclude Include="WorkflowTools.h" />
     <ClInclude Include="EmitterPreview.h" />
+    <ClInclude Include="CharacterSkinsImage.h" />
+    <ClInclude Include="CharacterSkinsModel.h" />
+    <ClInclude Include="CharacterSkinsWindow.h" />
     <ClInclude Include="EmitterLibraryWindow.h" />
     <ClInclude Include="EmitterPreviewModel.h" />
     <ClInclude Include="MagicEventWorkbench.h" />
@@ -280,6 +283,7 @@
     <ClCompile Include="WorkflowGraph.cpp" />
     <ClCompile Include="WorkflowTools.cpp" />
     <ClCompile Include="EmitterPreview.cpp" />
+    <ClCompile Include="CharacterSkinsWindow.cpp" />
     <ClCompile Include="EmitterLibraryWindow.cpp" />
     <ClCompile Include="MapAuthoringDialog.cpp" />
     <ClCompile Include="MagicEventWorkbench.cpp" />

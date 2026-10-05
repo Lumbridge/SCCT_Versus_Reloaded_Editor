@@ -99,6 +99,20 @@ namespace Workflow::Editor
     // in Leaves does, then restored to the build's lists) and the zone names.
     // See LightingBudgetModel.h.
     Json LightingBudgetScene();
+    // Character Skins (CharacterSkinsModel.h): the map's Character Skins actor.
+    // Settings: {placed, legacy, extra, compiled, slots:{SpyBody,...: material path or ""},
+    // models:{SpyModel,...: skeletal mesh path or ""}, goggles:{SpyGoggleOffset,...: [x,y,z]}}.
+    // Apply compiles the class into the map package when needed, replaces an earlier
+    // version's actor, places the actor once and sets its values in one Undo step;
+    // Remove deletes the actor (of any version).
+    Json CharacterSkinSettings();
+    Json LoadedSkeletalMeshes();
+    Json ApplyCharacterSkins(const Json& slots, const Json& models, const Json& goggles);
+    void RemoveCharacterSkins();
+    // Writes the stock textures of the four slots as 32-bit TGA files (SpyBody.tga, ...).
+    Json ExportDefaultCharacterSkins(const std::filesystem::path& folder);
+    // Imports an edited image into MyLevel.CharacterSkins for a slot; returns its path.
+    std::string ImportCharacterSkin(const std::string& property, const std::filesystem::path& file);
     // Selects exactly the live actors with these paths, one pass over the
     // level; focus frames them in the viewports. Returns how many were found.
     size_t SelectActorPaths(const std::vector<std::string>& paths, bool focus);

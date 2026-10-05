@@ -13,6 +13,8 @@
 #include "StageModel.h"
 #include "EntryThumbnailModel.h"
 #include "LightingBudgetModel.h"
+#include "CharacterSkinsModel.h"
+#include "CharacterSkinsImage.h"
 #include "logger.h"
 #include "MapRecovery.h"
 #include "BspDiagnostics.h"
@@ -1421,4 +1423,5 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "StageNative.inl"
 #include "EmitterLibraryNative.inl"
 #include "LightingBudgetNative.inl"
+#include "CharacterSkinsNative.inl"
 }

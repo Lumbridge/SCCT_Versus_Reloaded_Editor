@@ -1684,11 +1684,41 @@ JMP_HOOK(HOOK_EXPORT_DISPATCH, TB_ExportDispatchHook)
     }
 }
 
+// The browser's refresh (0x10E81400) reloads each listed package with
+// UObject::LoadPackage, and a map with its own textures lists MyLevel, which
+// has no file. That load throws past its BeginLoad, so check(GObjBeginLoadCount
+// ==0) fires on the next tick: every refresh of such a map, including the one
+// sent while the map loads. MyLevel is always in memory with its map; skip it.
+#define TB_REFRESH_LOAD_PACKAGE_CALL 0x10E81ABEu
+#define UOBJECT_LOAD_PACKAGE         0x10FB1EB0u
+typedef void* (__cdecl* LoadPackageFn)(void* outer, const char* name, DWORD flags);
+
+static void* __cdecl TB_RefreshLoadPackage(void* outer, const char* name, DWORD flags)
+{
+    if (name && _stricmp(name, "MyLevel") == 0)
+        return nullptr;
+    return reinterpret_cast<LoadPackageFn>(UOBJECT_LOAD_PACKAGE)(outer, name, flags);
+}
+
+static void TB_InstallRefreshLoadGuard()
+{
+    const intptr_t displacement = static_cast<intptr_t>(UOBJECT_LOAD_PACKAGE)
+        - static_cast<intptr_t>(TB_REFRESH_LOAD_PACKAGE_CALL + 5);
+    BYTE expected[5] = { 0xE8 };
+    memcpy(expected + 1, &displacement, sizeof(INT));
+    if (memcmp(reinterpret_cast<const void*>(TB_REFRESH_LOAD_PACKAGE_CALL), expected, sizeof(expected)) != 0 ||
+        !MemoryWriter::WriteCall(TB_REFRESH_LOAD_PACKAGE_CALL, reinterpret_cast<void (*)()>(TB_RefreshLoadPackage)))
+    {
+        Logger::log("TextureBrowser: MyLevel refresh guard not installed (fingerprint mismatch)");
+    }
+}
+
 void TextureBrowser::Initialize()
 {
     TB_LoadFavorites();
     TB_LoadView();
     INSTALL_HOOKS;
+    TB_InstallRefreshLoadGuard();
 
     static const BYTE expectedMruListLoad[] = { 0x8B, 0x0D, 0xEC, 0xDF, 0x65, 0x11 };
     if (memcmp(reinterpret_cast<const void*>(HOOK_MRU_LIST_BUILD),

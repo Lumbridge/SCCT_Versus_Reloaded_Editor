@@ -691,7 +691,8 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         //   41075-41089 property search       41090-41104 measure tool
         //   41105-41119 undo history          41120-41134 assembly/view thumbnails
         //   41135-41149 emitter editing       41150-41164 lighting budget
-        //   41165-41179 RE+ menu names        41180-41199 spare
+        //   41165-41179 RE+ menu names        41180       character skins
+        //   41181-41199 spare
         cmp dword ptr [esp+4], 41199
         jbe workflow_dispatch
     workflow_legacy_range:
