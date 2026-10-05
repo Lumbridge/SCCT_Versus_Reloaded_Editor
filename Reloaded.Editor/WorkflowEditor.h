@@ -2,6 +2,7 @@
 #include "WorkflowModel.h"
 #include <memory>
 
+namespace LightShadow { struct Scene; }
 namespace Workflow::Editor
 {
     void Initialize();
@@ -99,6 +100,10 @@ namespace Workflow::Editor
     // in Leaves does, then restored to the build's lists) and the zone names.
     // See LightingBudgetModel.h.
     Json LightingBudgetScene();
+    // Light and Shadow map (LightShadowModel.h): walkable BSP floor triangles
+    // with their lightmap UVs and atlases, the in-game lights at their render
+    // spheres, and the BSP planes for line of sight.
+    void LightShadowScene(LightShadow::Scene& scene);
     // Character Skins (CharacterSkinsModel.h): the map's Character Skins actor.
     // Settings: {placed, legacy, extra, compiled, slots:{SpyBody,...: material path or ""},
     // models:{SpyModel,...: skeletal mesh path or ""}, goggles:{SpyGoggleOffset,...: [x,y,z]}}.

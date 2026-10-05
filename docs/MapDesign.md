@@ -663,6 +663,15 @@ above that floor, so a ceiling light 224 units up with a 400-unit reach lights a
 considered, and the real bake decides the final look. **Check design...** lists
 rooms and corridors that no light reaches at all.
 
+**Tools → Show light and shadow map** fills each walkable BSP floor patch on
+the shown storey with its band from **RE+ Tools > Light and Shadow Map**: blue
+where a spy is hidden, yellow partly visible, red exposed (in an elevation, a
+bar at the floor's height). Unlike unlit shading it uses the built map: the
+floor's baked lightmap and the in-game lights, blocked by BSP walls. Turn
+**Overlays** off to see it under the light discs; the thresholds are in
+**RE+ Tools > Light and Shadow Settings...**. Build the geometry (and lighting)
+first: unbuilt brushes have no floor to sample.
+
 The plan reads and writes the actors; it does not rebuild lighting. Use
 **Build → Rebuild Lighting** (or the selective lighting tools) when the layout
 settles, and check the result in game.

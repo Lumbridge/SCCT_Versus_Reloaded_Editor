@@ -24,6 +24,8 @@
 #include "StageModel.h"
 #include "EmitterPreview.h"
 #include "MeasureTool.h"
+#include "LightShadowMap.h"
+#include "LightShadowModel.h"
 #include "EntryThumbnailModel.h"
 #include "LevelSnapshot.h"
 #include "logger.h"
@@ -935,6 +937,7 @@ bool HandleCommand(UINT command)
         return true;
     }
     if(MeasureTool::HandleCommand(command))return true;
+    if(LightShadowMap::HandleCommand(command))return true;
     if(LightingBudget::HandleCommand(command))return true;
     if(command==StoreyFilter::kOpen)
     {

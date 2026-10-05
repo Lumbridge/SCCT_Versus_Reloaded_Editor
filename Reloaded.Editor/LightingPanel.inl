@@ -122,6 +122,40 @@ void LightUnlitPaint(DesignState& s,Gdiplus::Graphics& g)
             if(!lit)g.FillRectangle(&shade,x,y,cell,cell);
         }
 }
+// The Light and Shadow map as a layer: each walkable floor patch on this
+// storey as a square in the top view (blue hidden, yellow partly visible, red
+// exposed), or as a bar at its height in an elevation.
+std::string LightShadowStatus()
+{
+    const auto& cells=LightShadowMap::Patches();
+    if(cells.empty())return "Light and shadow map: no floor patches. Build the geometry (and lighting) first; RE+ Tools > Light and Shadow Settings shows why.";
+    const auto summary=LightShadow::Summarise(cells);
+    return "Light and shadow map: "+std::to_string(summary.total)+" floor patches; blue hidden "+std::to_string(LightShadow::Percent(summary.bands[0],summary.total))
+        +"%, yellow partly visible "+std::to_string(LightShadow::Percent(summary.bands[1],summary.total))+"%, red exposed "
+        +std::to_string(LightShadow::Percent(summary.bands[2],summary.total))+"%. An estimate: see RE+ Tools > Light and Shadow Settings.";
+}
+void LightShadowPaint(DesignState& s,Gdiplus::Graphics& g)
+{
+    if(!s.lightShadow)return;
+    using namespace Gdiplus;
+    const auto& cells=LightShadowMap::Patches();
+    const double size=LightShadowMap::PatchSize();
+    RECT rc{};
+    GetClientRect(s.canvas,&rc);
+    SolidBrush brushes[3]={SolidBrush(Color(120,60,130,255)),SolidBrush(Color(120,255,210,30)),SolidBrush(Color(130,255,60,60))};
+    const int h=DesignHorizontal(s),v=DesignVertical(s);
+    const bool top=3-h-v==2;
+    const float side=static_cast<float>(size*0.9*s.zoom),bar=(std::max)(2.f,static_cast<float>(size*0.12*s.zoom));
+    for(const auto& cell:cells)
+    {
+        if(!DesignOnFloor(s,cell.at.z,cell.at.z))continue;
+        const auto at=DesignScreen(s,Vector{cell.at.x,cell.at.y,cell.at.z});
+        if(at.X<-side || at.Y<-side || at.X>rc.right+side || at.Y>rc.bottom+side)continue;
+        auto& brush=brushes[static_cast<int>(cell.band)];
+        if(top)g.FillRectangle(&brush,at.X-side/2,at.Y-side/2,side,side);
+        else g.FillRectangle(&brush,at.X-side/2,at.Y-bar,side,bar);
+    }
+}
 // Light icons, their rim handles, and the live outline of a light being dragged.
 void LightPaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void(const std::string&,Gdiplus::PointF)>& label)
 {

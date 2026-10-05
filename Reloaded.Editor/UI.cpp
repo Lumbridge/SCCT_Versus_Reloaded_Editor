@@ -6,6 +6,7 @@
 #include "WindowDriftFix.h"
 #include "RebuildAllMaps.h"
 #include "LightingBudget.h"
+#include "LightShadowMap.h"
 #include "WorkflowTools.h"
 #include "CharacterSkinsWindow.h"
 #include "EmitterLibraryWindow.h"
@@ -139,6 +140,8 @@ static void InjectReloadedMenuItems(HWND frame)
         AppendMenuA(reTools, MF_STRING, 40948, "&Map Design...");
         AppendMenuA(reTools, MF_STRING, WorkflowTools::kBrushVisibility, "&Brush Visibility...");
         AppendMenuA(reTools, MF_STRING, StoreyFilter::kOpen, "S&toreys (one floor at a time)...");
+        AppendMenuA(reTools, MF_STRING, LightShadowMap::kToggle, "Li&ght and Shadow Map");
+        AppendMenuA(reTools, MF_STRING, LightShadowMap::kSettings, "Light and Shadow Settings...");
         AppendMenuA(reTools, MF_SEPARATOR, 0, nullptr);
         AppendMenuA(reTools, MF_STRING, WorkflowTools::kConnections, "Gameplay &Connections...");
         AppendMenuA(reTools, MF_STRING, 40927, "SMagicEvent &Workbench...");
