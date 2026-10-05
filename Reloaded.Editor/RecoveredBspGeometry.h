@@ -97,6 +97,38 @@ namespace RecoveredBspGeometry
     bool MergeAdjacentConvexBrushes(Result& result,std::string& error,
                                     const Limits& limits = {});
 
+    struct GrowStatistics
+    {
+        std::size_t grown = 0;     // pairs replaced by one larger brush
+        std::size_t absorbed = 0;  // further brushes lying inside a grown one
+        bool budgetReached = false;
+        // For each output brush, the input brushes (by index) it replaces.
+        std::vector<std::vector<std::size_t>> members;
+    };
+
+    // Replace two neighbouring brushes (or two brushes either side of a common
+    // neighbour) with the region bounded by the planes supporting both, when
+    // that region lies entirely inside reference (the disjoint cells the
+    // brushes came from), and drop any other brush it then contains. This
+    // finds convex unions of several brushes that pairwise face joining
+    // cannot reach. No plane is invented, so the result still meets the
+    // original walls exactly.
+    // allowOverlap == false keeps the brushes disjoint: a region that would
+    // cut into a brush it does not contain is refused. true lets brushes of
+    // one CSG kind overlap (the arms of a crossing become two crossing bars),
+    // which describes the same space but gives the editor's BSP builder
+    // coplanar overlapping faces to resolve.
+    // Reaching the work budget keeps the merges made so far
+    // (statistics.budgetReached); invalid input fails and leaves result intact.
+    bool GrowConvexBrushes(const Result& reference, Result& result, bool allowOverlap,
+                           GrowStatistics& statistics, std::string& error,
+                           const Limits& limits = {});
+
+    // Enclosed volume of a closed brush, and its narrowest width: the least,
+    // over its faces, of the greatest depth any vertex lies behind that face.
+    double Volume(const Brush& brush);
+    double MinimumWidth(const Brush& brush);
+
     // Build larger volumes before smaller details. The native BSP builder
     // can otherwise lose narrow features between adjacent recovered cells.
     // Only homogeneous additive or subtractive sets can be reordered without

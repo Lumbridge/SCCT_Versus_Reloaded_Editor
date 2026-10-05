@@ -252,6 +252,124 @@ namespace
         assert(!MergeAdjacentConvexBrushes(concave,error,limited));
         assert(concave.brushes.size()==2 && error.find("work limit")!=std::string::npos);
     }
+
+    Brush Box(const Bounds& bounds)
+    {
+        std::vector<Node> nodes;
+        AddBox(nodes,bounds,true);
+        return Recover(nodes).brushes.front();
+    }
+
+    // The grown set must cover exactly the reference space, on a lattice
+    // offset from every box plane used below.
+    void SameSpace(const Result& reference,const Result& grown)
+    {
+        for (int x=-24;x<=24;++x)
+            for (int y=-24;y<=24;++y)
+                for (int z=-6;z<=6;++z)
+                {
+                    const Vec3 point{x*0.5+0.137,y*0.5+0.269,z*0.5+0.391};
+                    assert(Contains(reference,point)==Contains(grown,point));
+                }
+    }
+
+    void VerifyConvexGrowth()
+    {
+        std::string error;
+        GrowStatistics statistics;
+
+        // A crossing: the BSP leaves a centre and four arms. Joining along
+        // whole faces gives one bar and two loose arms; growth spans the
+        // arms through the bar, overlapping it, for two brushes.
+        Result cross;
+        cross.brushes={Box({{-2,-2,-2},{2,2,2}}),Box({{-10,-2,-2},{-2,2,2}}),Box({{2,-2,-2},{10,2,2}}),
+                       Box({{-2,2,-2},{2,10,2}}),Box({{-2,-10,-2},{2,-2,2}})};
+        const Result crossCells=cross;
+        assert(MergeAdjacentConvexBrushes(cross,error) && cross.brushes.size()==3);
+        assert(GrowConvexBrushes(crossCells,cross,true,statistics,error));
+        assert(error.empty() && cross.brushes.size()==2 && statistics.grown==1 && !statistics.budgetReached);
+        VerifyClosed(cross,true);
+        SameSpace(crossCells,cross);
+        for (const Brush& brush:cross.brushes) assert(std::fabs(Volume(brush)-20*4*4)<1e-7);
+        // Running it again finds nothing more to do.
+        assert(GrowConvexBrushes(crossCells,cross,true,statistics,error) && cross.brushes.size()==2 && statistics.grown==0);
+
+        // Two cells fill a square together with a third: growing the first
+        // pair covers the third, which is dropped.
+        Result square;
+        square.brushes={Box({{-10,-10,-2},{0,10,2}}),Box({{0,-10,-2},{10,0,2}}),Box({{0,0,-2},{10,10,2}})};
+        const Result squareCells=square;
+        assert(GrowConvexBrushes(squareCells,square,true,statistics,error));
+        assert(square.brushes.size()==1 && statistics.grown==1 && statistics.absorbed==1);
+        assert(std::fabs(Volume(square.brushes.front())-20*20*4)<1e-7);
+        SameSpace(squareCells,square);
+        assert(statistics.members.size()==1 && statistics.members[0]==std::vector<std::size_t>({0,1,2}));
+
+        // Kept disjoint, the square still becomes one brush (an exact union),
+        // but the crossing cannot: spanning the arms cuts into the bar.
+        Result disjointSquare=squareCells;
+        assert(GrowConvexBrushes(squareCells,disjointSquare,false,statistics,error) && disjointSquare.brushes.size()==1);
+        SameSpace(squareCells,disjointSquare);
+        Result disjointCross=crossCells;
+        assert(MergeAdjacentConvexBrushes(disjointCross,error) && disjointCross.brushes.size()==3);
+        assert(GrowConvexBrushes(crossCells,disjointCross,false,statistics,error));
+        assert(disjointCross.brushes.size()==3 && statistics.grown==0);
+        assert(statistics.members==std::vector<std::vector<std::size_t>>({{0},{1},{2}}));
+        SameSpace(crossCells,disjointCross);
+
+        // An L shape cannot grow: the region spanning both arms reaches the
+        // solid corner.
+        Result corner;
+        corner.brushes={Box({{-10,-10,-2},{0,10,2}}),Box({{0,-10,-2},{10,0,2}})};
+        const Result cornerCells=corner;
+        assert(GrowConvexBrushes(cornerCells,corner,true,statistics,error) && corner.brushes.size()==2);
+        assert(statistics.grown==0 && !Contains(corner,{5,5,0}));
+        SameSpace(cornerCells,corner);
+
+        // A step one hundredth of a unit high still stops growth: the test is
+        // exact volume, not sampling.
+        Result step;
+        step.brushes={Box({{-10,-2,-2},{0,2,2}}),Box({{0,-2,-2},{10,2,1.99}}),Box({{-2,2,-2},{2,10,2}})};
+        const Result stepCells=step;
+        assert(GrowConvexBrushes(stepCells,step,true,statistics,error));
+        SameSpace(stepCells,step);
+        assert(!Contains(step,{5,0,1.995}));
+
+        // A room around a pillar keeps its exact space.
+        std::vector<Node> pillar;
+        AddBox(pillar,{{-10,-10,-10},{10,10,10}},true);
+        pillar[5].front=AddBox(pillar,{{-2,-2,-10},{2,2,10}},false);
+        const Result pillarCells=Recover(pillar);
+        Result aroundPillar=pillarCells;
+        assert(MergeAdjacentConvexBrushes(aroundPillar,error));
+        const auto joined=aroundPillar.brushes.size();
+        assert(GrowConvexBrushes(pillarCells,aroundPillar,true,statistics,error));
+        assert(aroundPillar.brushes.size()<=joined && !Contains(aroundPillar,{0,0,0}));
+        VerifyClosed(aroundPillar,true);
+        CompareSpace(pillar,aroundPillar);
+
+        // Mixed CSG kinds are refused and leave the input alone.
+        Result mixed=cornerCells;
+        mixed.brushes[1].subtractive=false;
+        assert(!GrowConvexBrushes(cornerCells,mixed,true,statistics,error) && !error.empty());
+        assert(mixed.brushes.size()==2 && !mixed.brushes[1].subtractive);
+        Result open=crossCells;
+        open.brushes[0].faces.pop_back();
+        open.brushes[0].faces.pop_back();
+        open.brushes[0].faces.pop_back();
+        assert(!GrowConvexBrushes(crossCells,open,true,statistics,error) && open.brushes.size()==5);
+
+        // Running out of work keeps a valid (here unchanged) result.
+        Result limitedCross=crossCells;
+        Limits limited;
+        limited.maxClippingWork=3;
+        assert(GrowConvexBrushes(crossCells,limitedCross,true,statistics,error,limited));
+        assert(statistics.budgetReached && error.empty() && limitedCross.brushes.size()==5);
+        SameSpace(crossCells,limitedCross);
+
+        assert(std::fabs(MinimumWidth(Box({{0,0,0},{3,8,0.5}}))-0.5)<1e-12);
+        assert(std::fabs(Volume(Box({{0,0,0},{3,8,0.5}}))-12)<1e-9);
+    }
 }
 
 void VerifyRebuildOrdering()
@@ -301,6 +419,7 @@ int main()
 {
     VerifyRebuildOrdering();
     VerifyConvexMerging();
+    VerifyConvexGrowth();
     const Bounds room{{-10,-10,-10},{10,10,10}};
     std::vector<Node> nodes;
     AddBox(nodes,room,true);
