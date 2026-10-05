@@ -1,5 +1,6 @@
 #pragma once
 #include "WorkflowModel.h"
+#include "CharacterSkinsImage.h"
 #include <memory>
 
 namespace Workflow::Editor
@@ -112,7 +113,30 @@ namespace Workflow::Editor
     // Writes the stock textures of the four slots as 32-bit TGA files (SpyBody.tga, ...).
     Json ExportDefaultCharacterSkins(const std::filesystem::path& folder);
     // Imports an edited image into MyLevel.CharacterSkins for a slot; returns its path.
-    std::string ImportCharacterSkin(const std::string& property, const std::filesystem::path& file);
+    // name, when given, is the texture's name; otherwise the slot's, made unique.
+    std::string ImportCharacterSkin(const std::string& property, const std::filesystem::path& file, const std::string& name = {});
+    // Character Skin presets (CharacterSkinPresetsModel.h): built-in presets painted
+    // over the stock textures, and the user's in skin_presets.json with their pictures
+    // in skin_presets\<id>. View: {entries (merged, flagged), categories, problems}.
+    Json SkinPresets();
+    // The four slots' pictures as the preset would dress them, in Slots order: painted,
+    // read from its files, read from a loaded texture, or the stock picture for a stock
+    // slot. An empty image where none can be shown (a material that is not loaded).
+    // A size above 0 returns size x size thumbnails, painted on shrunk stock pictures (fast).
+    std::vector<CharacterSkins::Image> SkinPresetImages(const Json& entry, int size = 0);
+    // Imports the preset's pictures (reusing any already imported) and applies it with
+    // ApplyCharacterSkins; returns the map's settings.
+    Json ApplySkinPreset(const std::string& id);
+    // Saves the Character Skins values as a new user preset; details holds name,
+    // category and description. Textures stored in the map are kept as pictures.
+    Json SaveSkinPreset(const Json& slots, const Json& models, const Json& goggles, const Json& details);
+    Json UpdateSkinPreset(const std::string& id, const Json& changes);
+    // Deletes a user preset with its pictures, or hides a built-in.
+    void DeleteSkinPreset(const std::string& id);
+    void RestoreSkinPresets();
+    // A preset file to share (*.skinpreset) with its pictures inside, and back.
+    void ExportSkinPreset(const std::string& id, const std::filesystem::path& file);
+    Json ImportSkinPreset(const std::filesystem::path& file);
     // Selects exactly the live actors with these paths, one pass over the
     // level; focus frames them in the viewports. Returns how many were found.
     size_t SelectActorPaths(const std::vector<std::string>& paths, bool focus);

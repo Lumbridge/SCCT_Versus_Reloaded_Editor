@@ -49,6 +49,8 @@
     <ClInclude Include="CharacterSkinsImage.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CharacterSkinsModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CharacterSkinsWindow.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="CharacterSkinPresetsModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="CharacterSkinPresetsWindow.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="EmitterLibraryWindow.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="EmitterPreviewModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MagicEventWorkbench.h"><Filter>Header Files</Filter></ClInclude>
@@ -418,6 +420,7 @@
     <ClCompile Include="WorkflowTools.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="EmitterPreview.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="CharacterSkinsWindow.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="CharacterSkinPresetsWindow.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="EmitterLibraryWindow.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MapAuthoringDialog.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MagicEventWorkbench.cpp"><Filter>Source Files</Filter></ClCompile>

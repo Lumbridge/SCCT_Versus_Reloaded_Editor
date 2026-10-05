@@ -296,7 +296,7 @@ Json ExportDefaultCharacterSkins(const std::filesystem::path& folder)
 
 // Imports an edited image into the map package (group CharacterSkins, named after the
 // slot) and compresses it the way the stock texture is. Returns its object path.
-std::string ImportCharacterSkin(const std::string& property,const std::filesystem::path& file)
+std::string ImportCharacterSkin(const std::string& property,const std::filesystem::path& file,const std::string& chosen)
 {
     auto slot=std::find_if(CharacterSkins::Slots.begin(),CharacterSkins::Slots.end(),[&](const CharacterSkins::Slot& s){return property==s.property;});
     if(slot==CharacterSkins::Slots.end())throw std::runtime_error("Unknown Character Skins slot "+property);
@@ -307,8 +307,9 @@ std::string ImportCharacterSkin(const std::string& property,const std::filesyste
     std::pair<uint32_t,uint32_t> size;
     try{size=Authoring::ImageSize(header,extension);}catch(const std::exception& e){throw std::runtime_error(file.string()+": "+e.what());}
     const auto package=Path(Read<Address>(Level()+0x18));
-    std::string name=slot->property;
-    for(int suffix=2;Find(package+".CharacterSkins."+name);++suffix)name=std::string(slot->property)+std::to_string(suffix);
+    std::string name=chosen.empty()?std::string(slot->property):chosen;
+    if(!CharacterSkins::ValidPath("x."+name) || name.find('.')!=std::string::npos)throw std::runtime_error("Invalid texture name "+name);
+    for(int suffix=2;Find(package+".CharacterSkins."+name);++suffix)name=(chosen.empty()?std::string(slot->property):chosen+"_")+std::to_string(suffix);
     const auto path=package+".CharacterSkins."+name;
     Exec("TEXTURE IMPORT FILE=\""+file.string()+"\" NAME=\""+name+"\" PACKAGE=\""+package+"\" GROUP=\"CharacterSkins\" MIPS=1");
     auto texture=Find(path);
