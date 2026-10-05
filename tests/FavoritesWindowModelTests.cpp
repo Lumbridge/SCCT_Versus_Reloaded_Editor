@@ -39,6 +39,11 @@ int main()
               "the browsers' own sections");
         Check(KindFromKey("mesh") == Kind::Mesh && !KindFromKey("Texture"), "kind keys");
 
+        // The browser window's tabs go in front of the Favorites tab, which stays last.
+        Check(StockTabIndex(0, -1) == 0 && StockTabIndex(5, -1) == 5, "no Favorites tab: as asked");
+        Check(StockTabIndex(1, 1) == 1 && StockTabIndex(2, 1) == 1 && StockTabIndex(0, 1) == 0, "AddTab at GetCount goes before it");
+        Check(StockTabIndex(-1, 3) == 3, "a bad index goes before it too");
+
         // Tag names.
         Check(CleanTagName("  Ship   interior ") == "Ship interior", "spaces");
         Check(CleanTagName("a|b=c\"d[e]f;g") == "a b c d e f g", "unsafe characters");

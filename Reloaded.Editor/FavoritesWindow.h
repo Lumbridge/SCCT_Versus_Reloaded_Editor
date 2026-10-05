@@ -2,7 +2,8 @@
 #include <windows.h>
 
 // View > Favorites: the favourite materials, static meshes and sounds of the
-// three browsers in one tool window, with a type, tag, package and search
+// three browsers on one Favorites tab of the browser window (a floating tool
+// window when that window has no tabs), with a type, tag, package and search
 // filter, user tags ("Ship interior", "Lights"), and actions to show a
 // favourite in its browser, make it the current one, play it or remove it.
 // The favourite lists stay in the browsers' own ini sections, so their
@@ -13,6 +14,9 @@ namespace FavoritesWindow
     // entry in each browser (they use the same id).
     constexpr UINT kOpen = 41340;
 
+    // Hooks window creation so the browser window gets its Favorites tab.
+    void Initialize();
+    // Shows the Favorites tab, opening the browser window if needed.
     void Open();
     // From the frame's command dispatcher. True when the command was ours.
     bool HandleCommand(UINT command);

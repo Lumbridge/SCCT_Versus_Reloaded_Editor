@@ -49,6 +49,7 @@
 #include "EmitterPreview.h"
 #include "SelfUpdater.h"
 #include "AssetNameGloss.h"
+#include "FavoritesWindow.h"
 
 INIT_ONCE g_InitOnce = INIT_ONCE_STATIC_INIT;
 HINSTANCE g_hReloadedDll = nullptr;
@@ -172,6 +173,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     TextureBrowser::Initialize();
     StaticMeshBrowserFavorites::Initialize();
     AssetNameGloss::Initialize();
+    FavoritesWindow::Initialize();
     BspTextureClipboard::Initialize();
     GEWireframeFix::Initialize();
     LightmapFix::Initialize();
