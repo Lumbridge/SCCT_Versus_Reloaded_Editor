@@ -248,6 +248,7 @@
     <ClInclude Include="RealtimeFix.h" />
     <ClInclude Include="ReloadedOptions.h" />
     <ClInclude Include="DialogFix.h" />
+    <ClInclude Include="BrowserWindowClose.h" />
     <ClInclude Include="WindowDriftFix.h" />
     <ClInclude Include="DeintersectFix.h" />
     <ClInclude Include="MapUnlock.h" />
@@ -347,6 +348,7 @@
     <ClCompile Include="RealtimeFix.cpp" />
     <ClCompile Include="ReloadedOptions.cpp" />
     <ClCompile Include="DialogFix.cpp" />
+    <ClCompile Include="BrowserWindowClose.cpp" />
     <ClCompile Include="WindowDriftFix.cpp" />
     <ClCompile Include="DeintersectFix.cpp" />
     <ClCompile Include="MapUnlock.cpp" />
