@@ -138,26 +138,34 @@ namespace Workflow::Editor
     // Imports an edited image into MyLevel.CharacterSkins for a slot; returns its path.
     // name, when given, is the texture's name; otherwise the slot's, made unique.
     std::string ImportCharacterSkin(const std::string& property, const std::filesystem::path& file, const std::string& name = {});
-    // Character Skin presets (CharacterSkinPresetsModel.h): built-in presets painted
-    // over the stock textures, and the user's in skin_presets.json with their pictures
-    // in skin_presets\<id>. View: {entries (merged, flagged), categories, problems}.
+    // Character Skin presets (CharacterSkinPresetsModel.h): one-team presets, built-ins
+    // painted over the stock textures and the user's in skin_presets.json with their
+    // pictures in skin_presets\<id> (a version 1 file is split into team presets when
+    // first read). View: {entries (merged, flagged), categories, problems,
+    // wearing:{spy, merc: what each team wears on the map, in words}}.
     Json SkinPresets();
-    // The four slots' pictures as the preset would dress them, in Slots order: painted,
-    // read from its files, read from a loaded texture, or the stock picture for a stock
-    // slot. An empty image where none can be shown (a material that is not loaded).
-    // A size above 0 returns size x size thumbnails, painted on shrunk stock pictures (fast).
+    // The preset's team's two slots' pictures (body, head) as the preset would dress
+    // them: painted, read from its files, read from a loaded texture, or the stock
+    // picture for a stock slot. An empty image where none can be shown (a material that
+    // is not loaded). A size above 0 returns size x size thumbnails, painted on shrunk
+    // stock pictures (fast).
     std::vector<CharacterSkins::Image> SkinPresetImages(const Json& entry, int size = 0);
+    // The four slots' pictures as the map's Character Skins dress them, in Slots order.
+    std::vector<CharacterSkins::Image> MapSkinImages(int size = 0);
     // Imports the preset's pictures (reusing any already imported) and applies it with
-    // ApplyCharacterSkins; returns the map's settings.
+    // ApplyCharacterSkins, the other team's values as the map has them; returns the
+    // map's settings.
     Json ApplySkinPreset(const std::string& id);
-    // Saves the Character Skins values as a new user preset; details holds name,
-    // category and description. Textures stored in the map are kept as pictures.
-    Json SaveSkinPreset(const Json& slots, const Json& models, const Json& goggles, const Json& details);
+    // Saves one team's Character Skins values (team "spy" or "merc") as a new user
+    // preset; details holds name, category and description. Textures stored in the
+    // map are kept as pictures.
+    Json SaveSkinPreset(const std::string& team, const Json& slots, const Json& models, const Json& goggles, const Json& details);
     Json UpdateSkinPreset(const std::string& id, const Json& changes);
     // Deletes a user preset with its pictures, or hides a built-in.
     void DeleteSkinPreset(const std::string& id);
     void RestoreSkinPresets();
-    // A preset file to share (*.skinpreset) with its pictures inside, and back.
+    // A preset file to share (*.skinpreset) with its pictures inside, and back; import
+    // returns the saved entries (two for an old file that dressed both teams).
     void ExportSkinPreset(const std::string& id, const std::filesystem::path& file);
     Json ImportSkinPreset(const std::filesystem::path& file);
     // Generate Minimap (MinimapModel.h): the built BSP faces, static mesh boxes
