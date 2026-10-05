@@ -587,7 +587,15 @@ void Select(const Json& identities,bool focus)
 {
     auto e=Engine(), level=Level(); std::set<Address> selected;
     for(const auto& id:identities) if(auto a=ResolveIdentity(id)) selected.insert(a);
-    for(auto a:LiveActors()) reinterpret_cast<void(__thiscall*)(void*,void*,void*,int,int)>(0x10eb9a20)(reinterpret_cast<void*>(e),reinterpret_cast<void*>(level),reinterpret_cast<void*>(a),selected.count(a)?1:0,0);
+    // Native SelectActor (0x10eb9a20) calls Modify on the actor whatever its
+    // state, so calling it for every actor put the whole map into the open
+    // transaction (7 MB per Map Design edit on ShipD, against an 8 MB undo
+    // buffer). Only actors whose selection actually changes go through it.
+    for(auto a:LiveActors())
+    {
+        const bool want=selected.count(a)!=0, is=(Read<unsigned>(a+0x2f4)&0x40)!=0;
+        if(want!=is) reinterpret_cast<void(__thiscall*)(void*,void*,void*,int,int)>(0x10eb9a20)(reinterpret_cast<void*>(e),reinterpret_cast<void*>(level),reinterpret_cast<void*>(a),want?1:0,0);
+    }
     if(focus && !selected.empty()) Exec("CAMERA ALIGN");
     Call(e,0xe4); Redraw();
 }
