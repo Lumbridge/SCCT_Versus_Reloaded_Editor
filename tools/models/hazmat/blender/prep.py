@@ -31,7 +31,7 @@ YOKE_RADII = np.array([17.0, 13.0, 9.0])
 PACK_CENTER = np.array([0.0, -14.5, 40.0])   # the breathing set worn inside the suit
 PACK_RADII = np.array([11.5, 7.5, 15.0])
 CROTCH_Z = -6.0
-CROTCH_GAP = 1.0
+CROTCH_GAP = 1.6           # half the gap between the legs
 LEG_HEM_Z = -67.0          # the suit's legs end over the boots
 BOOT_TOP_Z = -58.0
 SOLE_THICKNESS = 1.6
@@ -57,12 +57,15 @@ def field_on_grid(samples, sample_r, lo, hi, voxel, k=12):
     return field, grid, gx.shape, axes
 
 
-def extract(field, shape, lo, voxel, smooth=4, blur=0.0):
+def extract(field, shape, lo, voxel, smooth=4, blur=0.0, after_blur=None):
     from skimage import measure
     from scipy import ndimage
     if blur:
         # Rounds off the facets and lumps of the low-poly merc underneath.
         field = ndimage.gaussian_filter(field.reshape(shape), blur / voxel)
+    if after_blur is not None:
+        # Cuts the blur must not fill in again (the gap between the legs).
+        field = np.maximum(field.reshape(shape), after_blur.reshape(shape))
     import scipy.sparse as sp
     import scipy.sparse.csgraph as cg
     verts, faces, _, _ = measure.marching_cubes(field.reshape(shape), 0.0, spacing=(voxel,) * 3)
@@ -106,7 +109,8 @@ def main():
     hi = np.maximum(s.max(0), HOOD_CENTER + HOOD_RADII) + 7
     field, grid, shape, _ = field_on_grid(s, r, lo, hi, voxel)
     gap = CROTCH_GAP * np.clip((CROTCH_Z - grid[:, 2]) / 5.0, 0, 1)
-    field = np.maximum(field, gap - np.abs(grid[:, 0]))
+    legs_apart = gap - np.abs(grid[:, 0])
+    field = np.maximum(field, legs_apart)
     field = smin(field, superellipsoid(grid, YOKE_CENTER, YOKE_RADII, 2.0), 5.0)
     field = smin(field, superellipsoid(grid, HOOD_CENTER, HOOD_RADII, HOOD_POWER), 6.0)
     field = smin(field, superellipsoid(grid, PACK_CENTER, PACK_RADII, 2.2), 5.0)
@@ -118,7 +122,7 @@ def main():
         sleeve_end = np.where(lateral < 12, along + SLEEVE_SHORT, -1e3)
         field = np.maximum(field, sleeve_end)
     field = np.maximum(field, LEG_HEM_Z - grid[:, 2])
-    parts["suit"] = extract(field, shape, lo, voxel, smooth=6, blur=1.9)
+    parts["suit"] = extract(field, shape, lo, voxel, smooth=6, blur=1.9, after_blur=legs_apart)
     print("suit", len(parts["suit"][0]), "verts", len(parts["suit"][1]), "tris")
 
     # ---- gloves: tight on the hand and fingers, a wide gauntlet over the end of the sleeve
