@@ -25,8 +25,9 @@ from build_hazmat import (point_weights, sample_body, chain_of, neighbours, limi
                           write_psk, fbm, smoothstep, decal, biohazard, font,
                           label_back, label_chest, label_sleeve, label_thigh)
 
-REGIONS = ["torso", "hood", "armL", "armR", "legL", "legR", "handL", "handR", "footL", "footR"]
+REGIONS = ["torso", "hood", "armL", "armR", "legL", "legR", "handL", "handR", "footL", "footR", "cap"]
 SUIT_OUT, GEAR_OUT = 1024, 512
+LEG_SPLIT_Z = -2.0
 LIGHT = np.array([0.25, 0.45, 1.0]) / np.linalg.norm([0.25, 0.45, 1.0])
 
 
@@ -75,6 +76,8 @@ def paint_suit(out, bone_pos):
     col[boot] = (np.array([0.06, 0.06, 0.06]) * (0.9 + 0.2 * fbm(p * 0.7 + 2, 2))[:, None])[boot]
     sole = boot & (seam > 0.5)
     col[sole] = np.array([0.03, 0.03, 0.03])
+    # Cut ends (glove openings, leg hems) read as the dark gap between two layers.
+    col[is_("cap")] = np.array([0.025, 0.025, 0.025])
 
     # Taped seams: a paler, flatter yellow with darker edges.
     s_tape = seam * suit
@@ -215,6 +218,11 @@ def rig(low, merc, names):
     for name, pick in picks.items():
         m = part == part_ids.index(name)
         W[m] = weights_for(v[m], None, samples, sample_w, names, pick)
+    # The baggy legs nearly touch: below the hips each leg takes weights from its own side
+    # only, or the inside of the legs webs across when they part.
+    for side in (1, -1):
+        m = (part == part_ids.index("suit")) & (v[:, 2] < LEG_SPLIT_Z) & (v[:, 0] * side > 0)
+        W[m] = weights_for(v[m], None, samples, sample_w, names, samples[:, 0] * side > 0.3)
     # The hood is rigid on the head above the shoulders, blending in over the neck.
     suit_m = part == part_ids.index("suit")
     blend = np.clip((v[:, 2] - 57.0) / 7.0, 0, 1) * (np.abs(v[:, 0]) < 17) * suit_m
@@ -225,19 +233,26 @@ def rig(low, merc, names):
     for _ in range(3):
         W = 0.5 * W + 0.5 * (a @ W) / deg[:, None]
     W = limit_weights(W)
-    # Gear: visor, gasket and hood valves on the head; the chest valve follows the suit under it.
+    # Gear rides the suit under it: each point takes the weights of the nearest suit points.
+    # Rigid on the head, the visor sank into the hood whenever an animation turned the head,
+    # since the hood around it blends between head, neck and spine.
     g = low["gear_v"]
-    GW = np.zeros((len(g), len(names)))
-    GW[:, head] = 1
-    chest = g[:, 2] < 55
-    if chest.any():
-        tree = cKDTree(v[suit_m])
-        _, i = tree.query(g[chest], k=1)
-        GW[chest] = W[suit_m][i]
+    tree = cKDTree(v[suit_m])
+    d, i = tree.query(g, k=4)
+    w = 1.0 / (d + 0.3) ** 2
+    GW = limit_weights((W[suit_m][i] * w[:, :, None]).sum(1) / w.sum(1)[:, None])
     return W, GW
 
 
 # ---------------------------------------------------------------- main
+
+def outward(pts, tris):
+    """+1 when the torso's faces turn counter-clockwise seen from outside, -1 when clockwise."""
+    c = np.cross(pts[tris[:, 1]] - pts[tris[:, 0]], pts[tris[:, 2]] - pts[tris[:, 0]])
+    m = pts[tris].mean(1)
+    torso = np.abs(m[:, 2] - 25) < 10
+    return np.sign((c[torso] * (m[torso] * np.array([1.0, 1.0, 0.0]))).sum(1)).mean()
+
 
 def to_tga(img, size, path):
     im = Image.fromarray((np.clip(img, 0, 1) * 255).astype(np.uint8), "RGB")
@@ -286,18 +301,13 @@ def main():
     for i in range(len(gv)):
         for b in np.nonzero(GW[i] > 1e-4)[0]:
             influences.append((float(GW[i, b]), len(sv) + i, int(b)))
-    # The PSK keeps the merc's winding: compare which way each mesh's torso faces turn.
-    def outward(pts, tris):
-        c = np.cross(pts[tris[:, 1]] - pts[tris[:, 0]], pts[tris[:, 2]] - pts[tris[:, 0]])
-        m = pts[tris].mean(1)
-        torso = np.abs(m[:, 2] - 25) < 10
-        return np.sign((c[torso] * (m[torso] * np.array([1.0, 1.0, 0.0]))).sum(1)).mean()
-    merc_sign = outward(merc.points, merc.wedges[merc.faces])
+    # PSK faces turn counter-clockwise seen from outside, as Blender's do. (The merc's faces as
+    # stored in SPerso.ukx turn the other way; a PSK written in that order shows the suit's
+    # inside in game, as if it faced away. Checked in the editor's Character Skins preview.)
     suit_sign = outward(sv, low["suit_f"])
-    print("winding: merc", round(float(merc_sign), 2), "suit", round(float(suit_sign), 2))
+    if suit_sign <= 0:
+        raise SystemExit("finish.py: the game mesh's faces turn inwards; check build.py")
     faces = np.array(faces)
-    if np.sign(merc_sign) != np.sign(suit_sign):
-        faces = faces[:, ::-1]
     write_psk(assets / "HazmatMerc.psk", points, wedges, faces, np.array(face_mat), ["HazmatSuit", "HazmatGear"],
               merc.bones, influences)
 

@@ -15,31 +15,28 @@ drive it with no changes, including the gun on `B R Hand`.
 
 | File | What it is |
 |---|---|
-| `HazmatMerc.psk` | the mesh: 5187 points, 10254 triangles, 2 materials (`HazmatSuit`, `HazmatGear`) |
+| `HazmatMerc.psk` | the mesh: 5163 points, 10168 triangles, 2 materials (`HazmatSuit`, `HazmatGear`) |
 | `HazmatSuit.tga` | 1024x1024 suit, glove and boot texture (folds, AO and labels painted in) |
 | `HazmatGear.tga` | 512x512 visor, gasket and valve texture |
 | `hazmat.json` | counts, the mesh rotation and the goggle light offset |
 | `preview_*.png`, `pose_*.png` | Blender renders (as the game shows it), and software renders posed by merc animations |
 
-## Put it on ShipD (or any map)
+## Put it on a map
 
-The model goes into the map itself (MyLevel), so the map works for everyone without an extra package.
+RE+ carries the suit inside `Reloaded.Editor.dll`. With the map open:
 
-1. Open the map in the editor (from `Packages\MapsEd`).
-2. **Texture Browser > File > Import**: import `HazmatSuit.tga` and `HazmatGear.tga` with
-   Package `MyLevel`, Group `Hazmat`, and the names left as `HazmatSuit` and `HazmatGear`.
-   Compress both as DXT1 if you like (right-click > Compress); it is not required.
-3. **View > Show Animation Browser > File > Import Mesh**: pick `HazmatMerc.psk`, Package `MyLevel`,
-   Name `HazmatMerc`. The editor log should say `Found texture for material 0: [HazmatSuit]` and
-   `material 1: [HazmatGear]`; that links the textures. Import the textures first, or the mesh is untextured.
-4. Still in the Animation Browser, on the **Mesh** tab, set **Rotation** Yaw to **-16384** (the stock
-   merc's value; without it the suit lies on its side).
-5. **RE+ Tools > Character Skins**: in **Merc model** type or pick `MyLevel.HazmatMerc`; the merc's
-   goggle lights fill in as **X -0.1, Y -2.8, Z -0.8** (they then sit on the visor). Press **Apply**.
-6. Save the map. Play it (Play Level as a spy, then type `addbot` in the console to see a merc in it).
+1. **RE+ Tools > Character Skins > Hazmat Mercs**. It imports the textures (group `Hazmat`, DXT1)
+   and the mesh (`MyLevel.HazmatMerc`, stood up like the stock merc) into the map, makes it the
+   merc model with the goggle lights on the visor (-0.1, -2.8, -0.8), and applies.
+2. Save the map. Play it (Play Level as a spy, then type `addbot` in the console to see a merc in it).
 
-A map that already has the older procedural suit: import the new textures and mesh over the old ones
-(same names), set the Yaw again, and re-apply Character Skins so the goggle lights move to the new visor.
+Pressing it again on a map that already has the suit just puts the mercs back in it. Everything
+lives in the map (MyLevel), so the map works for everyone without an extra package.
+
+By hand instead (for example with a rebuilt suit): import `HazmatSuit.tga` and `HazmatGear.tga` in
+the Texture Browser (Package `MyLevel`, Group `Hazmat`), then `HazmatMerc.psk` with the Animation
+Browser's Import Mesh (Package `MyLevel`, Name `HazmatMerc`), set its Mesh tab Rotation Yaw to
+-16384, and pick `MyLevel.HazmatMerc` as the Merc model in Character Skins.
 
 ## Rebuild it
 
@@ -68,8 +65,18 @@ high-poly parts it was baked from, hidden. The four stages:
    on `B Head`) and writes the PSK in the merc's winding.
 4. `blender/render.py` (Blender): textures the game mesh, renders the previews, saves the `.blend`.
 
+To ship a rebuilt suit with RE+, copy it into `assets/`, run `python pack_bundle.py` (it packs the
+PSK and both TGAs into `assets/HazmatMerc.bundle`, which `Reloaded.Editor.rc` embeds), and build the DLL.
+
 `pose_preview.py --install ... --out out/blender/assets --merc` poses the result with `SPerso.Def`
 sequences to check the rigging; `blender/look.py` renders quick Workbench views of `parts.npz` or a `.blend`.
+
+Two things only the engine showed (Character Skins' 3D preview draws through it):
+- PSK faces are wound counter-clockwise seen from outside, as Blender's are, not in the order
+  `SPerso.ukx` stores the merc's. In the stored order the suit showed its inside, as if it faced away.
+- The suit drew over the visor wherever they overlapped, even with the visor standing 5 units off
+  the hood, so `build.py` cuts the game mesh's faces under the visor and the valves (`cut_under_gear`);
+  the gasket hides the edge. The gear takes the weights of the suit under it, so it rides the hood.
 
 The meshes keep the merc's own coordinates. Unreal is left-handed, so seen directly in Blender they are
 a mirror image of the game; the previews and the saved scene mirror them back. Labels are placed for

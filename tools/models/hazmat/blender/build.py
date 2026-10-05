@@ -30,7 +30,8 @@ BPOS = {n: Vector(p) for n, p in zip(NAMES, D["bone_pos"])}
 HOOD_C = Vector(D["hood_center"])
 LEG_HEM_Z = float(D["leg_hem_z"])
 
-REGIONS = ["torso", "hood", "armL", "armR", "legL", "legR", "handL", "handR", "footL", "footR"]
+# "cap": the flat ends where a part was cut (glove openings, leg hems), painted as a dark gap.
+REGIONS = ["torso", "hood", "armL", "armR", "legL", "legR", "handL", "handR", "footL", "footR", "cap"]
 SUIT_TEX, GEAR_TEX = 2048, 1024          # bake sizes; finish.py halves them
 TRIANGLES = {"suit": 5400, "gloveL": 820, "gloveR": 820, "bootL": 420, "bootR": 420}
 GEAR_PARTS = ["visor", "gasket", "valve"]
@@ -239,11 +240,14 @@ def detail_suit(o, fine):
         # Zip flap down the front, from the crotch to the visor.
         flap = (np.clip((2.6 - np.abs(v[:, 0])) / 0.35, 0, 1) * (v[:, 1] > 4) *
                 np.clip((v[:, 2] + 2) / 1.5, 0, 1) * np.clip((59 - v[:, 2]) / 1.0, 0, 1))
-        # Tape over the leg hems (onto the boots).
-        tape = np.clip((LEG_HEM_Z + 3.4 - v[:, 2]) / 0.3, 0, 1) * np.isin(region, [REGIONS.index("legL"), REGIONS.index("legR")])
+        # Tape over the leg hems (onto the boots); the hem's flat underside is a cap.
+        legs = np.isin(region, [REGIONS.index("legL"), REGIONS.index("legR")])
+        cap = legs & (v[:, 2] < LEG_HEM_Z + 0.4) & (n[:, 2] < -0.6)
+        tape = np.clip((LEG_HEM_Z + 3.4 - v[:, 2]) / 0.3, 0, 1) * legs * ~cap
         seam = seam * (1 - flap) * (1 - tape)
         d += 0.28 * seam + 0.75 * flap + 0.35 * tape
         mask = np.stack([seam, flap, tape], 1)
+        region = np.where(cap, REGIONS.index("cap"), region)
     set_verts(o, v + n * d[:, None])
     return region, mask
 
@@ -256,12 +260,14 @@ def detail_glove(o, side):
     ax /= np.linalg.norm(ax)
     t = (v - np.array(wrist)) @ ax
     t_open = t.min()
-    tape = np.clip((t_open + 3.6 - t) / 0.3, 0, 1)
+    # The gauntlet's open end (towards the elbow) is a cap; tape wraps the cuff behind it.
+    cap = (t < t_open + 0.4) & (n @ ax < -0.6)
+    tape = np.clip((t_open + 3.6 - t) / 0.3, 0, 1) * ~cap
     # Wrinkles over the knuckles and the cuff.
     _, th, _, _ = limb_frame(v, elbow, wrist)
     d = 0.3 * gauss(t + 4, 3.5) * fold_profile(t / 1.8 + 0.8 * np.sin(th)) + 0.3 * tape
     set_verts(o, v + n * d[:, None])
-    region = np.full(len(v), REGIONS.index("hand" + side))
+    region = np.where(cap, REGIONS.index("cap"), REGIONS.index("hand" + side))
     return region, np.stack([np.zeros(len(v)), np.zeros(len(v)), tape], 1)
 
 
@@ -284,12 +290,16 @@ def raycast_surface(bvh, origin, direction):
     return hit, normal
 
 
+CUTS = []  # where gear covers the suit: the game mesh's faces there are removed
+
+
 def build_visor(bvh):
     """Rounded-rectangle face window over the front of the hood, plus its gasket."""
     cols, rows = 24, 15
     yaw_half, pitch_half, pitch_mid = math.radians(64), math.radians(27), math.radians(1.5)
     pts, uvs, nors = [], [], []
     centre = HOOD_C + Vector((0, -2.0, -1.0))
+    CUTS.append(("window", np.array(centre), yaw_half * 0.9, pitch_half * 0.85, pitch_mid))
     for j in range(rows):
         for i in range(cols):
             s, t = -1 + 2 * i / (cols - 1), -1 + 2 * j / (rows - 1)
@@ -389,6 +399,7 @@ def flip(o):
 
 def build_valve(bvh, name, origin, direction, radius=2.3):
     hit, nor = raycast_surface(bvh, origin, direction)
+    CUTS.append(("disc", np.array(hit), np.array(nor), radius * 0.75))
     bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=radius, depth=1.3, location=hit + nor * 0.45)
     o = bpy.context.active_object
     o.name = name
@@ -427,6 +438,36 @@ def join(objs):
 
 
 # ---------------------------------------------------------------- low poly and UVs
+
+def cut_under_gear(o):
+    """Removes the game mesh's faces that the gear covers. In the engine the suit drew over
+    the visor wherever the two overlapped (the visor stood well clear of the hood and still
+    did not show), so nothing of the suit is left behind it; the gasket hides the edge."""
+    v = verts_of(o)
+    f = tris_of(o)
+    c = v[f].mean(1)
+    doomed = np.zeros(len(f), bool)
+    for cut in CUTS:
+        if cut[0] == "window":
+            _, centre, yaw_half, pitch_half, pitch_mid = cut
+            r = c - centre
+            r /= np.linalg.norm(r, axis=1, keepdims=True)
+            yaw = np.arctan2(r[:, 0], r[:, 1])
+            pitch = np.arcsin(np.clip(r[:, 2], -1, 1)) - pitch_mid
+            doomed |= (r[:, 1] > 0) & ((np.abs(yaw) / yaw_half) ** 4 + (np.abs(pitch) / pitch_half) ** 4 < 1)
+        else:
+            _, hit, nor, radius = cut
+            rel = c - hit
+            along = rel @ nor
+            doomed |= (np.abs(along) < 2.0) & (np.linalg.norm(rel - along[:, None] * nor, axis=1) < radius)
+    bm = bmesh.new()
+    bm.from_mesh(o.data)
+    bm.faces.ensure_lookup_table()
+    bmesh.ops.delete(bm, geom=[bm.faces[i] for i in np.nonzero(doomed)[0]], context="FACES")
+    bm.to_mesh(o.data)
+    bm.free()
+    print("cut under the gear:", int(doomed.sum()), "faces")
+
 
 def decimated_copy(o, triangles, name):
     c = o.copy()
@@ -586,6 +627,7 @@ def main():
 
     # Low poly.
     lo = {"suit": decimated_copy(mid, TRIANGLES["suit"], "suit_lo")}
+    cut_under_gear(lo["suit"])
     for part in ("gloveL", "gloveR", "bootL", "bootR"):
         lo[part] = decimated_copy(hi[part], TRIANGLES[part], part + "_lo")
     bpy.data.objects.remove(mid)

@@ -27,6 +27,8 @@
 #include "BspDiagnostics.h"
 #include "MemoryWriter.h"
 #include "General.h"
+#include "resource.h"
+#include <zlib.h>
 #include <algorithm>
 #include <chrono>
 #include <fstream>
