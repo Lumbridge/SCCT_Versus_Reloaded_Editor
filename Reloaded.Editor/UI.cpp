@@ -9,6 +9,7 @@
 #include "MapCheck.h"
 #include "LightShadowMap.h"
 #include "RenderBudget.h"
+#include "MinimapWindow.h"
 #include "WorkflowTools.h"
 #include "CharacterSkinsWindow.h"
 #include "CharacterSkinPresetsWindow.h"
@@ -236,6 +237,8 @@ static void InjectReloadedMenuItems(HWND frame)
         AppendMenuA(lightingBuild, MF_STRING, MapCheck::kOpenCommand, "&Map Check...");
     if (lightingBuild && MenuPosByCommand(lightingBuild, RenderBudget::kOpenCommand) < 0)
         AppendMenuA(lightingBuild, MF_STRING, RenderBudget::kOpenCommand, "Re&nder Budget...");
+    if (lightingBuild && MenuPosByCommand(lightingBuild, MinimapWindow::Command) < 0)
+        AppendMenuA(lightingBuild, MF_STRING, MinimapWindow::Command, "Generate &Minimap...");
     // -UnlockPackages is what lets it save over the stock maps.
     if (RebuildAllMaps::Available())
     {

@@ -93,6 +93,19 @@ or foreign files rejected). The editor side imports the BMP with `TEXTURE
 IMPORT` into the loaded `<Map>-i` package and saves it with the stock
 `SAVEMAPPROP`, so it is exercised in the editor rather than here.
 
+`MinimapModelTests.cpp` covers Generate Minimap's pure parts: the game's
+world-to-picture transform through `LevelInfo.SnapshotCamera` (checked with
+AquaD's own camera: the centre, both corners, +X right and +Y down, a turned
+camera, back from pixel to world), framing a map in a square and the stock
+camera form that shows it, the game's floor choice from `MapFloors` and the
+height bands of the floors, which faces and meshes are floor, silhouette,
+wall or obstacle on a band, the footprint hull, the gameplay framing that
+leaves an outdoor map's backdrop out, marker numbering by objective, the
+typed floor list, the property text for `SnapshotCamera` and `MapFloors`,
+the bottom-up 32-bit TGA, and the check of the saved interface package's
+Briefing texture. Reading the BSP, importing the pictures and setting the
+LevelInfo happen in the editor and were checked there on ShipD and AquaD.
+
 `CrashRecoveryModelTests.cpp` covers the crash-recovery offer's pure parts:
 the session marker read back (an `=` in the map path, LF endings, unknown
 keys) and rejected without its pid or creation time, a marker of a live

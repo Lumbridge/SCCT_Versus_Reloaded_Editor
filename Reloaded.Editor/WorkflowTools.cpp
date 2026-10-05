@@ -12,6 +12,7 @@
 #include "LightingBudget.h"
 #include "MapCheck.h"
 #include "RenderBudget.h"
+#include "MinimapWindow.h"
 #include "WorkflowEditor.h"
 #include "EmitterLibraryModel.h"
 #include "WorkflowGraph.h"
@@ -954,6 +955,7 @@ bool HandleCommand(UINT command)
     if(LightingBudget::HandleCommand(command))return true;
     if(MapCheck::HandleCommand(command))return true;
     if(RenderBudget::HandleCommand(command))return true;
+    if(MinimapWindow::HandleCommand(command))return true;
     if(command==StoreyFilter::kOpen)
     {
         try{StoreyFilter::Open();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Storeys",MB_OK|MB_ICONERROR);}

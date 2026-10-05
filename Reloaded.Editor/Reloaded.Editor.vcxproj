@@ -167,6 +167,8 @@
     <ClInclude Include="MapUsagesModel.h" />
     <ClInclude Include="MapUsagesWindow.h" />
     <ClInclude Include="LightingBudget.h" />
+    <ClInclude Include="MinimapModel.h" />
+    <ClInclude Include="MinimapWindow.h" />
     <ClInclude Include="LightingBudgetModel.h" />
     <ClInclude Include="MapCheck.h" />
     <ClInclude Include="MapCheckModel.h" />
@@ -222,6 +224,7 @@
     <ClInclude Include="MapCheckNative.inl" />
     <ClInclude Include="LightShadowNative.inl" />
     <ClInclude Include="RenderBudgetNative.inl" />
+    <ClInclude Include="MinimapNative.inl" />
     <ClInclude Include="StagePanel.inl" />
     <ClInclude Include="LightingPanel.inl" />
     <ClInclude Include="PropertiesPanel.inl" />
@@ -297,6 +300,7 @@
     <ClCompile Include="MapCheck.cpp" />
     <ClCompile Include="LightShadowMap.cpp" />
     <ClCompile Include="RenderBudget.cpp" />
+    <ClCompile Include="MinimapWindow.cpp" />
     <ClCompile Include="LevelSnapshot.cpp" />
     <ClCompile Include="SelfUpdater.cpp" />
     <ClCompile Include="WorkflowEditor.cpp" />

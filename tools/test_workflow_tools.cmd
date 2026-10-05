@@ -136,6 +136,9 @@ if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\CharacterSkinPresetsModelTests.cpp Reloaded.Editor\WorkflowModel.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\CharacterSkinPresetsModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\CharacterSkinPresetsModelTests.exe"
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\MinimapModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MinimapModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\MinimapModelTests.exe"
 if errorlevel 1 goto failed
 popd
 exit /b 0
