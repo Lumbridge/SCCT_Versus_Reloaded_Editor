@@ -15,10 +15,11 @@ namespace CharacterSkins
 {
 // Raise with every change to Script(). Each version is its own class, so a map's
 // older actor can be read and replaced instead of recompiling a class in use.
-constexpr int Version = 4;
-constexpr const char* ClassName = "ReloadedCharacterSkins4";
+constexpr int Version = 5;
+constexpr const char* ClassName = "ReloadedCharacterSkins5";
 // Earlier versions' classes, newest first, whose actors the panel migrates.
-inline constexpr std::array<const char*, 3> LegacyClassNames = {{"ReloadedCharacterSkins3", "ReloadedCharacterSkins2", "ReloadedCharacterSkins"}};
+inline constexpr std::array<const char*, 4> LegacyClassNames = {
+    {"ReloadedCharacterSkins4", "ReloadedCharacterSkins3", "ReloadedCharacterSkins2", "ReloadedCharacterSkins"}};
 // Tag of the characters the addbot console command stands in an editor Play Level.
 constexpr const char* BotTag = "ReloadedTestBot";
 // Their controller, compiled into the map beside the actor: Controller itself is
@@ -40,15 +41,22 @@ struct Slot
     const char* stock;    // stock heat layer whose heat and EMF masks are reused
     const char* texture;  // the stock diffuse in SPersoTextures, exported for painting over
     const char* format;   // its compression, used again for an imported replacement
+    int section;          // the skin index (mesh material section) it dresses
+    int alsoSection = -1; // a second section wearing the same material, or -1
 };
-// Slot 0 is the body and slot 1 the head on both stock character meshes
-// (SPerso.ATT_01, SPerso.DEF_01); see the chains in SPersoTextures.
+// Skin 0 is the body and skin 1 the head on both stock character meshes
+// (SPerso.ATT_01, SPerso.DEF_01); see the chains in SPersoTextures. The merc's
+// DEF_01 has a third section, skin 2, with the body material again: it covers
+// most of the body (1566 of 1942 faces; skin 0 only 238), so the merc body
+// dresses both.
 inline constexpr std::array<Slot, 4> Slots = {{
-    {"SpyBody", "Spy body", "SPersoTextures.alpha_ATT02.HEAT_SN02", "Shadw_agent", "DXT3"},
-    {"SpyHead", "Spy head", "SPersoTextures.alpha_ATT02.HEAT_SN02_2", "Shadw_agent_2", "DXT1"},
-    {"MercBody", "Merc body", "SPersoTextures.alpha_DEF01.DEF01_heat_bodu", "DEF_01_A_Body", "DXT5"},
-    {"MercHead", "Merc head", "SPersoTextures.alpha_DEF01.def01_heat_face", "DEF_01_A_Face", "DXT5"},
+    {"SpyBody", "Spy body", "SPersoTextures.alpha_ATT02.HEAT_SN02", "Shadw_agent", "DXT3", 0},
+    {"SpyHead", "Spy head", "SPersoTextures.alpha_ATT02.HEAT_SN02_2", "Shadw_agent_2", "DXT1", 1},
+    {"MercBody", "Merc body", "SPersoTextures.alpha_DEF01.DEF01_heat_bodu", "DEF_01_A_Body", "DXT5", 0, 2},
+    {"MercHead", "Merc head", "SPersoTextures.alpha_DEF01.def01_heat_face", "DEF_01_A_Face", "DXT5", 1},
 }};
+// The skins a pawn's stock look is remembered for: 0 to SkinCount - 1.
+constexpr int SkinCount = 3;
 
 // A team's replacement model. The pawn keeps its team's own animation set (LinkMesh
 // alone drops it, and the pawn's moves, stance changes, gun and gadgets then stall),
@@ -120,7 +128,7 @@ inline std::string Script()
         "var const int Version;\r\n"
         "var Material Dressed[4];\r\n"
         "var Pawn Known[32];\r\n"
-        "var Material Stock[64];\r\n"
+        "var Material Stock[" + std::to_string(32 * SkinCount) + "];\r\n"
         "var byte Swapped[32];\r\n"
         "var bool bCommandsChecked, bCommands, bWatching;\r\n"
         "var string Typed;\r\n"
@@ -341,7 +349,12 @@ inline std::string Script()
         "\tif (Model == None)\r\n"
         "\t{\r\n"
         "\t\tDress(P, i, 0, Dressed[First]);\r\n"
-        "\t\tDress(P, i, 1, Dressed[First + 1]);\r\n"
+        "\t\tDress(P, i, 1, Dressed[First + 1]);\r\n";
+    for (size_t k = 0; k < Slots.size(); ++k)
+        if (Slots[k].alsoSection >= 0)
+            s += "\t\tif (First == " + std::to_string(k / 2 * 2) + ")\r\n\t\t\tDress(P, i, " +
+                 std::to_string(Slots[k].alsoSection) + ", Dressed[" + std::to_string(k) + "]);\r\n";
+    s +=
         "\t\treturn;\r\n"
         "\t}\r\n"
         "\tif (Swapped[i] == 0)\r\n"
@@ -362,7 +375,7 @@ inline std::string Script()
         "// restores after an effect, so the map's material may replace it.\r\n"
         "function int PawnIndex(Pawn P)\r\n"
         "{\r\n"
-        "\tlocal int i, Free;\r\n"
+        "\tlocal int i, j, Free;\r\n"
         "\r\n"
         "\tFree = -1;\r\n"
         "\tfor (i = 0; i < 32; i++)\r\n"
@@ -376,8 +389,8 @@ inline std::string Script()
         "\t\treturn -1;\r\n"
         "\tKnown[Free] = P;\r\n"
         "\tSwapped[Free] = 0;\r\n"
-        "\tStock[Free * 2] = Current(P, 0);\r\n"
-        "\tStock[Free * 2 + 1] = Current(P, 1);\r\n"
+        "\tfor (j = 0; j < " + std::to_string(SkinCount) + "; j++)\r\n"
+        "\t\tStock[Free * " + std::to_string(SkinCount) + " + j] = Current(P, j);\r\n"
         "\treturn Free;\r\n"
         "}\r\n"
         "\r\n"
@@ -395,7 +408,7 @@ inline std::string Script()
         "\tif (M == None)\r\n"
         "\t\treturn;\r\n"
         "\tNow = Current(P, Slot);\r\n"
-        "\tif (Now == None || Now == Stock[Index * 2 + Slot])\r\n"
+        "\tif (Now == None || Now == Stock[Index * " + std::to_string(SkinCount) + " + Slot])\r\n"
         "\t\tP.Skins[Slot] = M;\r\n"
         "}\r\n"
         "\r\n"

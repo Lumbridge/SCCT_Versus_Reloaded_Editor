@@ -21,10 +21,10 @@ int main()
     {
         const auto script = Script();
         // The stock compiler wants the class declaration first and CRLF text.
-        Check(Contains(script, "class ReloadedCharacterSkins4 extends Info\r\n\tplaceable;"), "class header");
-        Check(std::string(ClassName) == "ReloadedCharacterSkins4" && Version == 4, "versioned class name");
-        Check(std::string(LegacyClassNames[0]) == "ReloadedCharacterSkins3" && std::string(LegacyClassNames[2]) == "ReloadedCharacterSkins",
-              "versions 1 to 3 are migrated");
+        Check(Contains(script, "class ReloadedCharacterSkins5 extends Info\r\n\tplaceable;"), "class header");
+        Check(std::string(ClassName) == "ReloadedCharacterSkins5" && Version == 5, "versioned class name");
+        Check(std::string(LegacyClassNames[0]) == "ReloadedCharacterSkins4" && std::string(LegacyClassNames[3]) == "ReloadedCharacterSkins",
+              "versions 1 to 4 are migrated");
         Check(script.find("\n") == script.find("\r\n") + 1, "CRLF line ends");
         for (const auto& slot : Slots)
         {
@@ -43,7 +43,11 @@ int main()
         Check(Contains(script, "Swapped[Free] = 0;"), "a reused pawn slot swaps again");
         // Local per machine, never replicated; game effect skins are left alone.
         Check(Contains(script, "RemoteRole=ROLE_None") && Contains(script, "bNoDelete=True"), "local actor");
-        Check(Contains(script, "Now == None || Now == Stock[Index * 2 + Slot]"), "effect skins left alone");
+        Check(Contains(script, "Now == None || Now == Stock[Index * 3 + Slot]"), "effect skins left alone");
+        // The merc's DEF_01 has its body on skins 0 and 2 (skin 2 is most of it); all three
+        // stock skins are remembered.
+        Check(Contains(script, "\t\tif (First == 2)\r\n\t\t\tDress(P, i, 2, Dressed[2]);\r\n"), "merc body dresses skin 2 too");
+        Check(Contains(script, "var Material Stock[96];") && Contains(script, "Stock[Free * 3 + j] = Current(P, j);"), "three stock skins per pawn");
         Check(Contains(script, "Known[i].bDeleteMe"), "slots of gone pawns reused");
         Check(Contains(script, "Version=" + std::to_string(Version)), "version default");
         Check(!Contains(script, "replication"), "no replication block");

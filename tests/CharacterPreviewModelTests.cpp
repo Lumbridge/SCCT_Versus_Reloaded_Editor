@@ -42,6 +42,8 @@ int main()
         auto dressed = Figures(slots, Json::object());
         Check(dressed[0].skins[0] == "ShipD.CharacterSkins.SpyBody" && dressed[0].skins[1].empty(), "spy body slot, stock head");
         Check(dressed[1].skins[0] == "SnowPack.Camo.MercBody" && dressed[1].skins[1] == "SnowPack.Camo.MercHead", "merc slots");
+        // The merc's DEF_01 wears its body material on skins 0 and 2; skin 2 is most of the body.
+        Check(dressed[1].skins[2] == "SnowPack.Camo.MercBody" && dressed[0].skins[2].empty(), "merc body on both body sections");
         auto swapped = Figures(slots, {{"SpyModel", "SPerso.DEF_01"}, {"MercModel", ""}});
         Check(swapped[0].mesh == "SPerso.DEF_01" && swapped[0].animation == "SPerso.PRO", "a spy in the merc model moves as a spy");
         Check(swapped[0].skins[0].empty() && swapped[0].skins[1].empty(), "a model shows its own materials");
@@ -78,6 +80,8 @@ int main()
         Check(Contains(t3d, " Skins(0)=Material'ShipD.CharacterSkins.SpyBody'\n"), "the spy's body material");
         Check(!Contains(t3d, "Skins(1)=Material'ShipD") && Contains(t3d, " Skins(1)=Material'SnowPack.Camo.MercHead'\n"),
               "only the slots that are set");
+        Check(Contains(t3d, " Skins(2)=Material'SnowPack.Camo.MercBody'\n") && !Contains(t3d, "Skins(2)=Material'ShipD"),
+              "the merc body on skin 2 as well");
         Check(Contains(t3d, " Location=(X=0.000000,Y=-42,Z=0.000000)\n") && Contains(t3d, " Location=(X=0.000000,Y=42,Z=0.000000)\n"),
               "side by side");
         Check(Contains(t3d, " Rotation=(Pitch=0,Yaw=32768,Roll=0)\n"), "facing the camera");

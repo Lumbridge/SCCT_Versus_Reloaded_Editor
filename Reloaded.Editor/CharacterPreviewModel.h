@@ -31,7 +31,9 @@ struct Figure
     std::string team;      // "Spy" or "Merc"
     std::string mesh;      // SkeletalMesh path
     std::string animation; // MeshAnimation path
-    std::array<std::string, 2> skins; // body, head material paths; empty keeps the mesh's own
+    // Material paths by skin index (CharacterSkins::Slot::section): 0 body, 1 head, and
+    // on the merc 2 the rest of the body. Empty keeps the mesh's own.
+    std::array<std::string, CharacterSkins::SkinCount> skins;
     double y = 0;          // where it stands across the view
 };
 
@@ -84,7 +86,8 @@ inline std::vector<Figure> Figures(const Json& slots, const Json& models)
                 auto path = slots.is_object() ? slots.value(slot.property, std::string{}) : std::string{};
                 if (!CharacterSkins::ValidPath(path))
                     throw std::runtime_error(std::string(slot.label) + ": not a material path: " + path);
-                f.skins[k] = path;
+                f.skins[slot.section] = path;
+                if (slot.alsoSection >= 0) f.skins[slot.alsoSection] = path;
             }
         // The spy on the left of the starting view, the merc on the right.
         f.y = m == 0 ? -kSpacing : kSpacing;
