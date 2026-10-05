@@ -575,4 +575,13 @@ namespace FavoritesWindow::Model
         if (notLoaded) text += "; " + std::to_string(notLoaded) + " not loaded";
         return text + ".";
     }
+
+    // Where a tab the browser window adds goes while the Favorites tab is at
+    // index favorites (-1: not there): never after it, so it stays the last
+    // tab and the stock tabs keep their indices.
+    inline int StockTabIndex(int requested, int favorites)
+    {
+        if (favorites < 0) return requested;
+        return requested < 0 || requested > favorites ? favorites : requested;
+    }
 }

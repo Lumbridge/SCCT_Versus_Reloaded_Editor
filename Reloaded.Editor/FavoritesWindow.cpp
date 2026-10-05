@@ -8,6 +8,7 @@
 #include "StaticMeshBrowserFavorites.h"
 #include "SoundBrowserFavorites.h"
 #include "logger.h"
+#include "MemoryWriter.h"
 #include <commctrl.h>
 #include <windowsx.h>
 #include <algorithm>
@@ -20,8 +21,10 @@
 #include <vector>
 #pragma comment(lib, "comctl32.lib")
 
+// The panel sits on a Favorites tab added to the browser window (see the
+// tab section at the end), or in a floating window when that has no tabs.
 // The favourites are read from the browsers' own sections of
-// Reloaded_Editor.ini every second while the window is open, so a favourite
+// Reloaded_Editor.ini every second while the panel is shown, so a favourite
 // added in a browser, or in another open editor, shows up here; whatever this
 // window changes is written the browsers' way (a list re-read just before it
 // is rewritten) and the browsers are told to reload. Which favourites are in
@@ -64,7 +67,10 @@ namespace
         CmdAddToFirst = 300, CmdAddToLast = 899,
     };
 
+    // The panel holding every control. It lives on the browser window's
+    // Favorites tab, or in the floating host when that tab cannot be reached.
     HWND window = nullptr;
+    HWND host = nullptr;
     HFONT font = nullptr;
     HIMAGELIST images = nullptr;
 
@@ -1191,39 +1197,46 @@ namespace
 
     void Layout(int width, int height)
     {
-        constexpr int pad = 8, row = 24, left = 190;
+        // Sized for the browser window's tab as well as a wide floating
+        // window: the tag column and the filters narrow with the panel, and
+        // the action buttons get a row of their own across the whole width.
+        constexpr int pad = 8, row = 24;
+        const int left = std::clamp(width / 4, 130, 190);
         const int listLeft = pad + left + 6;
+        const int filters = std::clamp(width - 2 * pad - 48 - 120, 300, 470); // the three combos together
+        const int typeWidth = filters * 13 / 47, packageWidth = filters * 19 / 47, sortWidth = filters - typeWidth - packageWidth;
         int x = pad;
-        MoveWindow(Child(TypeCombo), x, pad, 130, 300, TRUE);
-        x += 136;
-        MoveWindow(Child(PackageCombo), x, pad, 190, 300, TRUE);
-        x += 196;
-        MoveWindow(Child(SortCombo), x, pad, 150, 300, TRUE);
-        x += 158;
+        MoveWindow(Child(TypeCombo), x, pad, typeWidth, 300, TRUE);
+        x += typeWidth + 6;
+        MoveWindow(Child(PackageCombo), x, pad, packageWidth, 300, TRUE);
+        x += packageWidth + 6;
+        MoveWindow(Child(SortCombo), x, pad, sortWidth, 300, TRUE);
+        x += sortWidth + 8;
         MoveWindow(Child(SearchLabel), x, pad + 4, 46, row - 4, TRUE);
         x += 48;
         MoveWindow(Child(SearchEdit), x, pad, std::max(60, width - pad - x), row - 2, TRUE);
 
-        const int top = pad + row + 6, statusTop = height - pad - 34, buttonsTop = statusTop - row - 8;
-        MoveWindow(Child(TagList), pad, top, left, std::max(40, buttonsTop - top - 2 * (row + 4)), TRUE);
-        MoveWindow(Child(TagEdit), pad, buttonsTop - 2 * (row + 4) + 4, left, row - 2, TRUE);
+        const int top = pad + row + 6, statusTop = height - pad - 34, buttonsTop = statusTop - row - 6;
+        const int tagButtonsTop = buttonsTop - row - 6, tagEditTop = tagButtonsTop - row - 2;
+        MoveWindow(Child(TagList), pad, top, left, std::max(40, tagEditTop - 4 - top), TRUE);
+        MoveWindow(Child(TagEdit), pad, tagEditTop, left, row - 2, TRUE);
         const int tagButton = (left - 8) / 3;
-        MoveWindow(Child(NewTag), pad, buttonsTop - row - 4 + 4, tagButton, row, TRUE);
-        MoveWindow(Child(RenameTag), pad + tagButton + 4, buttonsTop - row - 4 + 4, tagButton, row, TRUE);
-        MoveWindow(Child(DeleteTag), pad + 2 * (tagButton + 4), buttonsTop - row - 4 + 4, tagButton, row, TRUE);
+        MoveWindow(Child(NewTag), pad, tagButtonsTop, tagButton, row, TRUE);
+        MoveWindow(Child(RenameTag), pad + tagButton + 4, tagButtonsTop, tagButton, row, TRUE);
+        MoveWindow(Child(DeleteTag), pad + 2 * (tagButton + 4), tagButtonsTop, tagButton, row, TRUE);
 
-        MoveWindow(Child(List), listLeft, top, std::max(60, width - pad - listLeft), std::max(40, buttonsTop - 6 - top), TRUE);
+        MoveWindow(Child(List), listLeft, top, std::max(60, width - pad - listLeft), std::max(40, tagButtonsTop + row - top), TRUE);
         const int ids[] = {ShowButton, UseButton, PlayButton, AddToButton, RemoveButton, LoadButton};
         const int count = static_cast<int>(std::size(ids));
-        const int button = std::max(60, (width - pad - listLeft - (count - 1) * 6) / count);
-        for (int i = 0; i < count; ++i) MoveWindow(Child(ids[i]), listLeft + i * (button + 6), buttonsTop + 4, button, row, TRUE);
+        const int button = std::max(60, (width - 2 * pad - (count - 1) * 6) / count);
+        for (int i = 0; i < count; ++i) MoveWindow(Child(ids[i]), pad + i * (button + 6), buttonsTop + 4, button, row, TRUE);
         MoveWindow(Child(Status), pad, statusTop + 4, std::max(60, width - 2 * pad), 34, TRUE);
     }
 
     void SavePlacement()
     {
         RECT r{};
-        if (!window || IsIconic(window) || !GetWindowRect(window, &r)) return;
+        if (!host || IsIconic(host) || !GetWindowRect(host, &r)) return;
         const std::string value = std::to_string(r.left) + "," + std::to_string(r.top) + "," + std::to_string(r.right - r.left) + "," + std::to_string(r.bottom - r.top);
         WritePrivateProfileStringA(M::kViewSection, "Window", value.c_str(), ini.c_str());
     }
@@ -1283,15 +1296,17 @@ namespace
             case WM_SIZE:
                 Layout(LOWORD(l), HIWORD(l));
                 return 0;
-            case WM_GETMINMAXINFO:
-                reinterpret_cast<MINMAXINFO*>(l)->ptMinTrackSize = {640, 360};
+            case WM_SETFOCUS:
+                SetFocus(Child(List));
                 return 0;
             case WM_TIMER:
                 if (w == kTimer)
                 {
-                    // Not while a modal dialog has the editor (a map is opening).
-                    HWND owner = GetWindow(hwnd, GW_OWNER);
-                    if (!owner || IsWindowEnabled(owner)) Refresh(false);
+                    // Only while it is shown (another browser's tab may be in
+                    // front), and not while a modal dialog has the editor (a
+                    // map is opening).
+                    HWND owner = GetAncestor(hwnd, GA_ROOTOWNER);
+                    if (IsWindowVisible(hwnd) && (!owner || IsWindowEnabled(owner))) Refresh(false);
                 }
                 else if (w == kSearchTimer)
                 {
@@ -1316,7 +1331,7 @@ namespace
                 }
                 return 0;
             case kRefreshMessage:
-                Refresh(false);
+                if (IsWindowVisible(hwnd)) Refresh(false);
                 return 0;
             case WM_NOTIFY:
             {
@@ -1429,12 +1444,6 @@ namespace
                 Command(id);
                 return 0;
             }
-            case WM_CLOSE:
-                DestroyWindow(hwnd);
-                return 0;
-            case WM_DESTROY:
-                SavePlacement();
-                break;
             case WM_NCDESTROY:
                 window = nullptr;
                 dragging = false;
@@ -1455,105 +1464,427 @@ namespace
     }
 }
 
+namespace
+{
+    // ------------------------------------------------------------------
+    // The panel, made once and moved between its two hosts.
+
+    void FillPanel()
+    {
+        auto add = [](const char* cls, const char* text, int id, DWORD style, DWORD ex = 0) {
+            HWND child = CreateWindowExA(ex, cls, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 10, 10, window,
+                                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandle(nullptr), nullptr);
+            SendMessageA(child, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
+            return child;
+        };
+        HWND type = add("COMBOBOX", "", TypeCombo, WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST);
+        SendMessageA(type, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("All types"));
+        for (Kind k : M::kKinds) SendMessageA(type, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(M::KindPlural(k)));
+        SendMessageA(type, CB_SETCURSEL, filter.kind ? M::Index(*filter.kind) + 1 : 0, 0);
+        add("COMBOBOX", "", PackageCombo, WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST);
+        HWND sort = add("COMBOBOX", "", SortCombo, WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST);
+        for (auto s : Favorites::kSorts) SendMessageA(sort, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(Favorites::SortLabel(s)));
+        SendMessageA(sort, CB_SETCURSEL, static_cast<WPARAM>(filter.sort), 0);
+        add("STATIC", "Search:", SearchLabel, SS_LEFT);
+        HWND search = add("EDIT", "", SearchEdit, WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE);
+        SendMessageA(search, EM_LIMITTEXT, 200, 0);
+        SetWindowSubclass(search, SearchEditProc, 2, 0);
+        add("LISTBOX", "", TagList, WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT, WS_EX_CLIENTEDGE);
+        HWND tagEdit = add("EDIT", "", TagEdit, WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE);
+        SendMessageA(tagEdit, EM_LIMITTEXT, static_cast<WPARAM>(M::kMaxTagName), 0);
+        SendMessageW(tagEdit, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"Tag name"));
+        SendMessageW(search, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"Words in a name, package or tag"));
+        SetWindowSubclass(tagEdit, TagEditProc, 1, 0);
+        add("BUTTON", "&New", NewTag, WS_TABSTOP | BS_PUSHBUTTON);
+        add("BUTTON", "Rena&me", RenameTag, WS_TABSTOP | BS_PUSHBUTTON);
+        add("BUTTON", "&Delete", DeleteTag, WS_TABSTOP | BS_PUSHBUTTON);
+        HWND list = add(WC_LISTVIEWA, "", List, WS_TABSTOP | LVS_REPORT | LVS_SHOWSELALWAYS, WS_EX_CLIENTEDGE);
+        ListView_SetExtendedListViewStyle(list, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP);
+        const char* columns[] = {"Name", "Type", "Package / group", "Tags"};
+        const int widths[] = {200, 80, 170, 140};
+        for (int i = 0; i < 4; ++i)
+        {
+            LVCOLUMNA column{};
+            column.mask = LVCF_TEXT | LVCF_WIDTH;
+            column.cx = widths[i];
+            column.pszText = const_cast<char*>(columns[i]);
+            SendMessageA(list, LVM_INSERTCOLUMNA, i, reinterpret_cast<LPARAM>(&column));
+        }
+        ResetImages();
+        ListView_SetImageList(list, images, LVSIL_SMALL);
+        add("BUTTON", "&Show in Browser", ShowButton, WS_TABSTOP | BS_PUSHBUTTON);
+        add("BUTTON", "&Use", UseButton, WS_TABSTOP | BS_PUSHBUTTON);
+        add("BUTTON", "&Play", PlayButton, WS_TABSTOP | BS_PUSHBUTTON);
+        add("BUTTON", "&Add to Tag...", AddToButton, WS_TABSTOP | BS_PUSHBUTTON);
+        add("BUTTON", "&Remove", RemoveButton, WS_TABSTOP | BS_PUSHBUTTON);
+        add("BUTTON", "&Load Packages", LoadButton, WS_TABSTOP | BS_PUSHBUTTON);
+        add("STATIC", "", Status, SS_LEFT | SS_NOPREFIX);
+    }
+
+    // The panel inside parent, made the first time and moved there after.
+    void MakePanel(HWND parent)
+    {
+        if (window)
+        {
+            if (GetParent(window) != parent) SetParent(window, parent);
+            return;
+        }
+        ini = IniPath();
+        INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_LISTVIEW_CLASSES | ICC_STANDARD_CLASSES};
+        InitCommonControlsEx(&controls);
+        WNDCLASSA wc{};
+        wc.hInstance = GetModuleHandle(nullptr);
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
+        wc.lpfnWndProc = Proc;
+        wc.lpszClassName = "ReloadedFavoritesPanel";
+        RegisterClassA(&wc);
+
+        NONCLIENTMETRICSA metrics{};
+        metrics.cbSize = sizeof(metrics);
+        SystemParametersInfoA(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0);
+        font = CreateFontIndirectA(&metrics.lfMessageFont);
+        LoadView();
+        window = CreateWindowExA(WS_EX_CONTROLPARENT, wc.lpszClassName, "Favorites", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+                                 0, 0, 640, 400, parent, nullptr, wc.hInstance, nullptr);
+        if (!window) throw std::runtime_error("Cannot make the Favorites panel.");
+        FillPanel();
+        RECT client{};
+        GetClientRect(window, &client);
+        Layout(client.right, client.bottom);
+
+        for (auto& map : objects) map.clear();
+        resolvedCount = -1;
+        attempted.clear();
+        entries.clear();
+        rows.clear();
+        pendingTagItems.clear();
+        iniSeen.clear();
+        message = "Double-click to use a favourite (or play a sound); right-click or drag to tag.";
+        SetTimer(window, kTimer, 1000, nullptr);
+    }
+
+    // Brought into view: as a browser's Favorites view does when switched to,
+    // pick up what other editors saved and load the favourites' packages that
+    // are not in memory.
+    void Shown()
+    {
+        if (!window) return;
+        ReadIni(true);
+        if (!Loading()) Resolve();
+        LoadMissing(true);
+        Rebuild();
+        SetFocus(Child(List));
+    }
+
+    // ------------------------------------------------------------------
+    // The floating host, for when the browser window has no tabs to join.
+
+    LRESULT CALLBACK HostProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l)
+    {
+        switch (msg)
+        {
+        case WM_SIZE:
+            if (window && GetParent(window) == hwnd) MoveWindow(window, 0, 0, LOWORD(l), HIWORD(l), TRUE);
+            return 0;
+        case WM_GETMINMAXINFO:
+            reinterpret_cast<MINMAXINFO*>(l)->ptMinTrackSize = {640, 360};
+            return 0;
+        case WM_SETFOCUS:
+            if (window && GetParent(window) == hwnd) SetFocus(window);
+            return 0;
+        case WM_CLOSE:
+            DestroyWindow(hwnd);
+            return 0;
+        case WM_DESTROY:
+            SavePlacement();
+            break;
+        case WM_NCDESTROY:
+            host = nullptr;
+            break;
+        }
+        return DefWindowProcA(hwnd, msg, w, l);
+    }
+
+    void OpenFloating()
+    {
+        if (!host)
+        {
+            WNDCLASSA wc{};
+            wc.hInstance = GetModuleHandle(nullptr);
+            wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+            wc.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
+            wc.lpfnWndProc = HostProc;
+            wc.lpszClassName = "ReloadedFavoritesWindow";
+            RegisterClassA(&wc);
+            ini = IniPath();
+            const RECT place = LoadPlacement();
+            // A tool window owned by the frame: it stays above the editor and goes with it.
+            host = CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_CONTROLPARENT, wc.lpszClassName, "Favorites", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+                                   place.left, place.top, place.right, place.bottom, Frame(), nullptr, wc.hInstance, nullptr);
+            if (!host) throw std::runtime_error("Cannot open the Favorites window.");
+        }
+        MakePanel(host);
+        RECT client{};
+        GetClientRect(host, &client);
+        MoveWindow(window, 0, 0, client.right, client.bottom, TRUE);
+        ShowWindow(window, SW_SHOW);
+        ShowWindow(host, SW_RESTORE);
+        SetForegroundWindow(host);
+        Shown();
+    }
+
+    // ------------------------------------------------------------------
+    // The Favorites tab of the browser window (WBrowserMaster).
+    //
+    // The stock window keeps one tab per docked browser, each tab's lParam the
+    // browser's id. RefreshBrowserTabs empties the tabs and adds one per docked
+    // browser at index GetCount() whenever a browser is shown, docked or
+    // undocked; OnBrowserTabSelChange shows Browsers[lParam of the current tab]
+    // on TCN_SELCHANGE, and is the only reader of the current tab. So the
+    // Favorites tab is kept last, with an lParam no browser has; stock tabs
+    // added while it is there go in front of it; its TCN_SELCHANGE never
+    // reaches the stock window; and it gives way whenever the tabs are rebuilt.
+    // Docked browsers sit at (4, 32, width - 8, height - 36) of the window's
+    // client area (PositionChildControls), and the panel takes the same place.
+
+    constexpr LPARAM kTabParam = 0x46415652; // "FAVR"
+    constexpr Address kCreateWindowExASlot = 0x11AF23E0;
+    typedef HWND(WINAPI* CreateWindowExAFn)(DWORD, LPCSTR, LPCSTR, DWORD, int, int, int, int, HWND, HMENU, HINSTANCE, LPVOID);
+    CreateWindowExAFn previousCreateWindowExA = nullptr;
+
+    HWND master = nullptr;
+    HWND tabs = nullptr;
+    bool tabActive = false;
+    bool addingTab = false;
+    std::vector<HWND> hiddenBrowsers; // the docked browsers the tab hid
+    HMENU savedMenu = nullptr;        // the browser menu taken down while the tab shows
+    std::string savedCaption;         // the browser's name in the window's title
+
+    int FavoritesTab()
+    {
+        if (!tabs) return -1;
+        const int count = static_cast<int>(SendMessageA(tabs, TCM_GETITEMCOUNT, 0, 0));
+        for (int i = 0; i < count; ++i)
+        {
+            TCITEMA item{};
+            item.mask = TCIF_PARAM;
+            if (SendMessageA(tabs, TCM_GETITEMA, i, reinterpret_cast<LPARAM>(&item)) && item.lParam == kTabParam) return i;
+        }
+        return -1;
+    }
+
+    void AddFavoritesTab()
+    {
+        TCITEMA item{};
+        char caption[] = "Favorites";
+        item.mask = TCIF_TEXT | TCIF_PARAM;
+        item.pszText = caption;
+        item.lParam = kTabParam;
+        addingTab = true;
+        SendMessageA(tabs, TCM_INSERTITEMA, SendMessageA(tabs, TCM_GETITEMCOUNT, 0, 0), reinterpret_cast<LPARAM>(&item));
+        addingTab = false;
+    }
+
+    void PlacePanel()
+    {
+        if (!window || !master || GetParent(window) != master) return;
+        RECT r{};
+        GetClientRect(master, &r);
+        SetWindowPos(window, HWND_TOP, 4, 32, std::max(0L, r.right - 8), std::max(0L, r.bottom - 36), SWP_NOACTIVATE);
+    }
+
+    void DeactivateTab()
+    {
+        if (!tabActive) return;
+        tabActive = false;
+        if (window && GetParent(window) == master) ShowWindow(window, SW_HIDE);
+        if (master && IsWindow(master) && !savedCaption.empty()) SetWindowTextA(master, savedCaption.c_str());
+        savedCaption.clear();
+        // The browser's menu goes back up; the stock code replaces it next.
+        if (savedMenu)
+        {
+            if (master && IsWindow(master) && !GetMenu(master)) SetMenu(master, savedMenu);
+            else DestroyMenu(savedMenu);
+            savedMenu = nullptr;
+        }
+        for (HWND browser : hiddenBrowsers)
+            if (IsWindow(browser) && GetParent(browser) == master)
+                SetWindowPos(browser, nullptr, 0, 0, 0, 0, SWP_SHOWWINDOW | SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        hiddenBrowsers.clear();
+    }
+
+    void ActivateTab()
+    {
+        if (!master) return;
+        MakePanel(master);
+        // A floating window open from before gives up the panel.
+        if (host) DestroyWindow(host);
+        if (!tabActive)
+        {
+            tabActive = true;
+            hiddenBrowsers.clear();
+            for (HWND child = GetWindow(master, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT))
+                if (child != tabs && child != window && IsWindowVisible(child))
+                {
+                    hiddenBrowsers.push_back(child);
+                    ShowWindow(child, SW_HIDE);
+                }
+            // The menu bar belongs to the browser that was in front; its
+            // commands would act on that hidden browser.
+            savedMenu = GetMenu(master);
+            if (savedMenu) SetMenu(master, nullptr);
+            char caption[256] = {};
+            GetWindowTextA(master, caption, sizeof(caption));
+            savedCaption = caption;
+            SetWindowTextA(master, "Favorites");
+        }
+        PlacePanel();
+        ShowWindow(window, SW_SHOW);
+        Shown();
+    }
+
+    LRESULT CALLBACK TabsProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR)
+    {
+        switch (msg)
+        {
+        case TCM_INSERTITEMA:
+        case TCM_INSERTITEMW:
+        {
+            if (addingTab) break;
+            const int favorites = FavoritesTab();
+            const LRESULT result = DefSubclassProc(hwnd, msg, M::StockTabIndex(static_cast<int>(w), favorites), l);
+            if (favorites < 0 && result >= 0) AddFavoritesTab();
+            return result;
+        }
+        case TCM_DELETEALLITEMS:
+            DeactivateTab();
+            break;
+        case TCM_DELETEITEM:
+            if (static_cast<int>(w) == FavoritesTab()) DeactivateTab();
+            break;
+        case WM_NCDESTROY:
+            if (hwnd == tabs) tabs = nullptr;
+            RemoveWindowSubclass(hwnd, TabsProc, 1);
+            break;
+        }
+        return DefSubclassProc(hwnd, msg, w, l);
+    }
+
+    LRESULT CALLBACK MasterProc(HWND hwnd, UINT msg, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR)
+    {
+        try
+        {
+            switch (msg)
+            {
+            case WM_NOTIFY:
+            {
+                const NMHDR* header = reinterpret_cast<const NMHDR*>(l);
+                if (!header || !tabs || header->hwndFrom != tabs || header->code != TCN_SELCHANGE) break;
+                const int favorites = FavoritesTab();
+                if (favorites >= 0 && static_cast<int>(SendMessageA(tabs, TCM_GETCURSEL, 0, 0)) == favorites)
+                {
+                    // Browsers[kTabParam] does not exist: the stock window never hears of it.
+                    ActivateTab();
+                    return 0;
+                }
+                DeactivateTab();
+                break;
+            }
+            case WM_SIZE:
+            {
+                const LRESULT result = DefSubclassProc(hwnd, msg, w, l);
+                PlacePanel();
+                return result;
+            }
+            case WM_NCDESTROY:
+                if (hwnd == master)
+                {
+                    tabActive = false;
+                    hiddenBrowsers.clear();
+                    if (savedMenu) DestroyMenu(savedMenu);
+                    savedMenu = nullptr;
+                    savedCaption.clear();
+                    master = nullptr;
+                    tabs = nullptr;
+                }
+                RemoveWindowSubclass(hwnd, MasterProc, 1);
+                break;
+            }
+        }
+        catch (const std::exception& error)
+        {
+            Logger::log(std::string("FavoritesWindow: ") + error.what());
+        }
+        return DefSubclassProc(hwnd, msg, w, l);
+    }
+
+    bool IsTabClass(HWND hwnd)
+    {
+        char name[64] = {};
+        GetClassNameA(hwnd, name, sizeof(name));
+        return _stricmp(name, WC_TABCONTROLA) == 0 || _stricmp(name, "SplinterCell2UnrealWTabControl") == 0;
+    }
+
+    void AttachMaster(HWND browserWindow)
+    {
+        if (browserWindow == master) return;
+        HWND found = nullptr;
+        for (HWND child = GetWindow(browserWindow, GW_CHILD); child && !found; child = GetWindow(child, GW_HWNDNEXT))
+            if (IsTabClass(child)) found = child;
+        if (!found)
+        {
+            Logger::log("FavoritesWindow: the browser window has no tab control; no Favorites tab");
+            return;
+        }
+        master = browserWindow;
+        tabs = found;
+        tabActive = false;
+        SetWindowSubclass(master, MasterProc, 1, 0);
+        SetWindowSubclass(tabs, TabsProc, 1, 0);
+        if (SendMessageA(tabs, TCM_GETITEMCOUNT, 0, 0) > 0 && FavoritesTab() < 0) AddFavoritesTab();
+        Logger::log("FavoritesWindow: Favorites tab attached to the browser window");
+    }
+
+    HWND WINAPI CreateWindowExAHook(DWORD exStyle, LPCSTR className, LPCSTR windowName, DWORD style, int x, int y, int width,
+                                    int height, HWND parent, HMENU menu, HINSTANCE instance, LPVOID parameter)
+    {
+        HWND created = previousCreateWindowExA
+            ? previousCreateWindowExA(exStyle, className, windowName, style, x, y, width, height, parent, menu, instance, parameter)
+            : CreateWindowExA(exStyle, className, windowName, style, x, y, width, height, parent, menu, instance, parameter);
+        char name[96] = {};
+        if (created && GetClassNameA(created, name, static_cast<int>(sizeof(name))))
+        {
+            static const char kMaster[] = "WBrowserMaster";
+            const size_t length = strlen(name);
+            if (length >= sizeof(kMaster) - 1 && _stricmp(name + length - (sizeof(kMaster) - 1), kMaster) == 0) AttachMaster(created);
+        }
+        return created;
+    }
+
+    // Brings the browser window up on its Favorites tab; false when it has no
+    // tabs (every browser floats on its own) or is gone. Once its window has
+    // been closed (destroyed), the stock View > Show ... Browser commands
+    // crash the editor in WBrowserMaster::ShowBrowser, so it is not asked to
+    // come back then.
+    bool ShowTab()
+    {
+        if (!master || !IsWindow(master)) return false;
+        if (!IsWindowVisible(master) || FavoritesTab() < 0) OpenBrowser(Kind::Material);
+        const int favorites = FavoritesTab();
+        if (!master || !IsWindow(master) || !IsWindowVisible(master) || favorites < 0) return false;
+        if (!tabActive) SendMessageA(tabs, TCM_SETCURSEL, favorites, 0);
+        ActivateTab();
+        if (IsIconic(master)) ShowWindow(master, SW_RESTORE);
+        BringWindowToTop(master);
+        return true;
+    }
+}
+
 void Open()
 {
-    if (window)
-    {
-        ShowWindow(window, SW_RESTORE);
-        SetForegroundWindow(window);
-        Refresh(true);
-        return;
-    }
-    ini = IniPath();
-    INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_LISTVIEW_CLASSES | ICC_STANDARD_CLASSES};
-    InitCommonControlsEx(&controls);
-    WNDCLASSA wc{};
-    wc.hInstance = GetModuleHandle(nullptr);
-    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
-    wc.lpfnWndProc = Proc;
-    wc.lpszClassName = "ReloadedFavoritesWindow";
-    RegisterClassA(&wc);
-
-    NONCLIENTMETRICSA metrics{};
-    metrics.cbSize = sizeof(metrics);
-    SystemParametersInfoA(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0);
-    font = CreateFontIndirectA(&metrics.lfMessageFont);
-    LoadView();
-    const RECT place = LoadPlacement();
-    // A tool window owned by the frame: it stays above the editor and goes with it.
-    window = CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_CONTROLPARENT, wc.lpszClassName, "Favorites", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-                             place.left, place.top, place.right, place.bottom, Frame(), nullptr, wc.hInstance, nullptr);
-    if (!window) throw std::runtime_error("Cannot open the Favorites window.");
-    auto add = [](const char* cls, const char* text, int id, DWORD style, DWORD ex = 0) {
-        HWND child = CreateWindowExA(ex, cls, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 10, 10, window,
-                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandle(nullptr), nullptr);
-        SendMessageA(child, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
-        return child;
-    };
-    HWND type = add("COMBOBOX", "", TypeCombo, WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST);
-    SendMessageA(type, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("All types"));
-    for (Kind k : M::kKinds) SendMessageA(type, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(M::KindPlural(k)));
-    SendMessageA(type, CB_SETCURSEL, filter.kind ? M::Index(*filter.kind) + 1 : 0, 0);
-    add("COMBOBOX", "", PackageCombo, WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST);
-    HWND sort = add("COMBOBOX", "", SortCombo, WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST);
-    for (auto s : Favorites::kSorts) SendMessageA(sort, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(Favorites::SortLabel(s)));
-    SendMessageA(sort, CB_SETCURSEL, static_cast<WPARAM>(filter.sort), 0);
-    add("STATIC", "Search:", SearchLabel, SS_LEFT);
-    HWND search = add("EDIT", "", SearchEdit, WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE);
-    SendMessageA(search, EM_LIMITTEXT, 200, 0);
-    SetWindowSubclass(search, SearchEditProc, 2, 0);
-    add("LISTBOX", "", TagList, WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT, WS_EX_CLIENTEDGE);
-    HWND tagEdit = add("EDIT", "", TagEdit, WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE);
-    SendMessageA(tagEdit, EM_LIMITTEXT, static_cast<WPARAM>(M::kMaxTagName), 0);
-    SendMessageW(tagEdit, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"Tag name"));
-    SendMessageW(search, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"Words in a name, package or tag"));
-    SetWindowSubclass(tagEdit, TagEditProc, 1, 0);
-    add("BUTTON", "&New", NewTag, WS_TABSTOP | BS_PUSHBUTTON);
-    add("BUTTON", "Rena&me", RenameTag, WS_TABSTOP | BS_PUSHBUTTON);
-    add("BUTTON", "&Delete", DeleteTag, WS_TABSTOP | BS_PUSHBUTTON);
-    HWND list = add(WC_LISTVIEWA, "", List, WS_TABSTOP | LVS_REPORT | LVS_SHOWSELALWAYS, WS_EX_CLIENTEDGE);
-    ListView_SetExtendedListViewStyle(list, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP);
-    const char* columns[] = {"Name", "Type", "Package / group", "Tags"};
-    const int widths[] = {200, 80, 170, 140};
-    for (int i = 0; i < 4; ++i)
-    {
-        LVCOLUMNA column{};
-        column.mask = LVCF_TEXT | LVCF_WIDTH;
-        column.cx = widths[i];
-        column.pszText = const_cast<char*>(columns[i]);
-        SendMessageA(list, LVM_INSERTCOLUMNA, i, reinterpret_cast<LPARAM>(&column));
-    }
-    ResetImages();
-    ListView_SetImageList(list, images, LVSIL_SMALL);
-    add("BUTTON", "&Show in Browser", ShowButton, WS_TABSTOP | BS_PUSHBUTTON);
-    add("BUTTON", "&Use", UseButton, WS_TABSTOP | BS_PUSHBUTTON);
-    add("BUTTON", "&Play", PlayButton, WS_TABSTOP | BS_PUSHBUTTON);
-    add("BUTTON", "&Add to Tag...", AddToButton, WS_TABSTOP | BS_PUSHBUTTON);
-    add("BUTTON", "&Remove", RemoveButton, WS_TABSTOP | BS_PUSHBUTTON);
-    add("BUTTON", "&Load Packages", LoadButton, WS_TABSTOP | BS_PUSHBUTTON);
-    add("STATIC", "", Status, SS_LEFT | SS_NOPREFIX);
-    RECT client{};
-    GetClientRect(window, &client);
-    Layout(client.right, client.bottom);
-
-    for (auto& map : objects) map.clear();
-    resolvedCount = -1;
-    attempted.clear();
-    entries.clear();
-    rows.clear();
-    pendingTagItems.clear();
-    iniSeen.clear();
-    ReadIni(true);
-    // As a browser's Favorites view does when it is switched on: load the
-    // favourites' packages that are not in memory.
-    if (!Loading()) Resolve();
-    LoadMissing(true);
-    message = "Double-click to use a favourite (or play a sound); right-click or drag to tag.";
-    Rebuild();
-    SetTimer(window, kTimer, 1000, nullptr);
-    ShowWindow(window, SW_SHOW);
-    SetFocus(list);
+    if (ShowTab()) return;
+    OpenFloating();
 }
 
 bool HandleCommand(UINT command)
@@ -1588,5 +1919,14 @@ void InstallMenu(HMENU bar)
 void Changed()
 {
     if (window) PostMessageA(window, kRefreshMessage, 0, 0);
+}
+
+void Initialize()
+{
+    // Chained after the browsers' hooks of the same import.
+    previousCreateWindowExA = *reinterpret_cast<CreateWindowExAFn*>(kCreateWindowExASlot);
+    const uintptr_t hook = reinterpret_cast<uintptr_t>(CreateWindowExAHook);
+    if (!MemoryWriter::WriteBytes(kCreateWindowExASlot, &hook, sizeof(hook)))
+        Logger::log("FavoritesWindow: could not hook window creation; no Favorites tab in the browser window");
 }
 }

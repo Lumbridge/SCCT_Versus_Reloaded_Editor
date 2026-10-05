@@ -210,8 +210,10 @@ tags as key-by-key writes, with a stale editor's writes keeping another editor's
 change; stray tag names ignored; the rows for each type, tag, untagged, package and
 search filter (tags and the type are searched, and the English for French names
 through the search hook) in every sort order, unloaded favourites last; the
-package and tag lists with counts; the packages to load once per type; and the
-status summary.
+package and tag lists with counts; the packages to load once per type; the
+status summary; and where the browser window's own tabs go while the Favorites
+tab is there (always in front of it, so it stays last and the stock tabs keep
+their indices).
 
 There is no native suite test. It was checked by hand in a disposable editor:
 the window lists favourites from all three browsers with texture thumbnails,
