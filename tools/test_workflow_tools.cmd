@@ -10,6 +10,10 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\MeasureModelTests.cpp Reloaded
 if errorlevel 1 goto failed
 "%TEMP%\MeasureModelTests.exe"
 if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\PlacementModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\PlacementModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\PlacementModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\LevelSnapshotModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\LevelSnapshotModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\LevelSnapshotModelTests.exe"
