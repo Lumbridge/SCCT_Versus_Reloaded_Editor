@@ -3,7 +3,9 @@
 // file and its migration from both-team presets, and the shared preset file.
 // Applying a preset in the editor (import and compile) is verified natively.
 #include "../Reloaded.Editor/CharacterSkinPresetsModel.h"
+#include <cstring>
 #include <iostream>
+#include <map>
 #include <source_location>
 #include <stdexcept>
 #include <string>
@@ -45,6 +47,43 @@ Json UserEntry()
             {"slots", {{"SpyBody", {{"image", "SpyBody.tga"}}}, {"SpyHead", {{"path", "Arctic_TXT.Spy.Head"}}}}},
             {"models", {{"SpyModel", "SPerso.DEF_01"}}}, {"goggles", {{"SpyGoggleOffset", {4, 0, 0}}}}};
 }
+// A minimal PSK: header, one point, one face, one bone and the named materials.
+Bytes Psk(const std::vector<std::string>& materials, bool skeleton = true)
+{
+    Bytes out;
+    auto chunk = [&](const char* id, int size, int count) {
+        char head[32]{};
+        std::memcpy(head, id, std::strlen(id));
+        std::memcpy(head + 24, &size, 4);
+        std::memcpy(head + 28, &count, 4);
+        out.insert(out.end(), head, head + 32);
+        out.insert(out.end(), static_cast<size_t>(size) * count, 0);
+    };
+    chunk("ACTRHEAD", 0, 0);
+    chunk("PNTS0000", 12, 1);
+    chunk("VTXW0000", 16, 3);
+    chunk("FACE0000", 12, 1);
+    char head[32]{};
+    std::memcpy(head, "MATT0000", 8);
+    int size = 88, count = static_cast<int>(materials.size());
+    std::memcpy(head + 24, &size, 4);
+    std::memcpy(head + 28, &count, 4);
+    out.insert(out.end(), head, head + 32);
+    for (const auto& m : materials)
+    {
+        char record[88]{};
+        std::memcpy(record, m.data(), m.size());
+        out.insert(out.end(), record, record + 88);
+    }
+    if (skeleton) chunk("REFSKELT", 120, 1);
+    chunk("RAWWEIGHTS", 12, 1);
+    return out;
+}
+Json ModelEntry()
+{
+    return {{"team", "merc"}, {"name", "Diver"}, {"category", "Models"}, {"description", ""}, {"slots", Json::object()},
+            {"mesh", {{"name", "DiverMerc"}, {"materials", {"DiverBody", "DiverMask"}}}}, {"goggles", {{"MercGoggleOffset", {1, 0, 0}}}}};
+}
 // A version 1 entry: one preset dressing both teams.
 Json TwoTeamEntry()
 {
@@ -71,6 +110,7 @@ int main()
             Check(ids.insert(entry.at("id")).second, "built-in ids are unique");
             categories.insert(entry.at("category"));
             const auto& team = TeamOf(entry);
+            if (HasMesh(entry)) continue; // the models: checked below
             ++(std::string(team.id) == "spy" ? spies : mercs);
             Check(entry.at("slots").size() == 2 && entry.at("slots").contains(team.body) && entry.at("slots").contains(team.head), "every built-in dresses its team's two slots");
             Check(ImageSlots(entry).empty(), "built-ins carry no picture files");
@@ -335,6 +375,59 @@ int main()
         auto sharedBuiltin = ShareDocument(builtin, {});
         Check(ReadShared(sharedBuiltin)[0].entry.at("slots").at("SpyBody").contains("recipe"), "built-in shares its recipes");
         Check(ShareFileName("Snow: \"Arctic\"/2?") == "Snow Arctic2.skinpreset" && ShareFileName("...") == "Skin preset.skinpreset", "file names");
+
+        // Models a preset carries: the built-in hazmat suit, and the user's own.
+        const auto hazmat = std::find_if(builtins.begin(), builtins.end(), [](const Json& e) { return e.at("id") == "builtin.merc.hazmat_suit"; });
+        Check(hazmat != builtins.end() && HasMesh(*hazmat) && hazmat->at("category") == "Models", "the hazmat suit is a built-in merc model");
+        Check(MeshFiles(*hazmat) == std::vector<std::string>{"HazmatMerc.psk", "HazmatSuit.tga", "HazmatGear.tga"}, "a model's files");
+        Check(Contains(Summary(*hazmat), "Merc model: its own, HazmatMerc (2 textures)") && Contains(Summary(*hazmat), "Goggle lights: -0.1, -2.8, -0.8") &&
+              !Contains(Summary(*hazmat), "Merc body"), "model summary");
+        Check(std::find(DefaultCategories().begin(), DefaultCategories().end(), "Models") != DefaultCategories().end(), "a Models category");
+        {
+            Json modelFile = EmptyDocument();
+            auto model = Save(modelFile, ModelEntry());
+            Validate(model);
+            Check(Throws([] { auto e = ModelEntry(); e["mesh"]["name"] = "Bad name"; e["id"] = std::string(32, 'a'); e["modified"] = "1"; Validate(e); }), "model names are identifiers");
+            Check(Throws([] { auto e = ModelEntry(); e["mesh"]["materials"] = Json::array(); e["id"] = std::string(32, 'a'); e["modified"] = "1"; Validate(e); }), "a model needs materials");
+            Check(Throws([] { auto e = ModelEntry(); e["mesh"]["materials"] = {"A", "a"}; e["id"] = std::string(32, 'a'); e["modified"] = "1"; Validate(e); }), "materials are distinct");
+            Check(Throws([] { auto e = ModelEntry(); e["models"] = {{"MercModel", "SPerso.ATT_01"}}; e["id"] = std::string(32, 'a'); e["modified"] = "1"; Validate(e); }),
+                  "a preset names a model or carries one, not both");
+            Check(ValidModelName("HazmatMerc") && !ValidModelName("9lives") && ModelNameFrom("my suit-2") == "my_suit_2" && ModelNameFrom("2x") == "Model_2x", "model names");
+            // The PSK's materials, in order; anything else is refused.
+            const auto psk = Psk({"DiverBody", "DiverMask"});
+            Check(PskMaterials(psk) == std::vector<std::string>{"DiverBody", "DiverMask"}, "PSK materials");
+            Check(Throws([] { PskMaterials(Bytes(64, 0)); }), "not a PSK");
+            Check(Throws([] { PskMaterials(Psk({"A"}, false)); }), "a PSK without a skeleton");
+            Check(Throws([] { PskMaterials(Psk({})); }), "a PSK without materials");
+            auto cut = psk;
+            cut.resize(cut.size() - 20);
+            Check(Throws([&] { PskMaterials(cut); }), "a damaged PSK");
+            // Imported names carry the PSK's hash: the same model reuses what it imported.
+            Check(MeshImportName("DiverMerc", psk) == "DiverMerc_" + ModelStamp(psk) && ModelStamp(psk).size() == 8 &&
+                  MaterialImportName("DiverBody", psk) == "DiverBody_" + ModelStamp(psk) && ModelStamp(psk) != ModelStamp(Psk({"X", "Y"})), "import names");
+            // Applying: the team's model is the imported mesh; the other team is untouched.
+            Json settings = {{"slots", {{"SpyBody", "Snow.Body"}}}, {"models", {{"SpyModel", "SPerso.DEF_01"}, {"MercModel", "Old.Mesh"}}}, {"goggles", Json::object()}};
+            auto inModel = Dress(model, settings, {}, "MyLevel.DiverMerc_0000abcd");
+            Check(inModel.at("models").at("MercModel") == "MyLevel.DiverMerc_0000abcd" && inModel.at("models").at("SpyModel") == "SPerso.DEF_01" &&
+                  inModel.at("slots").at("SpyBody") == "Snow.Body" && inModel.at("goggles").at("MercGoggleOffset") == Json::array({1, 0, 0}), "inModel in the model");
+            Check(Throws([&] { Dress(model, settings, {}); }), "a carried model must be imported first");
+            // Wearing: known by the import record, like pictures.
+            Json modelList = Json::array({model});
+            Check(Wearing(Teams[1], inModel, modelList, {{"DiverMerc_0000abcd", model.at("id")}}) == "Diver", "wearing a carried model");
+            Check(Wearing(Teams[1], inModel, modelList, Json::object()) == "their own skins", "an unknown mesh is their own");
+            // Sharing carries the model's files, every one checked on the way sharedBack.
+            std::map<std::string, Bytes> files = {{"DiverMerc.psk", psk}, {"DiverBody.tga", Tga(Stock(8))}, {"DiverMask.tga", Tga(Stock(8))}};
+            auto document = ShareDocument(model, {}, files);
+            auto sharedBack = ReadShared(document);
+            Check(sharedBack.size() == 1 && sharedBack[0].files.size() == 3 && sharedBack[0].files.at("DiverMerc.psk") == psk && sharedBack[0].entry.at("mesh") == model.at("mesh"), "shared with its model");
+            Check(Throws([&] { auto f = files; f.erase("DiverMask.tga"); ShareDocument(model, {}, f); }), "a model file missing from the share");
+            auto badShare = document;
+            badShare["files"].erase("DiverBody.tga");
+            Check(Throws([&] { ReadShared(badShare); }), "a shared model without a picture");
+            badShare = document;
+            badShare["files"]["DiverMerc.psk"] = Base64(Psk({"Other"}));
+            Check(Throws([&] { ReadShared(badShare); }), "a shared PSK whose materials are not the preset's");
+        }
 
         Check(Contains(Summary(Builtins()[0]), "Spy body: camouflage patches") && !Contains(Summary(Builtins()[0]), "Merc") &&
               Contains(Summary(saved), "Spy model: SPerso.DEF_01 (goggle lights 4, 0, 0)"), "summary shows the preset's team only");

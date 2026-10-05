@@ -25,8 +25,7 @@ namespace Editor = Workflow::Editor;
 // Per slot row i: edit 200+i, Use Selected 210+i, Clear 220+i, Import 230+i.
 // Per model row m: model box 240+m, goggle offset X/Y/Z 250+3m..252+3m.
 constexpr int kEdit = 200, kUse = 210, kClear = 220, kImport = 230, kModel = 240, kGoggle = 250, kStatus = 101,
-              kApply = IDOK, kRemove = 102, kDownload = 103, kPreview = 104, kPreviewStatus = 105, kPresets = 106,
-              kHazmat = 107;
+              kApply = IDOK, kRemove = 102, kDownload = 103, kPreview = 104, kPreviewStatus = 105, kPresets = 106;
 // Timers: the preview redraws when its view changed, and shows the fields again a
 // moment after they stop changing.
 constexpr UINT_PTR kDrawTimer = 1, kRefreshTimer = 2;
@@ -223,7 +222,7 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
             Control(window, "STATIC",
                 "Models: any loaded skeletal mesh; the team keeps its own animations. Goggle lights move "
                 "by X, Y, Z along the head bone onto the new head (the merc model on a spy: 4, 0, 0). "
-                "Hazmat Mercs puts the mercs in a hazmat suit carried by RE+.",
+                "Presets... has ready-made models, such as the hazmat suit.",
                 0, kStatus + 51, 12, y + 4, width, 30);
             y += 38;
             const auto meshes = Editor::LoadedSkeletalMeshes();
@@ -243,7 +242,6 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
             Control(window, "BUTTON", "Remove from Map", WS_TABSTOP, kRemove, 12, r.bottom - 38, 125, 27);
             Control(window, "BUTTON", "Download Default Skins...", WS_TABSTOP, kDownload, 145, r.bottom - 38, 175, 27);
             Control(window, "BUTTON", "Presets...", WS_TABSTOP, kPresets, 328, r.bottom - 38, 80, 27);
-            Control(window, "BUTTON", "Hazmat Mercs", WS_TABSTOP, kHazmat, 416, r.bottom - 38, 105, 27);
             Control(window, "BUTTON", "Apply", BS_DEFPUSHBUTTON | WS_TABSTOP, kApply, r.right - 215, r.bottom - 38, 95, 27);
             Control(window, "BUTTON", "Close", WS_TABSTOP, IDCANCEL, r.right - 110, r.bottom - 38, 95, 27);
             // The 3D preview fills the right of the window above the buttons.
@@ -360,32 +358,6 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
             UpdateWindow(window);
             Show(window, Editor::ApplyCharacterSkins(values.at("slots"), values.at("models"), values.at("goggles")));
             Status(window, "Applied. Save the map, then play it to see the result; the map's own viewports still show the stock look.");
-            return TRUE;
-        }
-        if (id == kHazmat)
-        {
-            // One click: the suit RE+ carries goes into the map, the mercs wear it, applied.
-            Status(window, "Adding the hazmat suit to this map...");
-            UpdateWindow(window);
-            const auto added = Editor::AddHazmatSuit();
-            const auto mesh = added.at("mesh").get<std::string>();
-            for (size_t m = 0; m < CharacterSkins::Models.size(); ++m)
-            {
-                if (std::string(CharacterSkins::Models[m].property) != "MercModel")
-                    continue;
-                const auto box = GetDlgItem(window, kModel + static_cast<int>(m));
-                if (SendMessageA(box, CB_FINDSTRINGEXACT, static_cast<WPARAM>(-1), reinterpret_cast<LPARAM>(mesh.c_str())) == CB_ERR)
-                    SendMessageA(box, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(mesh.c_str()));
-                SetDlgItemTextA(window, kModel + static_cast<int>(m), mesh.c_str());
-                const auto& g = added.at("goggles");
-                SetGoggles(window, m, {g[0].get<double>(), g[1].get<double>(), g[2].get<double>()});
-            }
-            Status(window, "Applying...");
-            UpdateWindow(window);
-            const auto values = Values(window);
-            Show(window, Editor::ApplyCharacterSkins(values.at("slots"), values.at("models"), values.at("goggles")));
-            Status(window, std::string(added.at("added").get<bool>() ? "Added the hazmat suit (" : "The map already had the hazmat suit (") +
-                               mesh + "); the mercs now wear it. Save the map, then play it to see them.");
             return TRUE;
         }
         if (id == kPresets)

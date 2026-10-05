@@ -26,7 +26,7 @@ namespace Presets = CharacterSkins::Presets;
 enum Id
 {
     Search = 300, Tree, Preview, Name = 310, Category, Description, Details,
-    Apply = 320, SaveCurrent, Rename, Delete, Restore, ImportFile, ExportFile, Status = 330, Hint, Wearing,
+    Apply = 320, SaveCurrent, Rename, Delete, Restore, ImportFile, ExportFile, AddModel, Status = 330, Hint, Wearing,
     TeamSpy = 340, TeamMerc
 };
 constexpr int ThumbSide = 20, Thumb = 26; // tree icons: the team's body and head side by side
@@ -341,7 +341,9 @@ void ShowEntry(State& s)
         if (!at || description[at - 1] != '\r') description.insert(at, "\r");
     Set(s, Description, description.empty() ? "No description." : description);
     const std::string team = Lower(Presets::TeamOf(*entry).label);
-    std::string details = ReadOnly(*entry) ? "Built-in " + team + " preset: painted over the stock textures when applied." : "Your " + team + " preset";
+    std::string details = !ReadOnly(*entry) ? "Your " + team + " preset"
+                          : Presets::HasMesh(*entry) ? "Built-in " + team + " model: imported into this map when applied."
+                                                     : "Built-in " + team + " preset: painted over the stock textures when applied.";
     if (!ReadOnly(*entry))
     {
         const auto date = Date(*entry);
@@ -389,12 +391,16 @@ void PaintPreview(State& s, const DRAWITEMSTRUCT& item)
     const int side = std::max(16, std::min((width - 30) / 2, height - strip - 30 - label));
     const std::string team = s.team->label;
     const char* captions[2] = {"body", "head"};
+    const auto* shownEntry = Current(s);
+    const bool model = shownEntry && Presets::HasMesh(*shownEntry);
     for (int i = 0; i < 2; ++i)
     {
+        if (model && static_cast<size_t>(i) >= s.pictures.size()) break; // a one-texture model
         const int x = all.left + (width - 2 * side - 10) / 2 + i * (side + 10);
         const int y = all.top + 8;
         RECT caption{x, y, x + side, y + label};
-        DrawTextA(dc, ("Preset: " + team + " " + captions[i]).c_str(), -1, &caption, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        const std::string text = model ? "Model texture " + std::to_string(i + 1) : "Preset: " + team + " " + captions[i];
+        DrawTextA(dc, text.c_str(), -1, &caption, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
         RECT box{x, y + label, x + side, y + label + side};
         if (static_cast<size_t>(i) < s.pictures.size() && s.pictures[i].width > 0) DrawImage(dc, s.pictures[i], box);
         else missing(box, s.pictures.empty() ? "" : "No picture (the material is not loaded)");
@@ -436,6 +442,19 @@ void PaintPreview(State& s, const DRAWITEMSTRUCT& item)
     }
 }
 
+std::filesystem::path PickModel(HWND owner)
+{
+    wchar_t path[32768]{};
+    OPENFILENAMEW choose{sizeof(choose)};
+    choose.hwndOwner = owner;
+    choose.lpstrFile = path;
+    choose.nMaxFile = 32768;
+    choose.lpstrFilter = L"Skeletal meshes (*.psk)\0*.psk\0";
+    choose.lpstrTitle = L"Add a model: a PSK with one TGA per material beside it";
+    choose.Flags = OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST;
+    if (!GetOpenFileNameW(&choose)) return {};
+    return std::filesystem::path(path);
+}
 std::filesystem::path PickFile(HWND owner, bool save, const std::string& suggested)
 {
     wchar_t path[32768]{};
@@ -533,6 +552,20 @@ void Command(State& s, int id)
         Editor::ExportSkinPreset(found->at("id"), file);
         StatusText(s, "Exported " + Ansi(found->at("name").get<std::string>()) + " to " + file.string() + ", pictures included.");
     }
+    else if (id == AddModel)
+    {
+        const auto file = PickModel(s.window);
+        if (file.empty()) return;
+        const std::string team = Lower(s.team->label);
+        const auto stem = file.stem().u8string(); // UTF-8 text: a std::u8string would become a JSON array
+        Json suggested = {{"name", std::string(stem.begin(), stem.end())}, {"category", "Models"}, {"description", ""}};
+        auto details = WorkflowTools::AskDetails(s.window, suggested, ("Add a " + team + " model").c_str(), s.view.at("categories"));
+        if (details.is_null()) return;
+        SetCursor(LoadCursor(nullptr, IDC_WAIT));
+        auto saved = Editor::AddSkinPresetModel(s.team->id, file, details);
+        Select(s, saved.at("id"));
+        StatusText(s, "Added " + Ansi(saved.at("name").get<std::string>()) + " to your " + team + " presets. Apply it to import the model into this map.");
+    }
     else if (id == ImportFile)
     {
         const auto file = PickFile(s.window, false, {});
@@ -585,8 +618,8 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
             SendMessage(Control(*s, "STATIC", "", SS_ENDELLIPSIS | SS_NOPREFIX, Name, rx, 10, right - 4, 26), WM_SETFONT, reinterpret_cast<WPARAM>(s->heading), TRUE);
             Control(*s, "STATIC", "", SS_NOPREFIX, Category, rx, 38, right - 4, 18);
             Control(*s, "STATIC", "", SS_NOPREFIX, Description, rx, 60, right - 4, 64);
-            Control(*s, "STATIC", "", SS_NOPREFIX, Details, rx, 128, right - 4, bottom - 128 - 8 * 31 + 16);
-            int y = bottom - 7 * 31 + 4;
+            Control(*s, "STATIC", "", SS_NOPREFIX, Details, rx, 128, right - 4, bottom - 128 - 9 * 31 + 16);
+            int y = bottom - 8 * 31 + 4;
             Control(*s, "BUTTON", "Apply to This Map", BS_DEFPUSHBUTTON | WS_TABSTOP, Apply, rx, y - 8, right - 4, 32);
             y += 31;
             Control(*s, "BUTTON", "Save Current as Preset...", WS_TABSTOP, SaveCurrent, rx, y, right - 4, 27);
@@ -595,6 +628,8 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
             Control(*s, "BUTTON", "Delete...", WS_TABSTOP, Delete, rx + (right - 10) / 2 + 6, y, (right - 10) / 2, 27);
             y += 31;
             Control(*s, "BUTTON", "Restore Hidden", WS_TABSTOP, Restore, rx, y, right - 4, 27);
+            y += 31;
+            Control(*s, "BUTTON", "Add Model...", WS_TABSTOP, AddModel, rx, y, right - 4, 27);
             y += 31;
             Control(*s, "BUTTON", "Import Preset File...", WS_TABSTOP, ImportFile, rx, y, right - 4, 27);
             y += 31;

@@ -18,14 +18,21 @@
 //             | {"path": "Package.Group.Name"}  a material in a shared package},
 //              a slot left out keeps the stock look,
 //    "models": {"SpyModel" or "MercModel": "Package.Mesh"} (optional),
+//    "mesh": {"name": "HazmatMerc", "materials": ["HazmatSuit", "HazmatGear"]} (optional):
+//            a model the preset carries, instead of naming one in "models": <name>.psk
+//            rigged to the team's stock skeleton and one <material>.tga per PSK material,
+//            in the DLL for a built-in, beside the entry for the user's own. Applying
+//            imports them into the map (see MeshImportName),
 //    "goggles": {"SpyGoggleOffset" or "MercGoggleOffset": [x,y,z]} (optional)}
 // User file, <Editor::Directory()>/skin_presets.json:
 //   {"version":2,"presets":[user entries],"hiddenBuiltins":[built-in ids the user hid],
 //    "imports":{"<texture name a preset's picture was imported under>": "<preset id>"}}
-// with each user entry's pictures in <Editor::Directory()>/skin_presets/<id>/<Slot>.tga.
+// with each user entry's pictures in <Editor::Directory()>/skin_presets/<id>/<Slot>.tga
+// and its model's files beside them.
 // Version 1 entries dressed both teams; Migrate splits each into a spy and a merc entry.
 // Shared preset file (*.skinpreset): {"version":2,"format":"RE+ skin preset",
-//   "preset":{entry without id, modified and flags},"images":{"<Slot>":"<base64 TGA>"}};
+//   "preset":{entry without id, modified and flags},"images":{"<Slot>":"<base64 TGA>"},
+//   "files":{"<model file>":"<base64>"} for a preset carrying a model};
 // a version 1 file (both teams) reads back as two entries.
 #include "CharacterSkinsImage.h"
 #include "CharacterSkinsModel.h"
@@ -34,6 +41,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <set>
@@ -92,7 +100,7 @@ inline const Team& TeamOf(const Json& entry)
 
 inline const std::vector<std::string>& DefaultCategories()
 {
-    static const std::vector<std::string> categories = {"Woodland & Jungle", "Desert", "Snow & Arctic", "Urban & Night", "Fun", "Other"};
+    static const std::vector<std::string> categories = {"Woodland & Jungle", "Desert", "Snow & Arctic", "Urban & Night", "Fun", "Models", "Other"};
     return categories;
 }
 inline bool IsBuiltinId(const std::string& id) { return Workflow::EmitterLibrary::IsBuiltinId(id); }
@@ -117,6 +125,74 @@ inline const ModelSlot* FindGoggles(const std::string& property)
 }
 // The picture file of a slot kept beside a user entry.
 inline std::string ImageFile(const std::string& property) { return property + ".tga"; }
+
+// ---------------------------------------------------------------------------
+// Models a preset carries ("mesh"): a PSK and one TGA per material.
+constexpr size_t MaxModelMaterials = 8;
+// A model or material name: what the editor names the imported objects after.
+inline bool ValidModelName(const std::string& name)
+{
+    if (name.empty() || name.size() > 40 || !std::isalpha(static_cast<unsigned char>(name[0]))) return false;
+    return std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isalnum(c) || c == '_'; });
+}
+// A model name made from a file name: other characters become underscores.
+inline std::string ModelNameFrom(const std::string& stem)
+{
+    std::string out;
+    for (unsigned char c : stem) out += std::isalnum(c) ? static_cast<char>(c) : '_';
+    if (out.empty() || !std::isalpha(static_cast<unsigned char>(out[0]))) out = "Model_" + out;
+    if (out.size() > 40) out.resize(40);
+    return out;
+}
+inline bool HasMesh(const Json& entry) { return entry.is_object() && entry.contains("mesh"); }
+inline std::string MeshFile(const Json& entry) { return entry.at("mesh").at("name").get<std::string>() + ".psk"; }
+inline std::string MaterialFile(const std::string& material) { return material + ".tga"; }
+// Every file of an entry's model: the PSK first, then the pictures in material order.
+inline std::vector<std::string> MeshFiles(const Json& entry)
+{
+    std::vector<std::string> out;
+    if (!HasMesh(entry)) return out;
+    out.push_back(MeshFile(entry));
+    for (const auto& material : entry.at("mesh").at("materials")) out.push_back(MaterialFile(material.get<std::string>()));
+    return out;
+}
+// The material names of a PSK (ActorX skeletal mesh), in order. Throws when the bytes are
+// not one: chunks of a 32-byte header (20-byte id, flags, record size, record count).
+inline std::vector<std::string> PskMaterials(const Bytes& psk)
+{
+    auto i32 = [&](size_t at) { std::int32_t v; std::memcpy(&v, psk.data() + at, 4); return v; };
+    if (psk.size() < 32 || std::memcmp(psk.data(), "ACTRHEAD", 8) != 0) throw std::runtime_error("This is not a PSK skeletal mesh (no ACTRHEAD).");
+    std::vector<std::string> materials;
+    bool points = false, faces = false, bones = false;
+    size_t at = 0;
+    while (at + 32 <= psk.size())
+    {
+        const std::string id(reinterpret_cast<const char*>(psk.data() + at), strnlen(reinterpret_cast<const char*>(psk.data() + at), 20));
+        const std::int32_t size = i32(at + 24), count = i32(at + 28);
+        if (size < 0 || count < 0 || static_cast<std::uint64_t>(size) * static_cast<std::uint64_t>(count) > psk.size() - at - 32)
+            throw std::runtime_error("The PSK is damaged (chunk " + id + ").");
+        const size_t body = at + 32;
+        if (id == "PNTS0000") points = count > 0;
+        else if (id == "FACE0000") faces = count > 0;
+        else if (id == "REFSKELT") bones = count > 0;
+        else if (id == "MATT0000")
+        {
+            if (size < 64) throw std::runtime_error("The PSK's materials are damaged.");
+            for (std::int32_t m = 0; m < count; ++m)
+            {
+                const char* name = reinterpret_cast<const char*>(psk.data() + body + static_cast<size_t>(m) * size);
+                materials.emplace_back(name, strnlen(name, 64));
+            }
+        }
+        at = body + static_cast<size_t>(size) * static_cast<size_t>(count);
+    }
+    if (at != psk.size()) throw std::runtime_error("The PSK is damaged (it ends inside a chunk).");
+    if (!points || !faces) throw std::runtime_error("The PSK has no geometry.");
+    if (!bones) throw std::runtime_error("The PSK has no skeleton; a character model must be rigged to the team's stock skeleton.");
+    if (materials.empty()) throw std::runtime_error("The PSK names no materials.");
+    if (materials.size() > MaxModelMaterials) throw std::runtime_error("The PSK has more than " + std::to_string(MaxModelMaterials) + " materials.");
+    return materials;
+}
 
 // ---------------------------------------------------------------------------
 // Recipes: camouflage painted over the stock texture. The stock picture keeps its
@@ -349,6 +425,17 @@ inline std::uint32_t Fnv(const Bytes& data)
     for (auto b : data) h = (h ^ b) * 16777619u;
     return h;
 }
+// The names a carried model is imported under: its mesh and each material with the PSK's
+// hash, so applying the same model again reuses what it imported and a changed model
+// arrives beside the old one instead of over it.
+inline std::string ModelStamp(const Bytes& psk)
+{
+    char hex[9]{};
+    std::snprintf(hex, sizeof(hex), "%08x", Fnv(psk));
+    return hex;
+}
+inline std::string MeshImportName(const std::string& name, const Bytes& psk) { return name + "_" + ModelStamp(psk); }
+inline std::string MaterialImportName(const std::string& material, const Bytes& psk) { return material + "_" + ModelStamp(psk); }
 inline std::string ImportName(const std::string& property, const Bytes& tga)
 {
     if (!FindSlot(property)) throw std::runtime_error("Unknown Character Skins slot " + property + ".");
@@ -518,6 +605,21 @@ inline void Validate(const Json& entry)
             if (!it.value().get<std::string>().empty()) ++used;
         }
     }
+    if (entry.contains("mesh"))
+    {
+        const auto& mesh = entry.at("mesh");
+        if (!mesh.is_object() || !mesh.contains("name") || !mesh.at("name").is_string() || !ValidModelName(mesh.at("name").get<std::string>()))
+            fail("its model needs a name of letters, digits and underscores.");
+        if (!mesh.contains("materials") || !mesh.at("materials").is_array() || mesh.at("materials").empty() || mesh.at("materials").size() > MaxModelMaterials)
+            fail("its model needs 1 to " + std::to_string(MaxModelMaterials) + " materials.");
+        std::set<std::string> seen;
+        for (const auto& material : mesh.at("materials"))
+            if (!material.is_string() || !ValidModelName(material.get<std::string>()) || !seen.insert(Fold(material.get<std::string>())).second)
+                fail("its model's materials must be distinct names of letters, digits and underscores.");
+        if (entry.contains("models") && entry.at("models").is_object() && !entry.at("models").value(team->model, std::string{}).empty())
+            fail("it both names a model and carries one; keep one.");
+        ++used;
+    }
     if (entry.contains("goggles"))
     {
         if (!entry.at("goggles").is_object()) fail("its goggle light offsets are not an object.");
@@ -597,6 +699,13 @@ inline const Json& Builtins()
         Json list = Json::array();
         for (const auto& team : Teams)
             for (const auto& look : looks) list.push_back(Builtin(team, look.name, look.category, look.description, look.recipe));
+        // Models RE+ carries in the DLL (tools/models; the bundles in Reloaded.Editor.rc).
+        list.push_back({{"id", "builtin.merc.hazmat_suit"}, {"team", "merc"}, {"name", "Hazmat Suit"}, {"category", "Models"},
+                        {"description", "A yellow Level A hazmat suit with a wide visor, taped seams and black gloves and boots. "
+                                        "Imported into the map when applied; the mercs keep their own animations."},
+                        {"slots", Json::object()},
+                        {"mesh", {{"name", "HazmatMerc"}, {"materials", {"HazmatSuit", "HazmatGear"}}}},
+                        {"goggles", {{"MercGoggleOffset", {-0.1, -2.8, -0.8}}}}});
         for (auto& entry : list)
         {
             Validate(entry);
@@ -885,8 +994,9 @@ inline Json Capture(const Team& team, const Json& slots, const Json& models, con
 // The Character Skins values {slots, models, goggles} with one team dressed by entry
 // and the other team's values left exactly as they were. paths holds the material
 // path each of the entry's slots was imported or found under; a slot the entry does
-// not hold, and a model it does not name, go back to stock.
-inline Json Dress(const Json& entry, Json settings, const std::map<std::string, std::string>& paths)
+// not hold, and a model it does not name, go back to stock. mesh is the path the
+// entry's own model was imported under, when it carries one.
+inline Json Dress(const Json& entry, Json settings, const std::map<std::string, std::string>& paths, const std::string& mesh = {})
 {
     const auto& team = TeamOf(entry);
     for (const char* key : {"slots", "models", "goggles"})
@@ -903,7 +1013,13 @@ inline Json Dress(const Json& entry, Json settings, const std::map<std::string, 
         }
         settings["slots"][property] = path;
     }
-    settings["models"][team.model] = models.value(team.model, std::string{});
+    if (HasMesh(entry))
+    {
+        if (mesh.empty()) throw std::runtime_error("The preset's model was not imported.");
+        settings["models"][team.model] = mesh;
+    }
+    else
+        settings["models"][team.model] = models.value(team.model, std::string{});
     settings["goggles"][team.goggles] = goggles.contains(team.goggles) ? goggles.at(team.goggles) : Json::array({0, 0, 0});
     return settings;
 }
@@ -941,7 +1057,12 @@ inline std::string Wearing(const Team& team, const Json& settings, const Json& e
                 return imports.is_object() && imports.contains(name) && imports.at(name) == entry.at("id");
             };
             const auto presetModel = entry.value("models", Json::object()).value(team.model, std::string{});
-            const bool modelMatches = presetModel.empty() ? stockModel : Fold(presetModel) == Fold(model);
+            bool modelMatches = presetModel.empty() ? stockModel : Fold(presetModel) == Fold(model);
+            if (HasMesh(entry))
+            {
+                const auto name = ObjectName(model);
+                modelMatches = !stockModel && imports.is_object() && imports.contains(name) && imports.at(name) == entry.at("id");
+            }
             if (matches(team.body, body) && matches(team.head, head) && modelMatches) return entry.at("name").get<std::string>();
         }
     return "their own skins";
@@ -1018,7 +1139,7 @@ inline void RestoreBuiltins(Json& file)
 
 // A preset file to share: the entry without its identity, with its pictures inside.
 // images holds the TGA bytes of each image slot.
-inline Json ShareDocument(const Json& entry, const std::map<std::string, Bytes>& images)
+inline Json ShareDocument(const Json& entry, const std::map<std::string, Bytes>& images, const std::map<std::string, Bytes>& files = {})
 {
     Json preset = entry;
     Detail::Unflag(preset);
@@ -1032,13 +1153,25 @@ inline Json ShareDocument(const Json& entry, const std::map<std::string, Bytes>&
         ReadTga(found->second);
         pictures[property] = Base64(found->second);
     }
-    return {{"version", ShareVersion}, {"format", ShareFormat}, {"preset", preset}, {"images", pictures}};
+    Json document = {{"version", ShareVersion}, {"format", ShareFormat}, {"preset", preset}, {"images", pictures}};
+    if (HasMesh(entry))
+    {
+        Json carried = Json::object();
+        for (const auto& name : MeshFiles(entry))
+        {
+            auto found = files.find(name);
+            if (found == files.end()) throw std::runtime_error("The model file " + name + " is missing from this preset.");
+            carried[name] = Base64(found->second);
+        }
+        document["files"] = carried;
+    }
+    return document;
 }
 // A shared preset file read back: the entries (no id yet, user entries once saved)
 // and their pictures, every one checked. A version 2 file holds one team's preset;
 // a version 1 file (both teams) gives a spy entry and a merc entry. Recipe slots (a
 // built-in shared as is) are painted by the caller and turned into images before saving.
-struct Shared { Json entry; std::map<std::string, Bytes> images; };
+struct Shared { Json entry; std::map<std::string, Bytes> images, files; };
 inline std::vector<Shared> ReadShared(const Json& document)
 {
     if (!document.is_object() || document.value("format", std::string{}) != ShareFormat)
@@ -1072,6 +1205,20 @@ inline std::vector<Shared> ReadShared(const Json& document)
             auto bytes = FromBase64(images.at(property).get<std::string>());
             ReadTga(bytes);
             shared.images[property] = std::move(bytes);
+        }
+        if (HasMesh(shared.entry) && shared.entry.at("mesh").is_object() && shared.entry.at("mesh").contains("name") &&
+            shared.entry.at("mesh").at("name").is_string() && shared.entry.at("mesh").contains("materials") && shared.entry.at("mesh").at("materials").is_array())
+        {
+            const Json files = document.value("files", Json::object());
+            for (const auto& name : MeshFiles(shared.entry))
+            {
+                if (!files.is_object() || !files.contains(name) || !files.at(name).is_string()) throw std::runtime_error("The skin preset file has no " + name + ".");
+                shared.files[name] = FromBase64(files.at(name).get<std::string>());
+            }
+            const auto materials = PskMaterials(shared.files.at(MeshFile(shared.entry)));
+            for (const auto& material : materials)
+                if (!shared.files.count(MaterialFile(material))) throw std::runtime_error("The skin preset file's model has no picture for its material " + material + ".");
+            for (const auto& material : shared.entry.at("mesh").at("materials")) ReadTga(shared.files.at(MaterialFile(material.get<std::string>())));
         }
         // Checked as a user entry would be, under a placeholder id.
         auto probe = shared.entry;
@@ -1118,7 +1265,7 @@ inline std::string Summary(const Json& entry)
     const auto* team = entry.is_object() ? FindTeam(entry.value("team", std::string{})) : nullptr;
     for (const auto& slot : Slots)
     {
-        if (team && !Owns(*team, slot.property)) continue;
+        if ((team && !Owns(*team, slot.property)) || HasMesh(entry)) continue; // a model wears its own textures
         out += std::string(slot.label) + ": ";
         const auto slots = entry.value("slots", Json::object());
         if (!slots.contains(slot.property)) out += "stock";
@@ -1127,17 +1274,25 @@ inline std::string Summary(const Json& entry)
         else out += slots.at(slot.property).value("path", std::string{});
         out += "\r\n";
     }
+    if (HasMesh(entry) && team)
+    {
+        const auto& mesh = entry.at("mesh");
+        out += std::string(FindModel(team->model)->label) + ": its own, " + mesh.value("name", std::string{}) + " (" +
+               std::to_string(mesh.value("materials", Json::array()).size()) + " textures), imported into the map when applied\r\n";
+    }
     for (const auto& model : Models)
     {
         const auto models = entry.value("models", Json::object());
         const auto path = models.value(model.property, std::string{});
         const auto goggles = entry.value("goggles", Json::object());
         if (path.empty() && !goggles.contains(model.goggles)) continue;
-        out += std::string(model.label) + ": " + (path.empty() ? std::string("stock") : path);
+        if (HasMesh(entry) && team && model.property == std::string(team->model)) out += "Goggle lights";
+        else out += std::string(model.label) + ": " + (path.empty() ? std::string("stock") : path);
         if (goggles.contains(model.goggles))
         {
             const auto& g = goggles.at(model.goggles);
-            out += " (goggle lights " + Number(g[0].get<double>()) + ", " + Number(g[1].get<double>()) + ", " + Number(g[2].get<double>()) + ")";
+            out += (HasMesh(entry) && team && model.property == std::string(team->model) ? ": " : " (goggle lights ") + Number(g[0].get<double>()) + ", " +
+                   Number(g[1].get<double>()) + ", " + Number(g[2].get<double>()) + (HasMesh(entry) && team && model.property == std::string(team->model) ? "" : ")");
         }
         out += "\r\n";
     }

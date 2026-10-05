@@ -75,19 +75,16 @@ inline constexpr std::array<ModelSlot, 2> Models = {{
     {"MercModel", "MercGoggleOffset", "Merc model", "SPerso.Def", "SPerso.DEF_01"},
 }};
 
-// The hazmat suit RE+ carries (tools/models/hazmat): Add Hazmat Suit imports it into the
-// map package under this name.
-inline constexpr const char* HazmatMesh = "HazmatMerc";
-
 struct Offset { double x = 0, y = 0, z = 0; };
 // A goggle light offset that has been seen to fit; others start at zero. The merc
 // model on a spy was matched by eye in game on ShipD (2026-10-04).
 inline Offset SuggestedGoggles(const std::string& modelProperty, const std::string& mesh)
 {
     if (modelProperty == "SpyModel" && mesh == "SPerso.DEF_01") return {4, 0, 0};
-    // The hazmat suit (tools/models/hazmat): the lights sit on its visor.
-    if (modelProperty == "MercModel" && mesh.size() > 11 && mesh.compare(mesh.size() - 11, 11, ".HazmatMerc") == 0)
-        return {-0.1, -2.8, -0.8};
+    // The hazmat suit (tools/models/hazmat; the Hazmat Suit preset imports it as
+    // HazmatMerc_<hash>): the lights sit on its visor.
+    const auto name = mesh.substr(mesh.rfind('.') == std::string::npos ? 0 : mesh.rfind('.') + 1);
+    if (modelProperty == "MercModel" && name.rfind("HazmatMerc", 0) == 0) return {-0.1, -2.8, -0.8};
     return {};
 }
 inline std::string Number(double v)
