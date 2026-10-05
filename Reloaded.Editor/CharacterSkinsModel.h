@@ -73,6 +73,8 @@ struct Offset { double x = 0, y = 0, z = 0; };
 inline Offset SuggestedGoggles(const std::string& modelProperty, const std::string& mesh)
 {
     if (modelProperty == "SpyModel" && mesh == "SPerso.DEF_01") return {4, 0, 0};
+    // The hazmat suit (tools/models/hazmat): the lights sit on its visor.
+    if (modelProperty == "MercModel" && mesh == "MyLevel.HazmatMerc") return {-0.2, -1.4, 0};
     return {};
 }
 inline std::string Number(double v)

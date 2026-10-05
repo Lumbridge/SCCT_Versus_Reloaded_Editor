@@ -125,6 +125,8 @@ int main()
         Check(suggested.x == 4 && suggested.y == 0 && suggested.z == 0, "merc model on a spy");
         suggested = SuggestedGoggles("MercModel", "SPerso.DEF_01");
         Check(suggested.x == 0 && suggested.y == 0 && suggested.z == 0, "no suggestion for a merc's own model");
+        suggested = SuggestedGoggles("MercModel", "MyLevel.HazmatMerc");
+        Check(suggested.x == -0.2 && suggested.y == -1.4 && suggested.z == 0, "hazmat suit visor");
     }
     catch (const std::exception& e)
     {

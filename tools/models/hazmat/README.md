@@ -28,8 +28,8 @@ The model goes into the map itself (MyLevel), so the map works for everyone with
    `material 1: [HazmatGear]`; that links the textures. Import the textures first, or the mesh is untextured.
 4. Still in the Animation Browser, on the **Mesh** tab, set **Rotation** Yaw to **-16384** (the stock
    merc's value; without it the suit lies on its side).
-5. **RE+ Tools > Character Skins**: in **Merc model** type or pick `MyLevel.HazmatMerc`, set the merc's
-   goggle lights to **X -0.2, Y -1.4, Z 0** (they then sit on the visor), and press **Apply**.
+5. **RE+ Tools > Character Skins**: in **Merc model** type or pick `MyLevel.HazmatMerc`; the merc's
+   goggle lights fill in as **X -0.2, Y -1.4, Z 0** (they then sit on the visor). Press **Apply**.
 6. Save the map. Play it (Play Level as a spy, then type `addbot` in the console to see a merc in it).
 
 ## Rebuild it
