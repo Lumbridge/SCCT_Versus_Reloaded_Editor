@@ -158,6 +158,69 @@ int main()
         Check(!WhatsNew::Parse("") && !WhatsNew::Parse("Version=2.1.0\r\n\r\nx") && !WhatsNew::Parse("RE+ What's New\r\nVersion=latest\r\n\r\nx"),
               "damaged records refused");
 
+        // Release notes laid out for the offer and What's New windows.
+        using Kind = NoteBlock::Kind;
+        const auto notes = ParseNotes(
+            "The first feature release.\nIt spans lines.\n\n## New\n\n**Character Skins** (RE+ Tools)\n"
+            "- Set the `spy` skins.\n  More of the same item.\n  - nested\n1. first\n<!-- template\nnote -->\n"
+            "See [the page](https://x.y/z) or [https://a.b](https://a.b).\n```\ncode {x}\n  line 2\n```\n###### Six\n####### seven");
+        Check(notes.size() == 10, "block count");
+        Check(notes[0].kind == Kind::Paragraph && notes[0].spans.size() == 1 && notes[0].spans[0].text == "The first feature release. It spans lines.",
+              "paragraph lines joined");
+        Check(notes[1].kind == Kind::Heading && notes[1].level == 2 && notes[1].spans[0].text == "New", "heading");
+        Check(notes[2].kind == Kind::Paragraph && notes[2].spans.size() == 2 && notes[2].spans[0] == NoteSpan{"Character Skins", true, false}
+                  && notes[2].spans[1].text == " (RE+ Tools)", "bold span");
+        Check(notes[3].kind == Kind::Item && notes[3].level == 0 && notes[3].marker.empty() && notes[3].spans.size() == 3
+                  && notes[3].spans[1] == NoteSpan{"spy", false, true} && notes[3].spans[2].text == " skins. More of the same item.",
+              "bullet with code and a continuation line");
+        Check(notes[4].kind == Kind::Item && notes[4].level == 1 && notes[4].spans[0].text == "nested", "nested bullet");
+        Check(notes[5].kind == Kind::Item && notes[5].marker == "1." && notes[5].spans[0].text == "first", "numbered item");
+        Check(notes[6].kind == Kind::Paragraph && notes[6].spans[0].text == "See the page (https://x.y/z) or https://a.b.", "comment dropped, links");
+        Check(notes[7].kind == Kind::Code && notes[7].spans[0].text == "code {x}\n  line 2", "code fence kept verbatim");
+        Check(notes[8].kind == Kind::Heading && notes[8].level == 6 && notes[9].kind == Kind::Paragraph, "seven hashes are not a heading");
+        Check(ParseNotes("a ** b").at(0).spans.size() == 1 && ParseNotes("a ** b")[0].spans[0].text == "a ** b", "a lone ** stays");
+        Check(ParseNotes("#hashtag")[0].kind == Kind::Paragraph && ParseNotes("").empty(), "hashtag, empty notes");
+        const auto plain = ParseNotes("Fixes\r\n\r\n- Map recovery: fixed\r\nInstall\r\nExtract it.", false);
+        Check(plain.size() == 4 && plain[2].kind == Kind::Paragraph && plain[2].spans[0].text == "Install" && plain[3].spans[0].text == "Extract it.",
+              "plain text keeps its lines");
+        Check(RtfText("a\\b{c}\nd") == "a\\\\b\\{c\\}\\line d", "RTF specials");
+        Check(RtfText("\xE2\x80\xA2 \xC3\xA9 \xF0\x9F\x98\x80") == "\\u8226? \\u233? \\u-10179?\\u-8704?", "RTF Unicode, surrogate pairs");
+        Check(RtfText("\xC3") == "?" && RtfText("\x80x") == "?x", "broken UTF-8");
+        const auto rtf = NotesRtf("RE+ 2.2.0", "You have 2.1.0.", notes, "https://github.com/x");
+        Check(rtf.rfind("{\\rtf1", 0) == 0 && rtf.back() == '}', "RTF document");
+        Check(rtf.find("{\\b\\fs30 RE+ 2.2.0}") != std::string::npos && rtf.find("{\\b\\fs22 {New}}") != std::string::npos, "title and heading bold");
+        Check(rtf.find("\\bullet\\tab {Set the }{\\f1 spy}") != std::string::npos, "bullet with code span");
+        Check(rtf.find("\\u9702?\\tab {nested}") != std::string::npos && rtf.find("1.\\tab {first}") != std::string::npos, "nested and numbered markers");
+        Check(rtf.find("code \\{x\\}\\line   line 2") != std::string::npos && rtf.find("https://github.com/x\\par }") != std::string::npos, "code and footer");
+        int depth = 0;
+        for (size_t i = 0; i < rtf.size(); ++i)
+            if (rtf[i] == '\\') ++i;
+            else if (rtf[i] == '{') ++depth;
+            else if (rtf[i] == '}' && --depth < 0) break;
+        Check(depth == 0, "RTF groups balance");
+
+        // The offer: size, reminders and skips.
+        Check(SizeText(0) == "size unknown" && SizeText(900) == "900 bytes" && SizeText(2439403) == "2.3 MB" && SizeText(300 * 1024) == "300 KB", "sizes");
+        Release offer;
+        offer.assetName = "Reloaded_Editor_Plus_v2.2.0.zip";
+        offer.assetSize = 2439403;
+        Check(OfferSummary(offer, "2.1.0") == "You have RE+ 2.1.0. Download: 2.3 MB (Reloaded_Editor_Plus_v2.2.0.zip). The update takes effect when you restart the editor.",
+              "offer summary");
+        Check(RemindAfter(1000, Snooze::NextStart) == 0 && RemindAfter(1000, Snooze::OneDay) == 1000 + 86400
+                  && RemindAfter(0, Snooze::ThreeDays) == 3 * 86400 && RemindAfter(0, Snooze::OneWeek) == 7 * 86400, "reminder times");
+        Check(std::string(SnoozeText(Snooze::OneWeek)) == "In a week" && std::string(SnoozeText(Snooze::NextStart)) == "At the next start", "reminder labels");
+        Check(OfferAtStartup("v2.2.0", {}, 5), "offered by default");
+        Check(!OfferAtStartup("v2.2.0", {"v2.2.0", "", 0}, 5) && OfferAtStartup("v2.3.0", {"v2.2.0", "", 0}, 5), "a skip holds for its tag only");
+        Check(!OfferAtStartup("v2.2.0", {"", "v2.2.0", 100}, 99) && OfferAtStartup("v2.2.0", {"", "v2.2.0", 100}, 100), "a reminder waits its delay");
+        Check(OfferAtStartup("v2.2.0", {"", "v2.2.0", 0}, 99) && OfferAtStartup("v2.3.0", {"", "v2.2.0", 1000}, 99), "next start, and a newer release, are offered");
+
+        // What's New records keep Markdown from 2.2.0 on; older ones read as plain text.
+        WhatsNew md{"2.2.0", "RE+ 2.2.0", "## New\n- Checkpoints", false, true};
+        auto mdBack = WhatsNew::Parse(md.Format());
+        Check(mdBack && mdBack->markdown && mdBack->notes == "## New\n- Checkpoints", "Markdown record round trip");
+        Check(!WhatsNew::Parse("RE+ What's New\r\nVersion=2.1.0\r\nShown=0\r\n\r\nx")->markdown, "older records are plain");
+        Check(ClipUtf8("abc", 5) == "abc" && ClipUtf8(std::string(3, 'a') + "\xC3\xA9", 4) == "aaa" && ClipUtf8("abcdef", 3) == "abc", "UTF-8 clip");
+
         // Previous versions.
         Check(ProductVersion("RE+ 2.0.0") && *ProductVersion("RE+ 2.0.0") == V("2.0.0"), "RE+ product version");
         Check(ProductVersion("RE+ 2.1.0-rc.1")->ToString() == "2.1.0-rc.1", "release candidate");
