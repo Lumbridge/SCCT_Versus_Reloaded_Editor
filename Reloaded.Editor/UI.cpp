@@ -6,6 +6,7 @@
 #include "WindowDriftFix.h"
 #include "RebuildAllMaps.h"
 #include "LightingBudget.h"
+#include "RenderBudget.h"
 #include "WorkflowTools.h"
 #include "CharacterSkinsWindow.h"
 #include "EmitterLibraryWindow.h"
@@ -220,6 +221,8 @@ static void InjectReloadedMenuItems(HWND frame)
         AppendMenuA(lightingBuild, MF_STRING, MapRecovery::kMatchSelectedLightingCommandId, "Match Selected &BSP Lighting...");
     if (lightingBuild && MenuPosByCommand(lightingBuild, LightingBudget::kOpenCommand) < 0)
         AppendMenuA(lightingBuild, MF_STRING, LightingBudget::kOpenCommand, "Lighting B&udget...");
+    if (lightingBuild && MenuPosByCommand(lightingBuild, RenderBudget::kOpenCommand) < 0)
+        AppendMenuA(lightingBuild, MF_STRING, RenderBudget::kOpenCommand, "Re&nder Budget...");
     // -UnlockPackages is what lets it save over the stock maps.
     if (RebuildAllMaps::Available())
     {

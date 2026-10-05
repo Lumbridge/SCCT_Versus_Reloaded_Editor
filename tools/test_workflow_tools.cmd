@@ -111,6 +111,10 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\LightingBudgetModelTests.cpp /
 if errorlevel 1 goto failed
 "%TEMP%\LightingBudgetModelTests.exe"
 if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\RenderBudgetModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\RenderBudgetModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\RenderBudgetModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\CharacterSkinsModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\CharacterSkinsModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\CharacterSkinsModelTests.exe"
