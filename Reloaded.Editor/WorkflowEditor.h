@@ -116,6 +116,10 @@ namespace Workflow::Editor
     // Selects exactly the live actors with these paths, one pass over the
     // level; focus frames them in the viewports. Returns how many were found.
     size_t SelectActorPaths(const std::vector<std::string>& paths, bool focus);
+    // Recovery report (MapRecoveryNative.inl): selects actors by object name,
+    // or BSP surfaces by index, and optionally frames them in the viewports.
+    size_t SelectActorNames(const std::vector<std::string>& names, bool focus);
+    size_t SelectSurfaces(const std::vector<int>& surfaces, bool focus);
     // Security devices: creation, the motion sensor with its volume, and wiring.
     Json SecurityActors();
     Json Lights();

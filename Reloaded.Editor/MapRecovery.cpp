@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "Version.h"
 #include "MapRecovery.h"
+#include "MapRecoveryUi.h"
 #include "RecoveredBspGeometry.h"
 #include "RecoveredSurfacePartition.h"
 #include "RecoveredPolygonImport.h"
@@ -22,6 +23,7 @@
 #include <iomanip>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <system_error>
 #include <unordered_map>
@@ -694,9 +696,25 @@ namespace
                  static_cast<float>(value.z) };
     }
 
-    bool ReconstructSourceBrushes(void* level, RecoveredBspGeometry::Result& result,
-                                  RecoveredPolygonImport::VertexPool& sourcePoints,
-                                  std::string& error)
+    using Stage = MapRecoveryModel::Stage;
+    // Checkpoint callback: false means the user cancelled.
+    using StepFunction = std::function<bool(Stage, double)>;
+    const char kCancelledError[] = "Recovery was cancelled.";
+
+    // The brushes a recovery tries: the compiled BSP's cells joined along
+    // whole faces, then grown over their neighbours. Each current brush lists
+    // the joined brushes it replaces, so one the editor's BSP builder does
+    // not reproduce exactly can be split back into them.
+    struct SourceBrushes
+    {
+        RecoveredBspGeometry::Result joined;
+        std::vector<RecoveredBspGeometry::Brush> current;
+        std::vector<std::vector<size_t>> members;
+    };
+
+    bool ReconstructSourceBrushes(void* level, SourceBrushes& source,
+                                  bool merge, MapRecoveryModel::Counts& counts,
+                                  const StepFunction& step, std::string& error)
     {
         using namespace RecoveredBspGeometry;
         void* model = *reinterpret_cast<void**>(
@@ -748,25 +766,155 @@ namespace
         bounds.maximum.x += margin; bounds.maximum.y += margin; bounds.maximum.z += margin;
         const bool rootOutside = *reinterpret_cast<int*>(
             static_cast<char*>(model) + kModelRootOutsideOffset) != 0;
-        if (!Reconstruct(nodes, rootOutside, bounds, result, error)) return false;
-        const size_t cells = result.brushes.size();
+        RecoveredBspGeometry::Result cells;
+        if (!Reconstruct(nodes, rootOutside, bounds, cells, error)) return false;
+        counts.cells = cells.brushes.size();
+        counts.cellFaces = 0;
+        for (const auto& brush : cells.brushes) counts.cellFaces += brush.faces.size();
+        auto cancelled = [&](double fraction) {
+            if (step(Stage::Merging, fraction)) return false;
+            error = kCancelledError;
+            return true;
+        };
+        if (cancelled(0)) return false;
+        source.joined = cells;
+        source.members.clear();
+        // Joining cells that share a whole face has always been part of
+        // recovery: the editor's BSP builder does not reproduce every raw
+        // cell. Merging (the option) adds growth and surface combining.
         Logger::log("MapRecovery: merging compatible structural cells");
-        if (!MergeAdjacentConvexBrushes(result, error)) return false;
-        Logger::log("MapRecovery: merged " + std::to_string(cells) + " structural cells into "
-            + std::to_string(result.brushes.size()) + " closed brushes");
-        // Establish shared corners in reconstruction order, before material
-        // subdivision and the independent CSG build-order optimization.
-        for (const auto& brush : result.brushes)
+        if (!MergeAdjacentConvexBrushes(source.joined, error)) return false;
+        counts.joinedBrushes = source.joined.brushes.size();
+        Logger::log("MapRecovery: merged " + std::to_string(counts.cells) + " structural cells into "
+            + std::to_string(counts.joinedBrushes) + " closed brushes");
+        if (cancelled(0.3)) return false;
+        if (merge)
+        {
+            // Brushes of one CSG kind may overlap, so a brush may also grow
+            // over its neighbours while it stays inside the original cells.
+            RecoveredBspGeometry::Result grown = source.joined;
+            RecoveredBspGeometry::GrowStatistics statistics;
+            RecoveredBspGeometry::Limits growLimits;
+            growLimits.maxClippingWork = 2000000000;
+            if (!GrowConvexBrushes(cells, grown, true, statistics, error, growLimits)) return false;
+            source.current = std::move(grown.brushes);
+            source.members = std::move(statistics.members);
+            counts.grown = statistics.grown;
+            counts.absorbed = statistics.absorbed;
+            Logger::log("MapRecovery: grew " + std::to_string(statistics.grown) + " brushes over neighbours inside the original cells ("
+                + std::to_string(statistics.absorbed) + " more absorbed); " + std::to_string(source.current.size())
+                + " structural brushes" + (statistics.budgetReached ? "; stopped at the work limit" : ""));
+        }
+        else
+        {
+            source.current = source.joined.brushes;
+            Logger::log("MapRecovery: geometry merging is off; keeping the " + std::to_string(counts.joinedBrushes)
+                + " face-joined brushes");
+        }
+        if (source.members.size() != source.current.size())
+        {
+            source.members.assign(source.current.size(), {});
+            for (size_t index = 0; index < source.members.size(); ++index) source.members[index] = {index};
+        }
+        return !cancelled(0.8);
+    }
+
+    // One attempt's brushes: shared corners resolved in reconstruction order,
+    // native-precision bevels removed, then ordered larger volumes first.
+    // origin[i] is result.brushes[i]'s index in source.current.
+    bool PrepareAttemptBrushes(const SourceBrushes& source, RecoveredBspGeometry::Result& result,
+                               std::vector<size_t>& origin, RecoveredPolygonImport::VertexPool& sourcePoints,
+                               MapRecoveryModel::Counts& counts, std::string& error)
+    {
+        std::vector<RecoveredBspGeometry::Brush> brushes = source.current;
+        for (const auto& brush : brushes)
             for (const auto& face : brush.faces)
                 for (const auto& vertex : face.vertices)
                 {
                     RecoveredBspGeometry::Vec3 canonical;
-                    if (!sourcePoints.Resolve(vertex,canonical,error)) return false;
+                    if (!sourcePoints.Resolve(vertex, canonical, error)) return false;
                 }
-        for (auto& brush : result.brushes)
-            if (!RecoveredSurfacePartition::CanonicalizeBrushForEditor(brush, error)) return false;
-        if (!OrderForRebuild(result, error)) return false;
+        std::vector<std::pair<double, size_t>> order;
+        for (size_t index = 0; index < brushes.size(); ++index)
+        {
+            if (!RecoveredSurfacePartition::CanonicalizeBrushForEditor(brushes[index], error)) return false;
+            const double volume = RecoveredBspGeometry::Volume(brushes[index]);
+            if (!std::isfinite(volume) || volume <= 0)
+            {
+                error = "A recovered brush has invalid volume for rebuild ordering.";
+                return false;
+            }
+            order.emplace_back(volume, index);
+        }
+        // Build larger volumes before smaller details (OrderForRebuild).
+        std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+        result = {};
+        origin.clear();
+        for (const auto& entry : order)
+        {
+            result.brushes.push_back(std::move(brushes[entry.second]));
+            origin.push_back(entry.second);
+        }
+        counts.brushes = result.brushes.size();
+        counts.brushFaces = 0;
+        for (const auto& brush : result.brushes) counts.brushFaces += brush.faces.size();
         return true;
+    }
+
+    // Splits grown brushes whose bounds come within reach of a point back
+    // into the joined brushes they replaced. Returns how many were split.
+    size_t SplitGrownBrushes(SourceBrushes& source, const std::vector<Vec3>& points, double reach)
+    {
+        std::unordered_set<size_t> present;
+        for (const auto& list : source.members)
+            if (list.size() == 1) present.insert(list.front());
+        std::vector<RecoveredBspGeometry::Brush> brushes;
+        std::vector<std::vector<size_t>> members;
+        size_t split = 0;
+        for (size_t index = 0; index < source.current.size(); ++index)
+        {
+            const auto& brush = source.current[index];
+            bool close = false;
+            if (source.members[index].size() > 1)
+            {
+                RecoveredBspGeometry::Vec3 low = brush.faces.front().vertices.front(), high = low;
+                for (const auto& face : brush.faces)
+                    for (const auto& vertex : face.vertices)
+                    {
+                        low = {(std::min)(low.x, vertex.x), (std::min)(low.y, vertex.y), (std::min)(low.z, vertex.z)};
+                        high = {(std::max)(high.x, vertex.x), (std::max)(high.y, vertex.y), (std::max)(high.z, vertex.z)};
+                    }
+                for (const auto& point : points)
+                    if (point.x >= low.x - reach && point.x <= high.x + reach && point.y >= low.y - reach
+                        && point.y <= high.y + reach && point.z >= low.z - reach && point.z <= high.z + reach)
+                        close = true;
+                // A joined brush the editor cannot import (a bevel below its
+                // precision) stays covered by the grown brush instead.
+                for (size_t member : source.members[index])
+                {
+                    if (!close) break;
+                    auto copy = source.joined.brushes[member];
+                    std::string ignored;
+                    if (!RecoveredSurfacePartition::CanonicalizeBrushForEditor(copy, ignored)) close = false;
+                }
+            }
+            if (!close)
+            {
+                brushes.push_back(brush);
+                members.push_back(source.members[index]);
+                continue;
+            }
+            ++split;
+            for (size_t member : source.members[index])
+                if (present.insert(member).second)
+                {
+                    brushes.push_back(source.joined.brushes[member]);
+                    members.push_back({member});
+                }
+        }
+        source.current = std::move(brushes);
+        source.members = std::move(members);
+        return split;
     }
 
     void DumpSurfaceCase(const std::filesystem::path& path,
@@ -856,10 +1004,42 @@ namespace
                             const std::vector<RecoveredFace>& surfaces,
                             RecoveredPolygonImport::VertexPool& sourcePoints,
                             std::string& text, std::string& error,
-                            const std::filesystem::path& failurePath)
+                            const std::filesystem::path& failurePath,
+                            bool unifyMappings, MapRecoveryModel::Counts& counts,
+                            const StepFunction& step)
     {
         namespace Surface = RecoveredSurfacePartition;
         std::unordered_map<int, int> bySurface;
+        // Structural surfaces with the same material, flags and texture
+        // mapping on one plane look identical; letting them share one
+        // material index lets their adjoining pieces become one polygon.
+        std::vector<int> mappingOf;
+        if (unifyMappings)
+        {
+            std::vector<MapRecoveryModel::SurfaceMapping> mappings;
+            mappings.reserve(surfaces.size());
+            std::unordered_set<int> seenSurfaces;
+            for (const auto& surface : surfaces)
+            {
+                MapRecoveryModel::SurfaceMapping mapping;
+                // Only the first fragment of each surface represents it.
+                mapping.structural = surface.structural && seenSurfaces.insert(surface.surfaceIndex).second;
+                mapping.material = surface.materialPath;
+                mapping.flags = surface.flags;
+                const ::Vec3* vectors[] = {&surface.normal, &surface.origin, &surface.textureU, &surface.textureV};
+                double* targets[] = {mapping.normal, mapping.origin, mapping.u, mapping.v};
+                for (int index = 0; index < 4; ++index)
+                {
+                    targets[index][0] = vectors[index]->x;
+                    targets[index][1] = vectors[index]->y;
+                    targets[index][2] = vectors[index]->z;
+                }
+                mappings.push_back(std::move(mapping));
+            }
+            mappingOf = MapRecoveryModel::UnifyMappings(mappings);
+            for (size_t index = 0; index < mappingOf.size(); ++index)
+                if (mappings[index].structural && mappingOf[index] != static_cast<int>(index)) ++counts.unifiedSurfaces;
+        }
         std::unordered_map<int64_t, std::vector<size_t>> byPlaneDistance;
         std::vector<Surface::Surface> candidates;
         for (size_t index = 0; index < surfaces.size(); ++index)
@@ -881,6 +1061,8 @@ namespace
             // Cooked BSP nodes can be fragments of the same original surface;
             // that surface owns the texture, UV basis and polygon flags.
             candidate.materialIndex = bySurface.at(surface.surfaceIndex);
+            if (surface.structural && !mappingOf.empty())
+                candidate.materialIndex = mappingOf[static_cast<size_t>(candidate.materialIndex)];
             for (const auto& point : surface.vertices)
                 candidate.vertices.push_back({point.x, point.y, point.z});
             int64_t bucket = 0;
@@ -971,6 +1153,12 @@ namespace
         };
         for (const auto& brush : geometry.brushes)
         {
+            const size_t done = static_cast<size_t>(&brush - geometry.brushes.data());
+            if (done % 16 == 0 && !step(Stage::Materials, double(done) / double(geometry.brushes.size())))
+            {
+                error = kCancelledError;
+                return false;
+            }
             std::vector<bool> collapsedFaces;
             if (!Surface::ValidateEditorBrush(brush, collapsedFaces, error))
             {
@@ -983,7 +1171,9 @@ namespace
                 if (collapsedFaces[faceIndex]) continue;
                 const auto& face = brush.faces[faceIndex];
                 const auto found = bySurface.find(face.surfaceIndex);
-                const int fallback = found == bySurface.end() ? 0 : found->second;
+                int fallback = found == bySurface.end() ? 0 : found->second;
+                if (!mappingOf.empty() && surfaces[static_cast<size_t>(fallback)].structural)
+                    fallback = mappingOf[static_cast<size_t>(fallback)];
                 int64_t bucket = 0;
                 if (face.vertices.empty() || !Surface::PlaneBucket(face.normal, face.vertices.front(), bucket))
                 {
@@ -1149,6 +1339,11 @@ namespace
             + " non-solid sheet brushes and " + std::to_string(polygonCount) + " polygons");
         Logger::log("MapRecovery: retained " + std::to_string(hiddenZoneDividers)
             + " zone-divider brushes, hidden by default; retained ZoneInfo settings");
+        if (unifyMappings)
+            Logger::log("MapRecovery: " + std::to_string(counts.unifiedSurfaces)
+                + " surfaces share another surface's identical texture mapping");
+        counts.sheetBrushes = sheetGroups.size();
+        counts.polygons = polygonCount;
         text = output.str();
         return true;
     }
@@ -2928,16 +3123,19 @@ namespace
         return true;
     }
 
-    bool VerifySpaceProbes(const std::vector<SpaceProbe>& probes, std::string& error)
+    bool VerifySpaceProbes(const std::vector<SpaceProbe>& probes, std::string& error,
+                           std::vector<Vec3>* mismatches = nullptr)
     {
         void* model = CurrentModel();
         size_t different = 0;
+        if (mismatches) mismatches->clear();
         for (const auto& probe : probes)
         {
             bool outside = false;
             const bool valid = IsOutside(model, probe.point, outside);
             if (!valid || outside != probe.outside)
             {
+                if (mismatches) mismatches->push_back(probe.point);
                 if (different < 16)
                 {
                     std::ostringstream detail;
@@ -2984,48 +3182,109 @@ namespace
             ShowError(owner, "Could not choose a new recovery filename.");
             return;
         }
+        const bool merge = MapRecovery::MergeGeometryEnabled();
         const std::string message =
             "Create a normal editable source map from:\n\n" + source.string()
             + "\n\nOutput:\n" + destination.string()
             + "\n\nRecovery reconstructs new brushes, restores common and PC-only objects and level settings, "
               "and rebuilds geometry and lighting. It replaces the current map; save your work first. "
-              "Large maps can take several minutes.\n\nContinue?";
+              "Large maps can take several minutes; you can cancel until it starts saving.\n\n"
+            + (merge ? "Fragmented geometry will be merged into fewer brushes (File > Merge Recovered Geometry)."
+                     : "Merging is off: only cells sharing whole faces are joined, as before (File > Merge Recovered Geometry).")
+            + "\n\nContinue?";
         if (MessageBoxA(owner, message.c_str(), "Recover Compiled Map", MB_OKCANCEL | MB_ICONWARNING) != IDOK)
             return;
-        const HCURSOR previous = SetCursor(LoadCursor(nullptr, IDC_WAIT));
         std::string error;
-        const bool success = MapRecovery::RecoverToSource(source, destination, error);
-        SetCursor(previous);
+        MapRecovery::RecoveryOptions options;
+        options.mergeGeometry = merge;
+        MapRecovery::RecoveryOutcome outcome;
+        bool success = false;
+        {
+            // The frame stays disabled while recovery runs: clicks queued on it
+            // would otherwise all play out when the recovery returns.
+            MapRecoveryUi::Progress progress(owner);
+            options.progress = [&](Stage stage, double fraction) { return progress.Update(stage, fraction); };
+            const bool enabled = owner && IsWindowEnabled(owner);
+            if (enabled) EnableWindow(owner, FALSE);
+            const HCURSOR previous = SetCursor(LoadCursor(nullptr, IDC_WAIT));
+            success = MapRecovery::RecoverToSource(source, destination, error, options, &outcome);
+            SetCursor(previous);
+            if (enabled) EnableWindow(owner, TRUE);
+        }
+        if (owner) SetForegroundWindow(owner);
+        if (outcome.cancelled)
+        {
+            SetWindowTextA(owner, RE_PLUS_WINDOW_TITLE);
+            return;
+        }
         if (!success)
         {
+            // Whatever is left open was never saved; say so in the title too.
+            SetWindowTextA(owner, RE_PLUS_WINDOW_TITLE " - [Recovery failed - not saved]");
             ShowError(owner, error);
             MapRecovery::ArmViewportExceptionDiagnostic();
             return;
         }
         SetWindowTextA(owner, (RE_PLUS_WINDOW_TITLE " - [" + destination.stem().string() + "]").c_str());
-        std::string completion = "Created and verified a normal editable map:\n\n" + destination.string()
-            + "\n\nUse regular File > Open for this map. Its reconstructed brushes can be edited and rebuilt. "
-              "Test gameplay after making your changes.";
+        MapRecoveryUi::Report report;
+        report.summary = "Created and verified " + destination.filename().string()
+            + ". Open it later with File > Open; its brushes can be edited and rebuilt.\r\n"
+            + MapRecoveryModel::Summary(outcome.counts);
         const auto assetPath = packages / "StaticMeshes" / (RecoveryAssetName(destination) + ".usx");
         std::error_code assetError;
         if (std::filesystem::exists(assetPath, assetError))
-            completion += "\n\nInclude this asset package when sharing the playable map:\n" + assetPath.string();
-        completion += "\n\nRecovery details:\n"
-            + (destination.parent_path() / "Recovery" / destination.stem() / "Recovery.txt").string();
-        MessageBoxA(owner, completion.c_str(), "Map Recovery Complete", MB_OK | MB_ICONINFORMATION);
+            report.summary += "\r\nShip " + assetPath.filename().string() + " (StaticMeshes) with the playable map.";
+        report.details = outcome.details.string();
+        report.folder = outcome.folder.string();
+        report.rows = std::move(outcome.rows);
+        MapRecoveryUi::ShowReport(owner, std::move(report));
     }
 }
 
-bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
-                                  const std::filesystem::path& destination,
-                                  std::string& error)
+namespace
+{
+    // Files a cancelled recovery removes again: only ones this run created.
+    struct CreatedFiles
+    {
+        std::filesystem::path scratch;
+        bool scratchCreated = false;
+        std::vector<std::filesystem::path> files;
+        std::filesystem::path assetPackage;
+    };
+
+    struct Checkpoint
+    {
+        const MapRecovery::RecoveryOptions& options;
+        bool cancelled = false;
+        bool operator()(Stage stage, double fraction)
+        {
+            if (cancelled) return false;
+            if (options.cancelAt == stage) cancelled = MapRecoveryModel::CancelAllowed(stage);
+            else if (options.progress && !options.progress(stage, fraction))
+                cancelled = MapRecoveryModel::CancelAllowed(stage);
+            return !cancelled;
+        }
+    };
+
+    bool RecoverToSourceImpl(const std::filesystem::path& source,
+                             const std::filesystem::path& destination,
+                             std::string& error, const MapRecovery::RecoveryOptions& options,
+                             MapRecovery::RecoveryOutcome& outcome, Checkpoint& step,
+                             CreatedFiles& created)
 {
     const bool previousSuspension = lightingProtectionSuspended;
     lightingProtectionSuspended = true;
     struct ResumeProtection { bool previous; ~ResumeProtection() { lightingProtectionSuspended = previous; } } resume{previousSuspension};
     error.clear();
+    auto cancel = [&]() {
+        error = kCancelledError;
+        return false;
+    };
+    auto& counts = outcome.counts;
+    counts.merged = options.mergeGeometry;
     try
     {
+        if (!step(Stage::Preparing, 0)) return cancel();
         if (!HasSdcExtension(source) || !HasSdcExtension(destination)
             || !std::filesystem::is_regular_file(source))
         {
@@ -3084,7 +3343,11 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
             }
         } resetCookedWorkingMap{editor, output, error};
         const auto scratch = destination.parent_path() / "Recovery" / destination.stem();
+        created.scratch = scratch;
+        created.scratchCreated = !std::filesystem::exists(scratch);
         std::filesystem::create_directories(scratch);
+        outcome.folder = scratch;
+        outcome.details = scratch / "Recovery.txt";
         const auto staged = scratch / "CompiledInput.sdc";
         const auto rawAssets = scratch / (assetPackageName + ".usx");
         if (std::filesystem::exists(staged))
@@ -3092,6 +3355,10 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
             error = "A previous recovery attempt already uses " + scratch.string() + ". Choose a new output name.";
             return false;
         }
+        for (const char* name : {"CompiledInput.sdc", "Blank.t3d", "Actors.t3d", "Geometry.t3d", "Source.t3d",
+                                 "Imported.t3d", "Built.t3d", "BspCooked.json", "BspBuilt.json"})
+            created.files.push_back(scratch / name);
+        created.files.push_back(rawAssets);
         std::filesystem::copy_file(source, staged);
         const auto blankPath = scratch / "Blank.t3d";
         const auto actorsPath = scratch / "Actors.t3d";
@@ -3119,6 +3386,7 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
         EndRecoveryMode();
         std::string blankText;
         if (!exportMap(blankPath, blankText)) return false;
+        if (!step(Stage::Loading, 0)) return cancel();
         if (!ExecuteRecoveryLoad("MAP LOAD FILE=\"" + staged.string() + "\""))
         {
             error = "The compiled map could not be loaded. The input copy is at " + staged.string();
@@ -3126,6 +3394,7 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
         }
         g_recoveredPath = staged;
         g_recoveryOwner = GetActiveWindow();
+        if (!step(Stage::Reading, 0)) return cancel();
         std::vector<RecoveredFace> faces;
         size_t skipped = 0;
         Logger::log("MapRecovery: extracting cooked surfaces");
@@ -3143,6 +3412,7 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
         // material reconstruction. Keep this export even if geometry fails.
         std::string actorText;
         if (!exportMap(actorsPath, actorText)) return false;
+        if (!step(Stage::Reading, 0.5)) return cancel();
         RecoveredLighting originalLighting;
         if (!CaptureMeshLighting(g_recoveredLevel, assetPackageName.c_str(), originalLighting, error)) return false;
         if (!WriteBspSurfaceAudit(CurrentModel(), scratch / "BspCooked.json", error)) return false;
@@ -3185,18 +3455,25 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
             softBodies.emplace_back();
             if (!CaptureProceduralSoftBodyStructure(g_recoveredLevel, name, softBodies.back(), error)) return false;
         }
+        for (const auto& name : actors.skippedXboxActorNames)
+            outcome.rows.push_back({"Actor left out", name,
+                "Xbox-only in the compiled map; the recovered map is for PC.", MapRecoveryModel::Target::None});
+        for (const auto& name : actors.clearedReferenceActorNames)
+            outcome.rows.push_back({"Reference cleared", name,
+                "Pointed at an actor that was left out or had been deleted; that property is now None.",
+                MapRecoveryModel::Target::Actor, name});
         const bool rootOutside = *reinterpret_cast<int*>(static_cast<char*>(CurrentModel()) + kModelRootOutsideOffset) != 0;
-        RecoveredBspGeometry::Result geometry;
-        RecoveredPolygonImport::VertexPool sourcePoints;
+        SourceBrushes sourceBrushes;
+        if (!step(Stage::Reconstructing, 0)) return cancel();
         Logger::log("MapRecovery: reconstructing structural volumes");
-        if (!ReconstructSourceBrushes(g_recoveredLevel, geometry, sourcePoints, error)) return false;
-        Logger::log("MapRecovery: reconstructed " + std::to_string(geometry.brushes.size()) + " closed brushes");
-        std::string geometryText;
-        Logger::log("MapRecovery: restoring surface materials and texture coordinates");
-        if (!WriteSourceBrushes(geometry, faces, sourcePoints, geometryText, error, scratch / "SurfaceFailure.json")
-            || !WriteTextFile(geometryPath, geometryText, error)) return false;
+        // Pass the checkpoint by reference: its cancelled flag must be the one read below.
+        const StepFunction stepRef = [&step](Stage stage, double fraction) { return step(stage, fraction); };
+        if (!ReconstructSourceBrushes(g_recoveredLevel, sourceBrushes, options.mergeGeometry, counts, stepRef, error))
+            return step.cancelled ? cancel() : false;
+        // The cooked model is still loaded: sample its solid and empty space.
         std::vector<SpaceProbe> probes;
         if (!CaptureSpaceProbes(faces, probes, error)) return false;
+        if (!step(Stage::Assets, 0)) return cancel();
         std::vector<ExternalAssetLoad> assets;
         std::unordered_set<std::string> assetPaths;
         auto addAsset = [&](const std::string& path, void* type) {
@@ -3215,6 +3492,9 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
                 return false;
             }
             addAsset(asset.externalPath, type);
+            outcome.rows.push_back({"Asset moved", asset.originalPath,
+                "Embedded in the compiled map; now " + asset.externalPath + " in StaticMeshes\\" + assetPackageName
+                    + ".usx. Ship that package with the map.", MapRecoveryModel::Target::None});
         }
         for (const auto& face : faces)
             if (face.embeddedMaterialClass) addAsset(face.materialPath, face.embeddedMaterialClass);
@@ -3224,18 +3504,9 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
             std::filesystem::create_directories(assetPackagePath.parent_path());
             if (!RecoveredAssetPackage::Write(staged, rawAssets, error)) return false;
         }
-        std::string completeText;
-        if (!RecoveredActorImport::ComposeSourceMap(actors, blankText, geometryText, completeText, error)
-            || !WriteTextFile(sourcePath, completeText, error)) return false;
         // The native editor is 32-bit. Release interchange copies before its
         // importer and BSP builder allocate their own complete map models.
-        std::string{}.swap(blankText);
         std::string{}.swap(actorText);
-        std::string{}.swap(geometryText);
-        std::string{}.swap(completeText);
-        const size_t structuralBrushCount = geometry.brushes.size();
-        std::vector<RecoveredBspGeometry::Brush>{}.swap(geometry.brushes);
-        std::vector<RecoveredFace>{}.swap(faces);
 
         auto verifyActors = [&](const char* stage) {
             std::string actual;
@@ -3266,107 +3537,21 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
             return true;
         };
 
-        if (!exec("MAP NEW")) return false;
-        EndRecoveryMode();
-        // Load only referenced asset exports from the preserved package. OBJ
-        // LOAD loads every export, including the old compiled level itself.
-        using LoadObject = void*(__cdecl*)(void*, void*, const char*, const char*, unsigned int, void*);
-        for (const auto& asset : assets)
-        {
-            Logger::log("MapRecovery: loading external asset " + asset.path);
-            const auto rawAssetFilename = rawAssets.string();
-            void* object = reinterpret_cast<LoadObject>(0x10FB19C0)(
-                asset.type, nullptr, asset.path.c_str(), rawAssetFilename.c_str(), 2, nullptr);
-            if (!object)
-            {
-                error = "The preserved asset cannot load in normal editor mode: " + asset.path;
-                return false;
-            }
-            // Selected assets become ordinary cross-package dependencies.
-            // RF_Standalone roots them for OBJ SAVEPACKAGE; RF_Public allows
-            // the source map to reference exports that were originally private
-            // inside MyLevel (notably ConvexVolume antiportal data).
-            *reinterpret_cast<uint32_t*>(static_cast<char*>(object) + 0x1C) |= 0x00080004u;
-        }
-        if (!assets.empty())
-        {
-            // Save the selectively loaded assets into a clean package. The
-            // scratch input also contains the old cooked level; whole-package
-            // browser loads must never encounter that level in the dependency.
-            const auto relativeAssetPath = std::filesystem::relative(assetPackagePath, ExecutableDirectory()).string();
-            if (relativeAssetPath.size() >= 79)
-            {
-                error = "The recovery asset filename is too long for the editor. Choose a shorter map name.";
-                return false;
-            }
-            if (!exec("OBJ SAVEPACKAGE PACKAGE=\"" + assetPackageName + "\" FILE=\"" + relativeAssetPath + "\"")
-                || !std::filesystem::is_regular_file(assetPackagePath))
-            {
-                error = "The editor could not save the recovered asset package.";
-                return false;
-            }
-            std::ifstream savedAssets(assetPackagePath, std::ios::binary);
-            uint32_t packageMagic = 0;
-            savedAssets.read(reinterpret_cast<char*>(&packageMagic), sizeof(packageMagic));
-            if (!savedAssets || packageMagic != 0x9E2A83C1u
-                || std::filesystem::file_size(assetPackagePath) < 64)
-            {
-                error = "The editor did not write a valid recovered asset package: " + assetPackagePath.string();
-                return false;
-            }
-        }
-        if (!exec("MAP IMPORT FILE=\"" + sourcePath.string() + "\"")) return false;
-        // Match File > Import's native level finalizer. The separate platform
-        // synchronization below is also required before normal Save.
-        void* importedLevel = *reinterpret_cast<void**>(
-            static_cast<char*>(editor) + kEditorLevelOffset);
-        void** editorVtable = *reinterpret_cast<void***>(editor);
-        using FinalizeImport = void(__thiscall*)(void*, void*);
-        reinterpret_cast<FinalizeImport>(editorVtable[0xE0 / sizeof(void*)])(editor, importedLevel);
-        if (!SynchronizeImportedActorPlatforms(importedLevel, error)) return false;
-        if (!HasLiveSourceLevelInfo())
-        {
-            error = "The normal map importer did not retain a live LevelInfo object.";
-            return false;
-        }
-        if (!CurrentModel())
-        {
-            error = "The normal source import did not create a level model.";
-            return false;
-        }
-        *reinterpret_cast<int*>(static_cast<char*>(CurrentModel()) + kModelRootOutsideOffset) = rootOutside ? 1 : 0;
-        if (!verifyActors("Imported")) return false;
-        // MAP IMPORT creates a level without the collision hash initialized
-        // by ordinary level loading. LIGHT APPLY temporarily inserts actors
-        // into that hash and assumes it exists. Use the same native setup as
-        // normal loading (11133F12), including registration of existing actors.
-        auto* collisionHash=reinterpret_cast<void**>(
-            static_cast<char*>(importedLevel)+kLevelCollisionHashOffset);
-        if (!*collisionHash)
-        {
-            Logger::log("MapRecovery: initializing normal actor collision state");
-            using SetActorCollision=void(__thiscall*)(void*,int,int);
-            reinterpret_cast<SetActorCollision>(0x1111EB30)(importedLevel,1,0);
-            if (!*collisionHash)
-            {
-                error="The editor could not initialize collision for the imported source map.";
-                return false;
-            }
-        }
-        ArmActorTickDiagnostic();
-
         // Same actor-state bracket as the editor's Build All path. Explicit
         // commands ensure the user's last Build Options cannot skip a stage.
         struct BuildArray { void* data{}; int count{}; int capacity{}; };
         static BuildArray stateA, stateB;
         using Bracket = void(__thiscall*)(void*, void*, void*);
-        reinterpret_cast<Bracket>(0x10E06A1A)(editor, &stateA, &stateB);
         struct RestoreBuildState
         {
             void* editor;
             BuildArray& stateA;
             BuildArray& stateB;
             bool active = true;
+            RestoreBuildState(void* owner, BuildArray& first, BuildArray& second)
+                : editor(owner), stateA(first), stateB(second) {}
+            RestoreBuildState(const RestoreBuildState&) = delete;
+            RestoreBuildState& operator=(const RestoreBuildState&) = delete;
             void Finish()
             {
                 if (!active) return;
@@ -3374,16 +3559,192 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
                 reinterpret_cast<Bracket>(0x10E02EEC)(editor, &stateA, &stateB);
             }
             ~RestoreBuildState() { try { Finish(); } catch (...) {} }
-        } restoreBuildState{editor, stateA, stateB};
-        BspCollisionFix::RecoveryScope collisionRecovery;
-        bool built = HasLiveSourceLevelInfo() && exec("MAP REBUILD")
-            && BspLeafLightFix::Validate(CurrentModel(), error)
-            && ValidateCollisionBounds(CurrentModel(), error)
-            && HasLiveSourceLevelInfo() && exec("BSP REBUILD") && HasLiveSourceLevelInfo()
-            && BspLeafLightFix::Validate(CurrentModel(), error)
-            && ValidateCollisionBounds(CurrentModel(), error);
-        if (built) built = SeparateSolidPortalVisits(CurrentModel(), true, error)
-            && VerifySpaceProbes(probes, error);
+        };
+        std::optional<RestoreBuildState> restoreBuildState;
+        std::optional<BspCollisionFix::RecoveryScope> collisionRecovery;
+        RecoveredBspGeometry::Result geometry;
+        bool built = false;
+        // Overlapping grown brushes describe exactly the original space, but
+        // the editor's BSP builder resolves their coplanar faces with its own
+        // tolerances. When the rebuilt BSP misses any solid/empty sample, the
+        // grown brushes around the misses are split back into the brushes they
+        // replaced and the source is built again.
+        constexpr int kMostAttempts = 6;
+        for (int attempt = 0;; ++attempt)
+        {
+            auto stageFor = [&](Stage stage) { return attempt ? Stage::BuildingGeometry : stage; };
+            std::vector<size_t> origin;
+            RecoveredPolygonImport::VertexPool sourcePoints;
+            if (!PrepareAttemptBrushes(sourceBrushes, geometry, origin, sourcePoints, counts, error)) return false;
+            Logger::log("MapRecovery: reconstructed " + std::to_string(geometry.brushes.size()) + " closed brushes");
+            if (!step(stageFor(Stage::Materials), 0)) return cancel();
+            std::string geometryText;
+            Logger::log("MapRecovery: restoring surface materials and texture coordinates");
+            counts.unifiedSurfaces = 0;
+            if (!WriteSourceBrushes(geometry, faces, sourcePoints, geometryText, error, scratch / "SurfaceFailure.json",
+                                    options.mergeGeometry, counts,
+                                    attempt ? StepFunction([&](Stage, double) { return step(Stage::BuildingGeometry, 0); }) : stepRef))
+                return step.cancelled ? cancel() : false;
+            if (!WriteTextFile(geometryPath, geometryText, error)) return false;
+            std::string completeText;
+            if (!RecoveredActorImport::ComposeSourceMap(actors, blankText, geometryText, completeText, error)
+                || !WriteTextFile(sourcePath, completeText, error)) return false;
+            std::string{}.swap(geometryText);
+            std::string{}.swap(completeText);
+
+            if (!step(stageFor(Stage::Importing), 0)) return cancel();
+            if (!exec("MAP NEW")) return false;
+            EndRecoveryMode();
+            if (attempt == 0)
+            {
+                // Load only referenced asset exports from the preserved package. OBJ
+                // LOAD loads every export, including the old compiled level itself.
+                using LoadObject = void*(__cdecl*)(void*, void*, const char*, const char*, unsigned int, void*);
+                for (const auto& asset : assets)
+                {
+                    Logger::log("MapRecovery: loading external asset " + asset.path);
+                    const auto rawAssetFilename = rawAssets.string();
+                    void* object = reinterpret_cast<LoadObject>(0x10FB19C0)(
+                        asset.type, nullptr, asset.path.c_str(), rawAssetFilename.c_str(), 2, nullptr);
+                    if (!object)
+                    {
+                        error = "The preserved asset cannot load in normal editor mode: " + asset.path;
+                        return false;
+                    }
+                    // Selected assets become ordinary cross-package dependencies.
+                    // RF_Standalone roots them for OBJ SAVEPACKAGE (and keeps them
+                    // loaded through a retry's MAP NEW); RF_Public allows the
+                    // source map to reference exports that were originally private
+                    // inside MyLevel (notably ConvexVolume antiportal data).
+                    *reinterpret_cast<uint32_t*>(static_cast<char*>(object) + 0x1C) |= 0x00080004u;
+                }
+                if (!assets.empty())
+                {
+                    // Save the selectively loaded assets into a clean package. The
+                    // scratch input also contains the old cooked level; whole-package
+                    // browser loads must never encounter that level in the dependency.
+                    const auto relativeAssetPath = std::filesystem::relative(assetPackagePath, ExecutableDirectory()).string();
+                    if (relativeAssetPath.size() >= 79)
+                    {
+                        error = "The recovery asset filename is too long for the editor. Choose a shorter map name.";
+                        return false;
+                    }
+                    created.assetPackage = assetPackagePath;
+                    if (!exec("OBJ SAVEPACKAGE PACKAGE=\"" + assetPackageName + "\" FILE=\"" + relativeAssetPath + "\"")
+                        || !std::filesystem::is_regular_file(assetPackagePath))
+                    {
+                        error = "The editor could not save the recovered asset package.";
+                        return false;
+                    }
+                    std::ifstream savedAssets(assetPackagePath, std::ios::binary);
+                    uint32_t packageMagic = 0;
+                    savedAssets.read(reinterpret_cast<char*>(&packageMagic), sizeof(packageMagic));
+                    if (!savedAssets || packageMagic != 0x9E2A83C1u
+                        || std::filesystem::file_size(assetPackagePath) < 64)
+                    {
+                        error = "The editor did not write a valid recovered asset package: " + assetPackagePath.string();
+                        return false;
+                    }
+                }
+            }
+            if (!exec("MAP IMPORT FILE=\"" + sourcePath.string() + "\"")) return false;
+            // Match File > Import's native level finalizer. The separate platform
+            // synchronization below is also required before normal Save.
+            void* importedLevel = *reinterpret_cast<void**>(
+                static_cast<char*>(editor) + kEditorLevelOffset);
+            void** editorVtable = *reinterpret_cast<void***>(editor);
+            using FinalizeImport = void(__thiscall*)(void*, void*);
+            reinterpret_cast<FinalizeImport>(editorVtable[0xE0 / sizeof(void*)])(editor, importedLevel);
+            if (!SynchronizeImportedActorPlatforms(importedLevel, error)) return false;
+            if (!HasLiveSourceLevelInfo())
+            {
+                error = "The normal map importer did not retain a live LevelInfo object.";
+                return false;
+            }
+            if (!CurrentModel())
+            {
+                error = "The normal source import did not create a level model.";
+                return false;
+            }
+            *reinterpret_cast<int*>(static_cast<char*>(CurrentModel()) + kModelRootOutsideOffset) = rootOutside ? 1 : 0;
+            if (!verifyActors("Imported")) return false;
+            // MAP IMPORT creates a level without the collision hash initialized
+            // by ordinary level loading. LIGHT APPLY temporarily inserts actors
+            // into that hash and assumes it exists. Use the same native setup as
+            // normal loading (11133F12), including registration of existing actors.
+            auto* collisionHash=reinterpret_cast<void**>(
+                static_cast<char*>(importedLevel)+kLevelCollisionHashOffset);
+            if (!*collisionHash)
+            {
+                Logger::log("MapRecovery: initializing normal actor collision state");
+                using SetActorCollision=void(__thiscall*)(void*,int,int);
+                reinterpret_cast<SetActorCollision>(0x1111EB30)(importedLevel,1,0);
+                if (!*collisionHash)
+                {
+                    error="The editor could not initialize collision for the imported source map.";
+                    return false;
+                }
+            }
+            MapRecovery::ArmActorTickDiagnostic();
+
+            reinterpret_cast<Bracket>(0x10E06A1A)(editor, &stateA, &stateB);
+            restoreBuildState.emplace(editor, stateA, stateB);
+            collisionRecovery.emplace();
+            if (!step(Stage::BuildingGeometry, attempt ? 0.5 : 0)) return cancel();
+            built = HasLiveSourceLevelInfo() && exec("MAP REBUILD")
+                && BspLeafLightFix::Validate(CurrentModel(), error)
+                && ValidateCollisionBounds(CurrentModel(), error);
+            if (built && !step(Stage::BuildingGeometry, 0.8)) return cancel();
+            built = built && HasLiveSourceLevelInfo() && exec("BSP REBUILD") && HasLiveSourceLevelInfo()
+                && BspLeafLightFix::Validate(CurrentModel(), error)
+                && ValidateCollisionBounds(CurrentModel(), error);
+            if (built) built = SeparateSolidPortalVisits(CurrentModel(), true, error);
+            if (!built) break;
+            std::vector<Vec3> misses;
+            if (VerifySpaceProbes(probes, error, &misses)) break;
+            const bool anyGrown = std::any_of(sourceBrushes.members.begin(), sourceBrushes.members.end(),
+                [](const auto& list) { return list.size() > 1; });
+            if (attempt + 1 >= kMostAttempts || !anyGrown || misses.empty())
+            {
+                built = false;
+                break;
+            }
+            // Split the grown brushes around the misses; if none are close,
+            // every grown brush goes back to its joined brushes.
+            size_t split = SplitGrownBrushes(sourceBrushes, misses, 1.0);
+            if (!split) split = SplitGrownBrushes(sourceBrushes, misses, 64.0);
+            if (!split || attempt + 2 >= kMostAttempts) split += SplitGrownBrushes(sourceBrushes, misses, 1e12);
+            if (!split)
+            {
+                built = false;
+                break;
+            }
+            counts.splitBack += split;
+            Logger::log("MapRecovery: the rebuilt BSP missed " + std::to_string(misses.size())
+                + " samples; split " + std::to_string(split) + " grown brushes back and building again");
+            restoreBuildState.reset();
+            collisionRecovery.reset();
+            error.clear();
+        }
+        // Structural brushes are written first, so brush i is RecoveredVolume<i+1>.
+        for (size_t index = 0; built && index < geometry.brushes.size(); ++index)
+        {
+            const auto& brush = geometry.brushes[index];
+            const double width = RecoveredBspGeometry::MinimumWidth(brush), volume = RecoveredBspGeometry::Volume(brush);
+            if (!MapRecoveryModel::IsThinBrush(width, volume)) continue;
+            std::ostringstream detail;
+            detail << std::setprecision(3) << "Only " << width << " units across (" << volume
+                   << " cubic units): a sliver left by the compiled BSP's splits.";
+            const std::string name = "RecoveredVolume" + std::to_string(index + 1);
+            outcome.rows.push_back({"Thin brush", name, detail.str(), MapRecoveryModel::Target::Actor, name});
+        }
+        const size_t structuralBrushCount = geometry.brushes.size();
+        std::string{}.swap(blankText);
+        std::vector<RecoveredBspGeometry::Brush>{}.swap(geometry.brushes);
+        std::vector<RecoveredFace>{}.swap(faces);
+        SourceBrushes{}.joined.brushes.swap(sourceBrushes.joined.brushes);
+        std::vector<RecoveredBspGeometry::Brush>{}.swap(sourceBrushes.current);
+        if (built && !step(Stage::Lighting, 0)) return cancel();
         if (built)
         {
             RecoveredBspLighting::Activate(originalBspLighting);
@@ -3391,13 +3752,20 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
                 && BspLeafLightFix::Validate(CurrentModel(), error)
                 && ValidateCollisionBounds(CurrentModel(), error);
         }
+        // Rebuilt surfaces that kept mostly new lighting, for the report.
+        std::vector<RecoveredBspLighting::SurfaceTransfer> surfaceLighting;
+        if (built)
+            for (const auto& surface : RecoveredBspLighting::SurfaceResults(originalBspLighting))
+                if (MapRecoveryModel::LightingNotPreserved(surface.matched, surface.unmatched))
+                    surfaceLighting.push_back(surface);
+        if (built && !step(Stage::Paths, 0)) return cancel();
         if (built)
         {
             Logger::log("MapRecovery: rebuilding navigation and gameplay paths");
             using BuildPaths = void(__thiscall*)(void*);
             reinterpret_cast<BuildPaths>(0x10E06399)(editor);
         }
-        restoreBuildState.Finish();
+        if (restoreBuildState) restoreBuildState->Finish();
         if (!HasLiveSourceLevelInfo())
         {
             error = "The source map lost its LevelInfo object during the normal build.";
@@ -3420,6 +3788,34 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
         Logger::log("MapRecovery: preserved original baked colours on "
             + std::to_string(preservedMeshCount) + " mesh actors; recalculated "
             + std::to_string(recalculatedMeshCount) + " incompatible streams");
+        {
+            std::vector<std::string> recalculated;
+            for (const auto& [name, mesh] : originalLighting)
+                if (mesh.recalculated) recalculated.push_back(name);
+            std::sort(recalculated.begin(), recalculated.end());
+            for (const auto& name : recalculated)
+                outcome.rows.push_back({"Mesh lighting recalculated", name,
+                    "Its vertex layout changed, so the original baked colours could not be kept; it has freshly built lighting.",
+                    MapRecoveryModel::Target::Actor, name});
+            std::sort(surfaceLighting.begin(), surfaceLighting.end(), [](const auto& a, const auto& b) {
+                return a.unmatched != b.unmatched ? a.unmatched > b.unmatched : a.surface < b.surface;
+            });
+            constexpr size_t kMostSurfaces = 200;
+            for (size_t index = 0; index < surfaceLighting.size() && index < kMostSurfaces; ++index)
+            {
+                const auto& surface = surfaceLighting[index];
+                const size_t total = surface.matched + surface.unmatched;
+                outcome.rows.push_back({"BSP lighting not preserved", "Surface " + std::to_string(surface.surface),
+                    std::to_string(surface.unmatched) + " of " + std::to_string(total) + " lighting texels ("
+                        + std::to_string(surface.unmatched * 100 / (total ? total : 1))
+                        + "%) found no original lighting and kept the new bake.",
+                    MapRecoveryModel::Target::Surface, "", surface.surface});
+            }
+            if (surfaceLighting.size() > kMostSurfaces)
+                outcome.rows.push_back({"BSP lighting not preserved", "More surfaces",
+                    std::to_string(surfaceLighting.size() - kMostSurfaces) + " further surfaces are not listed.",
+                    MapRecoveryModel::Target::None});
+        }
         if (!verifyActors("Built")) return false;
 
         // LIGHT APPLY updates the active StaticMeshInstance pointer. The
@@ -3451,6 +3847,9 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
             bakedMeshActors.insert(name);
         }
 
+        if (!step(Stage::Paths, 1)) return cancel();
+        // From here the recovery writes its outputs and runs to the end.
+        step(Stage::Saving, 0);
         using SaveFn = int(__thiscall*)(void*, const char*);
         Logger::log("MapRecovery: saving normal source " + destination.string());
         const std::string outputName = destination.string();
@@ -3472,6 +3871,7 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
         }
         // This is deliberately the ordinary loader, with every recovery guard
         // off. A conversion is not successful unless its normal save reopens.
+        step(Stage::Verifying, 0);
         if (!exec("MAP NEW") || !exec("MAP LOAD FILE=\"" + outputName + "\"")) return false;
         const auto reopenedLevel = *reinterpret_cast<void**>(static_cast<char*>(editor) + kEditorLevelOffset);
         const RawArray reopenedActors = ReadRawArray(reopenedLevel, kLevelActorsDataOffset);
@@ -3544,6 +3944,13 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
                   "onto matching rebuilt surfaces, with atlas-content checks after saving and reopening. "
                   "Unmatched chart texels retain recalculated lighting. Ordinary builds preserve the existing bake. "
                   "Use Build > Recalculate Lighting explicitly to replace it; a fresh bake may differ from the original.\n";
+        counts.actors = actors.actorCount;
+        report << "\n" << MapRecoveryModel::Summary(counts) << "\n";
+        if (outcome.rows.empty()) report << "\nNothing to report: every item came back cleanly.\n";
+        else report << "\nItems that did not come back cleanly (" << outcome.rows.size() << "):\n"
+                    << MapRecoveryModel::RowsText(outcome.rows);
+        Logger::log("MapRecovery: " + MapRecoveryModel::Summary(counts));
+        Logger::log("MapRecovery: report lists " + std::to_string(outcome.rows.size()) + " items");
         std::string reportError;
         if (!WriteTextFile(scratch / "Recovery.txt", report.str(), reportError)) Logger::log(reportError);
         lightingProtectionSuspended = previousSuspension;
@@ -3557,6 +3964,76 @@ bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
     }
 }
 
+    // After a cancel: a new empty map, the recovery guards off, no File >
+    // Save target, and none of the files this run wrote.
+    void FinishCancelledRecovery(const CreatedFiles& created, std::string& error)
+    {
+        Logger::log("MapRecovery: cancelled; resetting to a new map and removing this run's files");
+        void* editor = *reinterpret_cast<void**>(kGEditor);
+        void* output = *reinterpret_cast<void**>(kGWarn);
+        bool reset = false;
+        try { reset = editor && output && DispatchEditorCommand(editor, output, "MAP NEW"); }
+        catch (...) {}
+        EndRecoveryMode();
+        SetCurrentMapFilename("");
+        std::vector<std::string> left;
+        std::error_code ignored;
+        auto removeFile = [&](const std::filesystem::path& path) {
+            std::error_code code;
+            if (!path.empty() && std::filesystem::exists(path, code) && !std::filesystem::remove(path, code))
+                left.push_back(path.string());
+        };
+        removeFile(created.assetPackage);
+        if (created.scratchCreated && !created.scratch.empty())
+        {
+            std::error_code code;
+            std::filesystem::remove_all(created.scratch, code);
+            if (std::filesystem::exists(created.scratch, ignored)) left.push_back(created.scratch.string());
+            // Remove Recovery\ too when this run was its only user.
+            const auto parent = created.scratch.parent_path();
+            if (std::filesystem::is_empty(parent, ignored)) std::filesystem::remove(parent, ignored);
+        }
+        else
+            for (const auto& file : created.files) removeFile(file);
+        error = kCancelledError;
+        error += reset ? " The editor now has a new empty map; nothing was saved."
+                       : " The editor could not start a new map; restart it before opening another map.";
+        if (!left.empty())
+        {
+            error += " Some files were in use and remain: " + left.front();
+            if (left.size() > 1) error += " and " + std::to_string(left.size() - 1) + " more";
+            error += ".";
+        }
+        Logger::log("MapRecovery: " + error);
+    }
+}
+
+bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
+                                  const std::filesystem::path& destination,
+                                  std::string& error)
+{
+    return RecoverToSource(source, destination, error, RecoveryOptions{MergeGeometryEnabled()}, nullptr);
+}
+
+bool MapRecovery::RecoverToSource(const std::filesystem::path& source,
+                                  const std::filesystem::path& destination,
+                                  std::string& error, const RecoveryOptions& options,
+                                  RecoveryOutcome* outcome)
+{
+    RecoveryOutcome local;
+    RecoveryOutcome& result = outcome ? *outcome : local;
+    result = {};
+    Checkpoint step{options};
+    CreatedFiles created;
+    const bool success = RecoverToSourceImpl(source, destination, error, options, result, step, created);
+    if (!success && step.cancelled)
+    {
+        result.cancelled = true;
+        FinishCancelledRecovery(created, error);
+    }
+    return success;
+}
+
 extern "C" __declspec(dllexport) int __cdecl ReloadedRecoverMapToSource(
     const char* source, const char* destination, char* errorBuffer, unsigned int errorSize)
 {
@@ -3565,6 +4042,81 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedRecoverMapToSource(
         && MapRecovery::RecoverToSource(source, destination, error);
     if (errorBuffer && errorSize) strncpy_s(errorBuffer, errorSize, error.c_str(), _TRUNCATE);
     return success ? 1 : 0;
+}
+
+// For the isolated native tests: merge 0/1, and a stage index at which to act
+// as if Cancel was pressed (-1 for none). On success the report text and row
+// count land in reportBuffer as "rows=<n>\n<Recovery.txt summary>".
+extern "C" __declspec(dllexport) int __cdecl ReloadedRecoverMapToSourceWithOptions(
+    const char* source, const char* destination, int merge, int cancelStage,
+    char* errorBuffer, unsigned int errorSize, char* reportBuffer, unsigned int reportSize)
+{
+    std::string error;
+    MapRecovery::RecoveryOptions options;
+    options.mergeGeometry = merge != 0;
+    if (cancelStage >= 0 && cancelStage < static_cast<int>(MapRecoveryModel::Stage::Count))
+        options.cancelAt = static_cast<MapRecoveryModel::Stage>(cancelStage);
+    MapRecovery::RecoveryOutcome outcome;
+    const bool success = source && destination
+        && MapRecovery::RecoverToSource(source, destination, error, options, &outcome);
+    if (errorBuffer && errorSize) strncpy_s(errorBuffer, errorSize, error.c_str(), _TRUNCATE);
+    if (reportBuffer && reportSize)
+    {
+        std::string text = "cancelled=" + std::to_string(outcome.cancelled ? 1 : 0)
+            + "\nrows=" + std::to_string(outcome.rows.size())
+            + "\ncells=" + std::to_string(outcome.counts.cells)
+            + "\nbrushes=" + std::to_string(outcome.counts.brushes)
+            + "\ncellFaces=" + std::to_string(outcome.counts.cellFaces)
+            + "\nbrushFaces=" + std::to_string(outcome.counts.brushFaces)
+            + "\npolygons=" + std::to_string(outcome.counts.polygons)
+            + "\nunified=" + std::to_string(outcome.counts.unifiedSurfaces) + "\n";
+        for (const auto& row : outcome.rows)
+            text += "row " + row.category + " | " + row.item + " | " + MapRecoveryModel::TargetText(row) + "\n";
+        strncpy_s(reportBuffer, reportSize, text.c_str(), _TRUNCATE);
+    }
+    return success ? 1 : 0;
+}
+
+namespace
+{
+    HMENU g_recoveryFileMenu = nullptr;
+    std::string RecoveryIniPath() { return (ExecutableDirectory() / "Reloaded_Editor.ini").string(); }
+}
+
+bool MapRecovery::MergeGeometryEnabled()
+{
+    return GetPrivateProfileIntA("MapRecovery", "MergeGeometry", 1, RecoveryIniPath().c_str()) != 0;
+}
+
+void MapRecovery::SetMergeGeometry(bool enabled)
+{
+    WritePrivateProfileStringA("MapRecovery", "MergeGeometry", enabled ? "1" : "0", RecoveryIniPath().c_str());
+    if (g_recoveryFileMenu)
+        CheckMenuItem(g_recoveryFileMenu, kMergeGeometryCommandId, MF_BYCOMMAND | (enabled ? MF_CHECKED : MF_UNCHECKED));
+    Logger::log(std::string("MapRecovery: geometry merging turned ") + (enabled ? "on" : "off"));
+}
+
+void MapRecovery::InstallMenu(HMENU file)
+{
+    if (!file) return;
+    g_recoveryFileMenu = file;
+    int position = -1;
+    for (int index = 0; index < GetMenuItemCount(file); ++index)
+    {
+        const UINT id = GetMenuItemID(file, index);
+        if (id == kMergeGeometryCommandId) return;
+        if (id == kCommandId || id == kOpenRecoveredCommandId) position = index;
+    }
+    if (position < 0) return;
+    InsertMenuA(file, position + 1, MF_BYPOSITION | MF_STRING | (MergeGeometryEnabled() ? MF_CHECKED : MF_UNCHECKED),
+                kMergeGeometryCommandId, "&Merge Recovered Geometry");
+}
+
+bool MapRecovery::HandleCommand(UINT command)
+{
+    if (command != kMergeGeometryCommandId) return false;
+    SetMergeGeometry(!MergeGeometryEnabled());
+    return true;
 }
 
 void MapRecovery::Run(HWND owner) { ChooseSourceRecovery(owner, false); }

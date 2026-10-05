@@ -936,6 +936,7 @@ bool HandleCommand(UINT command)
     }
     if(MeasureTool::HandleCommand(command))return true;
     if(LightingBudget::HandleCommand(command))return true;
+    if(MapRecovery::HandleCommand(command))return true;
     if(command==StoreyFilter::kOpen)
     {
         try{StoreyFilter::Open();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Storeys",MB_OK|MB_ICONERROR);}

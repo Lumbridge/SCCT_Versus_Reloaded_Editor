@@ -37,7 +37,12 @@ param(
     [switch]$CompactPoints,
     [string]$TracePoint,
     [string]$TraceActor,
-    [string[]]$ExtraAssetPackage = @()
+    [string[]]$ExtraAssetPackage = @(),
+    # Recover with File > Merge Recovered Geometry off.
+    [switch]$NoMerge,
+    # Act as if Cancel were pressed when this MapRecoveryModel::Stage starts
+    # (0 Preparing ... 10 Paths), then check the editor was left clean.
+    [ValidateRange(0, 10)][int]$CancelAtStage = -1
 )
 $ErrorActionPreference = 'Stop'
 if ($VerifyPreservedLighting -and !$ReopenOnly) { throw 'VerifyPreservedLighting requires ReopenOnly and a recovered source with nontrivial lighting.' }
@@ -168,7 +173,11 @@ inspect_cooked_only=$([int][bool]$InspectCookedOnly)
 compact_points=$([int][bool]$CompactPoints)
 trace_point=$TracePoint
 trace_actor=$TraceActor
+recovery_merge=$([int](!$NoMerge))
 "@ | Set-Content -LiteralPath (Join-Path $testSystem 'native_recovery_test.ini') -Encoding ascii
+if ($CancelAtStage -ge 0) {
+    Add-Content -LiteralPath (Join-Path $testSystem 'native_recovery_test.ini') -Value "recovery_cancel_stage=$CancelAtStage" -Encoding ascii
+}
 # The self-updater's start-up check would reach GitHub and could open a
 # message box the probe cannot answer.
 Add-Type -Namespace NativeRecoveryTest -Name Ini -MemberDefinition @'

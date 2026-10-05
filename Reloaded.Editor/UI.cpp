@@ -206,6 +206,7 @@ static void InjectReloadedMenuItems(HWND frame)
                         MF_BYPOSITION | MF_STRING,
                         MapRecovery::kOpenRecoveredCommandId,
                         "Convert &Legacy Recovered Map...");
+        MapRecovery::InstallMenu(file);
     }
 
     HMENU lightingBuild = SubMenuWithCommand(bar, 40038);

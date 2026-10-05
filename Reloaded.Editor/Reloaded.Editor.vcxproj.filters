@@ -161,6 +161,9 @@
     <ClInclude Include="MapRecovery.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="MapRecoveryModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MapRecoveryNative.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MapRecoveryUi.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="RecoveredBspLighting.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -322,6 +325,7 @@
     <ClCompile Include="MapRecovery.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="MapRecoveryUi.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="RecoveredBspLighting.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

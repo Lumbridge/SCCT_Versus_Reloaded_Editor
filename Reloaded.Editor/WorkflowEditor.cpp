@@ -1424,4 +1424,5 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "EmitterLibraryNative.inl"
 #include "LightingBudgetNative.inl"
 #include "CharacterSkinsNative.inl"
+#include "MapRecoveryNative.inl"
 }
