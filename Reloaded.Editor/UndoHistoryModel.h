@@ -115,6 +115,196 @@ namespace UndoHistory
         return result;
     }
 
+    // Named checkpoints: "before vent rework" on a row of the list. The
+    // buffer has no ids of its own, so each transaction is given one when
+    // first seen and the ids follow the buffer as it changes. A checkpoint
+    // is tied to the transaction its row ends with (row N: the Nth step), or
+    // to the start row; it lasts while that transaction is in the buffer and
+    // goes when the transaction does: trimmed off the front when the buffer
+    // is full, dropped from the redo end when a new step replaces undone
+    // ones, or cleared by a reset (a map load). The start row's checkpoint
+    // goes once anything is trimmed, since the start state is then gone.
+    //
+    // Prints are what the caller can read of each transaction, oldest first,
+    // to tell them apart (the address of its title text, which stays put
+    // while the transaction lives). Whenever the ids and the buffer's prints
+    // disagree, the ids start afresh and every checkpoint goes: losing a
+    // checkpoint is better than one that points at the wrong step.
+    class Checkpoints
+    {
+    public:
+        using Prints = std::vector<unsigned long long>;
+        struct Mark
+        {
+            unsigned long long after = 0; // the transaction's id
+            bool start = false;           // the start row instead
+            std::string name;
+        };
+        static constexpr size_t kNameLimit = 60;
+
+        bool Empty() const { return marks.empty(); }
+        size_t Size() const { return marks.size(); }
+
+        // Checks the ids against the buffer as it is now. Returns how many
+        // checkpoints went because the two disagreed.
+        size_t Observe(const Prints& now)
+        {
+            if (now == prints && ids.size() == prints.size()) return 0;
+            return Fresh(now);
+        }
+
+        // The outermost UTransBuffer::Begin ran: it dropped the undone steps,
+        // trimmed the oldest while the buffer was over its memory limit, and
+        // added the new step at the end.
+        size_t Began(const Prints& before, int undoBefore, const Prints& after, int undoAfter)
+        {
+            size_t gone = Observe(before);
+            if (marks.empty()) return gone + Fresh(after);
+            const int n = static_cast<int>(before.size());
+            const int kept = n - std::clamp(undoBefore, 0, n);
+            const int trimmed = kept + 1 - static_cast<int>(after.size());
+            if (undoAfter != 0 || after.empty() || trimmed < 0 || trimmed > kept
+                || !std::equal(before.begin() + trimmed, before.begin() + kept, after.begin()))
+                return gone + Fresh(after);
+            ids.erase(ids.begin() + kept, ids.end());
+            ids.erase(ids.begin(), ids.begin() + trimmed);
+            ids.push_back(next++);
+            prints = after;
+            if (trimmed > 0)
+            {
+                const auto was = marks.size();
+                std::erase_if(marks, [](const Mark& m) { return m.start; });
+                gone += was - marks.size();
+            }
+            return gone + Prune();
+        }
+
+        // The buffer was emptied.
+        size_t Reset()
+        {
+            const size_t gone = marks.size();
+            marks.clear();
+            ids.clear();
+            prints.clear();
+            return gone;
+        }
+
+        // Names a row of the buffer as it is now, renaming a checkpoint
+        // already there. False for an empty name or a row off the list.
+        bool Set(const Prints& now, int row, const std::string& name)
+        {
+            Observe(now);
+            const auto clean = Name(name);
+            if (clean.empty() || row < 0 || row > static_cast<int>(ids.size())) return false;
+            Remove(row);
+            Mark m;
+            m.start = row == 0;
+            m.after = row == 0 ? 0 : ids[row - 1];
+            m.name = clean;
+            marks.push_back(m);
+            return true;
+        }
+
+        bool Remove(int row)
+        {
+            const auto was = marks.size();
+            std::erase_if(marks, [&](const Mark& m) { return RowOf(m) == row; });
+            return marks.size() != was;
+        }
+
+        // The row a checkpoint is on, or -1 when its step is gone.
+        int RowOf(const Mark& m) const
+        {
+            if (m.start) return 0;
+            const auto at = std::find(ids.begin(), ids.end(), m.after);
+            return at == ids.end() ? -1 : static_cast<int>(at - ids.begin()) + 1;
+        }
+
+        // Row and name of every checkpoint, oldest row first.
+        std::vector<std::pair<int, std::string>> List() const
+        {
+            std::vector<std::pair<int, std::string>> out;
+            for (const auto& m : marks)
+                if (const int row = RowOf(m); row >= 0) out.emplace_back(row, m.name);
+            std::stable_sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+            return out;
+        }
+
+        std::string NameAt(int row) const
+        {
+            for (const auto& m : marks)
+                if (RowOf(m) == row) return m.name;
+            return {};
+        }
+
+        // "Checkpoint 3": the first such name not in use.
+        std::string NextName() const
+        {
+            for (int i = 1;; ++i)
+            {
+                const auto name = "Checkpoint " + std::to_string(i);
+                if (std::none_of(marks.begin(), marks.end(), [&](const Mark& m) { return m.name == name; })) return name;
+            }
+        }
+
+        // One line, trimmed, at most kNameLimit characters; empty when blank.
+        static std::string Name(const std::string& text)
+        {
+            std::string out;
+            for (unsigned char c : text) out += c < 32 || c == 127 ? ' ' : static_cast<char>(c);
+            const size_t first = out.find_first_not_of(' ');
+            if (first == std::string::npos) return {};
+            out = out.substr(first, out.find_last_not_of(' ') - first + 1);
+            if (out.size() > kNameLimit) out = out.substr(0, kNameLimit);
+            return out;
+        }
+
+    private:
+        Prints prints;
+        std::vector<unsigned long long> ids; // one per transaction, oldest first
+        unsigned long long next = 1;
+        std::vector<Mark> marks;
+
+        size_t Fresh(const Prints& now)
+        {
+            const size_t gone = marks.size();
+            marks.clear();
+            prints = now;
+            ids.clear();
+            for (size_t i = 0; i < now.size(); ++i) ids.push_back(next++);
+            return gone;
+        }
+        size_t Prune()
+        {
+            const auto was = marks.size();
+            std::erase_if(marks, [&](const Mark& m) { return RowOf(m) < 0; });
+            return was - marks.size();
+        }
+    };
+
+    // A row as the list and the copied text show it with its checkpoint.
+    inline std::string MarkedRowText(const Snapshot& s, int row, const std::string& checkpoint)
+    {
+        auto text = RowText(s, row);
+        if (!checkpoint.empty()) text += "   [" + checkpoint + "]";
+        return text;
+    }
+
+    // A checkpoint in the quick-jump list: its name, then where it is.
+    inline std::string JumpItemText(const Snapshot& s, int row, const std::string& name)
+    {
+        std::string where = row <= 0 ? "start" : "step " + std::to_string(row) + ": " + CleanTitle(s.titles[std::min(row, Count(s)) - 1], 48);
+        if (row == Current(s)) where += ", current";
+        else if (Undone(s, row)) where += ", undone";
+        return name + "  (" + where + ")";
+    }
+
+    inline std::string CheckpointsGoneText(size_t gone)
+    {
+        if (!gone) return {};
+        return gone == 1 ? "A checkpoint went with its step." : std::to_string(gone) + " checkpoints went with their steps.";
+    }
+
     inline std::string JumpReport(const JumpResult& r)
     {
         if (r.wanted == 0) return "Already at that step.";

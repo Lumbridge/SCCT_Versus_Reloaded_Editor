@@ -929,9 +929,9 @@ void RunObjectiveCommand(UINT command,const Json& snapshot)
 bool HandleCommand(UINT command)
 {
     if(EditorExtras::HandleCommand(command))return true;
-    if(command==UndoHistory::kOpen)
+    if(command==UndoHistory::kOpen || command==UndoHistory::kAddCheckpoint)
     {
-        try{UndoHistory::Open();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Undo History",MB_OK|MB_ICONERROR);}
+        try{UndoHistory::HandleCommand(command);}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Undo History",MB_OK|MB_ICONERROR);}
         return true;
     }
     if(MeasureTool::HandleCommand(command))return true;

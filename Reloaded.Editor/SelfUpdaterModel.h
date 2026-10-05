@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -198,6 +199,324 @@ namespace Updater
         return out;
     }
 
+    // Release notes as blocks a window can lay out: headings, paragraphs,
+    // list items and code. GitHub release bodies are Markdown; only what
+    // release notes use is understood (headings, - * + and 1. lists, **bold**,
+    // `code`, [links](url), ``` fences, HTML comments dropped). Plain text,
+    // as What's New records from before Markdown was kept hold, is read one
+    // paragraph per line.
+    struct NoteSpan
+    {
+        std::string text;
+        bool bold = false, code = false;
+        bool operator==(const NoteSpan&) const = default;
+    };
+    struct NoteBlock
+    {
+        enum class Kind { Heading, Paragraph, Item, Code } kind = Kind::Paragraph;
+        int level = 0;          // heading 1-6; list nesting from 0
+        std::string marker;     // a numbered item's "3."; empty for a bullet
+        std::vector<NoteSpan> spans;
+        bool operator==(const NoteBlock&) const = default;
+    };
+
+    inline std::vector<NoteSpan> NoteSpans(const std::string& text)
+    {
+        std::vector<NoteSpan> spans;
+        auto add = [&](std::string s, bool bold, bool code) {
+            if (s.empty()) return;
+            if (!spans.empty() && spans.back().bold == bold && spans.back().code == code) spans.back().text += s;
+            else spans.push_back({std::move(s), bold, code});
+        };
+        bool bold = false;
+        std::string run;
+        for (size_t i = 0; i < text.size();)
+        {
+            if ((text.compare(i, 2, "**") == 0 || text.compare(i, 2, "__") == 0))
+            {
+                // Only a marker with a partner further on starts bold.
+                if (bold || text.find(text.substr(i, 2), i + 2) != std::string::npos)
+                {
+                    add(run, bold, false), run.clear();
+                    bold = !bold;
+                    i += 2;
+                    continue;
+                }
+            }
+            if (text[i] == '`')
+            {
+                if (const auto close = text.find('`', i + 1); close != std::string::npos)
+                {
+                    add(run, bold, false), run.clear();
+                    add(text.substr(i + 1, close - i - 1), bold, true);
+                    i = close + 1;
+                    continue;
+                }
+            }
+            if (text[i] == '[')
+            {
+                const auto mid = text.find("](", i + 1);
+                const auto close = mid == std::string::npos ? mid : text.find(')', mid + 2);
+                if (close != std::string::npos && text.find('[', i + 1) > mid)
+                {
+                    const auto label = text.substr(i + 1, mid - i - 1), url = text.substr(mid + 2, close - mid - 2);
+                    run += label == url || label.empty() ? url : label + " (" + url + ")";
+                    i = close + 1;
+                    continue;
+                }
+            }
+            run += text[i++];
+        }
+        add(run, bold, false);
+        return spans;
+    }
+
+    inline std::vector<NoteBlock> ParseNotes(const std::string& source, bool markdown = true)
+    {
+        using Kind = NoteBlock::Kind;
+        std::vector<NoteBlock> blocks;
+        std::string paragraph;   // Markdown paragraph lines joined
+        std::string code;        // inside a ``` fence
+        bool inFence = false, inComment = false, itemOpen = false;
+        std::string itemText;
+        NoteBlock item;
+        auto trimmed = [](const std::string& s) {
+            const auto a = s.find_first_not_of(" \t");
+            return a == std::string::npos ? std::string{} : s.substr(a, s.find_last_not_of(" \t") - a + 1);
+        };
+        auto closeItem = [&] {
+            if (!itemOpen) return;
+            item.spans = NoteSpans(itemText);
+            blocks.push_back(item);
+            itemOpen = false;
+        };
+        auto closeParagraph = [&] {
+            if (paragraph.empty()) return;
+            blocks.push_back({Kind::Paragraph, 0, {}, NoteSpans(paragraph)});
+            paragraph.clear();
+        };
+        auto closeAll = [&] { closeItem(); closeParagraph(); };
+        size_t at = 0;
+        while (at <= source.size())
+        {
+            const auto end = source.find('\n', at);
+            std::string line = source.substr(at, end == std::string::npos ? std::string::npos : end - at);
+            at = end == std::string::npos ? source.size() + 1 : end + 1;
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (markdown && trimmed(line).rfind("```", 0) == 0)
+            {
+                if (inFence)
+                {
+                    if (!code.empty()) blocks.push_back({Kind::Code, 0, {}, {{code, false, true}}});
+                    code.clear();
+                }
+                else closeAll();
+                inFence = !inFence;
+                continue;
+            }
+            if (inFence) { code += (code.empty() ? "" : "\n") + line; continue; }
+            // HTML comments, which release templates leave in.
+            for (;;)
+            {
+                if (inComment)
+                {
+                    const auto close = line.find("-->");
+                    if (close == std::string::npos) { line.clear(); break; }
+                    line.erase(0, close + 3);
+                    inComment = false;
+                }
+                const auto open = line.find("<!--");
+                if (open == std::string::npos) break;
+                const auto close = line.find("-->", open + 4);
+                if (close == std::string::npos) { line.resize(open); inComment = true; break; }
+                line.erase(open, close + 3 - open);
+            }
+            const auto text = trimmed(line);
+            if (text.empty()) { closeAll(); continue; }
+            const auto indent = static_cast<int>(line.find_first_not_of(" \t"));
+            // # Heading
+            const auto hashes = text.find_first_not_of('#');
+            if (hashes != 0 && hashes != std::string::npos && hashes <= 6 && text[hashes] == ' ')
+            {
+                closeAll();
+                blocks.push_back({Kind::Heading, static_cast<int>(hashes), {}, NoteSpans(trimmed(text.substr(hashes)))});
+                continue;
+            }
+            // - item, * item, + item, 1. item
+            std::string marker;
+            size_t body = std::string::npos;
+            if (text.size() > 1 && (text[0] == '-' || text[0] == '*' || text[0] == '+') && text[1] == ' ') body = 2;
+            else if (const auto digits = text.find_first_not_of("0123456789");
+                     digits != 0 && digits != std::string::npos && digits <= 3 && text.compare(digits, 2, ". ") == 0)
+                marker = text.substr(0, digits + 1), body = digits + 2;
+            if (body != std::string::npos)
+            {
+                closeAll();
+                item = {Kind::Item, (std::min)(indent / 2, 4), marker, {}};
+                itemText = trimmed(text.substr(body));
+                itemOpen = true;
+                continue;
+            }
+            if (!markdown) { closeAll(); blocks.push_back({Kind::Paragraph, 0, {}, NoteSpans(text)}); continue; }
+            // A line under an item continues it; otherwise it joins the paragraph.
+            if (itemOpen) { itemText += " " + text; continue; }
+            paragraph += (paragraph.empty() ? "" : " ") + text;
+        }
+        if (inFence && !code.empty()) blocks.push_back({Kind::Code, 0, {}, {{code, false, true}}});
+        closeAll();
+        return blocks;
+    }
+
+    // UTF-8 text as RTF: the specials escaped, everything past ASCII as
+    // \uN? (UTF-16, signed), line breaks as \line.
+    inline std::string RtfText(const std::string& s)
+    {
+        std::string out;
+        auto unit = [&](unsigned u) { out += "\\u" + std::to_string(static_cast<int>(static_cast<std::int16_t>(u))) + "?"; };
+        for (size_t i = 0; i < s.size();)
+        {
+            const unsigned char c = static_cast<unsigned char>(s[i]);
+            if (c < 0x80)
+            {
+                if (c == '\\' || c == '{' || c == '}') out += '\\', out += static_cast<char>(c);
+                else if (c == '\n') out += "\\line ";
+                else if (c == '\t') out += "\\tab ";
+                else if (c >= 32) out += static_cast<char>(c);
+                ++i;
+                continue;
+            }
+            const int extra = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : -1;
+            unsigned cp = extra == 3 ? c & 7 : extra == 2 ? c & 15 : c & 31;
+            bool ok = extra > 0 && i + static_cast<size_t>(extra) < s.size();
+            for (int k = 1; ok && k <= extra; ++k)
+            {
+                const unsigned char d = static_cast<unsigned char>(s[i + k]);
+                if ((d & 0xC0) != 0x80) ok = false;
+                else cp = cp << 6 | (d & 0x3F);
+            }
+            if (!ok) { out += '?'; ++i; continue; }
+            i += 1 + extra;
+            if (cp >= 0x10000) { cp -= 0x10000; unit(0xD800 + (cp >> 10)); unit(0xDC00 + (cp & 0x3FF)); }
+            else unit(cp);
+        }
+        return out;
+    }
+
+    // A release notes document for a rich edit control: a bold title, an
+    // optional line under it, the notes, and an optional closing line.
+    inline std::string NotesRtf(const std::string& title, const std::string& subtitle, const std::vector<NoteBlock>& blocks, const std::string& footer)
+    {
+        using Kind = NoteBlock::Kind;
+        std::string rtf = "{\\rtf1\\ansi\\ansicpg1252\\deff0\\uc1{\\fonttbl{\\f0\\fswiss Segoe UI;}{\\f1\\fmodern Consolas;}}\\f0\\fs18 ";
+        auto spans = [&](const std::vector<NoteSpan>& list) {
+            std::string out;
+            for (const auto& s : list)
+            {
+                // A group: its formatting ends with it.
+                std::string open;
+                if (s.bold) open += "\\b ";
+                if (s.code) open += "\\f1 ";
+                out += "{" + open + RtfText(s.text) + "}";
+            }
+            return out;
+        };
+        rtf += "\\pard\\sa60{\\b\\fs30 " + RtfText(title) + "}\\par ";
+        if (!subtitle.empty()) rtf += "\\pard\\sa160 " + RtfText(subtitle) + "\\par ";
+        for (const auto& b : blocks)
+            switch (b.kind)
+            {
+            case Kind::Heading:
+            {
+                const int size = b.level <= 1 ? 26 : b.level == 2 ? 22 : 19;
+                rtf += "\\pard\\sb200\\sa80{\\b\\fs" + std::to_string(size) + " " + spans(b.spans) + "}\\par ";
+                break;
+            }
+            case Kind::Paragraph: rtf += "\\pard\\sb80\\sa60 " + spans(b.spans) + "\\par "; break;
+            case Kind::Item:
+            {
+                const int left = 360 + b.level * 360;
+                rtf += "\\pard\\fi-240\\li" + std::to_string(left) + "\\tx" + std::to_string(left) + "\\sa50 "
+                       + (b.marker.empty() ? std::string(b.level % 2 ? "\\u9702?" : "\\bullet") : RtfText(b.marker)) + "\\tab " + spans(b.spans) + "\\par ";
+                break;
+            }
+            case Kind::Code: rtf += "\\pard\\li360\\sa100{\\f1 " + RtfText(b.spans.empty() ? std::string{} : b.spans[0].text) + "}\\par "; break;
+            }
+        if (!footer.empty()) rtf += "\\pard\\sb160 " + RtfText(footer) + "\\par ";
+        return rtf + "}";
+    }
+
+    // "2.3 MB", for the download size GitHub gives the release archive.
+    inline std::string SizeText(std::uint64_t bytes)
+    {
+        if (!bytes) return "size unknown";
+        if (bytes < 1024) return std::to_string(bytes) + " bytes";
+        const double kb = bytes / 1024.0;
+        char text[32];
+        if (kb < 1024) std::snprintf(text, sizeof(text), "%.0f KB", kb);
+        else std::snprintf(text, sizeof(text), "%.1f MB", kb / 1024.0);
+        return text;
+    }
+
+    // Remind me later: the offer comes back at the next start, or not before
+    // a chosen delay has passed. Stored in [Updates] as RemindVersion (the
+    // tag) and RemindAfter (seconds since 1970, UTC; 0 for the next start).
+    enum class Snooze { NextStart, OneDay, ThreeDays, OneWeek };
+    inline const char* SnoozeText(Snooze s)
+    {
+        switch (s)
+        {
+        case Snooze::OneDay: return "Tomorrow";
+        case Snooze::ThreeDays: return "In 3 days";
+        case Snooze::OneWeek: return "In a week";
+        default: return "At the next start";
+        }
+    }
+    inline std::int64_t RemindAfter(std::int64_t now, Snooze s)
+    {
+        constexpr std::int64_t day = 24 * 60 * 60;
+        switch (s)
+        {
+        case Snooze::OneDay: return now + day;
+        case Snooze::ThreeDays: return now + 3 * day;
+        case Snooze::OneWeek: return now + 7 * day;
+        default: return 0;
+        }
+    }
+
+    // Whether the start-up check offers this release. Help > Check for
+    // Updates always does; a skip or a reminder holds only for the tag it
+    // was made for, so a newer release is offered straight away.
+    struct OfferSettings
+    {
+        std::string skipped, remindVersion;
+        std::int64_t remindAfter = 0;
+    };
+    inline bool OfferAtStartup(const std::string& tag, const OfferSettings& settings, std::int64_t now)
+    {
+        if (!tag.empty() && settings.skipped == tag) return false;
+        if (!tag.empty() && settings.remindVersion == tag && now < settings.remindAfter) return false;
+        return true;
+    }
+
+    // The line under the offer's title.
+    inline std::string OfferSummary(const Release& release, const std::string& running)
+    {
+        std::string text = "You have RE+ " + running + ". Download: " + SizeText(release.assetSize);
+        if (!release.assetName.empty()) text += " (" + release.assetName + ")";
+        text += ". The update takes effect when you restart the editor.";
+        return text;
+    }
+
+    // Text cut to at most limit bytes without splitting a UTF-8 sequence.
+    inline std::string ClipUtf8(std::string text, size_t limit)
+    {
+        if (text.size() <= limit) return text;
+        text.resize(limit);
+        while (!text.empty() && (static_cast<unsigned char>(text.back()) & 0xC0) == 0x80) text.pop_back();
+        if (!text.empty() && static_cast<unsigned char>(text.back()) >= 0xC0) text.pop_back();
+        return text;
+    }
+
     // The title and Markdown notes of one release object, as GitHub's
     // /releases/tags/<tag> answers it. The title falls back to the tag.
     inline std::pair<std::string, std::string> TitleAndNotes(const Json& release)
@@ -214,8 +533,9 @@ namespace Updater
     // them. Stored as a few "Key=value" lines, a blank line, then the notes.
     struct WhatsNew
     {
-        std::string version, title, notes; // notes: plain text, CRLF line ends
+        std::string version, title, notes; // notes: plain text, CRLF line ends, or Markdown
         bool shown = false;
+        bool markdown = false; // records written before 2.2.0 kept plain text
 
         static constexpr size_t kNotesLimit = 30000; // an EDIT control holds this comfortably
 
@@ -229,7 +549,7 @@ namespace Updater
                 return out;
             };
             return "RE+ What's New\r\nVersion=" + oneLine(version) + "\r\nTitle=" + oneLine(title)
-                   + "\r\nShown=" + (shown ? "1" : "0") + "\r\n\r\n" + notes;
+                   + "\r\nShown=" + (shown ? "1" : "0") + (markdown ? "\r\nMarkdown=1" : "") + "\r\n\r\n" + notes;
         }
 
         static std::optional<WhatsNew> Parse(const std::string& text)
@@ -251,6 +571,7 @@ namespace Updater
                 if (key == "Version") out.version = value;
                 else if (key == "Title") out.title = value;
                 else if (key == "Shown") out.shown = value == "1";
+                else if (key == "Markdown") out.markdown = value == "1";
             }
             if (!header || !Version::Parse(out.version)) return std::nullopt;
             out.notes = text.substr((std::min)(at, text.size()));

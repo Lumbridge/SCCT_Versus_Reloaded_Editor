@@ -6,7 +6,10 @@
 #include <winhttp.h>
 #include <bcrypt.h>
 #include <zlib.h>
+#include <richedit.h>
+#include <shellapi.h>
 #include <atomic>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -85,6 +88,25 @@ namespace
         return value;
     }
     void SetSkippedVersion(const std::string& v) { WritePrivateProfileStringA(kSection, "SkippedVersion", v.c_str(), IniPath().c_str()); }
+    // Remind me later: RemindVersion is the tag, RemindAfter the time (UTC
+    // seconds) before which the start-up check does not offer it again.
+    Updater::OfferSettings OfferSettings()
+    {
+        Updater::OfferSettings s;
+        s.skipped = SkippedVersion();
+        char value[64] = {};
+        GetPrivateProfileStringA(kSection, "RemindVersion", "", value, sizeof(value), IniPath().c_str());
+        s.remindVersion = value;
+        GetPrivateProfileStringA(kSection, "RemindAfter", "0", value, sizeof(value), IniPath().c_str());
+        s.remindAfter = _strtoi64(value, nullptr, 10);
+        return s;
+    }
+    void SetReminder(const std::string& tag, std::int64_t after)
+    {
+        WritePrivateProfileStringA(kSection, "RemindVersion", tag.c_str(), IniPath().c_str());
+        WritePrivateProfileStringA(kSection, "RemindAfter", std::to_string(after).c_str(), IniPath().c_str());
+    }
+    std::int64_t Now() { return static_cast<std::int64_t>(std::time(nullptr)); }
 
     int Ask(const std::wstring& text, UINT flags)
     {
@@ -357,47 +379,241 @@ namespace
         catch (const std::exception& e) { Logger::log(std::string("Updater: could not save the release notes: ") + e.what()); }
     }
 
-    HWND whatsNewWindow = nullptr;
-    LRESULT CALLBACK WhatsNewProc(HWND window, UINT message, WPARAM w, LPARAM l)
+    // The notes window, in two kinds: What's New (the notes alone) and the
+    // offer of a newer release (the notes, the download size and Install /
+    // Remind me later / Skip this version). Notes are laid out in a rich edit
+    // control from the Markdown GitHub gives; links open in the browser.
+    enum NotesId { NotesText = 1, OfferStatus, OfferSnooze, OfferInstall, OfferRemind, OfferSkip };
+    constexpr UINT kInstallFinished = WM_APP + 0x31;
+    HWND whatsNewWindow = nullptr, offerWindow = nullptr;
+    bool richEdit = false;
+    // The release the offer window shows; the frame's thread only.
+    std::optional<Release> offered;
+    bool installing = false, offerDone = false;
+    // From the check and install workers to the frame's thread.
+    std::mutex offerLock;
+    std::optional<Release> pendingOffer;
+    std::string installOutcome;
+    bool installOk = false;
+    HFONT uiFont = nullptr;
+
+    void StartInstall(HWND window);
+    void UpdateRollBackItem();
+
+    bool IsOffer(HWND window) { return GetWindowLongPtrW(window, GWLP_USERDATA) == 1; }
+
+    void LayOut(HWND window, int width, int height)
     {
-        if (message == WM_CREATE)
+        if (!IsOffer(window))
         {
-            HWND edit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,
-                                        8, 8, 600, 400, window, reinterpret_cast<HMENU>(1), GetModuleHandle(nullptr), nullptr);
-            SendMessageW(edit, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-            SendMessageW(edit, EM_SETLIMITTEXT, 0, 0);
+            MoveWindow(GetDlgItem(window, NotesText), 8, 8, (std::max)(1, width - 16), (std::max)(1, height - 16), TRUE);
+            return;
+        }
+        const int buttons = height - 38, status = buttons - 28;
+        MoveWindow(GetDlgItem(window, NotesText), 8, 8, (std::max)(1, width - 16), (std::max)(1, status - 14), TRUE);
+        MoveWindow(GetDlgItem(window, OfferStatus), 10, status, (std::max)(1, width - 20), 22, TRUE);
+        int x = width - 8;
+        auto place = [&](int id, int w, int h = 28) { x -= w; MoveWindow(GetDlgItem(window, id), x, buttons + (28 - h) / 2 + (id == OfferSnooze ? 3 : 0), w, id == OfferSnooze ? 200 : h, TRUE); x -= 6; };
+        place(OfferInstall, 100);
+        place(OfferRemind, 120);
+        place(OfferSnooze, 130, 24);
+        MoveWindow(GetDlgItem(window, OfferSkip), 8, buttons, 130, 28, TRUE);
+    }
+
+    void SetStatus(HWND window, const std::string& text) { SetWindowTextW(GetDlgItem(window, OfferStatus), Wide(text).c_str()); }
+
+    LRESULT CALLBACK NotesProc(HWND window, UINT message, WPARAM w, LPARAM l)
+    {
+        switch (message)
+        {
+        case WM_CREATE:
+        {
+            const bool offer = reinterpret_cast<CREATESTRUCTW*>(l)->lpCreateParams != nullptr;
+            SetWindowLongPtrW(window, GWLP_USERDATA, offer ? 1 : 0);
+            if (!uiFont)
+            {
+                NONCLIENTMETRICSW metrics{};
+                metrics.cbSize = sizeof(metrics);
+                SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0);
+                uiFont = CreateFontIndirectW(&metrics.lfMessageFont);
+            }
+            HINSTANCE instance = GetModuleHandle(nullptr);
+            static const bool loaded = LoadLibraryW(L"Msftedit.dll") != nullptr;
+            richEdit = loaded;
+            HWND notes = CreateWindowExW(WS_EX_CLIENTEDGE, richEdit ? MSFTEDIT_CLASS : L"EDIT", L"",
+                                         WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,
+                                         8, 8, 600, 400, window, reinterpret_cast<HMENU>(NotesText), instance, nullptr);
+            if (richEdit)
+            {
+                SendMessageW(notes, EM_SETBKGNDCOLOR, 0, GetSysColor(COLOR_WINDOW));
+                SendMessageW(notes, EM_AUTOURLDETECT, TRUE, 0);
+                SendMessageW(notes, EM_SETEVENTMASK, 0, ENM_LINK);
+                SendMessageW(notes, EM_EXLIMITTEXT, 0, 1 << 20);
+            }
+            else
+            {
+                SendMessageW(notes, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
+                SendMessageW(notes, EM_SETLIMITTEXT, 0, 0);
+            }
+            if (!offer) return 0;
+            auto add = [&](const wchar_t* cls, const wchar_t* text, int id, DWORD style) {
+                HWND child = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 10, 10, window,
+                                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance, nullptr);
+                SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), FALSE);
+                return child;
+            };
+            add(L"STATIC", L"", OfferStatus, SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS);
+            HWND snooze = add(L"COMBOBOX", L"", OfferSnooze, WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST);
+            for (auto s : {Updater::Snooze::NextStart, Updater::Snooze::OneDay, Updater::Snooze::ThreeDays, Updater::Snooze::OneWeek})
+                SendMessageW(snooze, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(Wide(Updater::SnoozeText(s)).c_str()));
+            SendMessageW(snooze, CB_SETCURSEL, 0, 0);
+            add(L"BUTTON", L"&Install", OfferInstall, WS_TABSTOP | BS_DEFPUSHBUTTON);
+            add(L"BUTTON", L"&Remind me later", OfferRemind, WS_TABSTOP | BS_PUSHBUTTON);
+            add(L"BUTTON", L"&Skip this version", OfferSkip, WS_TABSTOP | BS_PUSHBUTTON);
             return 0;
         }
-        if (message == WM_SIZE) { MoveWindow(GetDlgItem(window, 1), 8, 8, (std::max)(1, LOWORD(l) - 16), (std::max)(1, HIWORD(l) - 16), TRUE); return 0; }
-        if (message == WM_CLOSE) { DestroyWindow(window); return 0; }
-        if (message == WM_NCDESTROY) whatsNewWindow = nullptr;
+        case WM_SIZE:
+            LayOut(window, LOWORD(l), HIWORD(l));
+            return 0;
+        case WM_NOTIFY:
+        {
+            const auto* link = reinterpret_cast<ENLINK*>(l);
+            if (link->nmhdr.idFrom != NotesText || link->nmhdr.code != EN_LINK || link->msg != WM_LBUTTONUP) break;
+            const LONG length = link->chrg.cpMax - link->chrg.cpMin;
+            if (length <= 0 || length > 2048) return 0;
+            std::wstring url(static_cast<size_t>(length) + 1, L'\0');
+            TEXTRANGEW range{link->chrg, url.data()};
+            SendMessageW(link->nmhdr.hwndFrom, EM_GETTEXTRANGE, 0, reinterpret_cast<LPARAM>(&range));
+            url.resize(wcslen(url.c_str()));
+            // Only web links: the notes come from GitHub, not from this machine.
+            if (url.rfind(L"https://", 0) == 0) ShellExecuteW(window, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            return 1;
+        }
+        case WM_COMMAND:
+        {
+            if (!IsOffer(window) || !offered) break;
+            const int id = LOWORD(w);
+            if (id == OfferInstall)
+            {
+                if (offerDone) DestroyWindow(window);
+                else StartInstall(window);
+                return 0;
+            }
+            if (id == OfferRemind)
+            {
+                auto choice = static_cast<int>(SendMessageW(GetDlgItem(window, OfferSnooze), CB_GETCURSEL, 0, 0));
+                const auto snooze = static_cast<Updater::Snooze>(std::clamp(choice, 0, 3));
+                SetReminder(offered->tag, Updater::RemindAfter(Now(), snooze));
+                Logger::log("Updater: reminding about " + offered->tag + " " + Updater::Lower(Updater::SnoozeText(snooze)));
+                DestroyWindow(window);
+                return 0;
+            }
+            if (id == OfferSkip)
+            {
+                SetSkippedVersion(offered->tag);
+                Logger::log("Updater: skipping " + offered->tag);
+                DestroyWindow(window);
+                return 0;
+            }
+            break;
+        }
+        case kInstallFinished:
+        {
+            std::string outcome;
+            bool ok = false;
+            {
+                std::lock_guard lock(offerLock);
+                outcome = installOutcome;
+                ok = installOk;
+            }
+            installing = false;
+            SetStatus(window, outcome);
+            for (int id : {OfferSnooze, OfferRemind, OfferSkip}) ShowWindow(GetDlgItem(window, id), ok ? SW_HIDE : SW_SHOW), EnableWindow(GetDlgItem(window, id), TRUE);
+            EnableWindow(GetDlgItem(window, OfferInstall), TRUE);
+            SetWindowTextW(GetDlgItem(window, OfferInstall), ok ? L"&Close" : L"Try &again");
+            offerDone = ok;
+            if (ok) UpdateRollBackItem();
+            return 0;
+        }
+        case WM_CLOSE:
+            // The install finishes and reports here; it cannot be stopped half way.
+            if (installing) return 0;
+            DestroyWindow(window);
+            return 0;
+        case WM_NCDESTROY:
+            if (window == whatsNewWindow) whatsNewWindow = nullptr;
+            if (window == offerWindow) offerWindow = nullptr, offered.reset(), offerDone = false;
+            break;
+        }
         return DefWindowProcW(window, message, w, l);
     }
+
+    HWND NotesWindow(bool offer, const std::wstring& caption, int width, int height)
+    {
+        HWND& window = offer ? offerWindow : whatsNewWindow;
+        if (window) { SetWindowTextW(window, caption.c_str()); return window; }
+        static bool registered = false;
+        WNDCLASSW wc{};
+        wc.hInstance = GetModuleHandle(nullptr);
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
+        wc.lpfnWndProc = NotesProc;
+        wc.lpszClassName = L"ReloadedWhatsNew";
+        if (!registered) registered = RegisterClassW(&wc) != 0;
+        window = CreateWindowExW(WS_EX_TOOLWINDOW, wc.lpszClassName, caption.c_str(), WS_OVERLAPPEDWINDOW,
+                                 CW_USEDEFAULT, CW_USEDEFAULT, width, height, frame, nullptr, wc.hInstance, offer ? reinterpret_cast<void*>(1) : nullptr);
+        if (!window) Logger::log("Updater: could not open the release notes window");
+        return window;
+    }
+
+    void SetNotes(HWND window, const std::string& title, const std::string& subtitle, const std::string& notes, bool markdown, const std::string& footer)
+    {
+        HWND control = GetDlgItem(window, NotesText);
+        const std::string body = notes.empty() ? std::string("This release has no notes.") : notes;
+        if (richEdit)
+        {
+            const auto rtf = Updater::NotesRtf(title, subtitle, Updater::ParseNotes(body, markdown && !notes.empty()), footer);
+            SETTEXTEX how{ST_DEFAULT, CP_ACP};
+            SendMessageW(control, EM_SETTEXTEX, reinterpret_cast<WPARAM>(&how), reinterpret_cast<LPARAM>(rtf.c_str()));
+        }
+        else
+        {
+            std::string text = title + "\r\n" + (subtitle.empty() ? "" : subtitle + "\r\n") + "\r\n"
+                               + (markdown ? Updater::PlainNotes(body, Updater::WhatsNew::kNotesLimit) : body) + "\r\n\r\n" + footer;
+            SetWindowTextW(control, Wide(text).c_str());
+        }
+        SendMessageW(control, EM_SETSEL, 0, 0);
+        SendMessageW(control, EM_SCROLLCARET, 0, 0);
+    }
+
     // A resizable, read-only window: release notes can be long.
     void ShowWhatsNew(const Updater::WhatsNew& record)
     {
-        const auto caption = L"What's New in " RE_PLUS_NAME L" " + Wide(record.version);
-        if (!whatsNewWindow)
-        {
-            static bool registered = false;
-            WNDCLASSW wc{};
-            wc.hInstance = GetModuleHandle(nullptr);
-            wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-            wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
-            wc.lpfnWndProc = WhatsNewProc;
-            wc.lpszClassName = L"ReloadedWhatsNew";
-            if (!registered) registered = RegisterClassW(&wc) != 0;
-            whatsNewWindow = CreateWindowExW(WS_EX_TOOLWINDOW, wc.lpszClassName, caption.c_str(), WS_OVERLAPPEDWINDOW,
-                                             CW_USEDEFAULT, CW_USEDEFAULT, 640, 460, frame, nullptr, wc.hInstance, nullptr);
-            if (!whatsNewWindow) { Logger::log("Updater: could not open the What's New window"); return; }
-        }
-        else SetWindowTextW(whatsNewWindow, caption.c_str());
-        std::string text = record.title.empty() ? RE_PLUS_NAME " " + record.version : record.title;
-        text += "\r\n\r\n" + (record.notes.empty() ? std::string("This release has no notes.") : record.notes);
-        text += std::string("\r\n\r\n") + kReleasePage + record.version;
-        SetWindowTextW(GetDlgItem(whatsNewWindow, 1), Wide(text).c_str());
-        ShowWindow(whatsNewWindow, SW_SHOWNORMAL);
-        SetForegroundWindow(whatsNewWindow);
+        HWND window = NotesWindow(false, L"What's New in " RE_PLUS_NAME L" " + Wide(record.version), 640, 520);
+        if (!window) return;
+        SetNotes(window, record.title.empty() ? RE_PLUS_NAME " " + record.version : record.title, "", record.notes, record.markdown,
+                 kReleasePage + record.version);
+        ShowWindow(window, SW_SHOWNORMAL);
+        SetForegroundWindow(window);
+    }
+
+    // The offer of a newer release: its notes and download size, and what to do.
+    void ShowOffer(const Release& release)
+    {
+        if (installing) return;
+        HWND window = NotesWindow(true, L"RE+ Update", 700, 580);
+        if (!window) return;
+        offered = release;
+        offerDone = false;
+        const std::string title = "RE+ " + release.version.ToString() + (release.prerelease ? " (release candidate)" : "") + " is available";
+        SetNotes(window, title, Updater::OfferSummary(release, RE_PLUS_VERSION), release.notes, true,
+                 release.page.empty() ? kReleasePage + release.version.ToString() : release.page);
+        SetStatus(window, "Install now, or choose when to be reminded.");
+        for (int id : {OfferSnooze, OfferRemind, OfferSkip, OfferInstall}) ShowWindow(GetDlgItem(window, id), SW_SHOW), EnableWindow(GetDlgItem(window, id), TRUE);
+        SetWindowTextW(GetDlgItem(window, OfferInstall), L"&Install");
+        ShowWindow(window, SW_SHOWNORMAL);
+        SetForegroundWindow(window);
+        SetFocus(GetDlgItem(window, OfferInstall));
     }
 
     // Once, at the first start of a version the updater installed.
@@ -424,7 +640,7 @@ namespace
             const auto [title, notes] = Updater::TitleAndNotes(release);
             {
                 std::lock_guard lock(fetchedLock);
-                fetched = Updater::WhatsNew{RE_PLUS_VERSION, title, Updater::PlainNotes(notes, Updater::WhatsNew::kNotesLimit), true};
+                fetched = Updater::WhatsNew{RE_PLUS_VERSION, title, Updater::ClipUtf8(notes, Updater::WhatsNew::kNotesLimit), true, true};
             }
             if (!frame || !PostMessageW(frame, WM_COMMAND, SelfUpdater::kShowFetchedNotes, 0)) throw std::runtime_error("The editor window went away.");
         }
@@ -615,31 +831,21 @@ namespace
                 return;
             }
             const auto& release = *newest;
-            if (!interactive && SkippedVersion() == release.tag) return;
-            Logger::log("Updater: " + release.tag + " is available");
-            std::wstring text = L"RE+ " + Wide(release.version.ToString()) + (release.prerelease ? L" (release candidate)" : L"")
-                + L" is available. You have " RE_PLUS_DISPLAY_VERSION L".";
-            if (const auto notes = Updater::PlainNotes(release.notes); !notes.empty()) text += L"\r\n\r\n" + Wide(notes);
-            text += L"\r\n\r\nInstall it now? It takes effect when you restart the editor.\r\n\r\n"
-                    L"Yes: download and install it.\r\nNo: skip this version.\r\nCancel: ask me again next time.";
-            const int answer = Ask(text, MB_YESNOCANCEL | MB_ICONINFORMATION);
-            if (answer == IDNO) { SetSkippedVersion(release.tag); return; }
-            if (answer != IDYES) return;
-            try { Install(release); }
-            catch (const std::exception& e)
+            if (!interactive && !Updater::OfferAtStartup(release.tag, OfferSettings(), Now()))
             {
-                Logger::log(std::string("Updater: install failed: ") + e.what());
-                Ask(L"The update could not be installed. The editor is unchanged.\r\n\r\n" + Wide(e.what()), MB_OK | MB_ICONERROR);
+                Logger::log("Updater: " + release.tag + " is available; skipped or reminding later");
                 return;
             }
-            installedName = L"RE+ " + Wide(release.version.ToString());
-            installed = true;
-            SetSkippedVersion("");
-            // Shown once by the first start of the new version.
-            SaveWhatsNew({release.version.ToString(), release.name.empty() ? release.tag : release.name,
-                          Updater::PlainNotes(release.notes, Updater::WhatsNew::kNotesLimit), false});
-            UpdateRollBackItem();
-            Ask(installedName + L" is installed. Save your work and restart the editor to start using it.", MB_OK | MB_ICONINFORMATION);
+            Logger::log("Updater: " + release.tag + " is available");
+            {
+                std::lock_guard lock(offerLock);
+                pendingOffer = release;
+            }
+            // The offer window belongs to the frame's thread. At start-up the
+            // frame may not have its menu yet, which is when it is known here.
+            for (int i = 0; !frame && i < 120; ++i) Sleep(500);
+            if (!frame || !PostMessageW(frame, WM_COMMAND, SelfUpdater::kShowOffer, 0))
+                Logger::log("Updater: could not show the offer; the editor window is not up");
         }
         catch (const std::exception& e)
         {
@@ -647,6 +853,74 @@ namespace
             Logger::log(std::string("Updater: check failed: ") + e.what());
             if (interactive) Ask(L"Could not check for updates.\r\n\r\n" + Wide(e.what()), MB_OK | MB_ICONWARNING);
         }
+    }
+
+    // Install from the offer window: the download and swap run on a worker,
+    // which reports to the window when done.
+    struct InstallJob
+    {
+        Release release;
+        HWND window;
+    };
+    DWORD WINAPI InstallThread(LPVOID parameter)
+    {
+        std::unique_ptr<InstallJob> job(static_cast<InstallJob*>(parameter));
+        const auto& release = job->release;
+        std::string outcome;
+        bool ok = false;
+        {
+            struct Done { ~Done() { busy = false; } } done;
+            try
+            {
+                Install(release);
+                installedName = L"RE+ " + Wide(release.version.ToString());
+                installed = true;
+                SetSkippedVersion("");
+                SetReminder("", 0);
+                // Shown once by the first start of the new version.
+                SaveWhatsNew({release.version.ToString(), release.name.empty() ? release.tag : release.name,
+                              Updater::ClipUtf8(release.notes, Updater::WhatsNew::kNotesLimit), false, true});
+                outcome = "RE+ " + release.version.ToString() + " is installed. Save your work and restart the editor to start using it.";
+                ok = true;
+            }
+            catch (const std::exception& e)
+            {
+                Logger::log(std::string("Updater: install failed: ") + e.what());
+                outcome = std::string("Could not install the update; the editor is unchanged. ") + e.what();
+            }
+        }
+        {
+            std::lock_guard lock(offerLock);
+            installOutcome = outcome;
+            installOk = ok;
+        }
+        if (!PostMessageW(job->window, kInstallFinished, 0, 0))
+            Ask(Wide(outcome), MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONERROR));
+        return 0;
+    }
+    void StartInstall(HWND window)
+    {
+        if (!offered || installing) return;
+        if (installed)
+        {
+            SetStatus(window, Narrow(installedName) + " is already in place. Save your work and restart the editor to start using it.");
+            return;
+        }
+        if (busy.exchange(true))
+        {
+            SetStatus(window, "An update check is running. Try again in a moment.");
+            return;
+        }
+        installing = true;
+        for (int id : {OfferSnooze, OfferRemind, OfferSkip, OfferInstall}) EnableWindow(GetDlgItem(window, id), FALSE);
+        SetStatus(window, "Downloading and installing " + offered->assetName + " (" + Updater::SizeText(offered->assetSize) + ")...");
+        auto* job = new InstallJob{*offered, window};
+        if (HANDLE h = CreateThread(nullptr, 0, InstallThread, job, 0, nullptr)) { CloseHandle(h); return; }
+        delete job;
+        busy = false;
+        installing = false;
+        for (int id : {OfferSnooze, OfferRemind, OfferSkip, OfferInstall}) EnableWindow(GetDlgItem(window, id), TRUE);
+        SetStatus(window, "Could not start the install.");
     }
 
     DWORD WINAPI StartupThread(LPVOID)
@@ -727,6 +1001,16 @@ bool SelfUpdater::HandleCommand(UINT command)
             notes.swap(fetched);
         }
         if (notes) ShowWhatsNew(*notes);
+        return true;
+    }
+    if (command == kShowOffer)
+    {
+        std::optional<Release> release;
+        {
+            std::lock_guard lock(offerLock);
+            release.swap(pendingOffer);
+        }
+        if (release) ShowOffer(*release);
         return true;
     }
     if (command == kRollBack)

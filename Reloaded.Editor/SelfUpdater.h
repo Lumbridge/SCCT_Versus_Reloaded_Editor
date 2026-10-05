@@ -5,7 +5,10 @@
 // Updates the editor from the GitHub releases. A short while after start-up
 // (unless turned off) and from Help > Check for RE+ Updates, a worker
 // thread asks GitHub for the newest release; when it is newer than this DLL
-// it offers to install it. Installing downloads the release archive, checks
+// it offers to install it in a window with the release's notes and download
+// size: Install, Remind me later (at the next start or after a chosen delay,
+// [Updates] RemindVersion / RemindAfter) or Skip this version
+// ([Updates] SkippedVersion). Installing downloads the release archive, checks
 // it, and swaps Reloaded.Editor.dll (and the launcher) in place: a loaded DLL
 // cannot be overwritten but can be renamed, so the running one becomes
 // Reloaded.Editor.dll.old. The new version runs after the editor is
@@ -22,6 +25,9 @@ namespace SelfUpdater
     constexpr UINT kRollBack = 41001;
     // Posted to the frame by the worker that fetched the notes for What's New.
     constexpr UINT kShowFetchedNotes = 41002;
+    // Posted to the frame by the check that found a newer release: the offer
+    // window (its notes, download size, Install / Remind me later / Skip).
+    constexpr UINT kShowOffer = 41003;
 
     // From DLL start-up, with the path of this DLL.
     void Initialize(const std::wstring& dllPath);
