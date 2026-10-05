@@ -3,6 +3,7 @@
 #undef max
 #include "MeasureTool.h"
 #include "MeasureModel.h"
+#include "LightShadowMap.h"
 #include "WorkflowEditor.h"
 #include "GridSizeShortcutState.h"
 #include "MemoryWriter.h"
@@ -307,6 +308,8 @@ namespace
     void LogFault() { Logger::log("Measure: overlay faulted and was skipped"); }
     void __cdecl DrawOverlay(Address viewport, Address node)
     {
+        // The Light and Shadow map shares this hook, under the measurement.
+        LightShadowMap::DrawViewportOverlay(viewport, node);
         __try { DrawOverlayGuarded(viewport, node); }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {

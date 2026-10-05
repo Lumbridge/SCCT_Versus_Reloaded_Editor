@@ -15,7 +15,7 @@ enum DesignControl
     DName=740,DShape,DConstruction,DWidth,DLength,DHeight,DThickness,DSteps,DCeiling,DPortal,
     DPositionX,DPositionY,DPositionZ,DYaw,DInspectorTitle,DDiscard,
     // Building, checking and overlays.
-    DBuild=760,DCheck,DOverlays,DSecurity,DUnlit,DScene,DKeys,DDepthLabel,DStages,DSheetScroll,DTypes=775,DCheckList=780,DCheckDetail=781,DInspectorLabel=785,
+    DBuild=760,DCheck,DOverlays,DSecurity,DUnlit,DScene,DKeys,DDepthLabel,DStages,DSheetScroll,DTypes=775,DLightShadow=776,DCheckList=780,DCheckDetail=781,DInspectorLabel=785,
     // Right-click menu on the design view: what is under the cursor, then what
     // can start at that point.
     DCtxEditPiece=850,DCtxSelectPiece,DCtxDetachPiece,DCtxEditAnnotation,DCtxRemoveAnnotation,DCtxEditGuide,DCtxRemoveGuide,
@@ -167,6 +167,8 @@ struct DesignState
     int elementStage=0;
     double elementDepth=0;
     bool unlit=false;
+    // The Light and Shadow map's floor patches as a layer (LightShadowMap.h).
+    bool lightShadow=false;
     // The contextual properties sheet and where the inspector area starts.
     Sheet sheet;
     bool writingSheet=false;
@@ -600,6 +602,8 @@ void SheetDestroyControls(DesignState& s);
 LRESULT CALLBACK DesignFieldProc(HWND window,UINT message,WPARAM w,LPARAM l,UINT_PTR id,DWORD_PTR reference);
 void LightPaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void(const std::string&,Gdiplus::PointF)>& label);
 void LightUnlitPaint(DesignState& s,Gdiplus::Graphics& g);
+void LightShadowPaint(DesignState& s,Gdiplus::Graphics& g);
+std::string LightShadowStatus();
 void ObjectivePaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void(const std::string&,Gdiplus::PointF)>& label);
 Json ObjectiveAt(DesignState& s,double x,double y);
 bool ObjectiveAimHandleAt(DesignState& s,double x,double y,Json& start);
@@ -908,6 +912,7 @@ void DesignPaint(DesignState& s,HDC dc)
         g.FillPolygon(&brush,outline.data(),static_cast<INT>(outline.size()));
     }
     LightUnlitPaint(s,g);
+    LightShadowPaint(s,g);
     // A small padlock marks what is locked: point actors, and whole pieces.
     auto padlock=[&](float x,float y)
     {
@@ -2218,6 +2223,15 @@ void DesignCommand(DesignState& s,int id)
         CheckMenuItem(GetMenu(s.window),DUnlit,MF_BYCOMMAND|(s.unlit?MF_CHECKED:MF_UNCHECKED));
         InvalidateRect(s.canvas,nullptr,FALSE);
         DesignStatus(s,s.unlit?"Shading the brushes that no light reaches at this view's depth. A light's reach shrinks with its height above the floor.":"Unlit shading off.");
+        return;
+    }
+    if(id==DLightShadow)
+    {
+        s.lightShadow=!s.lightShadow;
+        LightShadowMap::SetPlanLayer(s.lightShadow);
+        CheckMenuItem(GetMenu(s.window),DLightShadow,MF_BYCOMMAND|(s.lightShadow?MF_CHECKED:MF_UNCHECKED));
+        InvalidateRect(s.canvas,nullptr,FALSE);
+        DesignStatus(s,s.lightShadow?LightShadowStatus():"Light and shadow map off.");
         return;
     }
     if(id==DOverlays)
@@ -5184,7 +5198,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             submenu("&Annotate",{{DGuides,"Player reference..."},{DMeasure,"Measure two points"},{DSightline,"Sightline between two points"},{0,nullptr},
                 {DRoute,"Route / objective..."},{DFinish,"Finish route / marker"},{DCompare,"Compare routes..."},{0,nullptr},{DClear,"Remove annotation..."}});
             submenu("&Tools",{{DPlay,"Playtest from here..."},{DSecurity,"Security..."},{DStages,"Zones..."},{DCheck,"Check design..."},{0,nullptr},
-                {DRefresh,"Refresh from editor"},{DFit,"Fit map / preview\tF"},{DFitSelection,"Fit selection\tShift+F"},{DSelectAll,"Select all on this storey\tCtrl+A"},{DUnlit,"Show unlit areas"},{DTypes,"Kinds of actor in the plan..."},{0,nullptr},{DUndo,"Undo\tCtrl+Z"},{DRedo,"Redo\tCtrl+Y"},{0,nullptr},{DKeys,"Keyboard and mouse..."}});
+                {DRefresh,"Refresh from editor"},{DFit,"Fit map / preview\tF"},{DFitSelection,"Fit selection\tShift+F"},{DSelectAll,"Select all on this storey\tCtrl+A"},{DUnlit,"Show unlit areas"},{DLightShadow,"Show light and shadow map"},{DTypes,"Kinds of actor in the plan..."},{0,nullptr},{DUndo,"Undo\tCtrl+Z"},{DRedo,"Redo\tCtrl+Y"},{0,nullptr},{DKeys,"Keyboard and mouse..."}});
             SetMenu(window,bar);
             const std::pair<int,const char*> buttons[]={
                 {DBlock,"New blockout..."},{DPlace,"Place / Apply preview"},
@@ -5385,6 +5399,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
         if(message==WM_NCDESTROY)
         {
             KillTimer(window,1);
+            if(s->lightShadow)LightShadowMap::SetPlanLayer(false);
             designWindow=nullptr;
             SetWindowLongPtr(window,GWLP_USERDATA,0);
             delete s;

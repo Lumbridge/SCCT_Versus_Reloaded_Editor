@@ -170,6 +170,8 @@
     <ClInclude Include="LightingBudgetModel.h" />
     <ClInclude Include="MapCheck.h" />
     <ClInclude Include="MapCheckModel.h" />
+    <ClInclude Include="LightShadowMap.h" />
+    <ClInclude Include="LightShadowModel.h" />
     <ClInclude Include="LevelSnapshot.h" />
     <ClInclude Include="LevelSnapshotModel.h" />
     <ClInclude Include="FavoritesModel.h" />
@@ -213,6 +215,7 @@
     <ClInclude Include="EmitterLibraryNative.inl" />
     <ClInclude Include="LightingBudgetNative.inl" />
     <ClInclude Include="MapCheckNative.inl" />
+    <ClInclude Include="LightShadowNative.inl" />
     <ClInclude Include="StagePanel.inl" />
     <ClInclude Include="LightingPanel.inl" />
     <ClInclude Include="PropertiesPanel.inl" />
@@ -286,6 +289,7 @@
     <ClCompile Include="MapUsagesWindow.cpp" />
     <ClCompile Include="LightingBudget.cpp" />
     <ClCompile Include="MapCheck.cpp" />
+    <ClCompile Include="LightShadowMap.cpp" />
     <ClCompile Include="LevelSnapshot.cpp" />
     <ClCompile Include="SelfUpdater.cpp" />
     <ClCompile Include="WorkflowEditor.cpp" />

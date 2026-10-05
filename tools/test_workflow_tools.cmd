@@ -122,6 +122,9 @@ if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\MapCheckModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MapCheckModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\MapCheckModelTests.exe"
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\LightShadowModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\LightShadowModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\LightShadowModelTests.exe"
 if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\CharacterSkinsModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\CharacterSkinsModelTests.exe"
 if errorlevel 1 goto failed

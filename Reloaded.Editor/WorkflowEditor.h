@@ -4,6 +4,7 @@
 
 namespace MapCheck { struct Scene; struct Settings; }
 
+namespace LightShadow { struct Scene; }
 namespace Workflow::Editor
 {
     void Initialize();
@@ -107,6 +108,10 @@ namespace Workflow::Editor
     MapCheck::Scene MapCheckScene(const MapCheck::Settings& settings);
     // Selects the actors (framing them when asked) and the BSP surfaces of a row.
     size_t SelectMapCheckRow(const std::vector<std::string>& actors, const std::vector<int>& surfaces, bool frame);
+    // Light and Shadow map (LightShadowModel.h): walkable BSP floor triangles
+    // with their lightmap UVs and atlases, the in-game lights at their render
+    // spheres, and the BSP planes for line of sight.
+    void LightShadowScene(LightShadow::Scene& scene);
     // Character Skins (CharacterSkinsModel.h): the map's Character Skins actor.
     // Settings: {placed, legacy, extra, compiled, slots:{SpyBody,...: material path or ""},
     // models:{SpyModel,...: skeletal mesh path or ""}, goggles:{SpyGoggleOffset,...: [x,y,z]}}.

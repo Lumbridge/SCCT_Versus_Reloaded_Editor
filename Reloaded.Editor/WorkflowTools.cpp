@@ -27,6 +27,8 @@
 #include "EmitterPreview.h"
 #include "MeasureTool.h"
 #include "PlacementTools.h"
+#include "LightShadowMap.h"
+#include "LightShadowModel.h"
 #include "EntryThumbnailModel.h"
 #include "LevelSnapshot.h"
 #include "logger.h"
@@ -945,6 +947,7 @@ bool HandleCommand(UINT command)
     }
     if(MeasureTool::HandleCommand(command))return true;
     if(PlacementTools::HandleCommand(command))return true;
+    if(LightShadowMap::HandleCommand(command))return true;
     if(LightingBudget::HandleCommand(command))return true;
     if(MapCheck::HandleCommand(command))return true;
     if(command==StoreyFilter::kOpen)

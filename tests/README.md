@@ -338,6 +338,25 @@ listed the two ZoneInfos in one zone with a 2,036-unit leak path drawn in the
 viewports, as the stock check's "in the same zone as" entry agreed; and a
 ZoneInfo moved into solid space, reported by both. Rows selected and framed their
 actors and portal surfaces.
+## Light and Shadow map
+
+`tools/test_workflow_tools.cmd` includes `LightShadowModelTests.cpp`: threshold
+clamping and banding (NaN counts as dark), lightmap luminance in the stored
+B,G,R,A order with bilinear sampling and the 2x display scale, light colour
+shares from hue and saturation, the squared falloff to a light's reach,
+walkable floors in either winding, grid sampling with no duplicates on shared
+edges and one patch per stacked storey, lights adding up to the 255 cap, BSP
+line of sight (a light behind a solid slab is blocked; one embedded a little in
+its fitting is not), the three brightness sources, summaries, legend and
+readout text, the drawn outline per band, the readout lookup, and the patch cap
+keeping small floors before vast ones.
+
+Checked by hand in a disposable install on ShipD and BankD (not covered by the
+native suite): the menu toggle and its check mark, sampling and the log line,
+patches drawn in the 3D view (depth-tested) and the top view with the legend,
+front and side views showing the legend only, the readout under the mouse in
+the top view, the settings window's Apply writing `[LightShadowMap]` and
+resampling, and Map Design's layer.
 
 ## Local BSP lighting matching
 
