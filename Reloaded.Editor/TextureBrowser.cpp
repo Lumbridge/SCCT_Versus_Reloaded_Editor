@@ -3,6 +3,7 @@
 #include "FavoritesModel.h"
 #include "WorkflowTools.h"
 #include "MapUsagesWindow.h"
+#include "FavoritesWindow.h"
 #include "Hooks.h"
 #include "MemoryWriter.h"
 #include <commdlg.h>
@@ -132,6 +133,7 @@ static int g_BottomStrip = 0;
 static HWND g_PackageFilterCombo = nullptr;
 static HWND g_SortCombo = nullptr;
 static HWND g_NotLoadedList = nullptr;
+static HWND g_WindowButton = nullptr; // opens the Favorites window
 
 typedef HWND(WINAPI* CreateWindowExAFn)(DWORD, LPCSTR, LPCSTR, DWORD,
                                         int, int, int, int, HWND, HMENU,
@@ -746,9 +748,16 @@ static void TB_ApplyFavoritesLayout()
     if (g_PackageFilterCombo)
         SetWindowPos(g_PackageFilterCombo, HWND_TOP, native.left, native.top,
                      width, dropHeight, SWP_NOACTIVATE | (active ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+    // The sort order shares its row with the Favorites window's button.
+    constexpr int windowButtonWidth = 96;
+    const int sortWidth = g_WindowButton ? (std::max)(40, width - windowButtonWidth - gap) : width;
     if (g_SortCombo)
         SetWindowPos(g_SortCombo, HWND_TOP, native.left, native.top + comboHeight + gap,
-                     width, dropHeight, SWP_NOACTIVATE | (active ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+                     sortWidth, dropHeight, SWP_NOACTIVATE | (active ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+    if (g_WindowButton)
+        SetWindowPos(g_WindowButton, HWND_TOP, native.left + sortWidth + gap, native.top + comboHeight + gap,
+                     (std::max)(1, width - sortWidth - gap), comboHeight,
+                     SWP_NOACTIVATE | (active ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
     if (g_NotLoadedList)
         SetWindowPos(g_NotLoadedList, HWND_TOP, native.left, native.bottom - listHeight,
                      width, (std::max)(listHeight, 1),
@@ -878,6 +887,19 @@ static void TB_ToggleCurrentFavorite()
     TB_SaveFavorites();
     TB_RefreshResolvedFavorites();
     TB_UpdateFavoritesView();
+    FavoritesWindow::Changed();
+}
+
+static void TB_OpenFavoritesWindow()
+{
+    try
+    {
+        FavoritesWindow::Open();
+    }
+    catch (const std::exception& error)
+    {
+        Logger::log(std::string("TextureBrowser: ") + error.what());
+    }
 }
 
 static int TB_MenuPosition(HMENU menu, UINT command)
@@ -922,9 +944,10 @@ static HMENU WINAPI TB_LoadMenuA_Hook(HINSTANCE instance, LPCSTR menuName)
     InsertMenuA(context, 3, toggleFlags, IDMN_TB_TOGGLE_FAVORITE, label);
     InsertMenuA(context, 4, materialFlags, WorkflowTools::kFindMaterial, "Find &Usages...");
     InsertMenuA(context, 5, materialFlags, MapUsagesWindow::kFindMaterial, "Find Usages in All &Maps...");
+    InsertMenuA(context, 6, MF_BYPOSITION | MF_STRING, FavoritesWindow::kOpen, "All Fa&vorites...");
     if (notLoaded)
         for (int i = 0; i < GetMenuItemCount(context); ++i)
-            if (GetMenuItemID(context, i) != IDMN_TB_TOGGLE_FAVORITE)
+            if (GetMenuItemID(context, i) != IDMN_TB_TOGGLE_FAVORITE && GetMenuItemID(context, i) != FavoritesWindow::kOpen)
                 EnableMenuItem(context, i, MF_BYPOSITION | MF_GRAYED);
     return menu;
 }
@@ -977,6 +1000,8 @@ static void TB_ShowNotLoadedMenu(HWND list, LPARAM screenPosition)
     DestroyMenu(menu);
     if (command == IDMN_TB_TOGGLE_FAVORITE)
         TB_ToggleCurrentFavorite();
+    else if (command == FavoritesWindow::kOpen)
+        TB_OpenFavoritesWindow();
 }
 
 static LRESULT CALLBACK TB_MruPageSubclassProc(HWND page, UINT message,
@@ -1074,6 +1099,12 @@ static bool TB_AttachFavoritesPage(HWND tab)
     if (!g_NotLoadedList || !IsWindow(g_NotLoadedList))
         g_NotLoadedList = create("LISTBOX", WS_VSCROLL | WS_BORDER | LBS_NOTIFY |
                                  LBS_NOINTEGRALHEIGHT, IDC_TB_FAVORITES_NOT_LOADED);
+    if (!g_WindowButton || !IsWindow(g_WindowButton))
+    {
+        g_WindowButton = create("BUTTON", BS_PUSHBUTTON, static_cast<int>(FavoritesWindow::kOpen));
+        if (g_WindowButton)
+            SetWindowTextA(g_WindowButton, "All Favorites...");
+    }
     return g_SortCombo != nullptr;
 }
 
@@ -1223,6 +1254,11 @@ static LRESULT CALLBACK TB_TabSubclassProc(HWND tab, UINT message,
         }
         if (LOWORD(wParam) == IDC_TB_FAVORITES_NOT_LOADED)
             return 0;
+        if (LOWORD(wParam) == FavoritesWindow::kOpen)
+        {
+            TB_OpenFavoritesWindow();
+            return 0;
+        }
         break;
 
     case WM_CONTEXTMENU:
@@ -1288,6 +1324,7 @@ static LRESULT CALLBACK TB_TabSubclassProc(HWND tab, UINT message,
             g_PackageFilterCombo = nullptr;
             g_SortCombo = nullptr;
             g_NotLoadedList = nullptr;
+            g_WindowButton = nullptr;
             g_TileFavorites.clear();
             g_NotLoadedRows.clear();
             g_TopStrip = 0;
@@ -1318,6 +1355,11 @@ static LRESULT CALLBACK TB_BrowserSubclassProc(HWND window, UINT message,
     if (message == WM_COMMAND && LOWORD(wParam) == IDMN_TB_TOGGLE_FAVORITE)
     {
         TB_ToggleCurrentFavorite();
+        return 0;
+    }
+    if (message == WM_COMMAND && LOWORD(wParam) == FavoritesWindow::kOpen)
+    {
+        TB_OpenFavoritesWindow();
         return 0;
     }
 
@@ -1448,6 +1490,37 @@ static HWND WINAPI TB_CreateWindowExA_Hook(DWORD exStyle, LPCSTR className,
         TB_IsTabControlClass(actualClassName))
         SetWindowSubclass(window, TB_TabDiscoverySubclassProc, 3, 0);
     return window;
+}
+
+void TextureBrowser::FavoritesChanged()
+{
+    TB_LoadFavorites();
+    TB_RefreshResolvedFavorites();
+    TB_UpdateFavoritesView();
+}
+
+bool TextureBrowser::ShowFavorite(const std::string& path)
+{
+    if (!g_TextureTab || !IsWindow(g_TextureTab))
+        return false;
+    // A package filter that would hide it gives way.
+    if (!g_PackageFilter.empty() &&
+        TB_ToLower(Favorites::Split(path).package) != TB_ToLower(g_PackageFilter))
+    {
+        g_PackageFilter.clear();
+        TB_SaveView();
+    }
+    TB_ActivateFavorites(g_TextureTab);
+    TB_LoadFavorites();
+    TB_RefreshResolvedFavorites();
+    TB_UpdateFavoritesView();
+    TB_RedrawFavoritesPage();
+    return true;
+}
+
+void TextureBrowser::Redraw()
+{
+    TB_RedrawFavoritesPage();
 }
 
 // DDS file format constants

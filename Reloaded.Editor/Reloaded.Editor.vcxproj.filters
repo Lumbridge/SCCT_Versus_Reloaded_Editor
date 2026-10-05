@@ -29,6 +29,8 @@
     <ClInclude Include="LevelSnapshot.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="LevelSnapshotModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="FavoritesModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="FavoritesWindow.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="FavoritesWindowModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="EntryThumbnailModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MeshFavoritesModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="UndoHistory.h"><Filter>Header Files</Filter></ClInclude>
@@ -356,6 +358,7 @@
     <ClCompile Include="SoundBrowserFavorites.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="FavoritesWindow.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="DdsImportFix.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

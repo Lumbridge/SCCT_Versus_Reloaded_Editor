@@ -2,6 +2,7 @@
 #include "SoundBrowserFavorites.h"
 #include "SoundFavoritesModel.h"
 #include "AssetNameGloss.h"
+#include "FavoritesWindow.h"
 #include "MemoryWriter.h"
 #include <commctrl.h>
 #pragma comment(lib, "comctl32.lib")
@@ -112,6 +113,7 @@ static HWND g_BrowserWindow = nullptr;
 static HWND g_PackageCombo = nullptr, g_GroupCombo = nullptr, g_GroupAll = nullptr, g_Unused = nullptr, g_List = nullptr;
 static HWND g_SearchLabel = nullptr, g_SearchEdit = nullptr, g_AllPackagesCheck = nullptr;
 static HWND g_FavoriteButton = nullptr, g_FavoritesToggle = nullptr, g_PackageFilterCombo = nullptr, g_SortCombo = nullptr;
+static HWND g_WindowButton = nullptr; // opens the Favorites window
 static bool g_ControlsAttached = false;
 static int g_ListMargin = -1; // the native gap below the list
 static int g_NormalColumnWidth = -1;
@@ -752,7 +754,14 @@ static void SBF_Layout(bool nativeLayout)
     constexpr int dropHeight = 320;
     SetWindowPos(g_PackageFilterCombo, HWND_TOP, package.left, package.top, package.right - package.left, dropHeight, SWP_NOACTIVATE);
     const LONG sortLeft = (std::min)(all.left, group.left);
-    SetWindowPos(g_SortCombo, HWND_TOP, sortLeft, group.top, group.right - sortLeft, dropHeight, SWP_NOACTIVATE);
+    // With Favorites shown, the Favorites window's button takes the row's right end.
+    const bool windowButton = g_WindowButton && g_CustomView && g_FavoritesActive;
+    const int windowButtonWidth = SBF_TextWidth("All Favorites...") + 16;
+    const LONG sortRight = windowButton ? (std::max)(sortLeft + 40, group.right - windowButtonWidth - gap) : group.right;
+    SetWindowPos(g_SortCombo, HWND_TOP, sortLeft, group.top, sortRight - sortLeft, dropHeight, SWP_NOACTIVATE);
+    if (g_WindowButton)
+        SetWindowPos(g_WindowButton, HWND_TOP, sortRight + gap, group.top, (std::max)(1L, group.right - sortRight - gap),
+                     package.bottom - package.top, SWP_NOACTIVATE | (windowButton ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
 }
 
 static void SBF_ShowNativeFilters(bool show)
@@ -762,6 +771,8 @@ static void SBF_ShowNativeFilters(bool show)
     {
         ShowWindow(g_PackageFilterCombo, SW_HIDE);
         ShowWindow(g_SortCombo, SW_HIDE);
+        if (g_WindowButton)
+            ShowWindow(g_WindowButton, SW_HIDE);
         for (int i = 0; i < 4; ++i)
             if (natives[i])
                 ShowWindow(natives[i], g_NativeVisible[i] ? SW_SHOWNA : SW_HIDE);
@@ -1110,6 +1121,7 @@ static void SBF_SetFavoritesActive(bool active)
     if (g_AllPackagesCheck)
         EnableWindow(g_AllPackagesCheck, !active);
     SBF_Refresh();
+    SBF_Layout(false);
 }
 
 static void SBF_ReadQuery()
@@ -1144,6 +1156,69 @@ void SoundBrowserFavorites::ToggleSelected()
         SBF_Refresh();
     else
         SBF_UpdateFavoriteButton();
+    FavoritesWindow::Changed();
+}
+
+void SoundBrowserFavorites::FavoritesChanged()
+{
+    SBF_LoadFavorites();
+    SBF_ResolveFavorites();
+    if (g_FavoritesActive && g_ControlsAttached)
+        SBF_Refresh();
+    else
+        SBF_UpdateFavoriteButton();
+}
+
+bool SoundBrowserFavorites::ShowFavorite(const std::string& path)
+{
+    if (!g_FeatureSupported || !g_ControlsAttached || !g_Browser || !g_List)
+        return false;
+    SBF_LoadFavorites();
+    // A search or package filter that would hide it gives way.
+    if (!SF::IsBlank(g_Query))
+    {
+        g_Query.clear();
+        if (g_SearchEdit)
+            SetWindowTextA(g_SearchEdit, "");
+        KillTimer(g_BrowserWindow, TIMER_SB_SEARCH);
+    }
+    if (!g_FavoritePackage.empty() && !SF::SameName(SF::Split(path).package, g_FavoritePackage))
+    {
+        g_FavoritePackage.clear();
+        SBF_SaveView();
+    }
+    if (g_FavoritesActive)
+        SBF_Refresh();
+    else
+        SBF_SetFavoritesActive(true);
+    for (size_t i = 0; i < g_Rows.size(); ++i)
+    {
+        if (!SF::SameName(g_Rows[i].path, path))
+            continue;
+        const int item = static_cast<int>(i);
+        ListView_SetItemState(g_List, -1, 0, LVIS_SELECTED);
+        ListView_SetItemState(g_List, item, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+        ListView_EnsureVisible(g_List, item, FALSE);
+        break;
+    }
+    SBF_UpdateFavoriteButton();
+    return true;
+}
+
+bool SoundBrowserFavorites::Play(void* sound, const std::string& path)
+{
+    if (!SBF_IsSound(sound))
+        return false;
+    // As the browser's Play does: a sound with no data loaded reads its wave
+    // from ..\packages\sounds\ first.
+    char fileName[MAX_PATH] = {};
+    if (SBF_StreamFileName(sound, fileName, std::size(fileName)))
+    {
+        const std::string file = std::string("..\\packages\\sounds\\") + fileName + ".wav";
+        SBF_LoadStreamData(sound, file.c_str());
+    }
+    const std::string command = "AUDIO PLAY NAME=\"" + path + "\"";
+    return SBF_ExecEditorCommand(command.c_str());
 }
 
 bool SoundBrowserFavorites::CustomRows()
@@ -1175,10 +1250,11 @@ void SoundBrowserFavorites::AddContextItems(HMENU context)
     AppendMenuA(context, MF_SEPARATOR, 0, nullptr);
     AppendMenuA(context, MF_STRING | (has ? MF_ENABLED : MF_GRAYED), kToggleFavorite,
                 favorite ? "Remove from &Favorites" : "Add to &Favorites");
+    AppendMenuA(context, MF_STRING, FavoritesWindow::kOpen, "All Fa&vorites...");
     // The stock commands act on the selected sound, which this row does not have.
     if (has && !loaded)
         for (int i = 0; i < GetMenuItemCount(context); ++i)
-            if (GetMenuItemID(context, i) != kToggleFavorite)
+            if (GetMenuItemID(context, i) != kToggleFavorite && GetMenuItemID(context, i) != FavoritesWindow::kOpen)
                 EnableMenuItem(context, i, MF_BYPOSITION | MF_GRAYED);
 }
 
@@ -1247,6 +1323,7 @@ static void SBF_AttachControls()
     g_FavoritesToggle = create(0, "BUTTON", "Favorites", WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX | BS_PUSHLIKE, IDC_SB_FAVORITES);
     g_PackageFilterCombo = create(0, "COMBOBOX", "", WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST, IDC_SB_PACKAGE_FILTER);
     g_SortCombo = create(0, "COMBOBOX", "", WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST, IDC_SB_SORT);
+    g_WindowButton = create(0, "BUTTON", "All Favorites...", WS_TABSTOP | BS_PUSHBUTTON, static_cast<int>(FavoritesWindow::kOpen));
     if (!g_SearchEdit || !g_AllPackagesCheck || !g_FavoriteButton || !g_FavoritesToggle || !g_PackageFilterCombo || !g_SortCombo)
     {
         Logger::log("SoundBrowserFavorites: could not create the search controls");
@@ -1311,6 +1388,18 @@ static bool SBF_HandleCommand(WPARAM wParam, LPARAM lParam)
     if (id == SoundBrowserFavorites::kToggleFavorite && (code == BN_CLICKED || code == 0))
     {
         SoundBrowserFavorites::ToggleSelected();
+        return true;
+    }
+    if (id == FavoritesWindow::kOpen && (code == BN_CLICKED || code == 0))
+    {
+        try
+        {
+            FavoritesWindow::Open();
+        }
+        catch (const std::exception& error)
+        {
+            Logger::log(std::string("SoundBrowserFavorites: ") + error.what());
+        }
         return true;
     }
     if (id == IDC_SB_FAVORITES && code == BN_CLICKED)
@@ -1403,7 +1492,7 @@ static LRESULT CALLBACK SBF_BrowserSubclassProc(HWND window, UINT message, WPARA
         g_BrowserWindow = nullptr;
         g_PackageCombo = g_GroupCombo = g_GroupAll = g_Unused = g_List = nullptr;
         g_SearchLabel = g_SearchEdit = g_AllPackagesCheck = g_FavoriteButton = g_FavoritesToggle = nullptr;
-        g_PackageFilterCombo = g_SortCombo = nullptr;
+        g_PackageFilterCombo = g_SortCombo = g_WindowButton = nullptr;
         g_ControlsAttached = false;
         g_CustomView = false;
         g_FavoritesActive = false;

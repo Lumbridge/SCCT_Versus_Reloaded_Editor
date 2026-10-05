@@ -7,6 +7,7 @@
 #include "EditorExtras.h"
 #include "StoreyFilter.h"
 #include "UndoHistory.h"
+#include "FavoritesWindow.h"
 #include "LightingBudget.h"
 #include "WorkflowEditor.h"
 #include "EmitterLibraryModel.h"
@@ -932,6 +933,11 @@ bool HandleCommand(UINT command)
     if(command==UndoHistory::kOpen || command==UndoHistory::kAddCheckpoint)
     {
         try{UndoHistory::HandleCommand(command);}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Undo History",MB_OK|MB_ICONERROR);}
+        return true;
+    }
+    if(command==FavoritesWindow::kOpen)
+    {
+        try{FavoritesWindow::Open();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Favorites",MB_OK|MB_ICONERROR);}
         return true;
     }
     if(MeasureTool::HandleCommand(command))return true;

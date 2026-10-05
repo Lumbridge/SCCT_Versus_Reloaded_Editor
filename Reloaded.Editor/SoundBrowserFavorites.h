@@ -20,4 +20,11 @@ namespace SoundBrowserFavorites
     // Adds the favourite item to the browser's right-click menu.
     void AddContextItems(HMENU context);
     void ToggleSelected();
+    // The saved favourites changed elsewhere (the Favorites window): reload them.
+    void FavoritesChanged();
+    // Switches the browser to Favorites and selects the sound's row, so a
+    // property's Use button takes it; false while the browser has no controls yet.
+    bool ShowFavorite(const std::string& path);
+    // Plays a loaded sound as the browser's Play does (streamed waves included).
+    bool Play(void* sound, const std::string& path);
 }
