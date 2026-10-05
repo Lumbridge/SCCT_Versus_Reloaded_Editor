@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "CharacterSkinsWindow.h"
+#include "CharacterPreview.h"
 #include "CharacterSkinsModel.h"
 #include "CharacterSkinPresetsWindow.h"
 #include "WorkflowEditor.h"
@@ -24,7 +25,13 @@ namespace Editor = Workflow::Editor;
 // Per slot row i: edit 200+i, Use Selected 210+i, Clear 220+i, Import 230+i.
 // Per model row m: model box 240+m, goggle offset X/Y/Z 250+3m..252+3m.
 constexpr int kEdit = 200, kUse = 210, kClear = 220, kImport = 230, kModel = 240, kGoggle = 250, kStatus = 101,
-              kApply = IDOK, kRemove = 102, kDownload = 103, kPresets = 104;
+              kApply = IDOK, kRemove = 102, kDownload = 103, kPreview = 104, kPreviewStatus = 105, kPresets = 106;
+// Timers: the preview redraws when its view changed, and shows the fields again a
+// moment after they stop changing.
+constexpr UINT_PTR kDrawTimer = 1, kRefreshTimer = 2;
+// Dialog width in dialog units; the fields keep the left kLeftUnits of it.
+constexpr int kDialogUnits = 640, kLeftUnits = 420;
+const char* const kHostClass = "ReloadedCharacterSkinsPreview";
 std::wstring lastFolder;
 
 std::filesystem::path PickFolder(HWND owner)
@@ -82,6 +89,44 @@ std::string Text(HWND window, int id)
     return first == std::string::npos ? std::string{} : text.substr(first, last - first + 1);
 }
 void Status(HWND window, const std::string& text) { SetDlgItemTextA(window, kStatus, text.c_str()); }
+void PreviewStatus(HWND window, const std::string& text) { SetDlgItemTextA(window, kPreviewStatus, text.c_str()); }
+const char* const kPreviewHelp = "Spy on the left, merc on the right. Drag to turn, right-drag or wheel to zoom, "
+                                 "middle-drag to pan, double-click to reset. Goggle lights are not shown.";
+// The fields as they are now, applied or not.
+Json Fields(HWND window, bool slots)
+{
+    Json out = Json::object();
+    if (slots)
+        for (size_t i = 0; i < CharacterSkins::Slots.size(); ++i)
+            out[CharacterSkins::Slots[i].property] = Text(window, kEdit + static_cast<int>(i));
+    else
+        for (size_t m = 0; m < CharacterSkins::Models.size(); ++m)
+            out[CharacterSkins::Models[m].property] = Text(window, kModel + static_cast<int>(m));
+    return out;
+}
+// Shows the fields in the 3D preview. A field naming something the preview cannot
+// show is reported under it, never in a message box; the previous look stays.
+void RefreshPreview(HWND window)
+{
+    KillTimer(window, kRefreshTimer);
+    if (!CharacterPreview::Viewport())
+        return;
+    try
+    {
+        const auto shown = CharacterPreview::Show(Fields(window, true), Fields(window, false));
+        std::string text;
+        for (const auto& warning : shown.at("warnings"))
+            text += (text.empty() ? "" : " ") + warning.get<std::string>();
+        if (text.empty())
+            text = kPreviewHelp;
+        PreviewStatus(window, text);
+    }
+    catch (const std::exception& e)
+    {
+        PreviewStatus(window, std::string("Not previewed: ") + e.what());
+    }
+}
+void ScheduleRefresh(HWND window) { SetTimer(window, kRefreshTimer, 300, nullptr); }
 std::string Number(double v) { return CharacterSkins::Number(v); }
 void SetGoggles(HWND window, size_t model, const CharacterSkins::Offset& o)
 {
@@ -144,6 +189,7 @@ void Show(HWND window, const Json& settings)
     if (settings.at("legacy").get<bool>()) status += " They were made by an earlier RE+; Apply updates them.";
     if (settings.at("extra").get<bool>()) status += " It has more than one Character Skins actor; only the first is shown.";
     Status(window, status);
+    ScheduleRefresh(window);
 }
 
 INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
@@ -155,7 +201,7 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
             SetWindowTextA(window, "Character Skins");
             RECT r{};
             GetClientRect(window, &r);
-            const int width = r.right - 24;
+            const int left = MulDiv(r.right, kLeftUnits, kDialogUnits), width = left - 24;
             Control(window, "STATIC",
                 "Dress this map's spies and mercs in its own materials or models, for example snow camo. Download Default "
                 "Skins saves the stock textures as TGA files to paint over in Photoshop or any paint program; "
@@ -197,7 +243,39 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
             Control(window, "BUTTON", "Presets...", WS_TABSTOP, kPresets, 328, r.bottom - 38, 80, 27);
             Control(window, "BUTTON", "Apply", BS_DEFPUSHBUTTON | WS_TABSTOP, kApply, r.right - 215, r.bottom - 38, 95, 27);
             Control(window, "BUTTON", "Close", WS_TABSTOP, IDCANCEL, r.right - 110, r.bottom - 38, 95, 27);
+            // The 3D preview fills the right of the window above the buttons.
+            auto host = CreateWindowExA(WS_EX_CLIENTEDGE, kHostClass, "", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+                                        left, 10, r.right - left - 12, r.bottom - 106, window,
+                                        reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPreview)), GetModuleHandle(nullptr), nullptr);
+            Control(window, "STATIC", kPreviewHelp, 0, kPreviewStatus, left, r.bottom - 90, r.right - left - 12, 44);
+            std::string error;
+            if (!host || !CharacterPreview::Attach(host, error))
+                PreviewStatus(window, "No preview: " + (error.empty() ? std::string("the preview panel is not available.") : error));
+            SetTimer(window, kDrawTimer, 30, nullptr);
             Show(window, Editor::CharacterSkinSettings());
+            return TRUE;
+        }
+        if (message == WM_TIMER)
+        {
+            if (w == kRefreshTimer)
+                RefreshPreview(window);
+            else if (w == kDrawTimer)
+                CharacterPreview::Tick();
+            return TRUE;
+        }
+        if (message == WM_DESTROY)
+        {
+            KillTimer(window, kDrawTimer);
+            KillTimer(window, kRefreshTimer);
+            CharacterPreview::Detach();
+            return FALSE;
+        }
+        if (message == WM_COMMAND && ((HIWORD(w) == EN_CHANGE && LOWORD(w) >= kEdit &&
+                                       LOWORD(w) < kEdit + static_cast<int>(CharacterSkins::Slots.size())) ||
+                                      ((HIWORD(w) == CBN_EDITCHANGE || HIWORD(w) == CBN_KILLFOCUS) && LOWORD(w) >= kModel &&
+                                       LOWORD(w) < kModel + static_cast<int>(CharacterSkins::Models.size()))))
+        {
+            ScheduleRefresh(window);
             return TRUE;
         }
         if (message == WM_COMMAND && HIWORD(w) == CBN_SELCHANGE && LOWORD(w) >= kModel &&
@@ -211,6 +289,8 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
             if (index != CB_ERR) SendMessageA(box, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(mesh));
             const auto suggested = CharacterSkins::SuggestedGoggles(CharacterSkins::Models[m].property, mesh);
             if (suggested.x || suggested.y || suggested.z) SetGoggles(window, m, suggested);
+            // The box takes its new text after this notification: preview the choice shortly.
+            ScheduleRefresh(window);
             return TRUE;
         }
         if (message != WM_COMMAND || HIWORD(w) != BN_CLICKED)
@@ -276,7 +356,7 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
             Status(window, "Compiling and applying...");
             UpdateWindow(window);
             Show(window, Editor::ApplyCharacterSkins(values.at("slots"), values.at("models"), values.at("goggles")));
-            Status(window, "Applied. Save the map, then play it to see the result; the editor viewports show the stock look.");
+            Status(window, "Applied. Save the map, then play it to see the result; the map's own viewports still show the stock look.");
             return TRUE;
         }
         if (id == kPresets)
@@ -318,10 +398,19 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
 void Open(HWND owner)
 {
     Editor::CharacterSkinSettings(); // fails here, before the window opens, without a map
+    WNDCLASSA host{};
+    if (!GetClassInfoA(GetModuleHandle(nullptr), kHostClass, &host))
+    {
+        host.hInstance = GetModuleHandle(nullptr);
+        host.lpfnWndProc = DefWindowProcA;
+        host.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(DKGRAY_BRUSH));
+        host.lpszClassName = kHostClass;
+        RegisterClassA(&host);
+    }
     std::vector<WORD> bytes((sizeof(DLGTEMPLATE) + 1) / 2 + 3, 0);
     auto dialog = reinterpret_cast<DLGTEMPLATE*>(bytes.data());
-    dialog->style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | DS_CENTER;
-    dialog->cx = 420;
+    dialog->style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN | DS_MODALFRAME | DS_CENTER;
+    dialog->cx = kDialogUnits;
     dialog->cy = 315;
     if (DialogBoxIndirectParamW(GetModuleHandle(nullptr), dialog, owner, Proc, 0) == -1)
         throw std::runtime_error("Cannot open the Character Skins window.");

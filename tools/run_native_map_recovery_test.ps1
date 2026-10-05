@@ -9,6 +9,7 @@ param(
     [switch]$GenerateFixture,
     [switch]$WorkflowTools,
     [switch]$BrushGridSnapOnly,
+    [switch]$CharacterPreviewOnly,
     [switch]$ImportBaseline,
     [switch]$ReopenOnly,
     [switch]$RootOutside,
@@ -143,8 +144,9 @@ source=$inputMap
 destination=$outputMap
 editor_dll=$injectedDll
 generate_fixture=$([int][bool]$GenerateFixture)
-workflow_tools=$([int][bool]($WorkflowTools -or $BrushGridSnapOnly))
+workflow_tools=$([int][bool]($WorkflowTools -or $BrushGridSnapOnly -or $CharacterPreviewOnly))
 brush_grid_snap_only=$([int][bool]$BrushGridSnapOnly)
+character_preview_only=$([int][bool]$CharacterPreviewOnly)
 import_baseline=$([int][bool]$ImportBaseline)
 reopen_only=$([int][bool]$ReopenOnly)
 root_outside=$([int][bool]$RootOutside)
@@ -226,7 +228,7 @@ try {
                 $failed = @($lines | Where-Object { $_ -match '^workflow_fail ' })
                 if ($failed.Count) { Write-Output ('' + $failed.Count + ' check(s) failed:'); $failed | ForEach-Object { Write-Output ('  ' + $_.Substring(14)) } }
                 if ($result -match '(?m)^FAIL ') { throw 'Native map recovery test failed.' }
-                if ($WorkflowTools -and !$BrushGridSnapOnly -and !$workflowRestarted) {
+                if ($WorkflowTools -and !$BrushGridSnapOnly -and !$CharacterPreviewOnly -and !$workflowRestarted) {
                     $owned = Get-Process -Id $editorProcessId -ErrorAction Stop
                     if ($owned.Path -ne $testExecutable) { throw 'Unexpected isolated editor path.' }
                     Stop-Process -Id $editorProcessId -Force

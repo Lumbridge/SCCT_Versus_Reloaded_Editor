@@ -115,6 +115,7 @@ namespace
         LARGE_INTEGER frequency{},previous{},second{};unsigned long long ticks=0,frames=0,loops=0,framesAtSecond=0;double frameRate=0;float idle=0;
     } state;
     Address wireExempt=0;   // the preview viewport, read by IsWireHook and SelectionInfoHook
+    Address otherExempt=0;  // the character preview's viewport (ExemptViewport), treated the same
 
     HWND Window()
     {
@@ -613,6 +614,8 @@ namespace
         {
             cmp ecx,dword ptr [wireExempt]
             je solid
+            cmp ecx,dword ptr [otherExempt]
+            je solid
             // Replay the five displaced bytes: mov eax,[ecx+0x30]; test eax,eax.
             mov eax,dword ptr [ecx+0x30]
             test eax,eax
@@ -637,6 +640,8 @@ namespace
             xor ecx,ecx
             mov eax,dword ptr [ebp+8]
             cmp eax,dword ptr [wireExempt]
+            je no_info
+            cmp eax,dword ptr [otherExempt]
             je no_info
             jmp dword ptr [resume]
         no_info:
@@ -740,6 +745,7 @@ void Initialize()
     }
     if(!MemoryWriter::WriteJump(kIsWire,IsWireHook) || !MemoryWriter::WriteJump(kSelectionInfo,SelectionInfoHook) || !MemoryWriter::WriteJump(kEditorTick,EditorTickHook)){state.faulted=true;state.fault="The live emitter preview could not be installed.";}
 }
+void ExemptViewport(void* viewport){otherExempt=reinterpret_cast<Address>(viewport);}
 bool Attach(HWND host,std::string& error)
 {
     try
