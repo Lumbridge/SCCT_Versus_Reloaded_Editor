@@ -20,6 +20,7 @@
 #include "CharacterSkinsModel.h"
 #include "CharacterSkinsImage.h"
 #include "PlacementModel.h"
+#include "CharacterSkinPresetsModel.h"
 #include "logger.h"
 #include "MapRecovery.h"
 #include "BspDiagnostics.h"
@@ -1433,4 +1434,5 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "RenderBudgetNative.inl"
 #include "CharacterSkinsNative.inl"
 #include "PlacementNative.inl"
+#include "CharacterSkinPresetsNative.inl"
 }

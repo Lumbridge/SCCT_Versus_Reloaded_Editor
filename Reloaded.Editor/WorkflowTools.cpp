@@ -3,6 +3,7 @@
 #undef max
 #include "WorkflowTools.h"
 #include "CharacterSkinsWindow.h"
+#include "CharacterSkinPresetsWindow.h"
 #include "EmitterLibraryWindow.h"
 #include "EditorExtras.h"
 #include "StoreyFilter.h"
@@ -920,9 +921,10 @@ Json SaveEmitterSelection(HWND owner,bool confirm)
     }
     return saved;
 }
-Json AskEmitterDetails(HWND owner,const Json& entry,const char* title)
+Json AskEmitterDetails(HWND owner,const Json& entry,const char* title){return AskDetails(owner,entry,title,Editor::EmitterCategories());}
+Json AskDetails(HWND owner,const Json& entry,const char* title,const Json& choices)
 {
-    std::vector<std::string> categories; for(const auto& category:Editor::EmitterCategories()) categories.push_back(Recode(category.get<std::string>(),CP_UTF8,CP_ACP));
+    std::vector<std::string> categories; for(const auto& category:choices) categories.push_back(Recode(category.get<std::string>(),CP_UTF8,CP_ACP));
     std::string description=Recode(entry.value("description",std::string{}),CP_UTF8,CP_ACP); std::replace(description.begin(),description.end(),'\n',' ');
     std::vector<InputField> fields={{"Name",Recode(entry.value("name",std::string{}),CP_UTF8,CP_ACP),{}},{"Category (choose or type)",Recode(entry.value("category",std::string{}),CP_UTF8,CP_ACP),categories,true},{"Description (optional)",description,{}}};
     if(!Ask(owner,title,fields)) return {};
@@ -1024,6 +1026,7 @@ bool HandleCommand(UINT command)
     if(command==MagicEventWorkbench::Command){try{MagicEventWorkbench::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"SMagicEvent Workbench",MB_OK|MB_ICONERROR);}return true;}
     if(command==CameraNetworkPanel::Command){try{CameraNetworkPanel::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"SCamNetwork Manager",MB_OK|MB_ICONERROR);}return true;}
     if(command==CharacterSkinsWindow::Command){try{CharacterSkinsWindow::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Character Skins",MB_OK|MB_ICONERROR);}return true;}
+    if(command==CharacterSkinPresetsWindow::Command){try{CharacterSkinPresetsWindow::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Character Skin Presets",MB_OK|MB_ICONERROR);}return true;}
     if(command==EmitterLibraryWindow::Command){try{EmitterLibraryWindow::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Emitter Library",MB_OK|MB_ICONERROR);}return true;}
     if(command==kSaveToEmitterLibrary){try{SaveEmitterSelection(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Save to Emitter Library",MB_OK|MB_ICONERROR);}return true;}
     if(command<kConnections || command>kSaveAssembly) return false;

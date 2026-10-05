@@ -3,6 +3,7 @@
 #undef max
 #include "CharacterSkinsWindow.h"
 #include "CharacterSkinsModel.h"
+#include "CharacterSkinPresetsWindow.h"
 #include "WorkflowEditor.h"
 #include <commdlg.h>
 #include <filesystem>
@@ -23,7 +24,7 @@ namespace Editor = Workflow::Editor;
 // Per slot row i: edit 200+i, Use Selected 210+i, Clear 220+i, Import 230+i.
 // Per model row m: model box 240+m, goggle offset X/Y/Z 250+3m..252+3m.
 constexpr int kEdit = 200, kUse = 210, kClear = 220, kImport = 230, kModel = 240, kGoggle = 250, kStatus = 101,
-              kApply = IDOK, kRemove = 102, kDownload = 103;
+              kApply = IDOK, kRemove = 102, kDownload = 103, kPresets = 104;
 std::wstring lastFolder;
 
 std::filesystem::path PickFolder(HWND owner)
@@ -102,6 +103,28 @@ CharacterSkins::Offset Goggles(HWND window, size_t model)
     }
     return CharacterSkins::CheckOffset({values[0], values[1], values[2]});
 }
+// The window's values as Apply uses them: {slots, models, goggles, any}.
+Json Values(HWND window)
+{
+    Json slots = Json::object(), models = Json::object(), goggles = Json::object();
+    bool any = false;
+    for (size_t i = 0; i < CharacterSkins::Slots.size(); ++i)
+    {
+        auto path = Text(window, kEdit + static_cast<int>(i));
+        any = any || !path.empty();
+        slots[CharacterSkins::Slots[i].property] = path;
+    }
+    for (size_t m = 0; m < CharacterSkins::Models.size(); ++m)
+    {
+        const auto& model = CharacterSkins::Models[m];
+        auto path = Text(window, kModel + static_cast<int>(m));
+        any = any || !path.empty();
+        models[model.property] = path;
+        const auto o = Goggles(window, m);
+        goggles[model.goggles] = Json::array({o.x, o.y, o.z});
+    }
+    return {{"slots", slots}, {"models", models}, {"goggles", goggles}, {"any", any}};
+}
 void Show(HWND window, const Json& settings)
 {
     for (size_t i = 0; i < CharacterSkins::Slots.size(); ++i)
@@ -171,6 +194,7 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
             Control(window, "STATIC", "", 0, kStatus, 12, y + 6, width, 44);
             Control(window, "BUTTON", "Remove from Map", WS_TABSTOP, kRemove, 12, r.bottom - 38, 125, 27);
             Control(window, "BUTTON", "Download Default Skins...", WS_TABSTOP, kDownload, 145, r.bottom - 38, 175, 27);
+            Control(window, "BUTTON", "Presets...", WS_TABSTOP, kPresets, 328, r.bottom - 38, 80, 27);
             Control(window, "BUTTON", "Apply", BS_DEFPUSHBUTTON | WS_TABSTOP, kApply, r.right - 215, r.bottom - 38, 95, 27);
             Control(window, "BUTTON", "Close", WS_TABSTOP, IDCANCEL, r.right - 110, r.bottom - 38, 95, 27);
             Show(window, Editor::CharacterSkinSettings());
@@ -243,33 +267,29 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
         }
         if (id == kApply)
         {
-            Json slots = Json::object();
-            bool any = false;
-            for (size_t i = 0; i < CharacterSkins::Slots.size(); ++i)
-            {
-                auto path = Text(window, kEdit + static_cast<int>(i));
-                any = any || !path.empty();
-                slots[CharacterSkins::Slots[i].property] = path;
-            }
-            Json models = Json::object(), goggles = Json::object();
-            for (size_t m = 0; m < CharacterSkins::Models.size(); ++m)
-            {
-                const auto& model = CharacterSkins::Models[m];
-                auto path = Text(window, kModel + static_cast<int>(m));
-                any = any || !path.empty();
-                models[model.property] = path;
-                const auto o = Goggles(window, m);
-                goggles[model.goggles] = Json::array({o.x, o.y, o.z});
-            }
-            if (!any)
+            const auto values = Values(window);
+            if (!values.at("any").get<bool>())
             {
                 Status(window, "Every slot is empty. Use Remove from Map to go back to the stock characters.");
                 return TRUE;
             }
             Status(window, "Compiling and applying...");
             UpdateWindow(window);
-            Show(window, Editor::ApplyCharacterSkins(slots, models, goggles));
+            Show(window, Editor::ApplyCharacterSkins(values.at("slots"), values.at("models"), values.at("goggles")));
             Status(window, "Applied. Save the map, then play it to see the result; the editor viewports show the stock look.");
+            return TRUE;
+        }
+        if (id == kPresets)
+        {
+            // Save Current as Preset keeps what the window shows, applied or not.
+            Json values;
+            try { values = Values(window); values.erase("any"); }
+            catch (const std::exception&) { values = Json(); }
+            if (CharacterSkinPresetsWindow::Open(window, values))
+            {
+                Show(window, Editor::CharacterSkinSettings());
+                Status(window, "Preset applied. Save the map, then play it to see the result.");
+            }
             return TRUE;
         }
         if (id == kRemove)

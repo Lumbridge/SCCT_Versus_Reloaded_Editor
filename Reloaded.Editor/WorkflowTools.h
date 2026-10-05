@@ -35,4 +35,6 @@ namespace WorkflowTools
     // Asks for an entry's name, category and description, starting from the
     // entry's own. Returns {name,category,description}, or null when cancelled.
     Workflow::Json AskEmitterDetails(HWND owner, const Workflow::Json& entry, const char* title);
+    // The same with a library's own category choices (a JSON array of names).
+    Workflow::Json AskDetails(HWND owner, const Workflow::Json& entry, const char* title, const Workflow::Json& categories);
 }
