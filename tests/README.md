@@ -217,6 +217,24 @@ perspective matrices (projection, the mouse in a 2D plane and the mouse ray
 onto a floor), and the Start / To / M chain. There is no native suite check:
 the right-click path was verified by hand in a disposable install.
 
+## Placement tools
+
+`tools/test_workflow_tools.cmd` runs `PlacementModelTests.cpp`: rotator to axes
+and back, a turned, scaled mesh's world box (PrePivot before the scale) and a
+collision cylinder's, aligning minimum / centre / maximum to the key actor,
+distributing along an axis and on the line between the first and last
+selected, the drop's rays (the nearest hit holds the box, start-solid rays are
+ignored, a sunk box rises, a pawn rests on its collision height), turning to sit
+on a floor, ceiling or wall, copies in a line, round a centre (on the
+selection's own circle or at a radius, partial arcs, turning or not) and along
+a path by count or spacing, the copy limits, preview box edges and the
+selection order. There is no native suite check yet; a scratch probe drove
+every command and the copies window in a disposable install on ShipD: drops to
+floor, ceiling and wall with Undo, End over a level viewport, alignment and
+distribution with Undo, line / radial / path copies of a mesh and of a CSG
+brush (Undo and Redo), Tags kept on copies, the RE+ Tools and actor menus, and
+the viewport preview.
+
 ## Animation import options
 
 `tools/test_workflow_tools.cmd` runs `AnimImportOptionsModelTests.cpp`: which of

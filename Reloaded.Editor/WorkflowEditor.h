@@ -185,4 +185,22 @@ namespace Workflow::Editor
     Json UpdateEmitterEntry(const std::string& id, const Json& changes);
     void DeleteEmitterEntry(const std::string& id);
     void RestoreBuiltinEmitters();
+    // Placement tools (PlacementModel.h). PlacementSelection: the selected
+    // actors (never the level info, builder brush or cameras) as identities
+    // with address (for ordering only), name, position, rotation, box lo/hi,
+    // kind (mesh, brush for volumes and movers, csg, actor) and locked.
+    // SelectedActorAddresses is cheap enough for every viewport message.
+    Json PlacementSelection();
+    std::vector<uintptr_t> SelectedActorAddresses();
+    // Moves actors by their "delta" in one Undo step; locked ones stay.
+    // Returns how many moved (none: no Undo step).
+    size_t PlacementMove(const Json& moves, const std::string& label);
+    // Drops the selection onto the surface below (0), above (1) or ahead (2),
+    // optionally turning meshes to sit flat on it, in one Undo step; a drop
+    // that changes nothing leaves none. Returns {moved,missed,unchanged,locked,brushes}.
+    Json PlacementDrop(int surface, bool align);
+    // Copies of the members, one per {before,pivot,yaw,turn,after}
+    // (Placement::Copy), pasted in one Undo step; the originals and copies
+    // end up selected. Returns the copies' identities.
+    Json PlacementCopy(const Json& members, const Json& copies, const std::string& label);
 }

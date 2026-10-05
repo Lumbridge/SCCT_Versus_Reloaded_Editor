@@ -2,6 +2,7 @@
 #include "GridSizeShortcut.h"
 #include "StoreyFilter.h"
 #include "MeasureTool.h"
+#include "PlacementTools.h"
 #include "EmitterPreview.h"
 #include "GridSizeShortcutState.h"
 #include "MemoryWriter.h"
@@ -142,6 +143,9 @@ namespace
             return true;
         // Notes right-clicks for Measure > Start Here / To Here, and takes M.
         if (MeasureTool::ViewportMessage(viewport, message, wParam, lParam))
+            return true;
+        // Follows the order actors are selected in, and takes End (drop to floor).
+        if (PlacementTools::ViewportMessage(viewport, message, wParam, lParam))
             return true;
         if (message != WM_MOUSEWHEEL)
             return false;

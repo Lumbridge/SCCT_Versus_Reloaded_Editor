@@ -316,6 +316,7 @@ namespace
                "Ctrl+D in a viewport: duplicate the selection (RE+ Options can drop the offset).\r\n"
                "J in a viewport: Game View, hiding editor icons and sprites the game does not draw.\r\n"
                "M in a viewport: measure from the last measured point to the mouse (in the 3D view, across the floor at its height).\r\n"
+               "End in a viewport: drop the selection to the floor.   Shift+End: and turn meshes flat on the surface.   Ctrl+End: to the ceiling.\r\n"
                "F12: RE+ Options.   F7: disabled (the stock script compiler would crash).\r\n"
                "\r\n"
                "PROPERTIES WINDOWS (F4 Actor Properties, F6 Level Properties)\r\n"
@@ -329,7 +330,8 @@ namespace
                "\r\n"
                "RIGHT-CLICK MENUS\r\n"
                "Actor: RE+: Select (all of this class, all with this Tag, same static mesh, invert) and\r\n"
-               "RE+: Visibility (hide selected, isolate selected, unhide all); Save Selection as Assembly;\r\n"
+               "RE+: Visibility (hide selected, isolate selected, unhide all); RE+: Placement (drop to floor, ceiling or wall,\r\n"
+               "align to the last selected, distribute evenly, copies in a line, round a centre or along a path); Save Selection as Assembly;\r\n"
                "Edit SMagicEvent; Add SObjective / triggers on a mission or objective; position the builder brush around meshes.\r\n"
                "Brush face or vertices: snap to the grid per axis.   Texture / mesh browser: Favorites, Find Usages and Find Usages in All Maps.\r\n"
                "Any viewport: Builder Brush > Place Here; Measure > Start Here / To Here / Clear Measurement (distance,\r\n"
@@ -351,7 +353,7 @@ namespace
                "Help: Check for RE+ Updates offers the newest release; Check for Updates at Startup turns the automatic check on or off;\r\n"
                "What's New in RE+ shows this version's release notes (also shown once after an update); Roll Back puts the version\r\n"
                "an update replaced back in place (and the newer one stays kept, to switch again); About RE+ shows the version.\r\n"
-               "RE+ Tools: Map Design (its own Keys... window lists the plan's shortcuts), Brush Visibility,\r\n"
+               "RE+ Tools: Map Design (its own Keys... window lists the plan's shortcuts), Brush Visibility, Placement,\r\n"
                "Gameplay Connections, SMagicEvent Workbench, SCamNetwork Manager, Working Views, Assemblies, JSON.\r\n";
     }
     LRESULT CALLBACK ShortcutsProc(HWND window, UINT message, WPARAM w, LPARAM l)
