@@ -39,6 +39,10 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\FavoritesModelTests.cpp /Fo"%T
 if errorlevel 1 goto failed
 "%TEMP%\FavoritesModelTests.exe"
 if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\FavoritesWindowModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\FavoritesWindowModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\FavoritesWindowModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\UndoHistoryModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\UndoHistoryModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\UndoHistoryModelTests.exe"
