@@ -1101,14 +1101,18 @@ bool RecoveredActorImport::Prepare(std::string_view exportedMap, PreparedMap& pr
             }
             skippedXboxActors.insert(Lower("MyLevel." + actor.name));
             ++prepared.skippedXboxActorCount;
+            prepared.skippedXboxActorNames.push_back(actor.name);
             continue;
         }
         kept.push_back(Sanitize(std::move(actor), prepared.removedRuntimePropertyCount));
     }
     for (auto& actor : kept)
     {
+        const auto clearedBefore = prepared.clearedXboxActorReferenceCount + prepared.clearedDeletedActorReferenceCount;
         ClearKnownActorReferences(actor, skippedXboxActors, prepared.clearedXboxActorReferenceCount);
         ClearKnownActorReferences(actor, deletedActors, prepared.clearedDeletedActorReferenceCount);
+        if (prepared.clearedXboxActorReferenceCount + prepared.clearedDeletedActorReferenceCount != clearedBefore)
+            prepared.clearedReferenceActorNames.push_back(actor.name);
         if (ClassLeaf(actor.className) == "esbstripdooractor"
             || ClassLeaf(actor.className) == "esbpatchactor")
         {

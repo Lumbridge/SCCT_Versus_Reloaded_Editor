@@ -394,6 +394,9 @@ int main(int argc, char** argv)
     assert(bad.skippedXboxActorCount == 1);
     assert(bad.clearedXboxActorReferenceCount == 1);
     assert(bad.clearedDeletedActorReferenceCount == 0);
+    // The recovery report names the left-out actor and the one that lost a reference.
+    assert(bad.skippedXboxActorNames == std::vector<std::string>{"Xbox0"});
+    assert(bad.clearedReferenceActorNames == std::vector<std::string>{"Volume0"});
     assert(bad.actorsT3d.find("Owner=None") != std::string::npos);
     assert(bad.actorsT3d.find("Xbox0") == std::string::npos);
     assert(bad.actorsT3d.find("Platform=PLF_PC_Only") != std::string::npos);
@@ -450,6 +453,8 @@ int main(int argc, char** argv)
     assert(bad.skippedXboxActorCount == 0);
     assert(bad.clearedXboxActorReferenceCount == 0);
     assert(bad.clearedDeletedActorReferenceCount == 2);
+    assert(bad.skippedXboxActorNames.empty() && !bad.clearedReferenceActorNames.empty()
+           && bad.clearedReferenceActorNames.front() == "Volume0");
     assert(bad.actorsT3d.find("Owner=None") != std::string::npos);
     assert(bad.actorsT3d.find("(EventFromActor=None,MoveTime=1.0)") != std::string::npos);
     assert(bad.actorsT3d.find("Description2=\"Trigger'MyLevel.Deleted0' stays literal\"") != std::string::npos);
