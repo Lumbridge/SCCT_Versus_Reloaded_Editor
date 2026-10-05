@@ -16,6 +16,7 @@
 #include "MapCheckModel.h"
 #include "MapCheckLog.h"
 #include "LightShadowModel.h"
+#include "LevelSnapshot.h"
 #include "CharacterSkinsModel.h"
 #include "CharacterSkinsImage.h"
 #include "PlacementModel.h"
@@ -1429,6 +1430,7 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "LightingBudgetNative.inl"
 #include "MapCheckNative.inl"
 #include "LightShadowNative.inl"
+#include "RenderBudgetNative.inl"
 #include "CharacterSkinsNative.inl"
 #include "PlacementNative.inl"
 }

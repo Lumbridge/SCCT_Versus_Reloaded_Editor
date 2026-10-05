@@ -129,6 +129,19 @@ namespace Workflow::Editor
     // Selects exactly the live actors with these paths, one pass over the
     // level; focus frames them in the viewports. Returns how many were found.
     size_t SelectActorPaths(const std::vector<std::string>& paths, bool focus);
+    // Lighting Budget fixes, one undoable transaction: fix 0 makes the lights
+    // static, 1 turns them off (LightingBudget::Applied). Returns how many of
+    // the paths were found and changed.
+    size_t LightingBudgetFix(const std::vector<std::string>& paths, int fix);
+    // Render Budget (RenderBudgetModel.h): every actor (zone, kind, drawn in
+    // game, static mesh triangles, materials), every BSP polygon's zone,
+    // surface and triangles, the surfaces' materials, the materials' textures
+    // and the zone names.
+    Json RenderBudgetScene();
+    // The perspective viewport's camera, the actors the engine draws from it
+    // (on a fresh repaint), the BSP nodes for the point-in-zone walk and the
+    // zone portal polygons.
+    Json RenderBudgetView();
     // Security devices: creation, the motion sensor with its volume, and wiring.
     Json SecurityActors();
     Json Lights();

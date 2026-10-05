@@ -92,6 +92,7 @@ namespace LightingBudget
         int zone = 0;
         LightFlags flags;
         double x = 0, y = 0, z = 0, radius = 0; // the render sphere; only read for in-game lights
+        double brightness = 0, lightRadius = 0; // LightBrightness and LightRadius, for "weakest"
     };
 
     // One BSP leaf: its zone and the lights in its generated light list
@@ -383,6 +384,121 @@ namespace LightingBudget
         text += "\r\n" + std::to_string(report.map.total) + " lights in the map, " + std::to_string(report.map.inGame)
             + " of them drawn in game. Static lights are baked and do not count.";
         if (!report.leavesKnown) text += " The BSP has not been built, so leaf counts are not checked.";
+        return text;
+    }
+
+    // ---- Fixes from a row ------------------------------------------------
+
+    enum class Fix { MakeStatic, TurnOff };
+
+    // Make static: clear bApplyToInGameLighting and bDynamicLight and set
+    // bApplyToStaticLighting, so Build Lighting bakes the light instead.
+    // LightEffect 22 and the heat pair also make a light dynamic in the
+    // editor's classes; they change how the light looks, so they are left
+    // alone and reported. Turn off: LightType None, which the editor labels
+    // Off and which no check counts.
+    inline LightFlags Applied(LightFlags f, Fix fix)
+    {
+        if (fix == Fix::TurnOff) { f.type = 0; return f; }
+        f.inGameFlag = false;
+        f.dynamicFlag = false;
+        f.staticFlag = true;
+        return f;
+    }
+
+    // How bright and far-reaching a light is: the weakest are turned off first.
+    inline double Strength(const Light& light)
+    {
+        return std::abs(light.brightness) * std::max(0.0, light.lightRadius);
+    }
+
+    struct FixPlan
+    {
+        Fix fix = Fix::MakeStatic;
+        std::vector<int> lights;     // the lights that change (indices into the light list)
+        int stillDynamic = 0;        // would still count: LightEffect 22 or both heat values set
+        int notInGame = 0;           // lights of the row that already cost nothing in game
+        bool Empty() const { return lights.empty(); }
+    };
+
+    // The row's in-game lights, made static. Lights that would still be
+    // dynamic afterwards are left out and counted.
+    inline FixPlan PlanMakeStatic(const std::vector<Light>& lights, const std::vector<int>& row)
+    {
+        FixPlan plan;
+        plan.fix = Fix::MakeStatic;
+        std::set<int> seen;
+        for (int index : row)
+        {
+            if (index < 0 || index >= static_cast<int>(lights.size()) || !seen.insert(index).second) continue;
+            const auto& flags = lights[index].flags;
+            if (!CountsInGame(flags)) { ++plan.notInGame; continue; }
+            if (CountsInGame(Applied(flags, Fix::MakeStatic))) { ++plan.stillDynamic; continue; }
+            plan.lights.push_back(index);
+        }
+        return plan;
+    }
+
+    // The row's count weakest in-game lights (by Strength, ties by list
+    // order), turned off.
+    inline FixPlan PlanTurnOffWeakest(const std::vector<Light>& lights, const std::vector<int>& row, int count)
+    {
+        FixPlan plan;
+        plan.fix = Fix::TurnOff;
+        std::vector<int> candidates;
+        std::set<int> seen;
+        for (int index : row)
+        {
+            if (index < 0 || index >= static_cast<int>(lights.size()) || !seen.insert(index).second) continue;
+            if (CountsInGame(lights[index].flags)) candidates.push_back(index);
+            else ++plan.notInGame;
+        }
+        std::stable_sort(candidates.begin(), candidates.end(), [&](int a, int b) { return Strength(lights[a]) < Strength(lights[b]); });
+        if (count < 0) count = 0;
+        if (static_cast<int>(candidates.size()) > count) candidates.resize(static_cast<size_t>(count));
+        plan.lights = candidates;
+        return plan;
+    }
+
+    inline std::string Plural(size_t count, const char* one, const char* many)
+    {
+        return std::to_string(count) + " " + (count == 1 ? one : many);
+    }
+
+    // The question shown in the window before a fix is applied.
+    inline std::string Confirmation(const FixPlan& plan, const std::string& what, const std::vector<Light>& lights)
+    {
+        if (plan.Empty())
+        {
+            std::string text = what + ": nothing to change.";
+            if (plan.stillDynamic) text += " " + Plural(static_cast<size_t>(plan.stillDynamic), "light is", "lights are")
+                + " dynamic through LightEffect 22 or heat values; change those in its properties.";
+            else text += " No light here is drawn in game.";
+            return text;
+        }
+        std::string names;
+        for (size_t i = 0; i < plan.lights.size() && i < 6; ++i)
+            names += (i ? ", " : "") + lights.at(static_cast<size_t>(plan.lights[i])).name;
+        if (plan.lights.size() > 6) names += " and " + std::to_string(plan.lights.size() - 6) + " more";
+        std::string text = plan.fix == Fix::MakeStatic
+            ? "Make " + Plural(plan.lights.size(), "in-game light", "in-game lights") + " in " + what
+                + " static (baked by Build Lighting, no longer drawn per frame)?"
+            : "Turn off the " + Plural(plan.lights.size(), "weakest in-game light", "weakest in-game lights") + " in " + what
+                + " (LightType None)?";
+        text += " " + names + ".";
+        if (plan.stillDynamic) text += " " + Plural(static_cast<size_t>(plan.stillDynamic), "light stays", "lights stay")
+            + " dynamic through LightEffect 22 or heat values.";
+        return text;
+    }
+
+    // The status after a fix: what changed and the row's new in-game count.
+    inline std::string Done(const FixPlan& plan, size_t changed, const std::string& what, int inGameBefore, int inGameAfter)
+    {
+        std::string text = (plan.fix == Fix::MakeStatic ? "Made " : "Turned off ") + Plural(changed, "light", "lights")
+            + (plan.fix == Fix::MakeStatic ? " static" : "") + " in " + what + " as one undoable step (Edit > Undo reverts it). In game there: "
+            + std::to_string(inGameBefore) + " -> " + std::to_string(inGameAfter) + ".";
+        if (changed < plan.lights.size()) text += " " + std::to_string(plan.lights.size() - changed) + " no longer exist; Refresh.";
+        if (plan.fix == Fix::MakeStatic) text += " Rebuild lighting to bake them.";
         return text;
     }
 

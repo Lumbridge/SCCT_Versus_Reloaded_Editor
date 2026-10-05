@@ -310,7 +310,27 @@ number with duplicate and unknown list entries ignored, the largest overlapping
 group as a maximal clique (a chain is not a group; a group straddling zones counts
 each zone's own share and is listed under the zone holding most of it), hotspot
 order and de-duplication, threshold clamping, the build warning's own limits, an
-unbuilt BSP, and the warning text.
+unbuilt BSP, and the warning text. The fixes from a row: Make static (clears
+bApplyToInGameLighting and bDynamicLight, sets bApplyToStaticLighting; lights kept
+dynamic by LightEffect 22 or the heat values are left out and counted), Turn off
+the weakest N (LightType None, by LightBrightness x LightRadius, ties in list
+order, lights that already cost nothing skipped), duplicate and unknown entries,
+and the confirmation and result texts.
+
+## Render Budget
+
+`tools/test_workflow_tools.cmd` includes `RenderBudgetModelTests.cpp`: per-zone
+totals (actors, those drawn in game, static meshes and their triangles, BSP
+polygons by their front zone with invisible and portal surfaces left out, unique
+materials and the textures they reach, emitters), hidden meshes not counted,
+guideline flags and clamping, hotspot order (zone measures and single heavy meshes
+by how far over they are) and texts, the point-in-zone BSP walk, camera axes from
+an Unreal rotation, the view frustum, polygon clipping, the portal walk (a door
+ahead and the one beyond it are seen, one behind or off to the side is not, the
+frustum narrows door by door, a camera standing in a portal sees through it, a
+camera outside every zone culls nothing, a cut-short search says so) and the view
+totals (actors the engine drew add their zones; BSP counts only for zones seen
+through portals).
 
 ## Map Check
 
