@@ -523,7 +523,9 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
         if (message == WM_NOTIFY)
         {
             const auto* header = reinterpret_cast<NMHDR*>(l);
-            if (header->idFrom == Tree && header->code == TVN_SELCHANGEDA && !s->filling)
+            // The dialog is created with DialogBoxIndirectParamW, so the tree sends the
+            // W notification; the A and W NMTREEVIEW layouts agree up to lParam.
+            if (header->idFrom == Tree && (header->code == TVN_SELCHANGEDA || header->code == TVN_SELCHANGEDW) && !s->filling)
             {
                 const auto* change = reinterpret_cast<NMTREEVIEWA*>(l);
                 if (change->itemNew.lParam >= 0 && static_cast<size_t>(change->itemNew.lParam) < Entries(*s).size())
