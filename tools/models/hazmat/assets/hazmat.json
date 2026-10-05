@@ -1,9 +1,9 @@
 {
-  "points": 3610,
-  "wedges": 4429,
-  "faces": 6882,
-  "suit_faces": 6200,
-  "gear_faces": 682,
+  "points": 5187,
+  "wedges": 7832,
+  "faces": 10254,
+  "suit_faces": 7878,
+  "gear_faces": 2376,
   "materials": [
     "HazmatSuit",
     "HazmatGear"
@@ -14,23 +14,13 @@
     0
   ],
   "visor_front_mesh": [
-    0.0,
-    16.27,
-    73.59
-  ],
-  "visor_front_head_local": [
-    11.89,
-    -15.29,
-    0.0
-  ],
-  "merc_front_head_local": [
-    12.11,
-    -13.9,
-    -0.02
+    -0.86,
+    17.71,
+    73.55
   ],
   "goggle_offset_from_merc_front": [
-    -0.2,
-    -1.4,
-    0.0
+    -0.1,
+    -2.8,
+    -0.8
   ]
 }
