@@ -334,6 +334,7 @@ namespace
                "align to the last selected, distribute evenly, copies in a line, round a centre or along a path); Save Selection as Assembly;\r\n"
                "Edit SMagicEvent; Add SObjective / triggers on a mission or objective; position the builder brush around meshes.\r\n"
                "Brush face or vertices: snap to the grid per axis.   Texture / mesh browser: Favorites, Find Usages and Find Usages in All Maps.\r\n"
+               "Staircase brush or its faces: Smooth Staircase (an invisible blocking ramp over the steps) / Remove Staircase Smoothing.\r\n"
                "Any viewport: Builder Brush > Place Here; Measure > Start Here / To Here / Clear Measurement (distance,\r\n"
                "dX/dY/dZ, player heights and run time, drawn into every viewport).\r\n"
                "\r\n"

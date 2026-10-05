@@ -22,6 +22,7 @@
 #include "PlacementModel.h"
 #include "CharacterSkinPresetsModel.h"
 #include "MinimapModel.h"
+#include "StairSmoothModel.h"
 #include "logger.h"
 #include "MapRecovery.h"
 #include "BspDiagnostics.h"
@@ -1492,4 +1493,5 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "CharacterSkinPresetsNative.inl"
 #include "MinimapNative.inl"
 #include "MapRecoveryNative.inl"
+#include "StairSmoothNative.inl"
 }

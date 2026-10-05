@@ -697,7 +697,8 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         //   41260-41279 placement tools       41280-41299 render budget
         //   41300-41319 map recovery          41320-41339 map JSON preview
         //   41340-41359 favorites window      41360-41379 updater / checkpoints
-        //   41380-41399 spare
+        //   41380-41384 spare             41385-41389 smooth staircase
+        //   41390-41399 spare
         cmp dword ptr [esp+4], 41399
         jbe workflow_dispatch
     workflow_legacy_range:
