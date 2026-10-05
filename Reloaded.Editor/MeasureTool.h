@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <array>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 // Measure in the editor's viewports: right-click > Measure > Start Here / To
@@ -24,8 +25,15 @@ namespace MeasureTool
     // viewport a right-click came from, and takes M. True when consumed.
     bool ViewportMessage(void* viewport, UINT message, WPARAM wParam, LPARAM lParam);
 
-    // Lines another tool draws into every level viewport through the same
-    // overlay (the placement tools' copy preview), with no depth test.
+    // Lines another tool draws into every level viewport of the map open now
+    // (Map Check's leak path), kept under the tool's name; an empty list removes
+    // them, and they go when another map is opened. Colours are FColor in
+    // memory order, 0xAARRGGBB.
+    struct OverlayLine { double from[3], to[3]; uint32_t colour; };
+    void SetOverlay(const std::string& owner, const std::vector<OverlayLine>& lines);
+
+    // The placement tools' copy preview: SetOverlay under its own name,
+    // without the redraw.
     // Colours are FColor (B,G,R,A in memory, 0xAARRGGBB as a number).
     // An empty list clears them; the caller redraws.
     struct ToolLine { std::array<double, 3> from, to; uint32_t colour; };

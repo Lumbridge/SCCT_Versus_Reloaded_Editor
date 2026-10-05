@@ -312,6 +312,33 @@ each zone's own share and is listed under the zone holding most of it), hotspot
 order and de-duplication, threshold clamping, the build warning's own limits, an
 unbuilt BSP, and the warning text.
 
+## Map Check
+
+`tools/test_workflow_tools.cmd` includes `MapCheckModelTests.cpp`: point queries
+copied from `UModel::PointRegion` (zone of the last node's side, solid behind CSG
+walls, a point on a plane counts as in front, an unbuilt BSP and a broken child
+index), segment-through-portal tests in either winding, the collision cylinder
+samples, which actors are checked and which are tested against geometry
+(triggers and objectives are not), actors in the void, far outside the bounds,
+beyond the world limit, stuck in BSP or a static mesh, an origin resting on a
+floor, the tolerance and far-distance settings, a portal with a gap (the two
+rooms are one zone; the leak path goes round the sheet through the gap, never
+through it) and one that fills its opening (the path is marked as through the
+sheet), unused and unconnected portals, both faces of a sheet as one row, the
+64-zone caveat, ZoneInfos in solid space, zones without a ZoneInfo, a level open
+to the outside, the stock entries' severities, and an unbuilt map.
+
+Not covered by the native suite. It was checked in a disposable install with an
+injected probe on ShipD: the clean map, then a player start moved into the void,
+one sunk 40 units, a light moved 10,000 units out and a static mesh actor's
+bStatic cleared (listed by the stock check, captured without its dialog); then,
+reloaded, a second ZoneInfo placed beyond a sealing zone portal and the portal
+taken out with Build Geometry and Build BSP (MAP REBUILD, BSP REBUILD): Map Check
+listed the two ZoneInfos in one zone with a 2,036-unit leak path drawn in the
+viewports, as the stock check's "in the same zone as" entry agreed; and a
+ZoneInfo moved into solid space, reported by both. Rows selected and framed their
+actors and portal surfaces.
+
 ## Local BSP lighting matching
 
 Compile and run `tests/LocalLightingMatchTests.cpp` with C++17 or later. It tests

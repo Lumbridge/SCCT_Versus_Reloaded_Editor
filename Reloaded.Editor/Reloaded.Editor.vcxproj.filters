@@ -26,6 +26,8 @@
     <ClInclude Include="MapUsagesWindow.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="LightingBudget.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="LightingBudgetModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MapCheck.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MapCheckModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="LevelSnapshot.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="LevelSnapshotModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="FavoritesModel.h"><Filter>Header Files</Filter></ClInclude>
@@ -66,6 +68,7 @@
     <ClInclude Include="EmitterLibraryDefaults.gen.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="EmitterLibraryNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="LightingBudgetNative.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MapCheckNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="StagePanel.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="LightingPanel.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="PropertiesPanel.inl"><Filter>Header Files</Filter></ClInclude>
@@ -419,6 +422,7 @@
     <ClCompile Include="MapUsages.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MapUsagesWindow.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="LightingBudget.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="MapCheck.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="LevelSnapshot.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="SelfUpdater.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="CrashRecovery.cpp"><Filter>Source Files</Filter></ClCompile>

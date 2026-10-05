@@ -7,11 +7,19 @@
 INIT_HOOKS;
 
 static MapCheckLog::Sink s_sink;
+static MapCheckLog::Capture s_capture;
+static int s_skipOriginal;
 
-static void __cdecl RecordEntry(const char* message)
+// Returns 1 when the entry was captured and the stock dialog should not see it.
+static int __cdecl RecordEntry(int type, void* actor, const char* message)
 {
+    if (s_capture)
+    {
+        s_capture(type, actor, message);
+        return 1;
+    }
     if (!message || !*message)
-        return;
+        return 0;
 
     char line[512];
     _snprintf_s(line, sizeof(line), _TRUNCATE, "Map Check: %s", message);
@@ -19,6 +27,7 @@ static void __cdecl RecordEntry(const char* message)
     Logger::log(line);
     if (s_sink)
         s_sink(line);
+    return 0;
 }
 
 // FFeedbackContextWindows::MapCheck_Add(int type, AActor* actor, const char* message).
@@ -28,16 +37,22 @@ JMP_HOOK(0x10e3a520, MapCheckAddHook)
     static int Resume = 0x10e3a525;
     __asm {
         pushad                          // [esp+0x20] retaddr, +0x24 type, +0x28 actor, +0x2c message
-        mov  eax, dword ptr [esp + 0x2c]
-        push eax
+        push dword ptr [esp + 0x2c]     // message
+        push dword ptr [esp + 0x2c]     // actor
+        push dword ptr [esp + 0x2c]     // type
         call RecordEntry
-        add  esp, 4
+        add  esp, 12
+        mov  dword ptr [s_skipOriginal], eax
         popad
+        cmp  dword ptr [s_skipOriginal], 0
+        jne  captured
 
         push ebp
         mov  ebp, esp
         push -1
         jmp  dword ptr [Resume]
+    captured:
+        ret  12                         // __thiscall, three arguments
     }
 }
 
@@ -64,4 +79,9 @@ void MapCheckLog::Initialize()
 void MapCheckLog::SetSink(Sink sink)
 {
     s_sink = sink;
+}
+
+void MapCheckLog::SetCapture(Capture capture)
+{
+    s_capture = capture;
 }
