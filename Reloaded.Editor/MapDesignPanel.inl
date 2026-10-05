@@ -5472,6 +5472,10 @@ void OpenDesign(HWND owner)
         }
     }
     catch(const std::exception&) { /* Default placement. */ }
+    // Owned by the editor's frame, not by whatever window was active: owned by
+    // the Storeys palette, say, Map Design was destroyed along with it when
+    // the palette closed.
+    if(HWND frame=Editor::MainWindow())owner=frame;
     designWindow=CreateWindowExA(WS_EX_CONTROLPARENT,wc.lpszClassName,"Map Design",WS_OVERLAPPEDWINDOW|WS_VISIBLE,
                                  x,y,width,height,owner,nullptr,wc.hInstance,state);
     if(!designWindow)throw std::runtime_error("Cannot open Map Design.");

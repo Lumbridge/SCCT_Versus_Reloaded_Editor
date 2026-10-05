@@ -299,8 +299,9 @@ room and round into the objective room's side wall, two starts per team facing
 inwards, a mission with an objective and its computer terminal, and a ceiling
 light in each room. It asks for the room and corridor sizes and which extras to
 include. The pieces are one Undo step; the starts, mission, objective, terminal
-and lights follow as their own. Build geometry, then run the design check, and
-reshape from there.
+and lights follow as their own. If any part cannot be placed, everything the
+layout placed is undone and the status line says why. Build geometry, then run
+the design check, and reshape from there.
 
 - **Room:** carves the interior space. Width/length/height describe that space.
 - **Corridor:** the same carve, extended by the wall thickness at each end so it

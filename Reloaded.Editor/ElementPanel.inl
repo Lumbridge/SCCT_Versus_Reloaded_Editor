@@ -427,6 +427,7 @@ void ElementPaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void(c
 // starts per team, a mission with an objective and its terminal, and a
 // ceiling light in each room. The pieces are one Undo step; the game actors
 // and lights follow as their own.
+void StarterLayoutBuild(DesignState& s,const std::vector<InputField>& f,const Vector& at);
 void StarterLayout(DesignState& s,const Vector& at)
 {
     if(s.plane!=0)throw std::runtime_error("Place the starter layout from the top view.");
@@ -439,6 +440,23 @@ void StarterLayout(DesignState& s,const Vector& at)
         {"Starts, mission, objective and terminal","Yes",{"Yes","No"}},
         {"A light in each room","Yes",{"Yes","No"}}};
     if(!Ask(s.window,"Versus Starter Layout",f))return;
+    // The layout is several Undo steps (pieces, starts, mission, objective,
+    // terminal, lights). If any part fails, everything it placed goes back,
+    // with the library's pieces as they were, rather than leaving half a
+    // layout behind.
+    const auto mark=Editor::UndoMark();
+    const Json before=DesignData(s);
+    try{StarterLayoutBuild(s,f,at);}
+    catch(const std::exception& e)
+    {
+        const auto undone=Editor::UndoBackTo(mark);
+        try{DesignSave(s,before,false);}catch(const std::exception&){}
+        DesignRefresh(s);
+        throw std::runtime_error(std::string("The starter layout could not be completed, so ")+(undone?"what it placed was undone":"nothing was placed")+": "+e.what());
+    }
+}
+void StarterLayoutBuild(DesignState& s,const std::vector<InputField>& f,const Vector& at)
+{
     const double centre=Design::Number(f[0].value,256,8192),spawn=Design::Number(f[1].value,256,8192),run=Design::Number(f[2].value,64,8192);
     const bool vents=f[3].value=="Yes",game=f[4].value=="Yes",lights=f[5].value=="Yes";
     const double t=16,z=s.depth,px=at[0],py=at[1];

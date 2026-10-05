@@ -59,6 +59,12 @@ namespace Workflow::Editor
     bool Compatible(const std::string& actorPath, const std::string& type);
     bool Exec(const std::string& command);
     void Redraw();
+    // The editor's main frame (the root window the menus belong to), or null.
+    HWND MainWindow();
+    // A mark taken before a multi-step operation; UndoBackTo undoes every step
+    // recorded since and drops them from the redo queue. Returns the count.
+    unsigned UndoMark();
+    size_t UndoBackTo(unsigned mark);
     // Reflected authoring API. Snapshots carry map identity and property values;
     // mutations reject stale snapshots and use one native transaction.
     Json ExportMapAuthoring();

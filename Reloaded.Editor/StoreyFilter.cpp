@@ -341,9 +341,12 @@ void Open()
     wc.lpszClassName = "ReloadedStoreyFilter";
     RegisterClassA(&wc);
     // A slim palette, kept above the editor so it can sit against a viewport.
+    // Owned by the frame: whatever was active (Map Design, say) would take the
+    // palette with it when it closed.
+    HWND owner = Editor::MainWindow();
     window = CreateWindowExA(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, wc.lpszClassName, "Storeys",
                              WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, 230, 520,
-                             GetActiveWindow(), nullptr, wc.hInstance, nullptr);
+                             owner ? owner : GetActiveWindow(), nullptr, wc.hInstance, nullptr);
     if (!window) throw std::runtime_error("Cannot open the storey palette.");
     SetTimer(window, kTimer, 1500, nullptr);
     generation = 0;

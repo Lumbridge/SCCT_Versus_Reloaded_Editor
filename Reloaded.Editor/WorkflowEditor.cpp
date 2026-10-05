@@ -442,6 +442,47 @@ bool Exec(const std::string& command)
     auto e=Engine(); return Call<int>(e+0x28,0,command.c_str(),reinterpret_cast<void*>(Read<Address>(0x115BEFB0)))!=0;
 }
 void Redraw() { auto e=Engine(); Call(e,0xe8,reinterpret_cast<void*>(Level())); }
+HWND MainWindow()
+{
+    // The global holds the bottom bar; its root is the frame the menus live on.
+    try
+    {
+        auto frame=Read<Address>(0x1165df84);
+        auto window=frame?reinterpret_cast<HWND>(Read<Address>(frame+4)):nullptr;
+        window=window?GetAncestor(window,GA_ROOT):nullptr;
+        return window && IsWindow(window)?window:nullptr;
+    }
+    catch(const std::exception&){return nullptr;}
+}
+// Begin (0x1105adc2) stamps each new transaction at +4 with a running count
+// kept at 0x11691d70; the next stamp marks where an operation starts.
+unsigned UndoMark() { Engine(); return Read<unsigned>(0x11691d70); }
+size_t UndoBackTo(unsigned mark)
+{
+    auto buffer=Read<Address>(Engine()+0x148);
+    if(!buffer || Read<int>(buffer+0x44)!=0) return 0;
+    size_t undone=0;
+    for(;;)
+    {
+        const int count=Read<int>(buffer+0x2c), undo=Read<int>(buffer+0x34);
+        if(undo>=count) break;
+        const auto transaction=Read<Address>(buffer+0x28)+static_cast<Address>(count-1-undo)*0x28;
+        if(Read<unsigned>(transaction+4)<mark) break;
+        Exec("TRANSACTION UNDO");
+        if(Read<int>(buffer+0x34)!=undo+1) break;
+        ++undone;
+    }
+    // Nothing older than the mark was undone, and every Begin since the mark
+    // cleared the redo queue, so the whole queue is the half-done operation:
+    // drop it, as Transaction's rollback does, so Redo cannot replay it.
+    if(undone)
+    {
+        const int undo=Read<int>(buffer+0x34);
+        reinterpret_cast<void(__thiscall*)(void*,int,int)>(0x110590e0)(reinterpret_cast<void*>(buffer+0x28),Read<int>(buffer+0x2c)-undo,undo);
+        Write(buffer+0x34,0);
+    }
+    return undone;
+}
 Json Actors(bool selectedOnly)
 {
     Json result=Json::array();
