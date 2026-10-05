@@ -179,6 +179,8 @@
     <ClInclude Include="Version.h" />
     <ClInclude Include="WorkflowEditor.h" />
     <ClInclude Include="WorkflowTools.h" />
+    <ClInclude Include="CharacterPreview.h" />
+    <ClInclude Include="CharacterPreviewModel.h" />
     <ClInclude Include="EmitterPreview.h" />
     <ClInclude Include="CharacterSkinsImage.h" />
     <ClInclude Include="CharacterSkinsModel.h" />
@@ -282,6 +284,7 @@
     <ClCompile Include="WorkflowEditor.cpp" />
     <ClCompile Include="WorkflowGraph.cpp" />
     <ClCompile Include="WorkflowTools.cpp" />
+    <ClCompile Include="CharacterPreview.cpp" />
     <ClCompile Include="EmitterPreview.cpp" />
     <ClCompile Include="CharacterSkinsWindow.cpp" />
     <ClCompile Include="EmitterLibraryWindow.cpp" />

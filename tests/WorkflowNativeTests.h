@@ -253,7 +253,7 @@ void Screenshot(HWND window,const std::filesystem::path& path)
     DeleteObject(bitmap);DeleteDC(dc);ReleaseDC(window,screen);
 }
 }
-void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=false, bool snapOnly=false)
+void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=false, bool snapOnly=false, bool charactersOnly=false)
 {
     using J=nlohmann::json;
     try
@@ -290,6 +290,50 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             if(failures>0)throw std::runtime_error(std::to_string(failures)+" check(s) failed; first: "+firstFailure);
             Record("PASS",pass);
         };
+        // Character Skins 3D preview: a spy and a merc in a private level and viewport that
+        // never reach the map. The captures are kept beside the report for a look by eye.
+        auto characterPreview=[&]()
+        {
+            auto beforeActors=call({{"op","actors"}});auto undoBefore=call({{"op","characters.state"}})["undo"];
+            auto opened=call({{"op","characters.open"}});
+            require(opened["parentIsHost"]==true && opened["fillsHost"]==true && opened["renDev"]==true && opened["cameraInPreviewLevel"]==true && opened["rendMap"]==5,
+                "character preview viewport fills its host and looks into its own level");
+            auto stock=call({{"op","characters.show"}});Record("character_preview_stock",stock.dump().c_str());
+            const auto& figures=stock["state"]["figures"];
+            require(stock["state"]["faulted"]==false && figures.size()==2 && figures[0]["instance"]=="SkeletalMeshInstance" && figures[1]["instance"]=="SkeletalMeshInstance"
+                && figures[0]["outer"]=="ReloadedCharacterPreview" && figures[0]["mesh"]=="SPerso.ATT_01" && figures[1]["mesh"]=="SPerso.DEF_01",
+                "both stock characters stand in the preview package as skeletal meshes");
+            require(!stock["poses"].value("Spy",std::string()).empty() && !stock["poses"].value("Merc",std::string()).empty(),"both characters hold a pose from their team's animations");
+            auto stockFrame=call({{"op","characters.capture"},{"path",(directory/"character_preview_stock.bmp").string()}});Record("character_preview_stock_frame",stockFrame.dump().c_str());
+            require(stockFrame["nonBlackPixels"].get<int>()>2000,"the stock characters draw in the preview");
+            // The merc's body layer on the spy: a stock material, so always loaded, and a different look.
+            auto dressed=call({{"op","characters.show"},{"slots",{{"SpyBody","SPersoTextures.alpha_DEF01.DEF01_heat_bodu"}}}});Record("character_preview_dressed",dressed.dump().c_str());
+            auto dressedFrame=call({{"op","characters.capture"},{"path",(directory/"character_preview_dressed.bmp").string()}});
+            require(dressed["warnings"].empty() && dressedFrame["nonBlackPixels"].get<int>()>2000 && dressedFrame["checksum"]!=stockFrame["checksum"],"a slot material changes the spy's look");
+            // The spy's own stock model chosen in the box is no model: the slot is still worn.
+            auto ownModel=call({{"op","characters.show"},{"slots",{{"SpyBody","SPersoTextures.alpha_DEF01.DEF01_heat_bodu"}}},{"models",{{"SpyModel","SPerso.ATT_01"}}}});
+            auto ownModelFrame=call({{"op","characters.capture"}});
+            require(ownModel["warnings"].empty() && ownModelFrame["checksum"]==dressedFrame["checksum"],"the team's own stock model keeps its slot materials");
+            auto unused=call({{"op","characters.show"},{"slots",{{"SpyBody","SPersoTextures.alpha_DEF01.DEF01_heat_bodu"}}},{"models",{{"SpyModel","SPerso.DEF_01"}}}});
+            require(unused["warnings"].size()==1,"a slot under another model is reported as not worn");
+            auto model=call({{"op","characters.show"},{"models",{{"SpyModel","SPerso.DEF_01"}}}});Record("character_preview_model",model.dump().c_str());
+            require(model["state"]["figures"][0]["mesh"]=="SPerso.DEF_01" && !model["poses"].value("Spy",std::string()).empty(),"a spy in the merc model holds a spy pose");
+            call({{"op","characters.capture"},{"path",(directory/"character_preview_model.bmp").string()}});
+            bool refused=false;try{call({{"op","characters.show"},{"slots",{{"MercHead","NoSuchPackage.Missing"}}}});}catch(const std::exception&){refused=true;}
+            require(refused && call({{"op","characters.state"}})["figures"].size()==2,"a missing material is refused and the previous look stays");
+            call({{"op","characters.show"}});
+            call({{"op","characters.camera"},{"camera",{{"yaw",20000},{"pitch",-2000}}}});
+            call({{"op","characters.capture"},{"path",(directory/"character_preview_turned.bmp").string()}});
+            Exec("OBJ GARBAGE");auto collected=call({{"op","characters.state"}});
+            require(collected["level"]==true && collected["viewport"]==true && collected["faulted"]==false && collected["figures"].size()==2,"character preview survives garbage collection");
+            require(call({{"op","actors"}})==beforeActors && collected["undo"]==undoBefore,"character preview leaves map actors and Undo history untouched");
+            auto closed=call({{"op","characters.close"}});
+            require(closed["viewport"]==false && closed["figures"].empty() && closed["liveActorClasses"].value("SAnimatedMesh",0)==0,"closing the preview removes its characters and viewport");
+            auto reopened=call({{"op","characters.open"}});
+            require(reopened["viewport"]==true && reopened["viewportsOpened"].get<int>()==closed["viewportsOpened"].get<int>()+1,"reopening the character preview opens a new viewport");
+            call({{"op","characters.close"}});
+        };
+        if(charactersOnly){characterPreview();finish("character skins 3D preview");return;}
         auto checkSurfaceBrushSelection=[&](size_t minimumBrushes)
         {
             auto read=[](uintptr_t p){return *reinterpret_cast<uintptr_t*>(p);};
@@ -629,6 +673,7 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             std::copy(saved.begin(),saved.end(),header);*reinterpret_cast<int*>(editor+0x1ac)=mode;memcpy(field("Rotation"),oldRotation.data(),12);
         }
         if(snapOnly){finish("native brush fitting, vertex portals, grid snap commands and transactions");return;}
+        characterPreview();
         {
             auto inspect=[&](const J& actor){return call({{"op","magic.inspect"},{"actor",actor}});};
             auto ref=[](const J& actor){auto type=actor.at("class").get<std::string>();return type.substr(type.find_last_of('.')+1)+"'"+actor.at("path").get<std::string>()+"'";};

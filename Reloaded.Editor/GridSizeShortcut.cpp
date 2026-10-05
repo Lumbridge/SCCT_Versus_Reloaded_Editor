@@ -3,6 +3,7 @@
 #include "StoreyFilter.h"
 #include "MeasureTool.h"
 #include "EmitterPreview.h"
+#include "CharacterPreview.h"
 #include "GridSizeShortcutState.h"
 #include "MemoryWriter.h"
 #include <windowsx.h>
@@ -108,11 +109,12 @@ namespace
                                        WPARAM wParam, LPARAM lParam)
     {
         g_handledResult = 0;
-        // The emitter preview's own viewport takes all its mouse and keyboard input,
+        // The emitter and character previews' own viewports take all their mouse and keyboard input,
         // so nothing done in the preview reaches the map or its selection. A click
         // there never activates its (WS_POPUP-restyled) window: keyboard focus and
         // activation stay with the window that hosts the preview.
-        if (EmitterPreview::ViewportMessage(viewport, message, wParam, lParam))
+        if (EmitterPreview::ViewportMessage(viewport, message, wParam, lParam)
+            || CharacterPreview::ViewportMessage(viewport, message, wParam, lParam))
         {
             if (message == WM_MOUSEACTIVATE)
                 g_handledResult = MA_NOACTIVATE;

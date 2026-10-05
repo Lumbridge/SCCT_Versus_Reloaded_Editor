@@ -115,6 +115,10 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\CharacterSkinsModelTests.cpp /
 if errorlevel 1 goto failed
 "%TEMP%\CharacterSkinsModelTests.exe"
 if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\CharacterPreviewModelTests.cpp Reloaded.Editor\WorkflowModel.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\CharacterPreviewModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\CharacterPreviewModelTests.exe"
+if errorlevel 1 goto failed
 popd
 exit /b 0
 :failed

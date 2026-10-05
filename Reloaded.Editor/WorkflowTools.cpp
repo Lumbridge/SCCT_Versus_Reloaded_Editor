@@ -23,6 +23,7 @@
 #include "SecurityModel.h"
 #include "StageModel.h"
 #include "EmitterPreview.h"
+#include "CharacterPreview.h"
 #include "MeasureTool.h"
 #include "EntryThumbnailModel.h"
 #include "LevelSnapshot.h"
@@ -1188,6 +1189,13 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="preview.detach"){EmitterPreview::Detach();result=EmitterPreview::State();}
         else if(op=="preview.step"){EmitterPreview::Step(q.value("seconds",1.0));result=EmitterPreview::State();}
         else if(op=="preview.camera"){if(q.contains("camera"))EmitterPreview::SetCamera(q.at("camera"));result=EmitterPreview::Camera();}
+        else if(op=="characters.open"){std::string error;if(!CharacterPreview::OpenTestWindow(error))throw std::runtime_error(error);result=CharacterPreview::State();}
+        else if(op=="characters.show"){result=CharacterPreview::Show(q.value("slots",Json::object()),q.value("models",Json::object()));result["state"]=CharacterPreview::State();}
+        else if(op=="characters.capture") result=CharacterPreview::Capture(q.value("path",std::string()));
+        else if(op=="characters.clear"){CharacterPreview::Clear();result=CharacterPreview::State();}
+        else if(op=="characters.close"){CharacterPreview::CloseTestWindow();result=CharacterPreview::State();}
+        else if(op=="characters.state") result=CharacterPreview::State();
+        else if(op=="characters.camera"){if(q.contains("camera"))CharacterPreview::SetCamera(q.at("camera"));result=CharacterPreview::Camera();}
         else if(op=="map") result={{"key",Editor::MapKey()},{"level",Editor::LevelPath()}};
         else throw std::runtime_error("Unknown workflow request.");
         auto text=Json({{"ok",true},{"result",result}}).dump(); if(text.size()+1>capacity) return -static_cast<int>(text.size()+1);

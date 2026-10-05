@@ -39,6 +39,9 @@ namespace EmitterPreview
     // Called from the UWindowsViewport::ViewportWndProc hook (GridSizeShortcut.cpp)
     // for every viewport; true when the message belonged to the preview and was consumed.
     bool ViewportMessage(void* viewport,UINT message,WPARAM wParam,LPARAM lParam);
+    // Another private preview viewport (CharacterPreview.cpp) that the IsWire and selection
+    // overlay hooks treat as this one: never wireframe, no map selection printed. Null clears.
+    void ExemptViewport(void* viewport);
 
     // Test host for the headless harness and manual checks: a top-level
     // "Emitter Preview Test" window with one child host panel. Refused while the

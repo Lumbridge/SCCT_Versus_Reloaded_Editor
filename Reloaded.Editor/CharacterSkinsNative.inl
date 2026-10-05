@@ -220,6 +220,9 @@ Json ApplyCharacterSkins(const Json& slots,const Json& models,const Json& goggle
     {
         auto path=models.value(model.property,std::string{});
         if(!CharacterSkins::ValidPath(path))throw std::runtime_error(std::string(model.label)+": not a model path: "+path);
+        // The team's own stock model is no model: it keeps the team's skin slots, which a
+        // model would replace with its own materials.
+        if(Fold(path)==Fold(model.stockMesh))path.clear();
         std::string text="None";
         if(!path.empty())
         {
