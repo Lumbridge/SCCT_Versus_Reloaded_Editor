@@ -33,7 +33,7 @@ namespace
     }
     struct AuthoringPlan
     {
-        Json document,summary=Json::array();
+        Json document,summary=Json::array(),rows=Json::array();
         std::map<std::string,Address> types;
         std::map<std::string,Json> identities,schemas;
     };
@@ -199,6 +199,14 @@ namespace
                 auto path=op.at("actor").at("path").get<std::string>();
                 plan.identities[path]=snapshot.at("actor");plan.types[path]=Find(snapshot.at("actor").at("class"));plan.schemas[path]=snapshot.at("schema");
             }
+            else if(kind=="delete")
+            {
+                // Only actors the export lists: never the LevelInfo, the builder brush, cameras or particle components.
+                const auto path=op.at("actor").at("path").get<std::string>();
+                if(!plan.identities.count(path) || plan.identities.at(path).at("class")!=op.at("actor").at("class"))
+                    throw std::runtime_error("Only actors the export lists can be deleted (not the LevelInfo, the builder brush, cameras or particle components), and only while they exist: "+path);
+                if(InspectActor(op.at("actor")).at("values")!=op.at("before"))throw std::runtime_error("Actor changed since export, so it is not deleted: "+path);
+            }
         }
         auto expect=document.value("expect",Json::object());
         for(const auto& op:document.at("operations"))if(op.at("op")=="update")expect[op.at("actor").at("path").get<std::string>()]=op.at("before");
@@ -209,50 +217,74 @@ namespace
             auto current=InspectActor(plan.identities.at(ref));
             if(current.at("values")!=expect.at(ref))throw std::runtime_error("Linked actor changed since export: "+ref);
         };
+        // A row click selects an existing actor; actors the file creates have nothing to select yet.
+        auto selectable=[&](const std::string& ref)->Json{return ref.find('.')!=std::string::npos && plan.identities.count(ref)?plan.identities.at(ref):Json();};
         for(auto& op:plan.document["operations"])
         {
             auto kind=op.at("op").get<std::string>();
-            if(kind=="load"){plan.summary.push_back("load package "+op.at("package").get<std::string>());continue;}
+            if(kind=="load")
+            {
+                plan.summary.push_back("load package "+op.at("package").get<std::string>());
+                plan.rows.push_back(Authoring::Row("Package",op.at("package").get<std::string>(),nullptr,"load",{},"loads before the map changes"));continue;
+            }
             if(kind=="texture")
             {
                 const auto size=AuthoringImage(op);
-                plan.summary.push_back("import texture "+Authoring::TexturePath(op)+" "+std::to_string(size.first)+"x"+std::to_string(size.second)+" from "+op.at("file").get<std::string>()+" ("+op.value("format",std::string("file's own format"))+(op.value("mips",true)?", mips":", no mips")+")");continue;
+                plan.summary.push_back("import texture "+Authoring::TexturePath(op)+" "+std::to_string(size.first)+"x"+std::to_string(size.second)+" from "+op.at("file").get<std::string>()+" ("+op.value("format",std::string("file's own format"))+(op.value("mips",true)?", mips":", no mips")+")");
+                plan.rows.push_back(Authoring::Row("Package",Authoring::TexturePath(op),nullptr,"import texture",{},std::to_string(size.first)+"x"+std::to_string(size.second)+" "+op.value("format",std::string("file's own format"))+" from "+op.at("file").get<std::string>()));continue;
             }
-            if(kind=="save"){plan.summary.push_back("save package "+op.at("package").get<std::string>()+" to Packages\\Textures"+(op.value("overwrite",false)?" (replacing the file, backed up)":""));continue;}
+            if(kind=="save")
+            {
+                plan.summary.push_back("save package "+op.at("package").get<std::string>()+" to Packages\\Textures"+(op.value("overwrite",false)?" (replacing the file, backed up)":""));
+                plan.rows.push_back(Authoring::Row("Package",op.at("package").get<std::string>(),nullptr,"save",{},std::string("Packages\\Textures")+(op.value("overwrite",false)?" (replacing the file, backed up)":"")));continue;
+            }
             if(kind=="surface")
             {
                 const auto texture=op.at("texture").get<std::string>();
                 if(!materialReady(texture))throw std::runtime_error("Load the surface material first (or import it in this file): "+texture);
                 const auto model=Read<Address>(Level()+0x13c);const auto count=model?Array(model+0x94,0x2c).size():0;
                 for(const auto& surface:op.at("surfaces"))if(surface.get<size_t>()>=count)throw std::runtime_error("The map has "+std::to_string(count)+" BSP surfaces; surface "+std::to_string(surface.get<size_t>())+" does not exist. Rebuild geometry first.");
-                plan.summary.push_back("texture "+std::to_string(op.at("surfaces").size())+" BSP surface(s) with "+texture);continue;
+                plan.summary.push_back("texture "+std::to_string(op.at("surfaces").size())+" BSP surface(s) with "+texture);
+                plan.rows.push_back(Authoring::Row("Surface",std::to_string(op.at("surfaces").size())+" BSP surface(s)",nullptr,"texture",{},texture));continue;
+            }
+            if(kind=="delete")
+            {
+                const auto path=op.at("actor").at("path").get<std::string>();
+                plan.summary.push_back("delete "+path+" ("+op.at("actor").at("class").get<std::string>()+")");
+                for(auto& row:Authoring::DeleteRows(plan.identities.at(path),op.at("before")))plan.rows.push_back(std::move(row));
+                continue;
             }
             if(kind=="link")
             {
                 auto event=op.at("event").get<std::string>(),target=op.at("target").get<std::string>();
-                if(deferred && (!plan.types.count(event) || !plan.types.count(target))){plan.summary.push_back(kind+" "+event+" / "+target+" (checked after the file's packages load)");continue;}
+                const auto trigger=op.at("trigger").get<bool>();
+                const auto row=Authoring::Row("Link",event,selectable(event),trigger?"triggered by":"action (group "+std::to_string(op.value("group",0))+")",{},target+(trigger?std::string{}:", delay "+op.value("delay",std::string("0"))+"s"));
+                if(deferred && (!plan.types.count(event) || !plan.types.count(target))){plan.summary.push_back(kind+" "+event+" / "+target+" (checked after the file's packages load)");plan.rows.push_back(row);continue;}
                 if(!plan.types.count(event) || !plan.types.count(target) || !AuthoringSubclass(plan.types.at(event),"SBase.SMagicEvent") || !AuthoringSubclass(plan.types.at(target),"Actor"))throw std::runtime_error("Link requires an SMagicEvent and an actor target.");
                 checkExisting(event);checkExisting(target);
-                plan.summary.push_back(kind+" "+event+(op.at("trigger").get<bool>()?" <- ":" -> ")+target+" (group "+std::to_string(op.value("group",0))+", delay "+op.value("delay",std::string("0"))+"s)");continue;
+                plan.summary.push_back(kind+" "+event+(trigger?" <- ":" -> ")+target+" (group "+std::to_string(op.value("group",0))+", delay "+op.value("delay",std::string("0"))+"s)");
+                plan.rows.push_back(row);continue;
             }
             const auto id=kind=="update"?op.at("actor").at("path").get<std::string>():op.at("id").get<std::string>();
-            if(deferred && !plan.types.count(id))continue;
+            const auto pending=Authoring::Row("Add",id,nullptr,"class",{},op.contains("class")?op.at("class").get<std::string>()+" (checked after the file's packages load)":std::string{});
+            if(deferred && !plan.types.count(id)){plan.rows.push_back(pending);continue;}
             if(kind=="component")
             {
                 auto owner=op.at("owner").get<std::string>();
-                if(deferred && !plan.types.count(owner))continue;
+                if(deferred && !plan.types.count(owner)){plan.rows.push_back(pending);continue;}
                 if(!plan.types.count(owner) || !AuthoringSubclass(plan.types.at(owner),"Emitter"))throw std::runtime_error("Particle component owner must be an emitter actor.");
                 checkExisting(owner);
                 for(const auto& other:document.at("operations"))if(other.contains("properties") && other.at("properties").contains("Emitters") && ((other.at("op")=="update" && other.at("actor").at("path")==owner) || (other.at("op")=="create" && other.at("id")==owner)))throw std::runtime_error("Do not replace Emitters while adding components to the same owner.");
             }
             plan.summary.push_back(kind+" "+id+" ("+Path(plan.types.at(id))+")"+(kind=="component"?" attached to "+op.at("owner").get<std::string>():std::string{}));
+            Json resolved=Json::object();
             for(auto it=op["properties"].begin();it!=op["properties"].end();++it)
             {
                 if(AuthoringPastedTeam(op,plan.types.at(id),it.key()))
                 {
                     const auto team=it.value().is_string()?it.value().get<std::string>():std::string{};
                     if(team.empty() || team.size()>3 || team.find_first_not_of("0123456789")!=std::string::npos || std::stoi(team)>255)throw std::runtime_error(id+": TeamNumber must be \"0\"-\"255\".");
-                    plan.summary.push_back("  TeamNumber = "+team);continue;
+                    plan.summary.push_back("  TeamNumber = "+team);resolved[it.key()]=team;continue;
                 }
                 if(!plan.schemas.at(id).contains(it.key()))throw std::runtime_error(id+": unsupported property "+it.key());
                 const auto& schema=plan.schemas.at(id).at(it.key());
@@ -283,6 +315,41 @@ namespace
                 references(schema,it.value(),value);
                 if(kind=="update")plan.summary.push_back("  "+it.key()+": "+Magic::Text(op.at("before").at(it.key()))+" -> "+Magic::Text(value));
                 else plan.summary.push_back("  "+it.key()+" = "+Magic::Text(value));
+                resolved[it.key()]=value;
+            }
+            Json rows;
+            if(kind=="update")rows=Authoring::UpdateRows(id,selectable(id),op.at("before"),resolved);
+            else
+            {
+                rows=Authoring::CreateRows(id,Path(plan.types.at(id)),resolved);
+                if(kind=="component")
+                {
+                    const auto owner=op.at("owner").get<std::string>();
+                    for(auto& row:rows)row["select"]=selectable(owner);
+                    rows.insert(rows.begin()+1,Authoring::Row("Add",id,selectable(owner),"component of",{},owner));
+                }
+            }
+            for(auto& row:rows)plan.rows.push_back(std::move(row));
+        }
+        // What still points at a deleted actor: the stock delete allows it, but the preview says so.
+        if(Authoring::Deletes(document))
+        {
+            std::map<Address,std::string> doomed;std::map<std::string,std::string> tags;
+            for(const auto& op:document.at("operations"))if(op.at("op")=="delete")
+                if(auto a=MagicResolve(op.at("actor")))doomed[a]=op.at("actor").at("path").get<std::string>();
+            const auto everyone=Actors();
+            for(const auto& live:everyone)if(doomed.count(MagicResolve(live)) && live.at("tag")!="None")tags[Fold(live.at("tag"))]=live.at("path").get<std::string>();
+            // A Tag another surviving actor shares still has a receiver.
+            for(const auto& live:everyone)if(!doomed.count(MagicResolve(live)))tags.erase(Fold(live.at("tag")));
+            size_t noted=0;
+            for(const auto& live:everyone)
+            {
+                auto a=MagicResolve(live);if(!a || doomed.count(a) || !live.value("authorable",false))continue;
+                for(const auto& ref:ReferencesOf(a))if(doomed.count(ref.target) && noted++<200)
+                {const auto& path=doomed.at(ref.target);plan.rows.push_back(Authoring::Row("Delete",path,plan.identities.at(path),"still referenced by",live.at("path").get<std::string>()+"."+ref.key,"None"));}
+                const auto event=Fold(live.at("event"));
+                if(event!="none" && tags.count(event) && noted++<200)
+                {const auto& path=tags.at(event);plan.rows.push_back(Authoring::Row("Delete",path,plan.identities.at(path),"still the Event of",live.at("path").get<std::string>(),"nothing left to trigger"));}
             }
         }
         return plan;
@@ -292,8 +359,8 @@ Json ExportMapAuthoring()
 {
     Json result={{"format","scct.map-authoring"},{"version",1},{"map",AuthoringMapKey()},{"level",LevelPath()},
         {"actors",Json::array()},{"classes",Json::array()},{"assets",Json::object()},
-        {"changes",{{"format","scct.map-changes"},{"version",1},{"map",AuthoringMapKey()},{"description",""},{"operations",Json::array()}}},
-        {"instructions","Read docs/MapAuthoring.md. Coordinates are absolute Unreal units; rotation is pitch/yaw/roll, 65536 units per turn. Property leaves are strings. Copy complete values to update.before. Use {$ref: creationId} for references to new actors/components. The snapshot and geometry are reference information; import only a scct.map-changes document. Geometry, baked lighting and navigation are not rebuilt by import."}};
+        {"changes",{{"format","scct.map-changes"},{"version",Authoring::kLatestVersion},{"map",AuthoringMapKey()},{"description",""},{"operations",Json::array()}}},
+        {"instructions","Read docs/MapAuthoring.md. Coordinates are absolute Unreal units; rotation is pitch/yaw/roll, 65536 units per turn. Property leaves are strings. Copy complete values to update.before. Use {$ref: creationId} for references to new actors/components. To delete an actor, add {op: delete, actor, before} with its exported identity and complete values, and set allowDeletes: true on the change file. The snapshot and geometry are reference information; import only a scct.map-changes document. Geometry, baked lighting and navigation are not rebuilt by import."}};
     Json members=Json::array();
     for(const auto& actor:Actors())
     {
@@ -325,7 +392,8 @@ Json PreviewMapAuthoring(const Json& document)
 {
     auto plan=PlanAuthoring(document,false);
     const bool assets=AuthoringHas(document,"load") || AuthoringHas(document,"texture") || AuthoringHas(document,"save");
-    return {{"changes",plan.summary},{"note",std::string(assets?"Package loads, texture imports and package saves run first and are not undone by Undo. ":"")+"Map changes apply in one Undo step. Save the map to retain changes. Lighting, geometry and navigation are not rebuilt; playtest the result."}};
+    return {{"changes",plan.summary},{"rows",plan.rows},{"tally",Authoring::Tally(plan.rows)},
+        {"note",std::string(assets?"Package loads, texture imports and package saves run first and are not undone by Undo. ":"")+"Map changes apply in one Undo step. Save the map to retain changes. Lighting, geometry and navigation are not rebuilt; playtest the result."}};
 }
 Json ApplyMapAuthoring(const Json& document)
 {
@@ -337,6 +405,20 @@ Json ApplyMapAuthoring(const Json& document)
     auto selection=SelectedIdentities();
     struct Restore{Json selection;~Restore(){try{Select(selection);Redraw();}catch(...){}}} restore{selection};
     Transaction transaction("Import map JSON changes");Json created=Json::array();
+    // Deletes go first, through the editor's own delete inside this transaction, so the same Undo brings them back.
+    // Nothing else in the file may touch a deleted actor, so the order changes no result; but a delete after the
+    // paste in one transaction makes Undo fault restoring the level's actor list (seen on ShipD), as the stock
+    // tools never order them that way. Map Design's blockout rebuild deletes before pasting too.
+    Json deleted=Json::array();
+    for(const auto& op:document.at("operations"))if(op.at("op")=="delete")deleted.push_back(op.at("actor"));
+    if(!deleted.empty())
+    {
+        Select(deleted);
+        if(SelectedIdentities().size()!=deleted.size())throw std::runtime_error("Could not select the "+std::to_string(deleted.size())+" actor(s) to delete.");
+        if(!Exec("ACTOR DELETE"))throw std::runtime_error("The editor refused to delete the actors.");
+        std::set<std::string> remaining;for(const auto& live:Actors())remaining.insert(live.at("path").get<std::string>());
+        for(const auto& gone:deleted)if(remaining.count(gone.at("path").get<std::string>()))throw std::runtime_error("The editor did not delete "+gone.at("path").get<std::string>());
+    }
     std::string text="Begin Map\r\n";size_t count=0;
     for(const auto& op:document.at("operations"))if(op.at("op")=="create")
     {
@@ -420,5 +502,5 @@ Json ApplyMapAuthoring(const Json& document)
         if(!Exec("POLY SETTEXTURE"))throw std::runtime_error("Native surface texturing failed.");
         textured+=wanted.size();
     }
-    transaction.Commit();return {{"created",created},{"operations",document.at("operations").size()},{"assets",assets},{"surfaces",textured}};
+    transaction.Commit();return {{"created",created},{"deleted",deleted},{"operations",document.at("operations").size()},{"assets",assets},{"surfaces",textured}};
 }

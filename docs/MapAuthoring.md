@@ -5,9 +5,19 @@ for inspection, editing tools, or sharing. Selecting actors before export marks
 them in the snapshot and helps identify the intended area.
 
 Prepare a JSON **change file** using the exported template. Open **View > Import Map from JSON...**,
-read the scrollable preview, and choose **Apply changes**. The editor applies the
+review the preview, and choose **Apply changes**. The editor applies the
 batch in one native transaction. Undo reverses the batch; Redo restores it.
 Save the map to retain the changes.
+
+The preview lists every change as a row: **Add**, **Modify**, **Move**,
+**Delete**, **Link**, **Package** or **Surface**, with the actor, the property,
+and its value before and after. Updates show only what actually changes,
+property by property; inside structs and arrays (an SMagicEvent's `Groups`, for
+example) the row names the field that changes, such as `Groups[0].EventGroup[1]`.
+Location and Rotation changes are listed as moves. The heading counts the actors
+added, modified, moved and deleted. Clicking a row selects that actor in the map
+and points the viewports at it; actors the file creates have nothing to select
+until it is applied. **Cancel** changes nothing (apart from that selection).
 
 ## What is supported
 
@@ -33,6 +43,9 @@ or execute commands/scripts from JSON.
 Version 2 adds package loads, texture imports, package saves, brushes made of
 textured polygons and BSP surface texturing; see
 [Version 2](#version-2-packages-textures-polygon-brushes-and-surfaces).
+Version 3 adds explicit actor deletes; see [Version 3](#version-3-deleting-actors).
+The export's change template now says `"version": 3`; version 1 and 2 files
+keep working unchanged.
 
 ## Snapshot (`scct.map-authoring`, version 1)
 
@@ -53,7 +66,8 @@ textured polygons and BSP surface texturing; see
   is not silently claimed to be editable or losslessly exported.
 - `changes`: an empty change-file template containing the correct map identity.
 
-Exports are limited to 64 MiB. Change-file import is limited to 128 MiB, 64 JSON
+Exports are limited to 256 MiB and are written straight to the file; ShipD's
+export is about 42 MB. Change-file import is limited to 128 MiB, 64 JSON
 nesting levels and 2,000 operations. Individual property limits also apply.
 Selection is restored after export and import. No map save happens automatically.
 
@@ -299,6 +313,82 @@ the BSP only after its own rebuild. Up to 2,000,000 unique indices per operation
 A generated map usually uses two files: the first loads packages, imports and
 saves its textures, and creates the brushes and actors; then rebuild geometry and
 optionally apply a second file with `surface` operations; then save the map.
+
+## Version 3: deleting actors
+
+Set `"version": 3` to delete actors. Version 3 accepts every version 1 and 2
+operation, with the same limits, so an older file only needs its version raised
+to gain deletes. A delete names one exported actor and carries its complete
+exported values, and the file must also opt in with `"allowDeletes": true`:
+
+```json
+{
+  "format": "scct.map-changes",
+  "version": 3,
+  "map": "c:\\...\\packages\\mapsed\\shipd.sdc",
+  "description": "Replace the corridor light",
+  "allowDeletes": true,
+  "operations": [
+    {
+      "op": "delete",
+      "actor": {"path": "MyLevel.Light12", "class": "Engine.Light"},
+      "before": {"COPY": "the actor's entire exported values object here"}
+    },
+    {
+      "op": "create", "id": "CorridorLight", "class": "Engine.Light",
+      "properties": {"Location": {"X": "128", "Y": "96", "Z": "64"}}
+    }
+  ]
+}
+```
+
+Deletes are deliberately narrow, so a mistake cannot empty a map:
+
+- There is no "delete everything not listed" mode and no wildcard. Each actor
+  to delete is its own operation, up to 1,000 per file.
+- Without `"allowDeletes": true` a file with a delete is refused, and so is
+  `allowDeletes` in a version 1 or 2 file. A file that deletes must name the
+  exported map; `"map": "*"` is refused.
+- `before` must equal the actor's current values exactly, as with an update,
+  so a stale export or the wrong actor is refused. Copy the actor's `values`
+  object from the export.
+- Only actors the export lists can be deleted. The LevelInfo, the builder brush,
+  cameras and particle components are never deleted.
+- An actor the file deletes cannot also be updated, linked, given a component
+  or referenced with `$ref` by the same file.
+
+Deletes run before every other map change, through the editor's own delete, in
+the same Undo step. (Since nothing else in the file may touch a deleted actor,
+the order changes no result. Deleting after the batch's new actors were pasted
+made Undo crash the editor while restoring the level's actor list.) The preview lists each deleted actor with its class and
+location. It also warns when another actor still points at it, by an object
+property (`still referenced by`) or by an Event that only this actor's Tag
+answers (`still the Event of`). Like the editor's own Delete, the import allows
+this; those references are left pointing at nothing, so fix or remove them too.
+Deleting a brush needs a geometry rebuild.
+
+The import result (and the workflow API's `authoring.apply`) lists the deleted
+identities in `deleted`. `authoring.preview` returns the preview rows in `rows`
+(`change`, `target`, `select`, `property`, `before`, `after`) and the heading in
+`tally`, beside the older `changes` text lines.
+
+## Version 3 and preview verification
+
+Validation on 2026-10-05: Release/Win32 build and `MapAuthoringModelTests` passed.
+A disposable editor loaded ShipD and exported it through **View > Export Map to
+JSON...** (this first failed with "bad allocation": the export was built as one
+42 MB string, a contiguous block the 32-bit editor no longer had after loading
+ShipD; it is now streamed to the file). A version 3 change file changed a light's
+brightness and hue, raised a player start by 64 units, added a light, and deleted
+a light and a door mover (`allowDeletes` on). The preview listed 1 added, 1
+modified, 1 moved, 2 deleted, each property with its old and new value, and warned
+that the door was still the Event of a presence trigger. Clicking rows selected
+the light and the door in the map (the created light reported nothing to select),
+and Apply still worked afterwards. A re-export matched the file exactly with no
+other actor changed; one Undo restored the original export exactly, Redo
+reapplied it, and a second Undo was clean. Files without `allowDeletes`, deleting
+the LevelInfo or builder brush, or with a stale `before` were refused before the
+preview.
 
 ## Version 2 verification
 

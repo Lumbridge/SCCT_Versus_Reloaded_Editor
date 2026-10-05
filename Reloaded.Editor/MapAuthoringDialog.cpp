@@ -3,18 +3,57 @@
 #include "WorkflowEditor.h"
 #include "MapAuthoringModel.h"
 #include <commdlg.h>
+#include <commctrl.h>
+#include <vector>
 #include <fstream>
+#include <iomanip>
 #include <stdexcept>
 
 namespace MapAuthoringDialog
 {
 namespace
 {
-    struct Preview { std::wstring text;bool accepted=false; };
+    constexpr int kHeading=10,kList=11,kStatus=12;
+    constexpr std::streamoff kMaximumExport=256LL*1024*1024;
+    // Streams the export to disk. Pretty-printing a large map's export into one string needs a contiguous block
+    // the 32-bit editor rarely has once the map is loaded (ShipD failed with "bad allocation").
+    void WriteExport(const std::filesystem::path& path,const Workflow::Json& document)
+    {
+        auto temp=path;temp+=".tmp";std::error_code error;
+        try
+        {
+            std::ofstream out(temp,std::ios::binary|std::ios::trunc);if(!out)throw std::runtime_error("Cannot create "+temp.string());
+            out<<std::setw(2)<<document;out.flush();
+            if(!out)throw std::runtime_error("Could not write "+temp.string());
+            if(out.tellp()>kMaximumExport)throw std::runtime_error("The export exceeds 256 MiB.");
+        }
+        catch(...){std::filesystem::remove(temp,error);throw;}
+        std::filesystem::rename(temp,path,error);
+        if(error){std::filesystem::remove(temp,error);throw std::runtime_error("Could not replace "+path.string());}
+    }
+    // One list row: change, actor, property, before, after; and the existing actor a click selects.
+    struct Line { std::wstring cells[5];Workflow::Json select; };
+    struct Preview { std::wstring text;std::vector<Line> lines;bool accepted=false; };
     std::wstring Wide(const std::string& text)
     {
         auto count=MultiByteToWideChar(CP_UTF8,0,text.data(),static_cast<int>(text.size()),nullptr,0);
         std::wstring result(count,L'\0');MultiByteToWideChar(CP_UTF8,0,text.data(),static_cast<int>(text.size()),result.data(),count);return result;
+    }
+    // Long values (whole arrays) are shortened in the list; the change file holds them in full.
+    std::wstring Cell(const std::string& text)
+    {
+        auto wide=Wide(text);for(auto& c:wide)if(c==L'\r' || c==L'\n' || c==L'\t')c=L' ';
+        if(wide.size()>300)wide=wide.substr(0,297)+L"...";
+        return wide;
+    }
+    void Status(HWND window,const std::wstring& text){SetWindowTextW(GetDlgItem(window,kStatus),text.c_str());}
+    void Choose(HWND window,Preview& state,int index)
+    {
+        if(index<0 || index>=static_cast<int>(state.lines.size()))return;
+        const auto& line=state.lines[index];
+        if(line.select.is_null()){Status(window,line.cells[1]+L" is created by this file, so there is nothing to select yet.");return;}
+        try{Workflow::Editor::Select(Workflow::Json::array({line.select}),true);Status(window,L"Selected "+line.cells[1]+L" in the map.");}
+        catch(const std::exception& e){Status(window,L"Could not select "+line.cells[1]+L": "+Wide(e.what()));}
     }
     LRESULT CALLBACK PreviewProc(HWND window,UINT message,WPARAM w,LPARAM l)
     {
@@ -22,23 +61,48 @@ namespace
         if(message==WM_CREATE)
         {
             state=static_cast<Preview*>(reinterpret_cast<CREATESTRUCT*>(l)->lpCreateParams);SetWindowLongPtr(window,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(state));
-            // Created empty: an edit control refuses creation text beyond its default 30,000-character limit,
-            // which a large change file's preview exceeds. Raise the limit, then set the text.
-            auto edit=CreateWindowExW(WS_EX_CLIENTEDGE,L"EDIT",L"",WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_HSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,0,0,0,0,window,reinterpret_cast<HMENU>(10),nullptr,nullptr);
+            // Created empty: an edit control refuses creation text beyond its default 30,000-character limit. Raise it, then set the text.
+            auto edit=CreateWindowExW(WS_EX_CLIENTEDGE,L"EDIT",L"",WS_CHILD|WS_VISIBLE|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,0,0,0,0,window,reinterpret_cast<HMENU>(kHeading),nullptr,nullptr);
             SendMessage(edit,EM_SETLIMITTEXT,0,0);SetWindowTextW(edit,state->text.c_str());
+            // A virtual list: a large change file has tens of thousands of rows.
+            auto list=CreateWindowExW(WS_EX_CLIENTEDGE,WC_LISTVIEWW,L"",WS_CHILD|WS_VISIBLE|WS_TABSTOP|LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS|LVS_OWNERDATA,0,0,0,0,window,reinterpret_cast<HMENU>(kList),nullptr,nullptr);
+            ListView_SetExtendedListViewStyle(list,LVS_EX_FULLROWSELECT|LVS_EX_GRIDLINES|LVS_EX_LABELTIP);
+            const wchar_t* titles[]={L"Change",L"Actor",L"Property",L"Before",L"After"};const int widths[]={60,180,130,250,250};
+            for(int i=0;i<5;++i){LVCOLUMNW column{};column.mask=LVCF_TEXT|LVCF_WIDTH;column.pszText=const_cast<wchar_t*>(titles[i]);column.cx=widths[i];ListView_InsertColumn(list,i,&column);}
+            ListView_SetItemCountEx(list,static_cast<int>(state->lines.size()),0);
+            CreateWindowW(L"STATIC",L"Click a row to select its actor in the map.",WS_CHILD|WS_VISIBLE|SS_LEFTNOWORDWRAP,0,0,0,0,window,reinterpret_cast<HMENU>(kStatus),nullptr,nullptr);
             CreateWindowW(L"BUTTON",L"Apply changes",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,0,0,0,0,window,reinterpret_cast<HMENU>(IDOK),nullptr,nullptr);
             CreateWindowW(L"BUTTON",L"Cancel",WS_CHILD|WS_VISIBLE|WS_TABSTOP,0,0,0,0,window,reinterpret_cast<HMENU>(IDCANCEL),nullptr,nullptr);
-            for(int id:{10,IDOK,IDCANCEL})SendMessage(GetDlgItem(window,id),WM_SETFONT,reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)),TRUE);
+            for(int id:{kHeading,kList,kStatus,IDOK,IDCANCEL})SendMessage(GetDlgItem(window,id),WM_SETFONT,reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)),TRUE);
             return 0;
         }
         if(message==WM_SIZE)
         {
             int width=LOWORD(l),height=HIWORD(l);
-            MoveWindow(GetDlgItem(window,10),12,12,width-24,height-68,TRUE);
+            MoveWindow(GetDlgItem(window,kHeading),12,12,width-24,96,TRUE);
+            MoveWindow(GetDlgItem(window,kList),12,116,width-24,height-176,TRUE);
+            MoveWindow(GetDlgItem(window,kStatus),12,height-37,width-290,18,TRUE);
             MoveWindow(GetDlgItem(window,IDOK),width-260,height-44,130,30,TRUE);
             MoveWindow(GetDlgItem(window,IDCANCEL),width-120,height-44,108,30,TRUE);return 0;
         }
-        if(message==WM_GETMINMAXINFO){auto info=reinterpret_cast<MINMAXINFO*>(l);info->ptMinTrackSize={480,320};return 0;}
+        if(message==WM_NOTIFY && state)
+        {
+            auto header=reinterpret_cast<NMHDR*>(l);
+            if(header->idFrom==kList && header->code==LVN_GETDISPINFOW)
+            {
+                auto& item=reinterpret_cast<NMLVDISPINFOW*>(l)->item;
+                if((item.mask&LVIF_TEXT) && item.iItem>=0 && item.iItem<static_cast<int>(state->lines.size()) && item.iSubItem>=0 && item.iSubItem<5)
+                    item.pszText=const_cast<wchar_t*>(state->lines[item.iItem].cells[item.iSubItem].c_str());
+                return 0;
+            }
+            if(header->idFrom==kList && header->code==LVN_ITEMCHANGED)
+            {
+                auto change=reinterpret_cast<NMLISTVIEW*>(l);
+                if((change->uChanged&LVIF_STATE) && (change->uNewState&LVIS_SELECTED) && !(change->uOldState&LVIS_SELECTED))Choose(window,*state,change->iItem);
+                return 0;
+            }
+        }
+        if(message==WM_GETMINMAXINFO){auto info=reinterpret_cast<MINMAXINFO*>(l);info->ptMinTrackSize={560,380};return 0;}
         if(message==WM_COMMAND && (LOWORD(w)==IDOK || LOWORD(w)==IDCANCEL)){state->accepted=LOWORD(w)==IDOK;DestroyWindow(window);return 0;}
         if(message==WM_CLOSE){DestroyWindow(window);return 0;}
         return DefWindowProc(window,message,w,l);
@@ -46,11 +110,19 @@ namespace
     bool Confirm(HWND owner,const Workflow::Json& preview,const Workflow::Json& document)
     {
         auto map=document.at("map").get<std::string>();if(map.rfind("unsaved:",0)==0)map="Unsaved map (current editor session)";else if(map=="*")map="The map that is open";
-        std::string text="Map: "+map+"\r\n"+document.value("description",std::string{})+"\r\n\r\n"+preview.at("note").get<std::string>()+"\r\n\r\n";
-        for(const auto& line:preview.at("changes"))text+=line.get<std::string>()+"\r\n";
+        std::string text="Map: "+map+"\r\n";
+        if(!document.value("description",std::string{}).empty())text+=document.at("description").get<std::string>()+"\r\n";
+        text+="Changes: "+preview.value("tally",std::string{})+"\r\n"+preview.at("note").get<std::string>()+"\r\n";
+        if(Workflow::Authoring::Deletes(document))text+="This file deletes actors (allowDeletes is on). Undo brings them back.\r\n";
         Preview state{Wide(text)};
+        for(const auto& row:preview.value("rows",Workflow::Json::array()))
+        {
+            Line line;int i=0;
+            for(const char* key:{"change","target","property","before","after"})line.cells[i++]=Cell(row.value(key,std::string{}));
+            line.select=row.value("select",Workflow::Json());state.lines.push_back(std::move(line));
+        }
         WNDCLASSW cls{};cls.lpfnWndProc=PreviewProc;cls.hInstance=GetModuleHandle(nullptr);cls.lpszClassName=L"ReloadedMapAuthoringPreview";cls.hCursor=LoadCursor(nullptr,IDC_ARROW);cls.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1);RegisterClassW(&cls);
-        auto window=CreateWindowExW(WS_EX_DLGMODALFRAME,cls.lpszClassName,L"Preview Map JSON Import",WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,CW_USEDEFAULT,850,650,owner,nullptr,cls.hInstance,&state);
+        auto window=CreateWindowExW(WS_EX_DLGMODALFRAME,cls.lpszClassName,L"Preview Map JSON Import",WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,CW_USEDEFAULT,920,660,owner,nullptr,cls.hInstance,&state);
         if(!window)throw std::runtime_error("Could not open the change preview.");
         EnableWindow(owner,FALSE);ShowWindow(window,SW_SHOW);MSG message{};
         while(IsWindow(window))
@@ -73,7 +145,7 @@ void Open(HWND owner,bool exporting)
         if(!(exporting?GetSaveFileNameW(&dialog):GetOpenFileNameW(&dialog))){if(CommDlgExtendedError())throw std::runtime_error("File dialog failed.");return;}
         if(exporting)
         {
-            Workflow::WriteDocument(std::filesystem::path(path),Workflow::Editor::ExportMapAuthoring());
+            WriteExport(std::filesystem::path(path),Workflow::Editor::ExportMapAuthoring());
             MessageBoxW(owner,L"Map exported to JSON. The file contains actor properties, available classes and assets, geometry context, and a template for importing changes.",L"Map JSON",MB_OK);return;
         }
         if(std::filesystem::file_size(path)>128*1024*1024)throw std::runtime_error("Change file exceeds 128 MiB.");
