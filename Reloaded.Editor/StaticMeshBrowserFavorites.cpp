@@ -3,6 +3,7 @@
 #include "MeshFavoritesModel.h"
 #include "WorkflowTools.h"
 #include "MapUsagesWindow.h"
+#include "FavoritesWindow.h"
 #include "MemoryWriter.h"
 #include <commctrl.h>
 #pragma comment(lib, "comctl32.lib")
@@ -89,6 +90,7 @@ static HWND g_MeshListParent = nullptr;
 static HWND g_FilterButton = nullptr;
 static HWND g_PackageFilterCombo = nullptr;
 static HWND g_SortCombo = nullptr;
+static HWND g_WindowButton = nullptr; // opens the Favorites window
 static bool g_PackageWasVisible = true;
 static bool g_GroupWasVisible = true;
 static bool g_GroupAllWasVisible = true;
@@ -893,9 +895,16 @@ static void SM_PositionFilterButton()
     if (g_GroupAll && GetWindowRect(g_GroupAll, &allRect))
         MapWindowPoints(nullptr, g_BrowserWindow, reinterpret_cast<POINT*>(&allRect), 2);
     const LONG sortLeft = (std::min)(allRect.left, groupRect.left);
+    // The Favorites window's button takes the right end of that row.
+    constexpr int windowButtonWidth = 96;
+    const LONG sortRight = g_WindowButton
+        ? (std::max)(sortLeft + 40, groupRect.right - windowButtonWidth - gap) : groupRect.right;
     if (g_SortCombo)
         SetWindowPos(g_SortCombo, HWND_TOP, sortLeft, groupRect.top,
-                     groupRect.right - sortLeft, dropHeight, SWP_NOACTIVATE);
+                     sortRight - sortLeft, dropHeight, SWP_NOACTIVATE);
+    if (g_WindowButton)
+        SetWindowPos(g_WindowButton, HWND_TOP, sortRight + gap, groupRect.top,
+                     (std::max)(1L, groupRect.right - sortRight - gap), groupRect.bottom - groupRect.top, SWP_NOACTIVATE);
 }
 
 // Native package, group and "all groups" controls give way to the Favorites
@@ -906,6 +915,7 @@ static void SM_ShowNativeFilters(bool show)
     {
         ShowWindow(g_PackageFilterCombo, SW_HIDE);
         ShowWindow(g_SortCombo, SW_HIDE);
+        ShowWindow(g_WindowButton, SW_HIDE);
         ShowWindow(g_PackageCombo, g_PackageWasVisible ? SW_SHOWNA : SW_HIDE);
         ShowWindow(g_GroupCombo, g_GroupWasVisible ? SW_SHOWNA : SW_HIDE);
         ShowWindow(g_GroupAll, g_GroupAllWasVisible ? SW_SHOWNA : SW_HIDE);
@@ -921,6 +931,7 @@ static void SM_ShowNativeFilters(bool show)
         SM_PositionFilterButton();
         ShowWindow(g_PackageFilterCombo, SW_SHOWNA);
         ShowWindow(g_SortCombo, SW_SHOWNA);
+        ShowWindow(g_WindowButton, SW_SHOWNA);
     }
 }
 
@@ -1015,6 +1026,19 @@ static void SM_ToggleCurrentFavorite()
     SM_RefreshResolvedFavorites();
     if (InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
         SM_PopulateFavorites(g_BrowserObject);
+    FavoritesWindow::Changed();
+}
+
+static void SM_OpenFavoritesWindow()
+{
+    try
+    {
+        FavoritesWindow::Open();
+    }
+    catch (const std::exception& error)
+    {
+        Logger::log(std::string("StaticMeshBrowserFavorites: ") + error.what());
+    }
 }
 
 static int SM_MenuPosition(HMENU menu, UINT command)
@@ -1065,10 +1089,11 @@ static HMENU WINAPI SM_LoadMenuA_Hook(HINSTANCE instance, LPCSTR menuName)
     InsertMenuA(context, 3, toggleFlags, IDMN_SM_TOGGLE_FAVORITE, label);
     InsertMenuA(context, 4, meshFlags, WorkflowTools::kFindMesh, "Find &Usages...");
     InsertMenuA(context, 5, meshFlags, MapUsagesWindow::kFindMesh, "Find Usages in All &Maps...");
+    InsertMenuA(context, 6, MF_BYPOSITION | MF_STRING, FavoritesWindow::kOpen, "All Fa&vorites...");
     // The stock commands act on the current mesh, which is not this row.
     if (!g_ContextPath.empty() && !hasMesh)
         for (int i = 0; i < GetMenuItemCount(context); ++i)
-            if (GetMenuItemID(context, i) != IDMN_SM_TOGGLE_FAVORITE)
+            if (GetMenuItemID(context, i) != IDMN_SM_TOGGLE_FAVORITE && GetMenuItemID(context, i) != FavoritesWindow::kOpen)
                 EnableMenuItem(context, i, MF_BYPOSITION | MF_GRAYED);
     return menu;
 }
@@ -1088,6 +1113,11 @@ static bool SM_HandleCommand(WPARAM wParam)
     if (LOWORD(wParam) == IDMN_SM_TOGGLE_FAVORITE)
     {
         SM_ToggleCurrentFavorite();
+        return true;
+    }
+    if (LOWORD(wParam) == FavoritesWindow::kOpen)
+    {
+        SM_OpenFavoritesWindow();
         return true;
     }
     return false;
@@ -1213,6 +1243,16 @@ static bool SM_AttachBrowserControls()
     }
     if (g_SortCombo)
         SendMessage(g_SortCombo, CB_SETCURSEL, static_cast<WPARAM>(g_Sort), 0);
+    if (!g_WindowButton || !IsWindow(g_WindowButton))
+    {
+        g_WindowButton = CreateWindowExA(
+            0, "BUTTON", "All Favorites...", WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+            0, 0, 96, 21, g_BrowserWindow,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(FavoritesWindow::kOpen)),
+            GetModuleHandleA(nullptr), nullptr);
+        if (g_WindowButton)
+            SendMessage(g_WindowButton, WM_SETFONT, SendMessage(g_FilterButton, WM_GETFONT, 0, 0), TRUE);
+    }
 
     if (g_MeshListParent)
         SetWindowSubclass(g_MeshListParent, SM_ListParentSubclassProc, 12, 0);
@@ -1378,6 +1418,7 @@ static LRESULT CALLBACK SM_BrowserSubclassProc(HWND window, UINT message,
         g_FilterButton = nullptr;
         g_PackageFilterCombo = nullptr;
         g_SortCombo = nullptr;
+        g_WindowButton = nullptr;
         g_Rows.clear();
         g_ControlsAttached = false;
         RemoveWindowSubclass(window, SM_BrowserSubclassProc, 11);
@@ -1449,6 +1490,56 @@ static LRESULT CALLBACK SM_CommandSubclassProc(HWND window, UINT message,
     if (message == WM_NCDESTROY)
         RemoveWindowSubclass(window, SM_CommandSubclassProc, 13);
     return DefSubclassProc(window, message, wParam, lParam);
+}
+
+void StaticMeshBrowserFavorites::FavoritesChanged()
+{
+    SM_LoadFavorites();
+    SM_RefreshResolvedFavorites();
+    if (InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
+        SM_PopulateFavorites(g_BrowserObject);
+}
+
+bool StaticMeshBrowserFavorites::ShowFavorite(const std::string& path)
+{
+    if (!g_FeatureSupported || !g_BrowserObject || !g_MeshList || !IsWindow(g_MeshList))
+        return false;
+    SM_LoadFavorites();
+    SM_RefreshResolvedFavorites();
+    // A package filter that would hide it gives way.
+    if (!g_PackageFilter.empty() &&
+        SM_ToLower(MeshFavorites::Split(path).package) != SM_ToLower(g_PackageFilter))
+    {
+        g_PackageFilter.clear();
+        SM_SaveView();
+    }
+    if (InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
+        SM_PopulateFavorites(g_BrowserObject);
+    else
+        SM_SetFavoritesActive(true);
+    if (!InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
+        return false;
+    for (size_t i = 0; i < g_Rows.size(); ++i)
+    {
+        if (SM_ToLower(g_FavoritePaths[g_Rows[i].favorite]) != SM_ToLower(path))
+            continue;
+        const int item = static_cast<int>(i);
+        ListView_SetItemState(g_MeshList, -1, 0, LVIS_SELECTED);
+        // Selecting the row shows it in the preview, as a click does.
+        ListView_SetItemState(g_MeshList, item, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+        ListView_EnsureVisible(g_MeshList, item, FALSE);
+        break;
+    }
+    return true;
+}
+
+bool StaticMeshBrowserFavorites::UseMesh(void* mesh)
+{
+    if (!SM_IsStaticMesh(mesh))
+        return false;
+    if (!g_BrowserObject)
+        return false;
+    return SM_TryUpdateNativePreview(mesh);
 }
 
 void StaticMeshBrowserFavorites::Initialize()

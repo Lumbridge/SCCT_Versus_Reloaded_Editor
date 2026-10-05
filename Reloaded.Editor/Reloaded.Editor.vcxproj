@@ -171,6 +171,8 @@
     <ClInclude Include="LevelSnapshot.h" />
     <ClInclude Include="LevelSnapshotModel.h" />
     <ClInclude Include="FavoritesModel.h" />
+    <ClInclude Include="FavoritesWindow.h" />
+    <ClInclude Include="FavoritesWindowModel.h" />
     <ClInclude Include="EntryThumbnailModel.h" />
     <ClInclude Include="MeshFavoritesModel.h" />
     <ClInclude Include="AnimImportOptionsModel.h" />
@@ -308,6 +310,7 @@
     </ClCompile>
     <ClCompile Include="SoundBrowser.cpp" />
     <ClCompile Include="SoundBrowserFavorites.cpp" />
+    <ClCompile Include="FavoritesWindow.cpp" />
     <ClCompile Include="TextureBrowser.cpp" />
     <ClCompile Include="UI.cpp" />
     <ClCompile Include="GEWireframeFix.cpp" />

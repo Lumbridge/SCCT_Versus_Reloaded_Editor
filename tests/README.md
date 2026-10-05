@@ -187,6 +187,26 @@ This also checks the vertex right-click popup, selection preservation on cancel,
 world-space selected-corner alignment, exact preservation of unselected vertices,
 shared polygon corners, and vertex Undo/Redo.
 
+## Favorites window
+
+`tools/test_workflow_tools.cmd` runs `FavoritesWindowModelTests.cpp`: the browsers'
+own favourite sections read back as they read them (Count, repeats, blanks) and
+written in their format; tag names cleaned for the ini; creating, renaming
+(including a case-only rename and a clash), deleting, adding to and removing from
+tags as key-by-key writes, with a stale editor's writes keeping another editor's
+change; stray tag names ignored; the rows for each type, tag, untagged, package and
+search filter (tags and the type are searched, and the English for French names
+through the search hook) in every sort order, unloaded favourites last; the
+package and tag lists with counts; the packages to load once per type; and the
+status summary.
+
+There is no native suite test. It was checked by hand in a disposable editor:
+the window lists favourites from all three browsers with texture thumbnails,
+Use sets the current material and static mesh, Show in Browser switches each
+browser to its Favorites view with the favourite selected, tag and remove changes
+reach the ini and the browsers, and a browser's own toggle or another editor's
+ini change reaches the open window within a second.
+
 ## Undo History
 
 `tools/test_workflow_tools.cmd` runs `UndoHistoryModelTests.cpp`: the rows (one

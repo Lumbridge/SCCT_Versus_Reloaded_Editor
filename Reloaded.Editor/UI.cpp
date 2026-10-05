@@ -11,6 +11,7 @@
 #include "EmitterLibraryWindow.h"
 #include "StoreyFilter.h"
 #include "UndoHistory.h"
+#include "FavoritesWindow.h"
 #include "MapPackageDialog.h"
 #include "EditorExtras.h"
 
@@ -186,6 +187,8 @@ static void InjectReloadedMenuItems(HWND frame)
                         WindowDriftFix::kResetPropertyWindowsCommandId,
                         "Reset &Property Window Positions");
     }
+    FavoritesWindow::InstallMenu(bar); // View > Favorites, after the browsers
+
 
     HMENU file = GetSubMenu(bar, 0);
     if (file)
