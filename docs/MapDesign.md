@@ -152,7 +152,8 @@ into the BSP stay, which makes it read best in the wireframe and brush-wireframe
 views. **Page Up / Page Down / Home** over a viewport step through the storeys
 while the palette is open. It puts back what it hid and nothing else, so an
 actor hidden by the Scene panel or Brush Visibility stays hidden; closing the
-palette shows every storey again.
+palette shows every storey again. Changing storey is a view, not an edit, so it
+takes no Undo step, and Undo and Redo work as usual while a floor is shown.
 
 On a map the toolkit built, the storeys are the floor heights of its rooms,
 corridors and vents, with a vent on a room's wall counted as part of that room's
@@ -298,8 +299,9 @@ room and round into the objective room's side wall, two starts per team facing
 inwards, a mission with an objective and its computer terminal, and a ceiling
 light in each room. It asks for the room and corridor sizes and which extras to
 include. The pieces are one Undo step; the starts, mission, objective, terminal
-and lights follow as their own. Build geometry, then run the design check, and
-reshape from there.
+and lights follow as their own. If any part cannot be placed, everything the
+layout placed is undone and the status line says why. Build geometry, then run
+the design check, and reshape from there.
 
 - **Room:** carves the interior space. Width/length/height describe that space.
 - **Corridor:** the same carve, extended by the wall thickness at each end so it

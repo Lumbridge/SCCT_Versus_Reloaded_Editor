@@ -210,7 +210,16 @@ void ObjectivePlaceUnder(DesignState& s,const Json& owner,const std::string& typ
 {
     // The owner is a plan row; the objective link needs the inspected snapshot
     // of the mission or objective, which carries the map identity it checks.
-    auto created=Editor::AddObjectiveActor(Editor::InspectActor(owner),type);
+    // AddObjectiveActor returns every actor it created (a flag brings its drop
+    // zone too); the one placed here is the actor of the asked-for class.
+    const auto list=Editor::AddObjectiveActor(Editor::InspectActor(owner),type);
+    Json created;
+    for(const auto& actor:list)if(actor.value("class",std::string())==type){created=actor;break;}
+    if(created.is_null())
+    {
+        if(!list.is_array() || list.empty())throw std::runtime_error("The editor did not create the "+type+".");
+        created=list.back();
+    }
     Vector position=at;
     position[2]=s.depth+64;
     try{Editor::MoveSecurityActor(created,{position,{}},Json::object());}

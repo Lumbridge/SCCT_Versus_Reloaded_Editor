@@ -444,6 +444,50 @@ bool Exec(const std::string& command)
     auto e=Engine(); return Call<int>(e+0x28,0,command.c_str(),reinterpret_cast<void*>(Read<Address>(0x115BEFB0)))!=0;
 }
 void Redraw() { auto e=Engine(); Call(e,0xe8,reinterpret_cast<void*>(Level())); }
+HWND MainWindow()
+{
+    // The global holds the bottom bar; its root is the frame the menus live on.
+    try
+    {
+        auto frame=Read<Address>(0x1165df84);
+        auto window=frame?reinterpret_cast<HWND>(Read<Address>(frame+4)):nullptr;
+        window=window?GetAncestor(window,GA_ROOT):nullptr;
+        return window && IsWindow(window)?window:nullptr;
+    }
+    catch(const std::exception&){return nullptr;}
+}
+// UTransBuffer CanUndo / CanRedo (vtable 0x70 / 0x74, FString* reason).
+bool CanUndo() { auto buffer=Read<Address>(Engine()+0x148); return buffer && Call<int>(buffer,0x70,static_cast<void*>(nullptr))!=0; }
+bool CanRedo() { auto buffer=Read<Address>(Engine()+0x148); return buffer && Call<int>(buffer,0x74,static_cast<void*>(nullptr))!=0; }
+// Begin (0x1105adc2) stamps each new transaction at +4 with a running count
+// kept at 0x11691d70; the next stamp marks where an operation starts.
+unsigned UndoMark() { Engine(); return Read<unsigned>(0x11691d70); }
+size_t UndoBackTo(unsigned mark)
+{
+    auto buffer=Read<Address>(Engine()+0x148);
+    if(!buffer || Read<int>(buffer+0x44)!=0) return 0;
+    size_t undone=0;
+    for(;;)
+    {
+        const int count=Read<int>(buffer+0x2c), undo=Read<int>(buffer+0x34);
+        if(undo>=count) break;
+        const auto transaction=Read<Address>(buffer+0x28)+static_cast<Address>(count-1-undo)*0x28;
+        if(Read<unsigned>(transaction+4)<mark) break;
+        Exec("TRANSACTION UNDO");
+        if(Read<int>(buffer+0x34)!=undo+1) break;
+        ++undone;
+    }
+    // Nothing older than the mark was undone, and every Begin since the mark
+    // cleared the redo queue, so the whole queue is the half-done operation:
+    // drop it, as Transaction's rollback does, so Redo cannot replay it.
+    if(undone)
+    {
+        const int undo=Read<int>(buffer+0x34);
+        reinterpret_cast<void(__thiscall*)(void*,int,int)>(0x110590e0)(reinterpret_cast<void*>(buffer+0x28),Read<int>(buffer+0x2c)-undo,undo);
+        Write(buffer+0x34,0);
+    }
+    return undone;
+}
 Json Actors(bool selectedOnly)
 {
     Json result=Json::array();
@@ -589,7 +633,15 @@ void Select(const Json& identities,bool focus)
 {
     auto e=Engine(), level=Level(); std::set<Address> selected;
     for(const auto& id:identities) if(auto a=ResolveIdentity(id)) selected.insert(a);
-    for(auto a:LiveActors()) reinterpret_cast<void(__thiscall*)(void*,void*,void*,int,int)>(0x10eb9a20)(reinterpret_cast<void*>(e),reinterpret_cast<void*>(level),reinterpret_cast<void*>(a),selected.count(a)?1:0,0);
+    // Native SelectActor (0x10eb9a20) calls Modify on the actor whatever its
+    // state, so calling it for every actor put the whole map into the open
+    // transaction (7 MB per Map Design edit on ShipD, against an 8 MB undo
+    // buffer). Only actors whose selection actually changes go through it.
+    for(auto a:LiveActors())
+    {
+        const bool want=selected.count(a)!=0, is=(Read<unsigned>(a+0x2f4)&0x40)!=0;
+        if(want!=is) reinterpret_cast<void(__thiscall*)(void*,void*,void*,int,int)>(0x10eb9a20)(reinterpret_cast<void*>(e),reinterpret_cast<void*>(level),reinterpret_cast<void*>(a),want?1:0,0);
+    }
     if(focus && !selected.empty()) Exec("CAMERA ALIGN");
     Call(e,0xe4); Redraw();
 }
