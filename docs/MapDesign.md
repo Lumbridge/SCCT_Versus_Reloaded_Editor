@@ -152,7 +152,8 @@ into the BSP stay, which makes it read best in the wireframe and brush-wireframe
 views. **Page Up / Page Down / Home** over a viewport step through the storeys
 while the palette is open. It puts back what it hid and nothing else, so an
 actor hidden by the Scene panel or Brush Visibility stays hidden; closing the
-palette shows every storey again.
+palette shows every storey again. Changing storey is a view, not an edit, so it
+takes no Undo step, and Undo and Redo work as usual while a floor is shown.
 
 On a map the toolkit built, the storeys are the floor heights of its rooms,
 corridors and vents, with a vent on a room's wall counted as part of that room's

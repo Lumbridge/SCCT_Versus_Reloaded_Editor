@@ -119,8 +119,9 @@ namespace
         return spans;
     }
 
-    // Hides what the chosen storey leaves out and shows what it brings back,
-    // in one Undo step.
+    // Hides what the chosen storey leaves out and shows what it brings back.
+    // This is a view, not an edit, so it takes no Undo step: re-applying it
+    // after an Undo must not drop the step that was just undone.
     void Apply(int index)
     {
         const int count = static_cast<int>(storeys.size());

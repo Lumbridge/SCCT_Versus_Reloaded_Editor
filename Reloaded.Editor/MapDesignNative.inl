@@ -381,9 +381,12 @@ Json DesignActorSpans()
     }
     return result;
 }
-// Hides one set of actors and shows another in a single Undo step, which is
-// what changing storey does: the floor being left goes, the floor arrived at
-// comes back.
+// Hides one set of actors and shows another, which is what changing storey
+// does: the floor being left goes, the floor arrived at comes back. This is a
+// view, like a geometry build putting hidden actors back (RestoreHiddenActors),
+// so it is not an Undo step: the Storeys palette re-applies its floor whenever
+// the map changes, and as a transaction that re-apply after an Undo dropped the
+// step just undone, so Undo could never get past it and Redo never worked.
 size_t DesignSetHidden(const Json& hide,const Json& show)
 {
     std::vector<Address> hiding,showing;
@@ -399,21 +402,21 @@ size_t DesignSetHidden(const Json& hide,const Json& show)
     };
     gather(hide,hiding);gather(show,showing);
     if(hiding.empty() && showing.empty())return 0;
-    size_t changed=0;
-    Transaction transaction("Show one storey");
+    size_t changed=0,deselected=0;
     for(auto a:hiding)
     {
         const auto flags=Read<unsigned>(a+0x2f4);
         if(flags&0x10u)continue;
-        Modify(a);Write(a+0x2f4,(flags|0x10u)&~0x40u);++changed;
+        if(flags&0x40u)++deselected;
+        Write(a+0x2f4,(flags|0x10u)&~0x40u);++changed;
     }
     for(auto a:showing)
     {
         const auto flags=Read<unsigned>(a+0x2f4);
         if(!(flags&0x10u))continue;
-        Modify(a);Write(a+0x2f4,flags&~0x10u);++changed;
+        Write(a+0x2f4,flags&~0x10u);++changed;
     }
-    transaction.Commit();
+    if(deselected)Call(Engine(),0xe4);
     if(changed)Redraw();
     return changed;
 }
