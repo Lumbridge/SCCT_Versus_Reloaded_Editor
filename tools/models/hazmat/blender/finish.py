@@ -12,6 +12,7 @@ hood and its gear are rigid on B Head.
 import argparse
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -301,15 +302,20 @@ def main():
     for i in range(len(gv)):
         for b in np.nonzero(GW[i] > 1e-4)[0]:
             influences.append((float(GW[i, b]), len(sv) + i, int(b)))
-    # PSK faces turn counter-clockwise seen from outside, as Blender's do. (The merc's faces as
-    # stored in SPerso.ukx turn the other way; a PSK written in that order shows the suit's
-    # inside in game, as if it faced away. Checked in the editor's Character Skins preview.)
+    # The editor's PSK importer mirrors Y (ActorX's handedness) on the way in: the points, the
+    # bones and with them the winding. So the PSK is written mirrored, faces in Blender's order
+    # (counter-clockwise from outside), and arrives in the merc's own space. Written unmirrored
+    # it showed back to front and inside out in Character Skins' preview.
     suit_sign = outward(sv, low["suit_f"])
     if suit_sign <= 0:
         raise SystemExit("finish.py: the game mesh's faces turn inwards; check build.py")
     faces = np.array(faces)
+    points = points * np.array([1.0, -1.0, 1.0])
+    # A reflection across the XZ plane turns rotation (x, y, z, w) into (-x, y, -z, w).
+    bones = [replace(b, position=(b.position[0], -b.position[1], b.position[2]),
+                     rotation=(-b.rotation[0], b.rotation[1], -b.rotation[2], b.rotation[3])) for b in merc.bones]
     write_psk(assets / "HazmatMerc.psk", points, wedges, faces, np.array(face_mat), ["HazmatSuit", "HazmatGear"],
-              merc.bones, influences)
+              bones, influences)
 
     # Goggle lights: Character Skins moves them by an offset in B Head's axes, from the stock
     # merc's helmet lamp to the front of the visor.

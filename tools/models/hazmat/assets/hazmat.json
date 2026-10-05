@@ -1,8 +1,8 @@
 {
-  "points": 5163,
-  "wedges": 7803,
-  "faces": 10168,
-  "suit_faces": 7792,
+  "points": 5187,
+  "wedges": 7830,
+  "faces": 10254,
+  "suit_faces": 7878,
   "gear_faces": 2376,
   "materials": [
     "HazmatSuit",

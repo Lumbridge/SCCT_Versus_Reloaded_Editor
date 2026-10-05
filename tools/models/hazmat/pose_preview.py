@@ -60,6 +60,8 @@ def main():
     anim = read_animation(Path(args.install))
     bind = bone_globals(merc.bones)
     points, w, f, inf = read_psk(out / "HazmatMerc.psk")
+    # The PSK is written Y-mirrored for the editor's importer (blender/finish.py); undo it.
+    points = points * np.array([1.0, -1.0, 1.0])
     tex = [np.asarray(Image.open(out / "HazmatSuit.tga").convert("RGB")),
            np.asarray(Image.open(out / "HazmatGear.tga").convert("RGB"))]
     uv = np.stack([w["u"], w["v"]], 1).astype(np.float64)

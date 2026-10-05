@@ -290,16 +290,12 @@ def raycast_surface(bvh, origin, direction):
     return hit, normal
 
 
-CUTS = []  # where gear covers the suit: the game mesh's faces there are removed
-
-
 def build_visor(bvh):
     """Rounded-rectangle face window over the front of the hood, plus its gasket."""
     cols, rows = 24, 15
     yaw_half, pitch_half, pitch_mid = math.radians(64), math.radians(27), math.radians(1.5)
     pts, uvs, nors = [], [], []
     centre = HOOD_C + Vector((0, -2.0, -1.0))
-    CUTS.append(("window", np.array(centre), yaw_half * 0.9, pitch_half * 0.85, pitch_mid))
     for j in range(rows):
         for i in range(cols):
             s, t = -1 + 2 * i / (cols - 1), -1 + 2 * j / (rows - 1)
@@ -399,7 +395,6 @@ def flip(o):
 
 def build_valve(bvh, name, origin, direction, radius=2.3):
     hit, nor = raycast_surface(bvh, origin, direction)
-    CUTS.append(("disc", np.array(hit), np.array(nor), radius * 0.75))
     bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=radius, depth=1.3, location=hit + nor * 0.45)
     o = bpy.context.active_object
     o.name = name
@@ -438,36 +433,6 @@ def join(objs):
 
 
 # ---------------------------------------------------------------- low poly and UVs
-
-def cut_under_gear(o):
-    """Removes the game mesh's faces that the gear covers. In the engine the suit drew over
-    the visor wherever the two overlapped (the visor stood well clear of the hood and still
-    did not show), so nothing of the suit is left behind it; the gasket hides the edge."""
-    v = verts_of(o)
-    f = tris_of(o)
-    c = v[f].mean(1)
-    doomed = np.zeros(len(f), bool)
-    for cut in CUTS:
-        if cut[0] == "window":
-            _, centre, yaw_half, pitch_half, pitch_mid = cut
-            r = c - centre
-            r /= np.linalg.norm(r, axis=1, keepdims=True)
-            yaw = np.arctan2(r[:, 0], r[:, 1])
-            pitch = np.arcsin(np.clip(r[:, 2], -1, 1)) - pitch_mid
-            doomed |= (r[:, 1] > 0) & ((np.abs(yaw) / yaw_half) ** 4 + (np.abs(pitch) / pitch_half) ** 4 < 1)
-        else:
-            _, hit, nor, radius = cut
-            rel = c - hit
-            along = rel @ nor
-            doomed |= (np.abs(along) < 2.0) & (np.linalg.norm(rel - along[:, None] * nor, axis=1) < radius)
-    bm = bmesh.new()
-    bm.from_mesh(o.data)
-    bm.faces.ensure_lookup_table()
-    bmesh.ops.delete(bm, geom=[bm.faces[i] for i in np.nonzero(doomed)[0]], context="FACES")
-    bm.to_mesh(o.data)
-    bm.free()
-    print("cut under the gear:", int(doomed.sum()), "faces")
-
 
 def decimated_copy(o, triangles, name):
     c = o.copy()
@@ -627,7 +592,6 @@ def main():
 
     # Low poly.
     lo = {"suit": decimated_copy(mid, TRIANGLES["suit"], "suit_lo")}
-    cut_under_gear(lo["suit"])
     for part in ("gloveL", "gloveR", "bootL", "bootR"):
         lo[part] = decimated_copy(hi[part], TRIANGLES[part], part + "_lo")
     bpy.data.objects.remove(mid)
