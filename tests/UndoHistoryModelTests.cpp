@@ -105,6 +105,75 @@ int main()
         copy.titles.back() = "Other";
         Check(!(copy == s), "a changed title differs");
 
+        // Checkpoints follow a stand-in buffer whose prints are made up ids.
+        {
+            using P = Checkpoints::Prints;
+            Checkpoints c;
+            P buf = {11, 12, 13, 14};
+            Check(c.Empty() && c.NextName() == "Checkpoint 1", "no checkpoints yet");
+            Check(c.Set(buf, 2, "  before vent\trework  ") && c.NameAt(2) == "before vent rework", "named and cleaned");
+            Check(!c.Set(buf, 2, "   ") && !c.Set(buf, 5, "x") && !c.Set(buf, -1, "x"), "blank names and rows off the list refused");
+            Check(c.Set(buf, 0, "clean slate") && c.Set(buf, 4, "Checkpoint 1") && c.NextName() == "Checkpoint 2", "start row and next name");
+            auto list = c.List();
+            Check(list.size() == 3 && list[0] == std::pair<int, std::string>{0, "clean slate"} && list[1].first == 2 && list[2].first == 4, "listed by row");
+            Check(c.Set(buf, 2, "vents v2") && c.Size() == 3 && c.NameAt(2) == "vents v2", "setting a marked row renames it");
+            Check(Checkpoints::Name(std::string(100, 'n')).size() == Checkpoints::kNameLimit, "long name cut");
+
+            // Undo two (undoCount 2), then a new step: 13 and 14 go, and the checkpoint on 14 with them.
+            P after = {11, 12, 15};
+            Check(c.Observe(buf) == 0, "nothing moved");
+            Check(c.Began(buf, 2, after, 0) == 1 && c.NameAt(2) == "vents v2" && c.NameAt(0) == "clean slate" && c.NameAt(4).empty(),
+                  "a dropped redo step takes its checkpoint");
+            buf = after;
+            // Full buffer: one step trimmed off the front as the next is added. Rows shift down; the start goes.
+            after = {12, 15, 16};
+            Check(c.Began(buf, 0, after, 0) == 1 && c.NameAt(1) == "vents v2" && c.NameAt(0).empty(), "trim moves rows and ends the start checkpoint");
+            buf = after;
+            Check(c.Set(buf, 3, "latest") && c.NameAt(3) == "latest", "checkpoint on the newest step");
+            after = {16, 17};
+            Check(c.Began(buf, 0, after, 0) == 1 && c.NameAt(1) == "latest" && c.Size() == 1, "two trimmed at once");
+            buf = after;
+
+            // Everything undone then a new step: the start checkpoint survives (nothing trimmed).
+            Check(c.Set(buf, 0, "start"), "start again");
+            after = {18};
+            Check(c.Began(buf, 2, after, 0) == 1 && c.NameAt(0) == "start" && c.Size() == 1, "start kept over a replaced buffer");
+            buf = after;
+
+            // Prints that do not fit what Begin can do: everything goes rather than point at the wrong step.
+            Check(c.Set(buf, 1, "one") && c.Began(buf, 0, P{99, 19}, 0) == 2 && c.Empty(), "a changed survivor resets");
+            Check(c.Set(buf, 1, "one") && c.Began(buf, 0, {18, 19}, 1) == 1, "redo left after Begin resets");
+            buf = {18, 19};
+            Check(c.Set(buf, 1, "one") && c.Began(buf, 0, {18, 19, 20, 21}, 0) == 1, "two steps added resets");
+            buf = {18, 19, 20, 21};
+            Check(c.Set(buf, 2, "two") && c.Observe({18, 19, 21, 20}) == 1 && c.Empty(), "reordered buffer resets");
+            buf = {18, 19, 21, 20};
+            Check(c.Set(buf, 2, "two") && c.Observe(buf) == 0 && c.Reset() == 1 && c.Empty(), "reset clears");
+            Check(c.Began({}, 0, {30}, 0) == 0 && c.Empty(), "Begin without checkpoints");
+
+            // Undo and redo leave checkpoints where they are.
+            buf = {30, 31, 32};
+            c.Set(buf, 3, "end");
+            Check(c.Observe(buf) == 0 && c.NameAt(3) == "end", "unchanged prints");
+            Check(c.Remove(3) && !c.Remove(3) && c.Empty(), "removed");
+
+            // Wording.
+            Snapshot w;
+            w.titles = {"Move actors", "Add actor", "Turn actors"};
+            w.undoCount = 1;
+            Check(MarkedRowText(w, 2, "vents") == "2.  Add actor   [vents]" && MarkedRowText(w, 1, "") == "1.  Move actors", "marked rows");
+            Check(JumpItemText(w, 2, "vents") == "vents  (step 2: Add actor, current)", "jump item at the current row");
+            Check(JumpItemText(w, 3, "x") == "x  (step 3: Turn actors, undone)" && JumpItemText(w, 0, "s") == "s  (start)", "undone and start");
+            Check(CheckpointsGoneText(0).empty() && CheckpointsGoneText(1) == "A checkpoint went with its step."
+                      && CheckpointsGoneText(3) == "3 checkpoints went with their steps.", "gone text");
+
+            // Jumping to a checkpoint uses the same stepping.
+            Buffer jb;
+            jb.s = w;
+            auto jr = Jump(StepsTo(jb.s, 0), [&](bool redo) { return jb.Step(redo); });
+            Check(jr.done == 2 && Current(jb.s) == 0, "jump to the start checkpoint");
+        }
+
         std::cout << checks << " undo history checks passed\n";
         return 0;
     }

@@ -195,7 +195,20 @@ UndoCount, which rows are greyed for Redo, the signed number of steps to a row
 (clamped at both ends), walking there one Undo or Redo at a time and stopping at
 the first step the editor refuses (an operation recording, nothing left), a
 thousand-step walk, title clean-up, memory sizes against the buffer's limit, the
-status line after a reset, and the reports after a jump.
+status line after a reset, and the reports after a jump. For checkpoints it
+checks naming and renaming, the start row, ids following UTransBuffer::Begin
+(undone steps dropped, one or two of the oldest trimmed, the whole buffer
+replaced), resets, and that prints Begin could not have produced (a changed
+survivor, redo left over, two steps added, a reordered buffer) drop every
+checkpoint rather than move one onto the wrong step.
+
+Checkpoints were checked by hand in a disposable installation (Select All /
+Select None steps): a checkpoint from Edit > Add Undo Checkpoint kept its step
+through four more edits and a jump back to it from the jump list ("Undid 4
+steps"), one on an undone step went when a new edit replaced the redo steps
+while the other stayed, one survived edits and a stock Undo with the panel
+closed, Delete removed one, and File > New cleared both with a note. Trimming by
+a full 8 MB buffer was not repeated for checkpoints; the model covers it.
 
 There is no native suite test yet. It was checked by hand in a disposable
 installation: the UTransBuffer layout read live (vtable, 8 MB MaxMemory, reset
