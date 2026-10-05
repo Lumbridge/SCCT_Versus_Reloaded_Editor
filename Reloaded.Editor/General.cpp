@@ -692,8 +692,13 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         //   41105-41119 undo history          41120-41134 assembly/view thumbnails
         //   41135-41149 emitter editing       41150-41164 lighting budget
         //   41165-41179 RE+ menu names        41180       character skins
-        //   41181-41199 spare
-        cmp dword ptr [esp+4], 41199
+        //   41181-41199 skin presets          41200-41219 light and shadow map
+        //   41220-41239 map check             41240-41259 minimap
+        //   41260-41279 placement tools       41280-41299 render budget
+        //   41300-41319 map recovery          41320-41339 map JSON preview
+        //   41340-41359 favorites window      41360-41379 updater / checkpoints
+        //   41380-41399 spare
+        cmp dword ptr [esp+4], 41399
         jbe workflow_dispatch
     workflow_legacy_range:
         cmp dword ptr [esp+4], 40920
