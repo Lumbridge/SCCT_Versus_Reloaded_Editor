@@ -61,6 +61,8 @@ namespace Workflow::Editor
     void Redraw();
     // The editor's main frame (the root window the menus belong to), or null.
     HWND MainWindow();
+    bool CanUndo();
+    bool CanRedo();
     // A mark taken before a multi-step operation; UndoBackTo undoes every step
     // recorded since and drops them from the redo queue. Returns the count.
     unsigned UndoMark();

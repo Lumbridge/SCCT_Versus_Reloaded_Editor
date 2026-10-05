@@ -454,6 +454,9 @@ HWND MainWindow()
     }
     catch(const std::exception&){return nullptr;}
 }
+// UTransBuffer CanUndo / CanRedo (vtable 0x70 / 0x74, FString* reason).
+bool CanUndo() { auto buffer=Read<Address>(Engine()+0x148); return buffer && Call<int>(buffer,0x70,static_cast<void*>(nullptr))!=0; }
+bool CanRedo() { auto buffer=Read<Address>(Engine()+0x148); return buffer && Call<int>(buffer,0x74,static_cast<void*>(nullptr))!=0; }
 // Begin (0x1105adc2) stamps each new transaction at +4 with a running count
 // kept at 0x11691d70; the next stamp marks where an operation starts.
 unsigned UndoMark() { Engine(); return Read<unsigned>(0x11691d70); }

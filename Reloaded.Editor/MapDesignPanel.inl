@@ -2195,8 +2195,14 @@ void DesignCommand(DesignState& s,int id)
         }
         // Otherwise the editor's own history: blockout edits, layer changes and
         // native actor moves all live in it.
-        if(!Editor::Exec(id==DUndo?"TRANSACTION UNDO":"TRANSACTION REDO"))
-            throw std::runtime_error(id==DUndo?"Nothing left to undo.":"Nothing to redo.");
+        // Exec reports success whether or not there was a step to take, so
+        // the buffer is asked first.
+        if(!(id==DUndo?Editor::CanUndo():Editor::CanRedo()))
+        {
+            DesignStatus(s,id==DUndo?"Nothing to undo.":"Nothing to redo.");
+            return;
+        }
+        Editor::Exec(id==DUndo?"TRANSACTION UNDO":"TRANSACTION REDO");
         DesignRefresh(s);
         DesignInspectorRefresh(s);
         DesignStatus(s,id==DUndo?"Undid the last editor change. Rebuild geometry if it moved BSP brushes."
