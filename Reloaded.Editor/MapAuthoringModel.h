@@ -16,6 +16,10 @@ namespace Workflow::Authoring
     constexpr size_t kMaximumBrushPolygons=16384;
     constexpr size_t kMaximumOperationsV2=20000;
     constexpr size_t kMaximumSurfaces=2000000;
+    // Version 3 adds deletes. Each one names an exported actor with its complete exported values, and the file must
+    // also say "allowDeletes": true, so neither a stray operation nor a generator bug can empty a map.
+    constexpr int kLatestVersion=3;
+    constexpr size_t kMaximumDeletes=1000;
     inline void Keys(const Json& object, std::initializer_list<const char*> allowed)
     {
         if(!object.is_object())throw std::runtime_error("Expected an object in the change file.");
@@ -141,22 +145,47 @@ namespace Workflow::Authoring
                 if(file.is_relative() && !base.empty())op["file"]=Utf8Text((base/file).lexically_normal());
             }
     }
+    // Every "$ref" text inside a property value.
+    inline void References(const Json& value,std::vector<std::string>& out)
+    {
+        if(value.is_object())
+        {
+            if(value.contains("$ref") && value.at("$ref").is_string())out.push_back(value.at("$ref").get<std::string>());
+            for(const auto& item:value)References(item,out);
+        }
+        else if(value.is_array())for(const auto& item:value)References(item,out);
+    }
     inline void Validate(const Json& document, const std::string& map)
     {
-        Keys(document,{"format","version","map","description","operations","expect"});
+        Keys(document,{"format","version","map","description","operations","expect","allowDeletes"});
         const auto& version=document.at("version");
-        const bool v2=version==2;
+        // Version 3 is version 2 plus deletes; everything later versions add keeps working in them.
+        const bool v3=version==3,v2=version==2 || v3;
         if(document.at("format")!="scct.map-changes" || !(version==1 || v2) || !(document.at("map")==map || (v2 && document.at("map")=="*")))
             throw std::runtime_error("Unsupported change file or wrong map. Export the destination map first.");
         if(document.contains("description"))document.at("description").get<std::string>();
         if(document.contains("expect") && !document.at("expect").is_object())throw std::runtime_error("expect must map existing object paths to their exported values.");
+        if(document.contains("allowDeletes") && (!v3 || !document.at("allowDeletes").is_boolean()))throw std::runtime_error("allowDeletes is a version 3 setting and must be true or false.");
+        const bool allowDeletes=document.value("allowDeletes",false);
         const auto& ops=document.at("operations");
         const size_t limit=v2?kMaximumOperationsV2:2000;
         if(!ops.is_array() || ops.empty() || ops.size()>limit)throw std::runtime_error("Supply between 1 and "+std::to_string(limit)+" operations.");
-        std::set<std::string> ids,updates,packages,textures;
+        std::set<std::string> ids,updates,packages,textures,deletes;
         for(const auto& op:ops)
         {
             auto kind=op.at("op").get<std::string>();
+            if(v3 && kind=="delete")
+            {
+                Keys(op,{"op","actor","before"});Keys(op.at("actor"),{"path","class"});
+                const auto path=op.at("actor").at("path").get<std::string>();op.at("actor").at("class").get<std::string>();
+                if(path.find('.')==std::string::npos)throw std::runtime_error("Delete an existing actor by its exported path, not a creation ID: "+path);
+                if(!allowDeletes)throw std::runtime_error("This file deletes "+path+". Deleting actors needs \"allowDeletes\": true at the top of the change file.");
+                if(document.at("map")=="*")throw std::runtime_error("A file that deletes actors must name the exported map, not \"*\".");
+                if(!op.at("before").is_object() || op.at("before").empty())throw std::runtime_error("A delete needs the actor's complete exported values in before: "+path);
+                if(!deletes.insert(Fold(path)).second)throw std::runtime_error("Duplicate delete: "+path);
+                if(deletes.size()>kMaximumDeletes)throw std::runtime_error("A file deletes at most "+std::to_string(kMaximumDeletes)+" actors.");
+                continue;
+            }
             if(kind=="create" || kind=="component")
             {
                 if(kind=="create")Keys(op,v2?std::initializer_list<const char*>{"op","id","class","geometry","polygons","properties"}:std::initializer_list<const char*>{"op","id","class","geometry","properties"});
@@ -237,9 +266,105 @@ namespace Workflow::Authoring
                 for(const auto& s:surfaces)if(!s.is_number_integer() || s.get<int64_t>()<0 || s.get<int64_t>()>=static_cast<int64_t>(kMaximumSurfaces) || !seen.insert(s.get<int64_t>()).second)throw std::runtime_error("Surface indices must be unique nonnegative integers.");
                 continue;
             }
-            else throw std::runtime_error("Unsupported map operation: "+kind+(v2?std::string{}:" (load, texture, save, surface and polygon brushes need version 2)"));
+            else throw std::runtime_error("Unsupported map operation: "+kind+(kind=="delete"?" (deletes need version 3)":v2?std::string{}:" (load, texture, save, surface and polygon brushes need version 2)"));
             if(!op.at("properties").is_object())throw std::runtime_error("Properties must be an object.");
         }
+        if(deletes.empty())return;
+        // An actor the file deletes cannot also be changed, linked, given components or referenced by it.
+        auto refuse=[&](const std::string& path,const std::string& use)
+        {if(deletes.count(Fold(path)))throw std::runtime_error(path+" is deleted by this file, so it cannot also be "+use+".");};
+        for(const auto& op:ops)
+        {
+            const auto kind=op.at("op").get<std::string>();
+            if(kind=="update")refuse(op.at("actor").at("path").get<std::string>(),"updated");
+            else if(kind=="link"){refuse(op.at("event").get<std::string>(),"linked");refuse(op.at("target").get<std::string>(),"linked");}
+            else if(kind=="component")refuse(op.at("owner").get<std::string>(),"given a component");
+            if(op.contains("properties"))
+            {
+                std::vector<std::string> refs;References(op.at("properties"),refs);
+                for(const auto& ref:refs)refuse(ref,"referenced");
+            }
+        }
+    }
+    inline bool Deletes(const Json& document)
+    {
+        for(const auto& op:document.at("operations"))if(op.at("op")=="delete")return true;
+        return false;
+    }
+
+    // Preview rows. "change" is Add, Modify, Move, Delete, Link or Package; "target" names the actor (creation ID or
+    // path); "select" is the existing actor's identity a row click selects, or null for actors the file creates.
+    inline Json Row(const std::string& change,const std::string& target,const Json& select,const std::string& property={},const std::string& before={},const std::string& after={})
+    {
+        return {{"change",change},{"target",target},{"select",select},{"property",property},{"before",before},{"after",after}};
+    }
+    // A leaf, or a struct of leaves (a vector, rotator or colour), reads best whole.
+    inline bool Compact(const Json& value)
+    {
+        if(!value.is_object() && !value.is_array())return true;
+        if(value.is_array())return false;
+        return std::all_of(value.begin(),value.end(),[](const Json& v){return !v.is_object() && !v.is_array();});
+    }
+    // Property-by-property differences, descending into structs and equal-length arrays to the fields that change.
+    inline void Differences(const Json& before,const Json& after,const std::string& name,Json& out)
+    {
+        if(before==after)return;
+        if(!Compact(after) && before.is_object() && after.is_object())
+        {
+            bool same=before.size()==after.size();
+            for(auto it=after.begin();same && it!=after.end();++it)same=before.contains(it.key());
+            if(same){for(auto it=after.begin();it!=after.end();++it)Differences(before.at(it.key()),it.value(),name+"."+it.key(),out);return;}
+        }
+        if(before.is_array() && after.is_array() && before.size()==after.size())
+        {
+            for(size_t i=0;i<after.size();++i)Differences(before[i],after[i],name+"["+std::to_string(i)+"]",out);
+            return;
+        }
+        out.push_back({{"property",name},{"before",before.is_null()?std::string{}:Magic::Text(before)},{"after",Magic::Text(after)}});
+    }
+    // Location and Rotation are moves; everything else is a modification.
+    inline std::string ChangeOf(const std::string& property)
+    {
+        const auto root=property.substr(0,property.find_first_of(".["));
+        return root=="Location" || root=="Rotation"?"Move":"Modify";
+    }
+    // An update: before is the actor's complete exported values, changes the resolved properties the file sets.
+    inline Json UpdateRows(const std::string& target,const Json& select,const Json& before,const Json& changes)
+    {
+        Json rows=Json::array(),differences=Json::array();
+        for(auto it=changes.begin();it!=changes.end();++it)Differences(before.contains(it.key())?before.at(it.key()):Json(),it.value(),it.key(),differences);
+        for(const auto& d:differences)rows.push_back(Row(ChangeOf(d.at("property")),target,select,d.at("property"),d.at("before"),d.at("after")));
+        if(rows.empty())rows.push_back(Row("Modify",target,select,"(no change)"));
+        return rows;
+    }
+    inline Json CreateRows(const std::string& id,const std::string& type,const Json& properties)
+    {
+        Json rows=Json::array({Row("Add",id,nullptr,"class",{},type)});
+        for(auto it=properties.begin();it!=properties.end();++it)rows.push_back(Row("Add",id,nullptr,it.key(),{},Magic::Text(it.value())));
+        return rows;
+    }
+    inline Json DeleteRows(const Json& identity,const Json& before)
+    {
+        const auto path=identity.at("path").get<std::string>();
+        Json rows=Json::array({Row("Delete",path,identity,"class",identity.at("class").get<std::string>(),{})});
+        if(before.contains("Location"))rows.push_back(Row("Delete",path,identity,"Location",Magic::Text(before.at("Location")),{}));
+        return rows;
+    }
+    // The preview's heading: distinct actors added, modified, moved and deleted, then links and other steps (one row each).
+    inline std::string Tally(const Json& rows)
+    {
+        std::map<std::string,std::set<std::string>> seen;std::map<std::string,size_t> steps;
+        for(const auto& row:rows)
+        {
+            const auto change=row.at("change").get<std::string>();
+            seen[change].insert(Fold(row.at("target").get<std::string>()));++steps[change];
+        }
+        std::string text;
+        auto part=[&](const char* change,const char* word,bool distinct)
+        {const auto n=distinct?seen[change].size():steps[change];if(n){if(!text.empty())text+=", ";text+=std::to_string(n)+" "+word;}};
+        part("Add","added",true);part("Modify","modified",true);part("Move","moved",true);part("Delete","deleted",true);
+        part("Link","link(s)",false);part("Package","package step(s)",false);part("Surface","surface step(s)",false);
+        return text.empty()?"No changes":text;
     }
     // New objects are referenced explicitly, never by replacing arbitrary text.
     template<class Resolver> Json Resolve(const Json& schema,const Json& value,Resolver resolve)
