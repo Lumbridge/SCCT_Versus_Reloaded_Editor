@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
@@ -123,6 +124,7 @@ public:
     size_t matchedTexels{}, unmatchedTexels{};
     std::vector<LocalLightingMatch::BspNode> visibility;
     bool rootOutside = false;
+    std::map<int,std::pair<size_t,size_t>> surfaceTexels; // surface -> matched, unmatched
 };
 static std::shared_ptr<Snapshot> active;
 
@@ -227,7 +229,7 @@ std::shared_ptr<Snapshot> Capture(void* model,AssetPath path,const char* package
 void Activate(const std::shared_ptr<Snapshot>& snapshot)
 {
     active=snapshot;
-    if(active) { active->error.clear();active->mapped=active->unmapped=active->atlases=0; }
+    if(active) { active->error.clear();active->mapped=active->unmapped=active->atlases=0;active->surfaceTexels.clear(); }
 }
 void Deactivate() { active.reset(); }
 
@@ -421,10 +423,15 @@ void RestoreAtlas(void* pixels,const void* model,const void* texture) noexcept
             const unsigned point=Read<uint16_t>(verts.data,start*8);
             if(point>=unsigned(points.count)) throw std::runtime_error("Invalid target BSP chart point");
             const V anchor=Position(points.data+point*12),normal=Position(node);
+            auto& texels=snapshot.surfaceTexels[surface];
             char material[1024]{};
-            if(!snapshot.path(Read<void*>(surfaces.data+surface*0x2C,0x10),material,sizeof(material),nullptr)) continue;
+            if(!snapshot.path(Read<void*>(surfaces.data+surface*0x2C,0x10),material,sizeof(material),nullptr))
+            {
+                texels.second+=size_t(w)*h;
+                continue;
+            }
             const auto found=snapshot.triangles.find(material);
-            if(found==snapshot.triangles.end()) continue;
+            if(found==snapshot.triangles.end()) { texels.second+=size_t(w)*h; continue; }
             double matrix[4][4],inverse[4][4];
             for(int r=0;r<4;++r) for(int c=0;c<4;++c)
             {
@@ -449,7 +456,7 @@ void RestoreAtlas(void* pixels,const void* model,const void* texture) noexcept
                     && t.minimum.x<=maximum.x+0.1 && t.maximum.x>=minimum.x-0.1
                     && t.minimum.y<=maximum.y+0.1 && t.maximum.y>=minimum.y-0.1
                     && t.minimum.z<=maximum.z+0.1 && t.maximum.z>=minimum.z-0.1) candidates.push_back(&t);
-            if(candidates.empty()) continue;
+            if(candidates.empty()) { texels.second+=size_t(w)*h; continue; }
             const Triangle* previous=nullptr;
             for(int py=0;py<h;++py) for(int px=0;px<w;++px)
             {
@@ -464,7 +471,8 @@ void RestoreAtlas(void* pixels,const void* model,const void* texture) noexcept
                             && world.z>=candidate->minimum.z-0.1 && world.z<=candidate->maximum.z+0.1
                             && candidate->Weights(world,b,c)) {selected=candidate;break;}
                 }
-                if(!selected) {++snapshot.unmapped;continue;}
+                if(!selected) {++snapshot.unmapped;++texels.second;continue;}
+                ++texels.first;
                 previous=selected;
                 const double a=1-b-c;
                 static_cast<uint32_t*>(pixels)[(y+py)*512+x+px]=Sample(snapshot.images[selected->atlas[layer]],
@@ -484,6 +492,13 @@ bool Result(const std::shared_ptr<Snapshot>& snapshot,std::string& error,bool al
     Logger::log("MapRecovery: transferred original BSP lighting to "+std::to_string(snapshot->mapped)
         +" texels across "+std::to_string(snapshot->atlases)+" atlases; unmatched chart texels="+std::to_string(snapshot->unmapped));
     return true;
+}
+std::vector<SurfaceTransfer> SurfaceResults(const std::shared_ptr<Snapshot>& snapshot)
+{
+    std::vector<SurfaceTransfer> result;
+    if(!snapshot) return result;
+    for(const auto& [surface,texels]:snapshot->surfaceTexels) result.push_back({surface,texels.first,texels.second});
+    return result;
 }
 bool CheckSavedAtlases(void* model,const std::shared_ptr<Snapshot>& snapshot,bool remember,std::string& error)
 {

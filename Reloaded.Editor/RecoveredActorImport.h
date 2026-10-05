@@ -30,6 +30,10 @@ namespace RecoveredActorImport
         std::size_t clearedXboxActorReferenceCount = 0;
         std::size_t clearedDeletedActorReferenceCount = 0;
         std::vector<std::string> unsupportedReferences;
+        // For the recovery report: actors left out, and kept actors that lost
+        // a reference to an excluded or deleted actor.
+        std::vector<std::string> skippedXboxActorNames;
+        std::vector<std::string> clearedReferenceActorNames;
         std::vector<ExternalizedAsset> externalizedAssets;
         // Native procedural strip doors and patches rebuild their level-owned simulation
         // from actor settings. Callers must also verify their native topology.

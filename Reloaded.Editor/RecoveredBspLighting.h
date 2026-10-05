@@ -2,6 +2,7 @@
 #include <memory>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 namespace RecoveredBspLighting
 {
@@ -24,4 +25,13 @@ namespace RecoveredBspLighting
     bool Result(const std::shared_ptr<Snapshot>& snapshot, std::string& error, bool allowUnmatched = false);
     bool CheckSavedAtlases(void* model, const std::shared_ptr<Snapshot>& snapshot,
                            bool remember, std::string& error);
+    // Lighting texels per rebuilt BSP surface in the last spatial transfer
+    // (recovery): copied from the original bake, or left with the new bake.
+    struct SurfaceTransfer
+    {
+        int surface = -1;
+        size_t matched = 0;
+        size_t unmatched = 0;
+    };
+    std::vector<SurfaceTransfer> SurfaceResults(const std::shared_ptr<Snapshot>& snapshot);
 }

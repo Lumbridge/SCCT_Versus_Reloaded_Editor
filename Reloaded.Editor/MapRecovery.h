@@ -1,7 +1,11 @@
 #pragma once
 
+#include "MapRecoveryModel.h"
+
 #include <filesystem>
+#include <functional>
 #include <string>
+#include <vector>
 
 namespace MapRecovery
 {
@@ -10,16 +14,53 @@ namespace MapRecovery
     constexpr UINT kOpenRecoveredCommandId = 40904;
     constexpr UINT kExportBrushesCommandId = 40905;
     constexpr UINT kRecoverEditableCommandId = 40906;
+    // File > Merge Recovered Geometry (checked): block 41300-41319.
+    constexpr UINT kMergeGeometryCommandId = 41300;
 
     void Run(HWND owner);
     void RunEditable(HWND owner);
     void OpenRecovered(HWND owner);
     void ExportRecoveredBrushes(HWND owner);
+    // Adds File > Merge Recovered Geometry after the recovery commands.
+    void InstallMenu(HMENU file);
+    bool HandleCommand(UINT command);
+    // [MapRecovery] MergeGeometry in Reloaded_Editor.ini; on by default.
+    bool MergeGeometryEnabled();
+    void SetMergeGeometry(bool enabled);
+
+    struct RecoveryOptions
+    {
+        // Join and grow the compiled BSP's convex cells into fewer brushes and
+        // combine matching surface pieces. Off: only cells sharing whole
+        // faces are joined (recovery's earlier behaviour).
+        bool mergeGeometry = true;
+        // Called at every checkpoint on the UI thread; false cancels while
+        // MapRecoveryModel::CancelAllowed(stage). May be empty.
+        std::function<bool(MapRecoveryModel::Stage, double)> progress;
+        // Test hook: behave as if Cancel was pressed when this stage starts.
+        MapRecoveryModel::Stage cancelAt = MapRecoveryModel::Stage::Count;
+    };
+
+    struct RecoveryOutcome
+    {
+        bool cancelled = false;
+        MapRecoveryModel::Counts counts;
+        std::vector<MapRecoveryModel::ReportRow> rows;
+        std::filesystem::path details;  // Recovery.txt
+        std::filesystem::path folder;
+    };
+
     // One-time conversion; the output uses the normal editor package layout.
     // No dialogs. The caller must supply a new destination filename.
+    // A cancelled recovery resets the editor to a new empty map and deletes
+    // the files it had written; error then says it was cancelled.
     bool RecoverToSource(const std::filesystem::path& source,
                          const std::filesystem::path& destination,
                          std::string& error);
+    bool RecoverToSource(const std::filesystem::path& source,
+                         const std::filesystem::path& destination,
+                         std::string& error, const RecoveryOptions& options,
+                         RecoveryOutcome* outcome);
     bool HandleSaveCommand(UINT commandId);
     constexpr UINT kRecalculateLightingCommandId = 40929;
     constexpr UINT kRecalculateSelectedLightingCommandId = 40930;

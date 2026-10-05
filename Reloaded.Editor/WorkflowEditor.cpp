@@ -1437,4 +1437,5 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "PlacementNative.inl"
 #include "CharacterSkinPresetsNative.inl"
 #include "MinimapNative.inl"
+#include "MapRecoveryNative.inl"
 }

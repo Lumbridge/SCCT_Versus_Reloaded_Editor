@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <new>
+#include <set>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
@@ -619,6 +621,579 @@ namespace RecoveredBspGeometry
     catch (const std::length_error&)
     {
         error="Convex brush merging exceeds container capacity."; return false;
+    }
+
+    namespace
+    {
+        Bounds BrushBounds(const Brush& brush)
+        {
+            Bounds result=FaceBounds(brush.faces.front());
+            for (const Face& face:brush.faces)
+            {
+                const Bounds part=FaceBounds(face);
+                result.minimum.x=(std::min)(result.minimum.x,part.minimum.x);
+                result.minimum.y=(std::min)(result.minimum.y,part.minimum.y);
+                result.minimum.z=(std::min)(result.minimum.z,part.minimum.z);
+                result.maximum.x=(std::max)(result.maximum.x,part.maximum.x);
+                result.maximum.y=(std::max)(result.maximum.y,part.maximum.y);
+                result.maximum.z=(std::max)(result.maximum.z,part.maximum.z);
+            }
+            return result;
+        }
+
+        bool BoundsMeet(const Bounds& a,const Bounds& b,double margin)
+        {
+            return a.minimum.x<=b.maximum.x+margin && b.minimum.x<=a.maximum.x+margin
+                && a.minimum.y<=b.maximum.y+margin && b.minimum.y<=a.maximum.y+margin
+                && a.minimum.z<=b.maximum.z+margin && b.minimum.z<=a.maximum.z+margin;
+        }
+
+        Cell ToCell(const Brush& brush)
+        {
+            Cell cell;
+            cell.reserve(brush.faces.size());
+            for (const Face& face:brush.faces) cell.push_back({face,false});
+            return cell;
+        }
+
+        double CellVolume(const Cell& cell)
+        {
+            double six=0;
+            const Vec3 reference=cell.front().face.vertices.front();
+            for (const CellFace& face:cell)
+                for (std::size_t index=1;index+1<face.face.vertices.size();++index)
+                    six+=Dot(Subtract(face.face.vertices[0],reference),
+                        Cross(Subtract(face.face.vertices[index],reference),
+                              Subtract(face.face.vertices[index+1],reference)));
+            return six/6.0;
+        }
+
+        // Two brushes share a face region: coplanar, opposite-facing faces
+        // whose bounds overlap. Brushes meeting only at an edge or corner are
+        // left to pairs that do share a face.
+        bool ShareFace(const Brush& a,const Brush& b,double epsilon)
+        {
+            for (const Face& first:a.faces)
+            {
+                const Bounds firstBounds=FaceBounds(first);
+                for (const Face& second:b.faces)
+                {
+                    if (Dot(first.normal,second.normal)>-1+1e-9) continue;
+                    if (std::fabs(Dot(first.normal,Subtract(second.vertices.front(),first.vertices.front())))>epsilon)
+                        continue;
+                    if (BoundsMeet(firstBounds,FaceBounds(second),epsilon)) return true;
+                }
+            }
+            return false;
+        }
+
+        // Uniform grid over the reference cells for hull emptiness queries.
+        struct CellGrid
+        {
+            Bounds extent;
+            int size[3]{1,1,1};
+            double step[3]{1,1,1};
+            std::vector<std::vector<std::size_t>> buckets;
+
+            void Range(const Bounds& box,int low[3],int high[3]) const
+            {
+                const double minimum[3]={box.minimum.x,box.minimum.y,box.minimum.z};
+                const double maximum[3]={box.maximum.x,box.maximum.y,box.maximum.z};
+                const double origin[3]={extent.minimum.x,extent.minimum.y,extent.minimum.z};
+                for (int axis=0;axis<3;++axis)
+                {
+                    low[axis]=static_cast<int>(std::floor((minimum[axis]-origin[axis])/step[axis]));
+                    high[axis]=static_cast<int>(std::floor((maximum[axis]-origin[axis])/step[axis]));
+                    low[axis]=(std::max)(0,(std::min)(size[axis]-1,low[axis]));
+                    high[axis]=(std::max)(0,(std::min)(size[axis]-1,high[axis]));
+                }
+            }
+        };
+    }
+
+    bool GrowConvexBrushes(const Result& reference,Result& result,bool allowOverlap,GrowStatistics& statistics,
+                           std::string& error,const Limits& limits)
+    try
+    {
+        statistics={};
+        error.clear();
+        if (!std::isfinite(limits.epsilon) || limits.epsilon<=0 || result.brushes.size()>limits.maxBrushes
+            || reference.brushes.size()>limits.maxBrushes)
+        {
+            error="Convex brush growth requires valid geometry limits.";
+            return false;
+        }
+        if (result.brushes.empty()) return true;
+        const bool subtractive=result.brushes.front().subtractive;
+        const std::vector<Brush>* sets[]={&reference.brushes,&result.brushes};
+        for (const std::vector<Brush>* set:sets)
+            for (const Brush& brush:*set)
+                if (brush.subtractive!=subtractive || brush.faces.size()<4
+                    || brush.faces.size()>limits.maxFacesPerBrush
+                    || std::any_of(brush.faces.begin(),brush.faces.end(),[](const Face& face)
+                        { return face.vertices.size()<3 || !Finite(face.normal); }))
+                {
+                    error="Convex brush growth requires closed brushes of a single CSG kind.";
+                    return false;
+                }
+
+        Work work{limits,0,error};
+        CellGrid grid;
+        std::vector<Bounds> cellBounds;
+        cellBounds.reserve(reference.brushes.size());
+        for (const Brush& cell:reference.brushes) cellBounds.push_back(BrushBounds(cell));
+        if (!cellBounds.empty())
+        {
+            grid.extent=cellBounds.front();
+            for (const Bounds& box:cellBounds)
+            {
+                grid.extent.minimum.x=(std::min)(grid.extent.minimum.x,box.minimum.x);
+                grid.extent.minimum.y=(std::min)(grid.extent.minimum.y,box.minimum.y);
+                grid.extent.minimum.z=(std::min)(grid.extent.minimum.z,box.minimum.z);
+                grid.extent.maximum.x=(std::max)(grid.extent.maximum.x,box.maximum.x);
+                grid.extent.maximum.y=(std::max)(grid.extent.maximum.y,box.maximum.y);
+                grid.extent.maximum.z=(std::max)(grid.extent.maximum.z,box.maximum.z);
+            }
+            const double span[3]={grid.extent.maximum.x-grid.extent.minimum.x,
+                grid.extent.maximum.y-grid.extent.minimum.y,grid.extent.maximum.z-grid.extent.minimum.z};
+            const int divisions=static_cast<int>((std::min)(48.0,(std::max)(1.0,std::cbrt(double(cellBounds.size())))));
+            for (int axis=0;axis<3;++axis)
+            {
+                grid.size[axis]=divisions;
+                grid.step[axis]=(std::max)(span[axis]/divisions,limits.epsilon*16);
+            }
+            grid.buckets.resize(static_cast<std::size_t>(grid.size[0])*grid.size[1]*grid.size[2]);
+            for (std::size_t index=0;index<cellBounds.size();++index)
+            {
+                int low[3],high[3];
+                grid.Range(cellBounds[index],low,high);
+                for (int x=low[0];x<=high[0];++x) for (int y=low[1];y<=high[1];++y) for (int z=low[2];z<=high[2];++z)
+                    grid.buckets[(static_cast<std::size_t>(x)*grid.size[1]+y)*grid.size[2]+z].push_back(index);
+            }
+        }
+        std::vector<unsigned> stamp(reference.brushes.size(),0);
+        std::vector<double> cellVolumes;
+        cellVolumes.reserve(reference.brushes.size());
+        for (const Brush& cell:reference.brushes) cellVolumes.push_back(Volume(cell));
+        unsigned query=0;
+        // Cheap rejection before measuring volumes: a point of the candidate
+        // region that no reference cell contains proves it reaches solid space.
+        auto insideReference=[&](const Vec3& point)
+        {
+            if (grid.buckets.empty()) return false;
+            int low[3],high[3];
+            grid.Range({point,point},low,high);
+            for (std::size_t cellIndex:grid.buckets[(static_cast<std::size_t>(low[0])*grid.size[1]+low[1])*grid.size[2]+low[2]])
+            {
+                const Bounds& box=cellBounds[cellIndex];
+                if (point.x<box.minimum.x-limits.epsilon || point.x>box.maximum.x+limits.epsilon
+                    || point.y<box.minimum.y-limits.epsilon || point.y>box.maximum.y+limits.epsilon
+                    || point.z<box.minimum.z-limits.epsilon || point.z>box.maximum.z+limits.epsilon) continue;
+                const Brush& cell=reference.brushes[cellIndex];
+                if (std::all_of(cell.faces.begin(),cell.faces.end(),[&](const Face& face)
+                    { return Dot(face.normal,Subtract(point,face.vertices.front()))<=limits.epsilon; }))
+                    return true;
+            }
+            return false;
+        };
+
+        std::vector<Brush> brushes=result.brushes;
+        // Identities survive the per-pass compaction, so a pair already shown
+        // not to fit is not measured again until one of its brushes changes.
+        std::vector<std::uint64_t> identity(brushes.size());
+        std::vector<std::vector<std::size_t>> members(brushes.size());
+        for (std::size_t index=0;index<members.size();++index) members[index]={index};
+        std::uint64_t nextIdentity=0;
+        for (auto& value:identity) value=nextIdentity++;
+        std::set<std::pair<std::uint64_t,std::uint64_t>> rejected;
+        bool stopped=false;
+        for (unsigned pass=0;pass<64 && !stopped;++pass)
+        {
+            std::vector<Bounds> bounds;
+            std::vector<double> volume;
+            bounds.reserve(brushes.size());
+            volume.reserve(brushes.size());
+            for (const Brush& brush:brushes)
+            {
+                bounds.push_back(BrushBounds(brush));
+                volume.push_back(BrushVolume(brush,brush.faces.front().vertices.front()));
+            }
+            // Sweep along X for brushes whose bounds meet, then require a
+            // shared face region.
+            std::vector<std::size_t> order(brushes.size());
+            for (std::size_t index=0;index<order.size();++index) order[index]=index;
+            std::sort(order.begin(),order.end(),[&](std::size_t a,std::size_t b)
+            {
+                return bounds[a].minimum.x<bounds[b].minimum.x
+                    || (bounds[a].minimum.x==bounds[b].minimum.x && a<b);
+            });
+            std::vector<std::pair<std::size_t,std::size_t>> pairs;
+            std::vector<std::vector<std::size_t>> neighbours(brushes.size());
+            for (std::size_t i=0;i<order.size() && !stopped;++i)
+                for (std::size_t j=i+1;j<order.size();++j)
+                {
+                    const std::size_t a=order[i],b=order[j];
+                    if (bounds[b].minimum.x>bounds[a].maximum.x+limits.epsilon) break;
+                    if (!work.Spend(1)) { stopped=true; break; }
+                    if (!BoundsMeet(bounds[a],bounds[b],limits.epsilon)
+                        || !ShareFace(brushes[a],brushes[b],limits.epsilon)) continue;
+                    neighbours[a].push_back(b);
+                    neighbours[b].push_back(a);
+                    pairs.emplace_back((std::min)(a,b),(std::max)(a,b));
+                }
+            if (stopped) break;
+            // Brushes on either side of a common neighbour can also span it:
+            // the arms of a crossing become one brush running through the
+            // brush that crosses them.
+            for (const auto& around:neighbours)
+                for (std::size_t i=0;i<around.size() && !stopped;++i)
+                    for (std::size_t j=i+1;j<around.size();++j)
+                    {
+                        if (pairs.size()>=2000000 || !work.Spend(1)) { stopped=true; break; }
+                        pairs.emplace_back((std::min)(around[i],around[j]),(std::max)(around[i],around[j]));
+                    }
+            if (stopped) break;
+            std::sort(pairs.begin(),pairs.end());
+            pairs.erase(std::unique(pairs.begin(),pairs.end()),pairs.end());
+            // Largest combined volume first: rooms absorb their fragments
+            // before small neighbours can claim them.
+            std::sort(pairs.begin(),pairs.end(),[&](const auto& x,const auto& y)
+            {
+                const double vx=volume[x.first]+volume[x.second],vy=volume[y.first]+volume[y.second];
+                if (vx!=vy) return vx>vy;
+                return x<y;
+            });
+            std::vector<bool> changed(brushes.size(),false),removed(brushes.size(),false);
+            std::size_t merged=0;
+            for (const auto& [a,b]:pairs)
+            {
+                if (changed[a] || changed[b] || removed[a] || removed[b]) continue;
+                const std::pair<std::uint64_t,std::uint64_t> key{(std::min)(identity[a],identity[b]),
+                                                                  (std::max)(identity[a],identity[b])};
+                if (rejected.count(key)) continue;
+                struct Reject
+                {
+                    std::set<std::pair<std::uint64_t,std::uint64_t>>& set;
+                    std::pair<std::uint64_t,std::uint64_t> key;
+                    bool active=true;
+                    ~Reject() { if (active) set.insert(key); }
+                } reject{rejected,key};
+                Bounds box=bounds[a];
+                box.minimum.x=(std::min)(box.minimum.x,bounds[b].minimum.x)-1;
+                box.minimum.y=(std::min)(box.minimum.y,bounds[b].minimum.y)-1;
+                box.minimum.z=(std::min)(box.minimum.z,bounds[b].minimum.z)-1;
+                box.maximum.x=(std::max)(box.maximum.x,bounds[b].maximum.x)+1;
+                box.maximum.y=(std::max)(box.maximum.y,bounds[b].maximum.y)+1;
+                box.maximum.z=(std::max)(box.maximum.z,bounds[b].maximum.z)+1;
+                Cell hull=MakeBox(box);
+                bool usable=true;
+                for (const Brush* self:{&brushes[a],&brushes[b]})
+                {
+                    const Brush& other=self==&brushes[a] ? brushes[b] : brushes[a];
+                    for (const Face& face:self->faces)
+                    {
+                        if (!work.Spend(1)) { usable=false; stopped=true; break; }
+                        bool supporting=true;
+                        for (const Face& otherFace:other.faces)
+                        {
+                            for (const Vec3& point:otherFace.vertices)
+                                if (Dot(face.normal,Subtract(point,face.vertices.front()))>limits.epsilon)
+                                {
+                                    supporting=false;
+                                    break;
+                                }
+                            if (!supporting) break;
+                        }
+                        if (!supporting) continue;
+                        Cell next;
+                        if (!Clip(hull,face.normal,Dot(face.normal,face.vertices.front()),face.surfaceIndex,next,work))
+                        {
+                            usable=false;
+                            if (work.exhausted) stopped=true;
+                            break;
+                        }
+                        hull=std::move(next);
+                        if (hull.empty() || hull.size()>limits.maxFacesPerBrush) { usable=false; break; }
+                    }
+                    if (!usable) break;
+                }
+                if (stopped) { reject.active=false; break; }
+                // A face of the clipping box left over means the supporting
+                // planes do not close the region: it is not a candidate.
+                if (!usable || std::any_of(hull.begin(),hull.end(),[](const CellFace& face)
+                        { return face.artificialBoundary; }))
+                {
+                    error.clear();
+                    continue;
+                }
+                const std::string previousError=error;
+                if (!ValidateClosedCell(hull,work))
+                {
+                    if (work.exhausted) { reject.active=false; stopped=true; break; }
+                    error=previousError;
+                    continue;
+                }
+                {
+                    Vec3 centre{};
+                    std::size_t corners=0;
+                    for (const CellFace& face:hull)
+                        for (const Vec3& point:face.face.vertices) { centre=Add(centre,point); ++corners; }
+                    centre=Scale(centre,1.0/static_cast<double>(corners));
+                    // Corners, edge midpoints and face centres pulled slightly
+                    // inwards, then points part-way to the centre.
+                    bool plausible=insideReference(centre);
+                    for (std::size_t faceIndex=0;faceIndex<hull.size() && plausible;++faceIndex)
+                    {
+                        const Face& face=hull[faceIndex].face;
+                        Vec3 middle{};
+                        for (std::size_t index=0;index<face.vertices.size() && plausible;++index)
+                        {
+                            const Vec3& point=face.vertices[index];
+                            const Vec3 edge=Scale(Add(point,face.vertices[(index+1)%face.vertices.size()]),0.5);
+                            middle=Add(middle,point);
+                            for (const Vec3& sample:{point,edge})
+                                for (double depth:{1e-3,0.25,0.5,0.75})
+                                    if (plausible && !insideReference(Add(sample,Scale(Subtract(centre,sample),depth))))
+                                        plausible=false;
+                        }
+                        middle=Scale(middle,1.0/static_cast<double>(face.vertices.size()));
+                        for (double depth:{1e-3,0.25,0.5,0.75})
+                            if (plausible && !insideReference(Add(middle,Scale(Subtract(centre,middle),depth))))
+                                plausible=false;
+                    }
+                    if (!plausible) continue;
+                }
+                double hullArea=0;
+                for (const CellFace& face:hull) hullArea+=FaceArea(face.face);
+                const double hullVolume=CellVolume(hull);
+                const Bounds hullBounds=[&]
+                {
+                    Bounds result=FaceBounds(hull.front().face);
+                    for (const CellFace& face:hull)
+                    {
+                        const Bounds part=FaceBounds(face.face);
+                        result.minimum.x=(std::min)(result.minimum.x,part.minimum.x);
+                        result.minimum.y=(std::min)(result.minimum.y,part.minimum.y);
+                        result.minimum.z=(std::min)(result.minimum.z,part.minimum.z);
+                        result.maximum.x=(std::max)(result.maximum.x,part.maximum.x);
+                        result.maximum.y=(std::max)(result.maximum.y,part.maximum.y);
+                        result.maximum.z=(std::max)(result.maximum.z,part.maximum.z);
+                    }
+                    return result;
+                }();
+                // The grown region must be covered by the original cells. They
+                // are disjoint, so the clipped volumes add up to the region's
+                // own volume exactly when no part of it reaches outside them.
+                double covered=0;
+                bool measured=true;
+                if (++query==0) { std::fill(stamp.begin(),stamp.end(),0u); query=1; }
+                if (!grid.buckets.empty())
+                {
+                    int low[3],high[3];
+                    grid.Range(hullBounds,low,high);
+                    for (int x=low[0];x<=high[0] && measured;++x)
+                        for (int y=low[1];y<=high[1] && measured;++y)
+                            for (int z=low[2];z<=high[2] && measured;++z)
+                                for (std::size_t cellIndex:grid.buckets[(static_cast<std::size_t>(x)*grid.size[1]+y)*grid.size[2]+z])
+                                {
+                                    if (stamp[cellIndex]==query) continue;
+                                    stamp[cellIndex]=query;
+                                    if (!BoundsMeet(cellBounds[cellIndex],hullBounds,-limits.epsilon)) continue;
+                                    // Whole cells inside or outside need no clipping.
+                                    const Brush& cell=reference.brushes[cellIndex];
+                                    bool outside=false,within=true;
+                                    for (const CellFace& face:hull)
+                                    {
+                                        double nearest=std::numeric_limits<double>::infinity(),farthest=-nearest;
+                                        const double distance=Dot(face.face.normal,face.face.vertices.front());
+                                        for (const Face& cellFace:cell.faces)
+                                            for (const Vec3& point:cellFace.vertices)
+                                            {
+                                                const double side=Dot(face.face.normal,point)-distance;
+                                                nearest=(std::min)(nearest,side);
+                                                farthest=(std::max)(farthest,side);
+                                            }
+                                        if (nearest>=-limits.epsilon) { outside=true; break; }
+                                        if (farthest>limits.epsilon) within=false;
+                                    }
+                                    if (outside) continue;
+                                    if (within) { covered+=cellVolumes[cellIndex]; continue; }
+                                    Cell clipped=ToCell(cell);
+                                    for (const CellFace& face:hull)
+                                    {
+                                        Cell next;
+                                        if (!Clip(clipped,face.face.normal,Dot(face.face.normal,face.face.vertices.front()),
+                                                  -1,next,work))
+                                        {
+                                            measured=false;
+                                            break;
+                                        }
+                                        clipped=std::move(next);
+                                        if (clipped.empty()) break;
+                                    }
+                                    if (!measured) break;
+                                    if (!clipped.empty()) covered+=CellVolume(clipped);
+                                }
+                }
+                if (!measured)
+                {
+                    if (work.exhausted) { reject.active=false; stopped=true; break; }
+                    error.clear();
+                    continue;
+                }
+                if (!std::isfinite(covered) || !std::isfinite(hullVolume) || hullVolume<=0
+                    || std::fabs(covered-hullVolume)>limits.epsilon*hullArea+hullVolume*1e-12)
+                    continue;
+                if (!allowOverlap)
+                {
+                    // Every other brush must lie wholly inside the region (it
+                    // is then absorbed) or wholly outside it, so the brushes
+                    // stay disjoint: the region is then exactly their union.
+                    bool partial=false;
+                    std::vector<Vec3> hullPoints;
+                    for (const CellFace& face:hull)
+                        hullPoints.insert(hullPoints.end(),face.face.vertices.begin(),face.face.vertices.end());
+                    for (std::size_t other=0;other<brushes.size() && !partial;++other)
+                    {
+                        if (other==a || other==b || removed[other]) continue;
+                        const Bounds otherBounds=changed[other] ? BrushBounds(brushes[other]) : bounds[other];
+                        if (!BoundsMeet(otherBounds,hullBounds,-limits.epsilon)) continue;
+                        const Brush& candidate=brushes[other];
+                        auto beyond=[&](const Face& plane,const auto& points)
+                        {
+                            for (const Vec3& point:points)
+                                if (Dot(plane.normal,Subtract(point,plane.vertices.front()))<-limits.epsilon) return false;
+                            return true;
+                        };
+                        std::vector<Vec3> candidatePoints;
+                        for (const Face& face:candidate.faces)
+                            candidatePoints.insert(candidatePoints.end(),face.vertices.begin(),face.vertices.end());
+                        bool within=true;
+                        for (const Vec3& point:candidatePoints)
+                        {
+                            for (const CellFace& face:hull)
+                                if (Dot(face.face.normal,Subtract(point,face.face.vertices.front()))>limits.epsilon)
+                                {
+                                    within=false;
+                                    break;
+                                }
+                            if (!within) break;
+                        }
+                        if (within) continue;
+                        if (std::any_of(hull.begin(),hull.end(),[&](const CellFace& face){ return beyond(face.face,candidatePoints); })
+                            || std::any_of(candidate.faces.begin(),candidate.faces.end(),[&](const Face& face){ return beyond(face,hullPoints); }))
+                            continue;
+                        // No separating face: measure the shared volume.
+                        Cell clipped=ToCell(candidate);
+                        for (const CellFace& face:hull)
+                        {
+                            Cell next;
+                            if (!Clip(clipped,face.face.normal,Dot(face.face.normal,face.face.vertices.front()),-1,next,work))
+                            {
+                                partial=true;
+                                break;
+                            }
+                            clipped=std::move(next);
+                            if (clipped.empty()) break;
+                        }
+                        if (work.exhausted) break;
+                        if (!partial && !clipped.empty() && CellVolume(clipped)>limits.epsilon*hullArea) partial=true;
+                    }
+                    if (work.exhausted) { reject.active=false; stopped=true; break; }
+                    error.clear();
+                    if (partial) continue;
+                }
+                reject.active=false;
+                Brush grown;
+                grown.subtractive=subtractive;
+                grown.faces.reserve(hull.size());
+                for (CellFace& face:hull) grown.faces.push_back(std::move(face.face));
+                brushes[a]=std::move(grown);
+                identity[a]=nextIdentity++;
+                changed[a]=true;
+                removed[b]=true;
+                members[a].insert(members[a].end(),members[b].begin(),members[b].end());
+                ++merged;
+                ++statistics.grown;
+                // Any other brush now wholly inside the grown one is redundant.
+                const Bounds& grownBounds=hullBounds;
+                for (std::size_t other=0;other<brushes.size();++other)
+                {
+                    if (other==a || removed[other] || !BoundsMeet(bounds[other],grownBounds,limits.epsilon)) continue;
+                    bool inside=true;
+                    for (const Face& face:brushes[other].faces)
+                    {
+                        for (const Vec3& point:face.vertices)
+                        {
+                            for (const Face& plane:brushes[a].faces)
+                                if (Dot(plane.normal,Subtract(point,plane.vertices.front()))>limits.epsilon)
+                                {
+                                    inside=false;
+                                    break;
+                                }
+                            if (!inside) break;
+                        }
+                        if (!inside) break;
+                    }
+                    if (!inside) continue;
+                    removed[other]=true;
+                    members[a].insert(members[a].end(),members[other].begin(),members[other].end());
+                    ++merged;
+                    ++statistics.absorbed;
+                }
+            }
+            if (stopped) work.error.clear();
+            std::vector<Brush> remaining;
+            std::vector<std::uint64_t> remainingIdentity;
+            std::vector<std::vector<std::size_t>> remainingMembers;
+            remaining.reserve(brushes.size());
+            for (std::size_t index=0;index<brushes.size();++index)
+                if (!removed[index])
+                {
+                    remaining.push_back(std::move(brushes[index]));
+                    remainingIdentity.push_back(identity[index]);
+                    remainingMembers.push_back(std::move(members[index]));
+                }
+            brushes=std::move(remaining);
+            identity=std::move(remainingIdentity);
+            members=std::move(remainingMembers);
+            if (!merged) break;
+        }
+        statistics.budgetReached=stopped;
+        for (auto& list:members) std::sort(list.begin(),list.end());
+        statistics.members=std::move(members);
+        error.clear();
+        result.brushes=std::move(brushes);
+        return true;
+    }
+    catch (const std::bad_alloc&)
+    {
+        error="There is insufficient memory to grow recovered brushes."; return false;
+    }
+    catch (const std::length_error&)
+    {
+        error="Convex brush growth exceeds container capacity."; return false;
+    }
+
+    double Volume(const Brush& brush)
+    {
+        if (brush.faces.empty() || brush.faces.front().vertices.empty()) return 0;
+        return BrushVolume(brush,brush.faces.front().vertices.front());
+    }
+
+    double MinimumWidth(const Brush& brush)
+    {
+        double narrowest=std::numeric_limits<double>::infinity();
+        for (const Face& face:brush.faces)
+        {
+            if (face.vertices.empty()) continue;
+            double deepest=0;
+            for (const Face& other:brush.faces)
+                for (const Vec3& point:other.vertices)
+                    deepest=(std::max)(deepest,-Dot(face.normal,Subtract(point,face.vertices.front())));
+            narrowest=(std::min)(narrowest,deepest);
+        }
+        return std::isfinite(narrowest) ? narrowest : 0;
     }
 
     bool OrderForRebuild(Result& result,std::string& error)

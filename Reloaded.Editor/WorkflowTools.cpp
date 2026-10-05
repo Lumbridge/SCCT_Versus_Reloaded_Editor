@@ -956,6 +956,7 @@ bool HandleCommand(UINT command)
     if(MapCheck::HandleCommand(command))return true;
     if(RenderBudget::HandleCommand(command))return true;
     if(MinimapWindow::HandleCommand(command))return true;
+    if(MapRecovery::HandleCommand(command))return true;
     if(command==StoreyFilter::kOpen)
     {
         try{StoreyFilter::Open();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Storeys",MB_OK|MB_ICONERROR);}

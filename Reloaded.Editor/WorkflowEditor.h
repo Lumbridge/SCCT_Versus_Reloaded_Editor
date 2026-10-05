@@ -175,6 +175,10 @@ namespace Workflow::Editor
     // (on a fresh repaint), the BSP nodes for the point-in-zone walk and the
     // zone portal polygons.
     Json RenderBudgetView();
+    // Recovery report (MapRecoveryNative.inl): selects actors by object name,
+    // or BSP surfaces by index, and optionally frames them in the viewports.
+    size_t SelectActorNames(const std::vector<std::string>& names, bool focus);
+    size_t SelectSurfaces(const std::vector<int>& surfaces, bool focus);
     // Security devices: creation, the motion sensor with its volume, and wiring.
     Json SecurityActors();
     Json Lights();

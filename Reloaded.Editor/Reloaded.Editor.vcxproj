@@ -250,6 +250,9 @@
     <ClInclude Include="DeintersectFix.h" />
     <ClInclude Include="MapUnlock.h" />
     <ClInclude Include="MapRecovery.h" />
+    <ClInclude Include="MapRecoveryModel.h" />
+    <ClInclude Include="MapRecoveryNative.inl" />
+    <ClInclude Include="MapRecoveryUi.h" />
     <ClInclude Include="RecoveredBspLighting.h" />
     <ClInclude Include="RecoveredSoftBodySettings.h" />
     <ClInclude Include="RecoveredBspGeometry.h" />
@@ -347,6 +350,7 @@
     <ClCompile Include="MeasureTool.cpp" />
     <ClCompile Include="PlacementTools.cpp" />
     <ClCompile Include="MapRecovery.cpp" />
+    <ClCompile Include="MapRecoveryUi.cpp" />
     <ClCompile Include="RecoveredBspLighting.cpp" />
     <ClCompile Include="RecoveredBspGeometry.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>

@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -1461,8 +1462,58 @@ void RunTest() {
     }
     Record("recovering", source);
     bool menuRecovery = GetPrivateProfileIntA("test", "recovery_menu", 0, configuration.c_str()) != 0;
+    // Merge option and cancellation go through the options export; its
+    // report (counts and rows) is recorded line by line.
+    using RecoverWithOptionsFn = int(__cdecl*)(const char*, const char*, int, int, char*, unsigned int, char*, unsigned int);
+    auto recoverWithOptions = reinterpret_cast<RecoverWithOptionsFn>(GetProcAddress(editorDll, "ReloadedRecoverMapToSourceWithOptions"));
+    if (!recoverWithOptions) recoverWithOptions = reinterpret_cast<RecoverWithOptionsFn>(GetProcAddress(editorDll, "_ReloadedRecoverMapToSourceWithOptions"));
+    const int mergeOption = static_cast<int>(GetPrivateProfileIntA("test", "recovery_merge", 1, configuration.c_str()));
+    char cancelText[32] = {};
+    GetPrivateProfileStringA("test", "recovery_cancel_stage", "", cancelText, sizeof(cancelText), configuration.c_str());
+    const int cancelStage = cancelText[0] ? atoi(cancelText) : -1;
+    auto recordReport = [](const char* text) {
+        std::istringstream lines(text);
+        for (std::string line; std::getline(lines, line);) Record("recovery_report", line.c_str());
+    };
+    if (cancelStage >= 0) {
+        static char cancelReport[65536] = {};
+        if (!recoverWithOptions) { Record("FAIL", "Recovery options export was not found."); return; }
+        const auto outputs = std::filesystem::path(destination);
+        const auto runtime = outputs.parent_path().parent_path() / "Maps" / outputs.filename();
+        const auto scratch = outputs.parent_path() / "Recovery" / outputs.stem();
+        const auto assets = outputs.parent_path().parent_path() / "StaticMeshes" / (outputs.stem().string() + "_Assets.usx");
+        const int result = recoverWithOptions(source, destination, mergeOption, cancelStage, error, sizeof(error), cancelReport, sizeof(cancelReport));
+        recordReport(cancelReport);
+        Record("cancel_result", error);
+        auto window = *reinterpret_cast<unsigned char**>(0x1165E80C);
+        auto filename = window ? reinterpret_cast<const char*>(window + 0x58) : "";
+        Snapshot("cancelled_recovery");
+        if (result || !strstr(error, "cancelled")) { Record("FAIL", "Recovery did not stop at the requested cancel point."); return; }
+        if (!strstr(cancelReport, "cancelled=1")) { Record("FAIL", "The outcome was not marked cancelled."); return; }
+        if (!window || filename[0]) { Record("FAIL", "Cancelled recovery left a File Save target."); return; }
+        for (const auto& path : {outputs, runtime, scratch, assets})
+            if (std::filesystem::exists(path)) { Record("FAIL", ("Cancelled recovery left " + path.string()).c_str()); return; }
+        auto editor = *reinterpret_cast<unsigned char**>(kEditor);
+        auto level = *reinterpret_cast<unsigned char**>(editor + 0x130);
+        auto model = *reinterpret_cast<unsigned char**>(level + 0x13C);
+        if (*reinterpret_cast<int*>(model + 0x98) != 0) { Record("FAIL", "Cancelled recovery left BSP surfaces in the open map."); return; }
+        // A new map is solid: carving a room proves geometry builds again.
+        if (!SetCubeBrush(128) || !Exec("BRUSH SUBTRACT") || !Rebuild() || !HasGeometry()) {
+            Record("FAIL", "Normal editing failed after a cancelled recovery."); return;
+        }
+        Snapshot("cancel_followup_normal_edit");
+        Record("PASS", ("Cancel at stage " + std::to_string(cancelStage) + " reset the editor to a new map, removed its files and allowed normal editing.").c_str());
+        return;
+    }
+    static char recoveryReport[65536] = {};
+    auto recoverSelected = [&]() -> int {
+        if (!recoverWithOptions) return recover(source, destination, error, sizeof(error));
+        const int result = recoverWithOptions(source, destination, mergeOption, -1, error, sizeof(error), recoveryReport, sizeof(recoveryReport));
+        recordReport(recoveryReport);
+        return result;
+    };
     if (!(menuRecovery ? RecoverThroughMenu(editorDll, source, destination, sizeof(destination))
-                       : recover(source, destination, error, sizeof(error)))) {
+                       : recoverSelected())) {
         if (inspectCookedOnly && inspectedCooked) {
             Record("PASS", "Cooked-file inspection completed; no source reconstruction or gameplay validation was performed.");
             return;

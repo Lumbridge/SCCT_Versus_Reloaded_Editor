@@ -18,6 +18,10 @@ cl /nologo /std:c++17 /W4 /WX /EHsc /O2 tests\RecoveredBspGeometryTests.cpp Relo
 if not "%errorlevel%"=="0" goto failed
 "%TEMP%\RecoveredBspGeometryTests.exe"
 if not "%errorlevel%"=="0" goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /O2 tests\MapRecoveryModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MapRecoveryModelTests.exe"
+if not "%errorlevel%"=="0" goto failed
+"%TEMP%\MapRecoveryModelTests.exe"
+if not "%errorlevel%"=="0" goto failed
 cl /nologo /std:c++17 /W4 /WX /EHsc /O2 tests\RecoveredActorImportTests.cpp Reloaded.Editor\RecoveredActorImport.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\RecoveredActorImportTests.exe"
 if not "%errorlevel%"=="0" goto failed
 "%TEMP%\RecoveredActorImportTests.exe"

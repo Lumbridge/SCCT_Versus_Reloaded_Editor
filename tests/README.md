@@ -635,6 +635,34 @@ ordinary geometry/BSP/lighting/path rebuilding, File Save, reopening and export.
 Use `-RecoveryMenu -VisibleEditor` for the actual recovery menu, file picker and
 confirmation dialog in the isolated test. `-FpuBoundsProbe` checks native bounds
 with a full x87 stack; combined with `-RecoveryMenu`, it then runs recovery.
+With `-RecoveryMenu` the probe also captures the progress window
+(`recovery_progress.bmp`) from its own thread, records the Recovery Report's
+summary and row count, chooses the first row of each kind through
+Select and Frame, and saves `recovery_report.bmp`/`recovery_report_after.bmp`.
+
+`-NoMerge` recovers with File > Merge Recovered Geometry off (face joining only,
+the earlier behaviour). `-CancelAtStage <n>` acts as if Cancel were pressed when
+`MapRecoveryModel::Stage` n starts (0 Preparing ... 10 Paths) and then checks
+that the editor holds a new empty map with no File Save target, that the
+source, playable map, recovery folder and asset package are gone, and that a
+subtractive cube still builds. Both go through the
+`ReloadedRecoverMapToSourceWithOptions` export, whose report lines
+(`recovery_report cells=... brushes=... polygons=...` and one line per row) are
+recorded.
+
+Geometry merging (2026-10-05): faces-joined cells may grow over neighbours
+while they stay inside the original cells (`GrowConvexBrushes`, overlapping
+brushes of one CSG kind). Results against the earlier face joining, with the
+same solid/empty, lighting, save/reopen and actor checks passing:
+OffsD 1,803 cells -> 1,205 brushes / 9,448 polygons before, 810-837 brushes /
+8,683-8,797 polygons now; AquaD 302 cells -> 234 / 1,940 before, 215 / 1,792 now.
+The editor's BSP builder does not always reproduce overlapping brushes exactly
+(OffsD missed 3 of 8,046 samples on the first build); recovery then splits the
+grown brushes around the misses back into their joined brushes and builds
+again, up to six times. The user's ShipD still fails: before this change in
+bevel canonicalization, now at one sample beside a 1-unit sliver under two
+slopes 0.22 units apart, which no brush grouping reproduces. BankD fails the
+imported-actor check (StaticMeshActor307's StaticMesh) with and without merging.
 
 Sub18 regression (2026-09-13): retained portal surface 1282 has a vertex
 0.074219 units from its cooked BSP plane. Recovery accepts the native BSP
