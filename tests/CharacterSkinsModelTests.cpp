@@ -57,13 +57,15 @@ int main()
         Check(Contains(script, "BotClass = class'SPawnAttaque_1Mesh'") && Contains(script, "BotClass = class'SPawnDefense_1Mesh'"), "bot classes");
         Check(Contains(script, "Spawn(BotClass, , 'ReloadedTestBot',") && Contains(script, "DynamicActors(class'Pawn', P, 'ReloadedTestBot')"),
               "killbots removes only the tagged bots");
-        Check(Contains(script, "GRI.PRIArray[i].PlayerName = \"Test bot\"") && Contains(script, "\tNameBots(PC);\r\n\tC = Console("),
+        Check(Contains(script, "GRI.PRIArray[i].PlayerName = \"Test bot\"") && Contains(script, "\tNameBots(PC);\r\n\tControlBots();\r\n\tC = Console("),
               "names kept: the Reloaded patch crashes on an empty one");
         // A merc's game crashes on a character without a controller; Controller is abstract.
         Check(Contains(script, "BotClass.default.Controller = Ctl;") && Contains(script, "BotClass.default.Controller = None;") &&
                   Contains(BotControllerScript(), "class ReloadedBotController extends Controller;\r\n"),
               "bots have a controller");
         Check(Contains(script, "Bot.AttachToBone(Gun, 'B R Hand');"), "a merc bot holds its gun");
+        Check(Contains(script, "P.AttachToBone(SPAWNDEFENSE(P).WeaponDummy, 'B R Hand');"), "the gun follows a model swap");
+        Check(Contains(script, "\tControlBots();"), "bots keep a controller");
         Check(Contains(script, "only the other team can be added"), "own team refused");
 
         Check(ValidPath(""), "empty keeps stock");
