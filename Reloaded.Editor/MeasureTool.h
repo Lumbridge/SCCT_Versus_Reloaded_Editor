@@ -1,5 +1,8 @@
 #pragma once
 #include <windows.h>
+#include <cstdint>
+#include <string>
+#include <vector>
 
 // Measure in the editor's viewports: right-click > Measure > Start Here / To
 // Here sets the two ends from the clicked point (grid-snapped like Builder
@@ -20,4 +23,11 @@ namespace MeasureTool
     // Every level-viewport message, from the ViewportWndProc hook. Notes the
     // viewport a right-click came from, and takes M. True when consumed.
     bool ViewportMessage(void* viewport, UINT message, WPARAM wParam, LPARAM lParam);
+
+    // Lines another tool draws into every level viewport of the map open now
+    // (Map Check's leak path), kept under the tool's name; an empty list removes
+    // them, and they go when another map is opened. Colours are FColor in
+    // memory order, 0xAARRGGBB.
+    struct OverlayLine { double from[3], to[3]; uint32_t colour; };
+    void SetOverlay(const std::string& owner, const std::vector<OverlayLine>& lines);
 }

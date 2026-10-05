@@ -53,6 +53,8 @@ namespace
     bool popupSurface = false;
     int popupHidden = -1;
     bool overlayFaulted = false;
+    struct Overlay { Address level = 0; std::vector<OverlayLine> lines; };
+    std::map<std::string, Overlay> overlays;
 
     bool Copy(void* destination, const void* source, size_t size)
     {
@@ -243,6 +245,16 @@ namespace
         const auto camera = Read<Address>(viewport + 0x30);
         const auto location = Read<std::array<float, 3>>(camera + 0x80);
         view.camera = { location[0], location[1], location[2] };
+        if (!overlays.empty() && view.width > 0 && view.height > 0)
+        {
+            const auto level = CurrentLevel();
+            std::vector<std::pair<std::pair<Vector, Vector>, uint32_t>> extra;
+            for (const auto& [owner, overlay] : overlays)
+                if (overlay.level == level)
+                    for (const auto& line : overlay.lines)
+                        extra.push_back({ { { line.from[0], line.from[1], line.from[2] }, { line.to[0], line.to[1], line.to[2] } }, line.colour });
+            if (!extra.empty()) DrawLines(viewport, view, extra);
+        }
         if (!session.start || !sessionLevel || CurrentLevel() != sessionLevel || view.width <= 0 || view.height <= 0) return;
 
         std::vector<std::pair<std::pair<Vector, Vector>, uint32_t>> lines;
@@ -332,6 +344,13 @@ void Initialize()
     }
     if (MemoryWriter::WriteJump(kOverlayAt, OverlayHook))
         Logger::log("Measure: viewport overlay installed");
+}
+
+void SetOverlay(const std::string& owner, const std::vector<OverlayLine>& lines)
+{
+    if (lines.empty()) overlays.erase(owner);
+    else overlays[owner] = { CurrentLevel(), lines };
+    Redraw();
 }
 
 void AddMenu(HMENU menu, bool surface)
