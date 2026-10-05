@@ -1,30 +1,37 @@
 #pragma once
-// Character Skin presets: a named set of Character Skins (the four material slots,
-// the two model swaps and their goggle light offsets) kept in a library and applied
-// to any map through the Character Skins Import and Apply paths. Pure: no Windows,
-// no engine, so the tests compile it alone.
+// Character Skin presets: a named look for ONE team (its two material slots, its
+// model swap and that model's goggle light offset) kept in a library and applied to
+// any map through the Character Skins Import and Apply paths. Applying a spy preset
+// changes only the spy values and leaves the mercs as the map has them, so spies and
+// mercs can wear different presets. Pure: no Windows, no engine, so the tests
+// compile it alone.
 //
 // Entry, the contract with the browser and the editor side:
-//   {"id": "builtin.<slug>" (compiled in, never written) | 32 lower-case hex (user),
+//   {"id": "builtin.<team>.<slug>" (compiled in, never written) | 32 lower-case hex (user),
+//    "team": "spy"|"merc",
 //    "name", "category", "description",
 //    "builtin": true|false, "readonly": true|false (in memory only, never written),
 //    "modified": epoch milliseconds as text (user entries),
-//    "slots": {"SpyBody"|"SpyHead"|"MercBody"|"MercHead":
+//    "slots": {"SpyBody"|"SpyHead" (spy) or "MercBody"|"MercHead" (merc):
 //               {"recipe": {...}}  a camouflage made from the stock texture (Recolour)
 //             | {"image": "<Slot>.tga"}  a picture kept beside the entry
 //             | {"path": "Package.Group.Name"}  a material in a shared package},
 //              a slot left out keeps the stock look,
-//    "models": {"SpyModel"|"MercModel": "Package.Mesh"} (optional),
-//    "goggles": {"SpyGoggleOffset"|"MercGoggleOffset": [x,y,z]} (optional)}
+//    "models": {"SpyModel" or "MercModel": "Package.Mesh"} (optional),
+//    "goggles": {"SpyGoggleOffset" or "MercGoggleOffset": [x,y,z]} (optional)}
 // User file, <Editor::Directory()>/skin_presets.json:
-//   {"version":1,"presets":[user entries],"hiddenBuiltins":[built-in ids the user hid]}
+//   {"version":2,"presets":[user entries],"hiddenBuiltins":[built-in ids the user hid],
+//    "imports":{"<texture name a preset's picture was imported under>": "<preset id>"}}
 // with each user entry's pictures in <Editor::Directory()>/skin_presets/<id>/<Slot>.tga.
-// Shared preset file (*.skinpreset): {"version":1,"format":"RE+ skin preset",
-//   "preset":{entry without id, modified and flags},"images":{"<Slot>":"<base64 TGA>"}}.
+// Version 1 entries dressed both teams; Migrate splits each into a spy and a merc entry.
+// Shared preset file (*.skinpreset): {"version":2,"format":"RE+ skin preset",
+//   "preset":{entry without id, modified and flags},"images":{"<Slot>":"<base64 TGA>"}};
+// a version 1 file (both teams) reads back as two entries.
 #include "CharacterSkinsImage.h"
 #include "CharacterSkinsModel.h"
 #include "EmitterLibraryModel.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -43,6 +50,45 @@ constexpr const char* ImageFolder = "skin_presets";
 constexpr const char* ShareFormat = "RE+ skin preset";
 constexpr const char* ShareExtension = ".skinpreset";
 constexpr int MaxSide = 2048;
+constexpr int FileVersion = 2;  // skin_presets.json
+constexpr int ShareVersion = 2; // *.skinpreset
+
+// The two teams a preset can belong to, and the Character Skins values each owns.
+struct Team
+{
+    const char* id;     // "spy" | "merc", as written in entries
+    const char* label;  // "Spy"
+    const char* plural; // "Spies"
+    const char* body;   // slot properties
+    const char* head;
+    const char* model;   // model property
+    const char* goggles; // goggle offset property
+};
+inline constexpr std::array<Team, 2> Teams = {{
+    {"spy", "Spy", "Spies", "SpyBody", "SpyHead", "SpyModel", "SpyGoggleOffset"},
+    {"merc", "Merc", "Mercs", "MercBody", "MercHead", "MercModel", "MercGoggleOffset"},
+}};
+inline const Team* FindTeam(const std::string& id)
+{
+    for (const auto& team : Teams)
+        if (id == team.id) return &team;
+    return nullptr;
+}
+// The team owning a slot, model or goggle property; null for anything else.
+inline const Team* TeamOfProperty(const std::string& property)
+{
+    for (const auto& team : Teams)
+        if (property == team.body || property == team.head || property == team.model || property == team.goggles) return &team;
+    return nullptr;
+}
+inline bool Owns(const Team& team, const std::string& property) { return TeamOfProperty(property) == &team; }
+// The team of a (valid) entry.
+inline const Team& TeamOf(const Json& entry)
+{
+    const auto* team = entry.is_object() && entry.contains("team") && entry.at("team").is_string() ? FindTeam(entry.at("team").get<std::string>()) : nullptr;
+    if (!team) throw std::runtime_error("The skin preset belongs to no team.");
+    return *team;
+}
 
 inline const std::vector<std::string>& DefaultCategories()
 {
@@ -427,11 +473,16 @@ inline void Validate(const Json& entry)
     }
     const auto modified = text("modified", user);
     if (!modified.empty() && (modified.size() > 20 || modified.find_first_not_of("0123456789") != std::string::npos)) fail("its modified time is not a number.");
+    const auto* team = FindTeam(text("team", true));
+    if (!team) fail("its team must be spy or merc.");
+    if (builtin && id.rfind(std::string("builtin.") + team->id + ".", 0) != 0) fail("its built-in id does not name its team.");
+    auto other = [&](const std::string& property) { fail(property + " belongs to the other team; a " + team->id + " preset holds only " + team->id + " values."); };
     if (!entry.contains("slots") || !entry.at("slots").is_object()) fail("its slots are missing.");
     size_t used = 0;
     for (auto it = entry.at("slots").begin(); it != entry.at("slots").end(); ++it)
     {
         if (!FindSlot(it.key())) fail("it has an unknown slot " + it.key() + ".");
+        if (!Owns(*team, it.key())) other(it.key());
         const auto& value = it.value();
         if (!value.is_object() || value.size() != 1) fail("slot " + it.key() + " must hold one recipe, image or path.");
         if (value.contains("recipe"))
@@ -462,6 +513,7 @@ inline void Validate(const Json& entry)
         for (auto it = entry.at("models").begin(); it != entry.at("models").end(); ++it)
         {
             if (!FindModel(it.key())) fail("it has an unknown model " + it.key() + ".");
+            if (!Owns(*team, it.key())) other(it.key());
             if (!it.value().is_string() || !ValidPath(it.value().get<std::string>())) fail("model " + it.key() + " is not a mesh path.");
             if (!it.value().get<std::string>().empty()) ++used;
         }
@@ -472,10 +524,13 @@ inline void Validate(const Json& entry)
         for (auto it = entry.at("goggles").begin(); it != entry.at("goggles").end(); ++it)
         {
             if (!FindGoggles(it.key())) fail("it has an unknown goggle offset " + it.key() + ".");
+            if (!Owns(*team, it.key())) other(it.key());
             const auto& v = it.value();
             if (!v.is_array() || v.size() != 3 || !v[0].is_number() || !v[1].is_number() || !v[2].is_number()) fail("goggle offset " + it.key() + " needs X, Y and Z.");
-            try { CheckOffset({v[0].get<double>(), v[1].get<double>(), v[2].get<double>()}); }
+            Offset o;
+            try { o = CheckOffset({v[0].get<double>(), v[1].get<double>(), v[2].get<double>()}); }
             catch (const std::exception& e) { fail(e.what()); }
+            if (o.x || o.y || o.z) ++used;
         }
     }
     if (!used) fail("it changes nothing: every slot and model is stock.");
@@ -499,45 +554,49 @@ inline Json Recipe(const std::string& pattern, const std::vector<std::string>& c
     if (pattern == "digital") r["cell"] = cell;
     return r;
 }
-inline Json Builtin(const std::string& name, const std::string& category, const std::string& description, const Json& spy, const Json& merc)
+inline std::string BuiltinId(const Team& team, const std::string& name) { return std::string("builtin.") + team.id + "." + Workflow::EmitterLibrary::Slug(name); }
+inline Json Builtin(const Team& team, const std::string& name, const std::string& category, const std::string& description, const Json& recipe)
 {
-    return {{"id", Workflow::EmitterLibrary::BuiltinId(name)}, {"name", name}, {"category", category}, {"description", description},
-            {"slots", {{"SpyBody", {{"recipe", spy}}}, {"SpyHead", {{"recipe", spy}}}, {"MercBody", {{"recipe", merc}}}, {"MercHead", {{"recipe", merc}}}}}};
+    return {{"id", BuiltinId(team, name)}, {"team", team.id}, {"name", name}, {"category", category}, {"description", description},
+            {"slots", {{team.body, {{"recipe", recipe}}}, {team.head, {{"recipe", recipe}}}}}};
 }
 } // namespace Detail
 
 // The presets that ship with RE+: camouflage painted over the stock textures when
-// applied, so nothing but the DLL is needed. Never written; hiding one only hides it.
+// applied, so nothing but the DLL is needed. Every look comes as a spy preset and a
+// merc preset. Never written; hiding one only hides it.
 inline const Json& Builtins()
 {
     static const Json builtins = [] {
         using Detail::Builtin;
         using Detail::Recipe;
+        struct Look { const char* name; const char* category; const char* description; Json recipe; };
+        const std::vector<Look> looks = {
+            {"Woodland", "Woodland & Jungle", "Classic four-colour woodland: khaki, green, brown and black patches. For forests and overgrown maps.",
+             Recipe("blotch", {"#7d7a52", "#4c5a30", "#5c4530", "#1f1f1a"}, 70, 11)},
+            {"Jungle Tiger Stripe", "Woodland & Jungle", "Tiger stripe in deep jungle greens: long dark brush strokes over olive.",
+             Recipe("tiger", {"#55652d", "#2d3b1a", "#7a843f", "#141710"}, 60, 23)},
+            {"Desert", "Desert", "Sand, tan and earth patches for dunes, dust and dry stone.", Recipe("blotch", {"#c4aa7c", "#9a7d52", "#e0d0aa", "#6d583c"}, 80, 31)},
+            {"Arid Digital", "Desert", "Pixelated desert camouflage in sand and khaki squares.", Recipe("digital", {"#bfa678", "#d8c79f", "#8f7550", "#a68f68"}, 56, 37, 6)},
+            {"Snow", "Snow & Arctic", "Arctic white with grey patches and a few dark flecks, for snowy and icy maps.",
+             Recipe("blotch", {"#e6eaee", "#c0c8d0", "#8d969f", "#4e555c"}, 85, 41)},
+            {"Arctic Digital", "Snow & Arctic", "Pixelated snow camouflage: white and pale blue-grey squares.", Recipe("digital", {"#f0f3f5", "#b9c3cc", "#dce2e8", "#7e8994"}, 60, 43, 5)},
+            {"Urban Night", "Urban & Night", "Dark digital greys and charcoal for streets, rooftops and night missions.",
+             Recipe("digital", {"#3a3f46", "#23262b", "#545b64", "#14161a"}, 60, 53, 8)},
+            {"Midnight Blue", "Urban & Night", "Near-black navy digital camouflage that disappears in moonlit shadow.",
+             Recipe("digital", {"#1c2433", "#101722", "#2e3a52", "#0a0d13"}, 56, 59, 7)},
+            // Red vs Blue of version 1, one colour per preset so either team can take either.
+            {"Team Red", "Fun", "Bold red team colours. Give the other team Team Blue and every fight reads at a glance.",
+             Recipe("blotch", {"#a32020", "#701414", "#c84040"}, 90, 61)},
+            {"Team Blue", "Fun", "Bold blue team colours. Give the other team Team Red and every fight reads at a glance.",
+             Recipe("blotch", {"#2246a8", "#152d70", "#4068cc"}, 90, 67)},
+            {"Hazard Stripes", "Fun", "Yellow and black warning stripes. Nobody will miss you.", Recipe("stripes", {"#e8c018", "#1a1a1a"}, 24, 71)},
+            {"Solid Gold", "Fun", "Polished gold from head to toe, for the winners.", Recipe("solid", {"#d8aa3c"}, 64, 73, 6, 1.4)},
+            {"Bubblegum", "Fun", "Pink, cyan and violet candy camouflage.", Recipe("blotch", {"#f08cc0", "#68d0e8", "#ffffff", "#b050c8"}, 70, 79)},
+        };
         Json list = Json::array();
-        const auto woodland = Recipe("blotch", {"#7d7a52", "#4c5a30", "#5c4530", "#1f1f1a"}, 70, 11);
-        list.push_back(Builtin("Woodland", "Woodland & Jungle", "Classic four-colour woodland: khaki, green, brown and black patches. For forests and overgrown maps.", woodland, woodland));
-        const auto jungle = Recipe("tiger", {"#55652d", "#2d3b1a", "#7a843f", "#141710"}, 60, 23);
-        list.push_back(Builtin("Jungle Tiger Stripe", "Woodland & Jungle", "Tiger stripe in deep jungle greens: long dark brush strokes over olive.", jungle, jungle));
-        const auto desert = Recipe("blotch", {"#c4aa7c", "#9a7d52", "#e0d0aa", "#6d583c"}, 80, 31);
-        list.push_back(Builtin("Desert", "Desert", "Sand, tan and earth patches for dunes, dust and dry stone.", desert, desert));
-        const auto arid = Recipe("digital", {"#bfa678", "#d8c79f", "#8f7550", "#a68f68"}, 56, 37, 6);
-        list.push_back(Builtin("Arid Digital", "Desert", "Pixelated desert camouflage in sand and khaki squares.", arid, arid));
-        const auto snow = Recipe("blotch", {"#e6eaee", "#c0c8d0", "#8d969f", "#4e555c"}, 85, 41);
-        list.push_back(Builtin("Snow", "Snow & Arctic", "Arctic white with grey patches and a few dark flecks, for snowy and icy maps.", snow, snow));
-        const auto arctic = Recipe("digital", {"#f0f3f5", "#b9c3cc", "#dce2e8", "#7e8994"}, 60, 43, 5);
-        list.push_back(Builtin("Arctic Digital", "Snow & Arctic", "Pixelated snow camouflage: white and pale blue-grey squares.", arctic, arctic));
-        const auto urban = Recipe("digital", {"#3a3f46", "#23262b", "#545b64", "#14161a"}, 60, 53, 8);
-        list.push_back(Builtin("Urban Night", "Urban & Night", "Dark digital greys and charcoal for streets, rooftops and night missions.", urban, urban));
-        const auto blue = Recipe("digital", {"#1c2433", "#101722", "#2e3a52", "#0a0d13"}, 56, 59, 7);
-        list.push_back(Builtin("Midnight Blue", "Urban & Night", "Near-black navy digital camouflage that disappears in moonlit shadow.", blue, blue));
-        list.push_back(Builtin("Red vs Blue", "Fun", "Team colours: spies in red, mercs in blue, so every fight reads at a glance.",
-                               Recipe("blotch", {"#a32020", "#701414", "#c84040"}, 90, 61), Recipe("blotch", {"#2246a8", "#152d70", "#4068cc"}, 90, 67)));
-        const auto hazard = Recipe("stripes", {"#e8c018", "#1a1a1a"}, 24, 71);
-        list.push_back(Builtin("Hazard Stripes", "Fun", "Yellow and black warning stripes. Nobody will miss you.", hazard, hazard));
-        const auto gold = Recipe("solid", {"#d8aa3c"}, 64, 73, 6, 1.4);
-        list.push_back(Builtin("Solid Gold", "Fun", "Polished gold from head to toe, for the winners.", gold, gold));
-        const auto pink = Recipe("blotch", {"#f08cc0", "#68d0e8", "#ffffff", "#b050c8"}, 70, 79);
-        list.push_back(Builtin("Bubblegum", "Fun", "Pink, cyan and violet candy camouflage.", pink, pink));
+        for (const auto& team : Teams)
+            for (const auto& look : looks) list.push_back(Builtin(team, look.name, look.category, look.description, look.recipe));
         for (auto& entry : list)
         {
             Validate(entry);
@@ -548,18 +607,156 @@ inline const Json& Builtins()
     }();
     return builtins;
 }
+// The built-in ids of version 1 (one preset for both teams), and the team presets
+// that replace each: hiding an old one hides both of its parts.
+inline std::vector<std::string> ReplacedBuiltin(const std::string& id)
+{
+    if (!IsBuiltinId(id) || id.find('.', 8) != std::string::npos) return {};
+    const auto slug = id.substr(8);
+    if (slug == "red_vs_blue") return {"builtin.spy.team_red", "builtin.merc.team_blue"};
+    return {"builtin.spy." + slug, "builtin.merc." + slug};
+}
 
-inline Json EmptyDocument() { return {{"version", 1}, {"presets", Json::array()}, {"hiddenBuiltins", Json::array()}}; }
+inline Json EmptyDocument() { return {{"version", FileVersion}, {"presets", Json::array()}, {"hiddenBuiltins", Json::array()}, {"imports", Json::object()}}; }
 inline const char* DamagedFile()
 {
     return "The skin preset file (skin_presets.json) is damaged or from a newer version, so your presets are not listed. Restore a valid copy or move it aside before saving presets.";
 }
+
+namespace Detail
+{
+// A user id made from another, so migrating the same file twice gives the same ids.
+inline std::string DerivedId(const std::string& id, const std::string& salt)
+{
+    static const char* hex = "0123456789abcdef";
+    std::string out;
+    for (std::uint64_t seed : {1469598103934665603ull, 1099511628211ull * 7919})
+    {
+        std::uint64_t h = seed;
+        for (unsigned char c : id + ":" + salt) h = (h ^ c) * 1099511628211ull;
+        for (int shift = 60; shift >= 0; shift -= 4) out += hex[(h >> shift) & 15];
+    }
+    return out;
+}
+// The part of a version 1 entry (both teams) that belongs to one team; null when that
+// team keeps the stock look.
+inline Json TeamPart(const Json& entry, const Team& team)
+{
+    Json part = entry;
+    part["team"] = team.id;
+    for (const char* key : {"slots", "models", "goggles"})
+    {
+        if (!entry.contains(key) || !entry.at(key).is_object()) continue;
+        Json kept = Json::object();
+        for (auto it = entry.at(key).begin(); it != entry.at(key).end(); ++it)
+            if (Owns(team, it.key()) && !(std::string(key) == "models" && it.value() == Json(""))) kept[it.key()] = it.value();
+        part[key] = kept;
+    }
+    if (part.contains("models") && part.at("models").empty()) part.erase("models");
+    if (part.contains("goggles") && part.at("goggles").empty()) part.erase("goggles");
+    bool any = part.contains("slots") && part.at("slots").is_object() && !part.at("slots").empty();
+    if (part.contains("models"))
+        for (const auto& value : part.at("models"))
+            any = any || (value.is_string() && !value.get<std::string>().empty());
+    if (part.contains("goggles"))
+        for (const auto& value : part.at("goggles"))
+            any = any || (value.is_array() && std::any_of(value.begin(), value.end(), [](const Json& v) { return !v.is_number() || v.get<double>() != 0; }));
+    return any ? part : Json();
+}
+} // namespace Detail
+
+// A picture to copy when a version 1 entry is split: the merc part gets its own id,
+// so its pictures move to its own folder (the spy part keeps the old id and folder).
+struct PictureCopy { std::string from, to, property; };
+struct Migration
+{
+    Json document;
+    std::vector<PictureCopy> copies;
+    bool changed = false;
+};
+// Brings a version 1 file to version 2: each entry that dressed both teams becomes a
+// spy entry and a merc entry with the same name, category, description and date,
+// a hidden version 1 built-in hides both of its team presets. Entries already with
+// a team, and entries too damaged to split, are kept as they are. A version 2 file
+// comes back unchanged.
+inline Migration Migrate(Json document)
+{
+    Migration result;
+    if (!document.is_object() || document.value("version", 0) != 1)
+    {
+        result.document = std::move(document);
+        return result;
+    }
+    result.changed = true;
+    Json presets = Json::array();
+    std::set<std::string> ids;
+    if (document.contains("presets") && document.at("presets").is_array())
+        for (const auto& entry : document.at("presets"))
+            if (entry.is_object() && entry.contains("id") && entry.at("id").is_string()) ids.insert(entry.at("id").get<std::string>());
+    if (document.contains("presets") && document.at("presets").is_array())
+        for (const auto& entry : document.at("presets"))
+        {
+            const bool splittable = entry.is_object() && !entry.contains("team") && entry.contains("id") && entry.at("id").is_string() &&
+                                    IsUserId(entry.at("id").get<std::string>());
+            if (!splittable)
+            {
+                presets.push_back(entry);
+                continue;
+            }
+            const auto id = entry.at("id").get<std::string>();
+            const auto spy = Detail::TeamPart(entry, Teams[0]), merc = Detail::TeamPart(entry, Teams[1]);
+            if (spy.is_null() && merc.is_null())
+            {
+                presets.push_back(entry); // nothing to split: kept, and reported as it was
+                continue;
+            }
+            if (!spy.is_null()) presets.push_back(spy);
+            if (!merc.is_null())
+            {
+                auto part = merc;
+                if (!spy.is_null())
+                {
+                    std::string mercId = Detail::DerivedId(id, "merc");
+                    for (int n = 2; ids.count(mercId); ++n) mercId = Detail::DerivedId(id, "merc" + std::to_string(n));
+                    ids.insert(mercId);
+                    part["id"] = mercId;
+                    for (const auto& slot : Slots)
+                        if (part.at("slots").contains(slot.property) && part.at("slots").at(slot.property).is_object() &&
+                            part.at("slots").at(slot.property).contains("image"))
+                            result.copies.push_back({id, mercId, slot.property});
+                }
+                presets.push_back(part);
+            }
+        }
+    Json hidden = Json::array();
+    std::set<std::string> seen;
+    if (document.contains("hiddenBuiltins") && document.at("hiddenBuiltins").is_array())
+        for (const auto& id : document.at("hiddenBuiltins"))
+        {
+            if (!id.is_string()) continue;
+            auto replaced = ReplacedBuiltin(id.get<std::string>());
+            if (replaced.empty()) replaced.push_back(id.get<std::string>());
+            for (const auto& r : replaced)
+                if (seen.insert(r).second) hidden.push_back(r);
+        }
+    result.document = document;
+    result.document["version"] = FileVersion;
+    result.document["presets"] = presets;
+    result.document["hiddenBuiltins"] = hidden;
+    if (!result.document.contains("imports")) result.document["imports"] = Json::object();
+    return result;
+}
+
+// The user file checked, a version 1 file migrated in memory (the editor writes it back
+// and copies its pictures: see Migrate).
 inline Json Document(Json document)
 {
-    if (!document.is_object() || document.value("version", 0) != 1) throw std::runtime_error(DamagedFile());
+    if (document.is_object() && document.value("version", 0) == 1) document = Migrate(std::move(document)).document;
+    if (!document.is_object() || document.value("version", 0) != FileVersion) throw std::runtime_error(DamagedFile());
     for (const char* key : {"presets", "hiddenBuiltins"})
         if (!document.contains(key)) document[key] = Json::array();
-    if (!document.at("presets").is_array() || !document.at("hiddenBuiltins").is_array()) throw std::runtime_error(DamagedFile());
+    if (!document.contains("imports")) document["imports"] = Json::object();
+    if (!document.at("presets").is_array() || !document.at("hiddenBuiltins").is_array() || !document.at("imports").is_object()) throw std::runtime_error(DamagedFile());
     for (const auto& id : document.at("hiddenBuiltins"))
         if (!id.is_string()) throw std::runtime_error(DamagedFile());
     return document;
@@ -640,16 +837,17 @@ inline const Json& Find(const Json& entries, const std::string& id)
     throw std::runtime_error("The selected skin preset no longer exists. Refresh the list.");
 }
 
-// A new user entry from the Character Skins window's values: slots holds each
-// slot's material path, models each model path, goggles each [x,y,z]. local names
-// the slots whose material is stored inside the map: they become images, which the
-// caller writes. Returns the unsaved entry (no id).
-inline Json Capture(const Json& slots, const Json& models, const Json& goggles, const std::set<std::string>& local)
+// A new user entry for one team from the Character Skins window's values: slots holds
+// each slot's material path, models each model path, goggles each [x,y,z]; the other
+// team's values are ignored. local names the slots whose material is stored inside
+// the map: they become images, which the caller writes. Returns the unsaved entry (no id).
+inline Json Capture(const Team& team, const Json& slots, const Json& models, const Json& goggles, const std::set<std::string>& local)
 {
-    Json entry = {{"name", "New preset"}, {"category", "Other"}, {"description", ""}, {"slots", Json::object()}, {"models", Json::object()}, {"goggles", Json::object()}};
+    Json entry = {{"team", team.id}, {"name", "New preset"}, {"category", "Other"}, {"description", ""}, {"slots", Json::object()}, {"models", Json::object()}, {"goggles", Json::object()}};
     bool any = false;
     for (const auto& slot : Slots)
     {
+        if (!Owns(team, slot.property)) continue;
         const auto path = slots.is_object() ? slots.value(slot.property, std::string{}) : std::string{};
         if (path.empty()) continue;
         if (!ValidPath(path)) throw std::runtime_error(std::string(slot.label) + ": not a material path: " + path);
@@ -658,6 +856,7 @@ inline Json Capture(const Json& slots, const Json& models, const Json& goggles, 
     }
     for (const auto& model : Models)
     {
+        if (!Owns(team, model.property)) continue;
         const auto path = models.is_object() ? models.value(model.property, std::string{}) : std::string{};
         if (!path.empty())
         {
@@ -671,11 +870,81 @@ inline Json Capture(const Json& slots, const Json& models, const Json& goggles, 
             if (!v.is_array() || v.size() != 3 || !v[0].is_number() || !v[1].is_number() || !v[2].is_number())
                 throw std::runtime_error(std::string(model.label) + ": the goggle light offset needs numbers for X, Y and Z.");
             const Offset o = CheckOffset({v[0].get<double>(), v[1].get<double>(), v[2].get<double>()});
-            if (o.x || o.y || o.z) entry["goggles"][model.goggles] = Json::array({o.x, o.y, o.z});
+            if (o.x || o.y || o.z)
+            {
+                entry["goggles"][model.goggles] = Json::array({o.x, o.y, o.z});
+                any = true;
+            }
         }
     }
-    if (!any) throw std::runtime_error("Every slot and model is stock, so there is nothing to save. Fill in a slot or apply a preset first.");
+    if (!any)
+        throw std::runtime_error(std::string(team.plural) + " wear the stock look, so there is nothing to save. Fill in a " + team.id + " slot or apply a " + team.id + " preset first.");
     return entry;
+}
+
+// The Character Skins values {slots, models, goggles} with one team dressed by entry
+// and the other team's values left exactly as they were. paths holds the material
+// path each of the entry's slots was imported or found under; a slot the entry does
+// not hold, and a model it does not name, go back to stock.
+inline Json Dress(const Json& entry, Json settings, const std::map<std::string, std::string>& paths)
+{
+    const auto& team = TeamOf(entry);
+    for (const char* key : {"slots", "models", "goggles"})
+        if (!settings.contains(key) || !settings.at(key).is_object()) settings[key] = Json::object();
+    const auto slots = entry.value("slots", Json::object()), models = entry.value("models", Json::object()), goggles = entry.value("goggles", Json::object());
+    for (const char* property : {team.body, team.head})
+    {
+        std::string path;
+        if (slots.contains(property))
+        {
+            auto found = paths.find(property);
+            if (found == paths.end() || found->second.empty()) throw std::runtime_error(std::string("The preset's ") + property + " has no material to apply.");
+            path = found->second;
+        }
+        settings["slots"][property] = path;
+    }
+    settings["models"][team.model] = models.value(team.model, std::string{});
+    settings["goggles"][team.goggles] = goggles.contains(team.goggles) ? goggles.at(team.goggles) : Json::array({0, 0, 0});
+    return settings;
+}
+
+// The last part of an object path: the name a texture was imported under.
+inline std::string ObjectName(const std::string& path)
+{
+    const auto dot = path.rfind('.');
+    return dot == std::string::npos ? path : path.substr(dot + 1);
+}
+// What a team wears on the map, in words: the name of the listed preset its values
+// match, "the stock look", or "its own skins". settings is the map's Character Skins
+// values; imports maps the texture names preset pictures were imported under to the
+// preset ids (the file's "imports"). Goggle offsets are not compared.
+inline std::string Wearing(const Team& team, const Json& settings, const Json& entries, const Json& imports)
+{
+    auto value = [&](const char* key, const char* property) {
+        return settings.is_object() && settings.contains(key) && settings.at(key).is_object() ? settings.at(key).value(property, std::string{}) : std::string{};
+    };
+    const std::string body = value("slots", team.body), head = value("slots", team.head), model = value("models", team.model);
+    const ModelSlot* stock = FindModel(team.model);
+    const bool stockModel = model.empty() || (stock && Fold(model) == Fold(stock->stockMesh));
+    if (body.empty() && head.empty() && stockModel) return "the stock look";
+    if (entries.is_array())
+        for (const auto& entry : entries)
+        {
+            if (!entry.is_object() || entry.value("team", std::string{}) != team.id) continue;
+            const auto slots = entry.value("slots", Json::object());
+            auto matches = [&](const char* property, const std::string& path) {
+                if (!slots.contains(property)) return path.empty();
+                if (path.empty()) return false;
+                const auto& slot = slots.at(property);
+                if (slot.contains("path")) return Fold(slot.at("path").get<std::string>()) == Fold(path);
+                const auto name = ObjectName(path);
+                return imports.is_object() && imports.contains(name) && imports.at(name) == entry.at("id");
+            };
+            const auto presetModel = entry.value("models", Json::object()).value(team.model, std::string{});
+            const bool modelMatches = presetModel.empty() ? stockModel : Fold(presetModel) == Fold(model);
+            if (matches(team.body, body) && matches(team.head, head) && modelMatches) return entry.at("name").get<std::string>();
+        }
+    return "their own skins";
 }
 
 // Adds entry with a fresh user id (or replaces the user entry with its id), after
@@ -763,39 +1032,64 @@ inline Json ShareDocument(const Json& entry, const std::map<std::string, Bytes>&
         ReadTga(found->second);
         pictures[property] = Base64(found->second);
     }
-    return {{"version", 1}, {"format", ShareFormat}, {"preset", preset}, {"images", pictures}};
+    return {{"version", ShareVersion}, {"format", ShareFormat}, {"preset", preset}, {"images", pictures}};
 }
-// A shared preset file read back: the entry (no id yet, a user entry once saved)
-// and its pictures, every one checked. Recipe slots (a built-in shared as is) are
-// painted by the caller and turned into images before saving.
+// A shared preset file read back: the entries (no id yet, user entries once saved)
+// and their pictures, every one checked. A version 2 file holds one team's preset;
+// a version 1 file (both teams) gives a spy entry and a merc entry. Recipe slots (a
+// built-in shared as is) are painted by the caller and turned into images before saving.
 struct Shared { Json entry; std::map<std::string, Bytes> images; };
-inline Shared ReadShared(const Json& document)
+inline std::vector<Shared> ReadShared(const Json& document)
 {
     if (!document.is_object() || document.value("format", std::string{}) != ShareFormat)
         throw std::runtime_error("This is not an RE+ skin preset file.");
-    if (document.value("version", 0) != 1) throw std::runtime_error("This skin preset file is from a newer version of RE+.");
+    const int version = document.value("version", 0);
+    if (version != 1 && version != ShareVersion) throw std::runtime_error("This skin preset file is from a newer version of RE+.");
     if (!document.contains("preset") || !document.at("preset").is_object()) throw std::runtime_error("The skin preset file has no preset.");
-    Shared shared;
-    shared.entry = document.at("preset");
-    Detail::Unflag(shared.entry);
-    shared.entry.erase("modified");
+    Json preset = document.at("preset");
+    Detail::Unflag(preset);
+    preset.erase("modified");
+    std::vector<Json> entries;
+    if (version == 1)
+    {
+        preset.erase("team");
+        for (const auto& team : Teams)
+            if (auto part = Detail::TeamPart(preset, team); !part.is_null()) entries.push_back(part);
+        if (entries.empty()) throw std::runtime_error("The skin preset file's preset changes nothing.");
+    }
+    else
+        entries.push_back(preset);
     const Json images = document.value("images", Json::object());
     if (!images.is_object()) throw std::runtime_error("The skin preset file's pictures are damaged.");
-    for (const auto& property : ImageSlots(shared.entry))
+    std::vector<Shared> result;
+    for (auto& entry : entries)
     {
-        if (!images.contains(property) || !images.at(property).is_string()) throw std::runtime_error("The skin preset file has no picture for " + property + ".");
-        auto bytes = FromBase64(images.at(property).get<std::string>());
-        ReadTga(bytes);
-        shared.images[property] = std::move(bytes);
+        Shared shared;
+        shared.entry = entry;
+        for (const auto& property : ImageSlots(shared.entry))
+        {
+            if (!images.contains(property) || !images.at(property).is_string()) throw std::runtime_error("The skin preset file has no picture for " + property + ".");
+            auto bytes = FromBase64(images.at(property).get<std::string>());
+            ReadTga(bytes);
+            shared.images[property] = std::move(bytes);
+        }
+        // Checked as a user entry would be, under a placeholder id.
+        auto probe = shared.entry;
+        probe["id"] = std::string(32, '0');
+        probe["modified"] = "0";
+        if (probe.contains("slots") && probe.at("slots").is_object())
+            for (auto& [key, value] : probe["slots"].items())
+                if (value.is_object() && value.contains("recipe")) value = {{"image", ImageFile(key)}};
+        Validate(probe);
+        result.push_back(std::move(shared));
     }
-    // Checked as a user entry would be, under a placeholder id.
-    auto probe = shared.entry;
-    probe["id"] = std::string(32, '0');
-    probe["modified"] = "0";
-    for (auto& [key, value] : probe["slots"].items())
-        if (value.is_object() && value.contains("recipe")) value = {{"image", ImageFile(key)}};
-    Validate(probe);
-    return shared;
+    return result;
+}
+// Remembers which preset each imported texture name came from (see Wearing).
+inline void RecordImports(Json& file, const std::map<std::string, std::string>& names)
+{
+    file = Document(std::move(file));
+    for (const auto& [name, id] : names) file["imports"][name] = id;
 }
 // A file name for a shared preset: the name with characters Windows refuses dropped.
 inline std::string ShareFileName(const std::string& name)
@@ -817,12 +1111,14 @@ inline std::string PatternLabel(const std::string& pattern)
     if (pattern == "solid") return "solid colour";
     return pattern;
 }
-// A short summary for the browser's details box.
+// A short summary for the browser's details box: the entry's team values only.
 inline std::string Summary(const Json& entry)
 {
     std::string out;
+    const auto* team = entry.is_object() ? FindTeam(entry.value("team", std::string{})) : nullptr;
     for (const auto& slot : Slots)
     {
+        if (team && !Owns(*team, slot.property)) continue;
         out += std::string(slot.label) + ": ";
         const auto slots = entry.value("slots", Json::object());
         if (!slots.contains(slot.property)) out += "stock";
@@ -835,9 +1131,9 @@ inline std::string Summary(const Json& entry)
     {
         const auto models = entry.value("models", Json::object());
         const auto path = models.value(model.property, std::string{});
-        if (path.empty()) continue;
-        out += std::string(model.label) + ": " + path;
         const auto goggles = entry.value("goggles", Json::object());
+        if (path.empty() && !goggles.contains(model.goggles)) continue;
+        out += std::string(model.label) + ": " + (path.empty() ? std::string("stock") : path);
         if (goggles.contains(model.goggles))
         {
             const auto& g = goggles.at(model.goggles);

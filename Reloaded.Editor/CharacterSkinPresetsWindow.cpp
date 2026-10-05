@@ -26,19 +26,23 @@ namespace Presets = CharacterSkins::Presets;
 enum Id
 {
     Search = 300, Tree, Preview, Name = 310, Category, Description, Details,
-    Apply = 320, SaveCurrent, Rename, Delete, Restore, ImportFile, ExportFile, Status = 330, Hint
+    Apply = 320, SaveCurrent, Rename, Delete, Restore, ImportFile, ExportFile, Status = 330, Hint, Wearing,
+    TeamSpy = 340, TeamMerc
 };
-constexpr int ThumbSide = 20, Thumb = 26; // tree icons: spy body and merc body side by side
+constexpr int ThumbSide = 20, Thumb = 26; // tree icons: the team's body and head side by side
+size_t lastTeam = 0;                      // the team shown when the window opens again
 struct State
 {
     HWND window{}, tree{};
     HIMAGELIST icons{};
     HFONT heading{};
     Json view, current;
+    const Presets::Team* team = &Presets::Teams[0]; // the presets listed
     std::vector<size_t> rows; // tree item lParam >= 0: index into view.entries
     std::string selected;
     std::string previewKey; // id and modified of the pictures shown
-    std::vector<CharacterSkins::Image> pictures;
+    std::vector<CharacterSkins::Image> pictures;    // the selected preset's body and head
+    std::vector<CharacterSkins::Image> mapPictures; // the four slots as the map has them
     std::map<std::string, int> iconOf; // id + modified -> image list index
     bool applied = false, filling = false;
 };
@@ -135,10 +139,11 @@ HBITMAP Icon(const std::vector<CharacterSkins::Image>& thumbs)
         pixels[i * 4 + 2] = GetRValue(window);
         pixels[i * 4 + 3] = 255;
     }
-    // Spy body then merc body, each squeezed into Thumb x ThumbSide.
+    // Body then head, each squeezed into Thumb x ThumbSide.
     for (int part = 0; part < 2; ++part)
     {
-        const auto& image = thumbs[part == 0 ? 0 : 2];
+        if (static_cast<size_t>(part) >= thumbs.size()) break;
+        const auto& image = thumbs[part];
         if (image.width <= 0) continue;
         const auto shrunk = Presets::Shrink(image, Thumb, ThumbSide);
         for (int y = 0; y < ThumbSide; ++y)
@@ -172,10 +177,29 @@ int IconIndex(State& s, const Json& entry)
     return s.iconOf[key] = std::max(index, 0);
 }
 
-void Refresh(State& s) { s.view = Editor::SkinPresets(); }
+// What each team wears on the map, in words and pictures.
+void ShowWearing(State& s)
+{
+    try { s.mapPictures = Editor::MapSkinImages(96); }
+    catch (const std::exception&) { s.mapPictures.clear(); }
+    std::string text = "On this map now:";
+    const auto wearing = s.view.is_object() ? s.view.value("wearing", Json::object()) : Json::object();
+    for (const auto& team : Presets::Teams)
+    {
+        const auto words = wearing.value(team.id, std::string{});
+        text += " " + Lower(team.plural) + " wear " + (words.empty() ? std::string("(unknown)") : Ansi(words)) + (&team == &Presets::Teams[0] ? ";" : ".");
+    }
+    Set(s, Wearing, text);
+    InvalidateRect(GetDlgItem(s.window, Preview), nullptr, TRUE);
+}
+void Refresh(State& s)
+{
+    s.view = Editor::SkinPresets();
+    ShowWearing(s);
+}
 void ShowEntry(State& s);
-// The tree: one bold row per category, its presets below. The search spans names,
-// categories and descriptions; a category without a match is left out.
+// The tree: one bold row per category, its presets below, for the team shown. The
+// search spans names, categories and descriptions; a category without a match is left out.
 void Fill(State& s)
 {
     const auto filter = Lower(Ansi(Text(s.window, Search)));
@@ -188,6 +212,7 @@ void Fill(State& s)
     for (size_t i = 0; i < entries.size(); ++i)
     {
         const auto& entry = entries[i];
+        if (entry.value("team", std::string{}) != s.team->id) continue;
         const auto haystack = Lower(Ansi(entry.at("name").get<std::string>() + "\n" + entry.at("category").get<std::string>() + "\n" + entry.value("description", std::string{})));
         if (!filter.empty() && haystack.find(filter) == std::string::npos) continue;
         auto c = category.find(Workflow::Fold(entry.at("category").get<std::string>()));
@@ -253,18 +278,34 @@ void Fill(State& s)
     if (auto root = TreeView_GetRoot(s.tree)) TreeView_Select(s.tree, root, TVGN_FIRSTVISIBLE);
     ShowEntry(s);
     const auto& problems = s.view.at("problems");
-    if (!shown && !filter.empty()) StatusText(s, "No preset matches the search.");
+    if (!shown && !filter.empty()) StatusText(s, std::string("No ") + Lower(s.team->label) + " preset matches the search.");
     else if (!problems.empty()) StatusText(s, Ansi(problems[0].get<std::string>()) + (problems.size() > 1 ? " (and " + std::to_string(problems.size() - 1) + " more)" : ""));
+}
+// Shows one team's presets: the switch, the buttons' words, the list.
+void ShowTeam(State& s, const Presets::Team& team)
+{
+    s.team = &team;
+    lastTeam = static_cast<size_t>(&team - Presets::Teams.data());
+    CheckDlgButton(s.window, TeamSpy, lastTeam == 0 ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(s.window, TeamMerc, lastTeam == 1 ? BST_CHECKED : BST_UNCHECKED);
+    const std::string plural = team.plural, label = team.label;
+    Set(s, Apply, "Apply to " + plural + " on This Map");
+    Set(s, SaveCurrent, "Save Current " + label + " Skins as Preset...");
+    SendDlgItemMessageA(s.window, Search, EM_SETCUEBANNER, TRUE,
+                        reinterpret_cast<LPARAM>(lastTeam == 0 ? L"Search spy presets" : L"Search merc presets"));
+    Set(s, Hint, "Applying a " + Lower(label) + " preset imports its pictures into this map and changes only the " + Lower(plural) + "; the " +
+                     Lower(Presets::Teams[1 - lastTeam].plural) + " keep what they wear.");
 }
 void Select(State& s, const std::string& id)
 {
     s.selected = id;
     Refresh(s);
     for (const auto& entry : Entries(s))
-        if (entry.at("id") == id && !Text(s.window, Search).empty())
+        if (entry.at("id") == id)
         {
+            if (const auto* team = Presets::FindTeam(entry.value("team", std::string{}))) ShowTeam(s, *team);
             const auto filter = Lower(Text(s.window, Search));
-            if (Lower(Ansi(entry.at("name").get<std::string>())).find(filter) == std::string::npos) SetDlgItemTextA(s.window, Search, "");
+            if (!filter.empty() && Lower(Ansi(entry.at("name").get<std::string>())).find(filter) == std::string::npos) SetDlgItemTextA(s.window, Search, "");
         }
     Fill(s);
 }
@@ -299,7 +340,8 @@ void ShowEntry(State& s)
     for (size_t at = description.find('\n'); at != std::string::npos; at = description.find('\n', at + 2))
         if (!at || description[at - 1] != '\r') description.insert(at, "\r");
     Set(s, Description, description.empty() ? "No description." : description);
-    std::string details = ReadOnly(*entry) ? "Built-in preset: painted over the stock textures when applied." : "Your preset";
+    const std::string team = Lower(Presets::TeamOf(*entry).label);
+    std::string details = ReadOnly(*entry) ? "Built-in " + team + " preset: painted over the stock textures when applied." : "Your " + team + " preset";
     if (!ReadOnly(*entry))
     {
         const auto date = Date(*entry);
@@ -333,23 +375,64 @@ void PaintPreview(State& s, const DRAWITEMSTRUCT& item)
     SetTextColor(dc, RGB(220, 220, 220));
     SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
     const int width = all.right - all.left, height = all.bottom - all.top, label = 18;
-    const int side = std::max(16, std::min((width - 30) / 2, (height - 30) / 2 - label));
-    for (size_t i = 0; i < CharacterSkins::Slots.size(); ++i)
+    auto missing = [&](const RECT& box, const char* text) {
+        auto frame = CreateSolidBrush(RGB(70, 70, 70));
+        FrameRect(dc, &box, frame);
+        DeleteObject(frame);
+        RECT inner = box;
+        DrawTextA(dc, text, -1, &inner, DT_CENTER | DT_WORDBREAK | DT_VCENTER);
+    };
+    // Below: what both teams wear on the map now, so a mix (desert spies, snow mercs) shows.
+    const int thumb = std::max(24, std::min(56, (height - 60) / 5));
+    const int strip = label + 2 * (thumb + 8) + 6;
+    // Above: the selected preset's body and head, large.
+    const int side = std::max(16, std::min((width - 30) / 2, height - strip - 30 - label));
+    const std::string team = s.team->label;
+    const char* captions[2] = {"body", "head"};
+    for (int i = 0; i < 2; ++i)
     {
-        const int column = static_cast<int>(i % 2), row = static_cast<int>(i / 2);
-        const int x = all.left + (width - 2 * side - 10) / 2 + column * (side + 10);
-        const int y = all.top + 10 + row * (side + label + 10);
+        const int x = all.left + (width - 2 * side - 10) / 2 + i * (side + 10);
+        const int y = all.top + 8;
         RECT caption{x, y, x + side, y + label};
-        DrawTextA(dc, CharacterSkins::Slots[i].label, -1, &caption, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        DrawTextA(dc, ("Preset: " + team + " " + captions[i]).c_str(), -1, &caption, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
         RECT box{x, y + label, x + side, y + label + side};
-        if (i < s.pictures.size() && s.pictures[i].width > 0) DrawImage(dc, s.pictures[i], box);
-        else
+        if (static_cast<size_t>(i) < s.pictures.size() && s.pictures[i].width > 0) DrawImage(dc, s.pictures[i], box);
+        else missing(box, s.pictures.empty() ? "" : "No picture (the material is not loaded)");
+    }
+    int y = all.bottom - strip;
+    auto line = CreatePen(PS_SOLID, 1, RGB(80, 80, 80));
+    auto old = SelectObject(dc, line);
+    MoveToEx(dc, all.left + 8, y - 4, nullptr);
+    LineTo(dc, all.right - 8, y - 4);
+    SelectObject(dc, old);
+    DeleteObject(line);
+    RECT title{all.left + 10, y, all.right - 10, y + label};
+    DrawTextA(dc, "On this map now", -1, &title, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+    y += label + 2;
+    const auto wearing = s.view.is_object() ? s.view.value("wearing", Json::object()) : Json::object();
+    for (size_t t = 0; t < Presets::Teams.size(); ++t, y += thumb + 8)
+    {
+        const auto& row = Presets::Teams[t];
+        const bool shown = &row == s.team;
+        RECT band{all.left + 6, y - 2, all.right - 6, y + thumb + 2};
+        if (shown)
         {
-            auto frame = CreateSolidBrush(RGB(70, 70, 70));
-            FrameRect(dc, &box, frame);
-            DeleteObject(frame);
-            DrawTextA(dc, "No picture (the material is not loaded)", -1, &box, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+            auto mark = CreateSolidBrush(RGB(48, 56, 72));
+            FillRect(dc, &band, mark);
+            DeleteObject(mark);
         }
+        for (int part = 0; part < 2; ++part)
+        {
+            const size_t slot = t * 2 + part; // Slots: SpyBody, SpyHead, MercBody, MercHead
+            RECT box{all.left + 10 + part * (thumb + 4), y, all.left + 10 + part * (thumb + 4) + thumb, y + thumb};
+            if (slot < s.mapPictures.size() && s.mapPictures[slot].width > 0) DrawImage(dc, s.mapPictures[slot], box);
+            else missing(box, "?");
+        }
+        RECT words{all.left + 18 + 2 * (thumb + 4), y, all.right - 10, y + thumb};
+        const auto name = wearing.value(row.id, std::string{});
+        SetTextColor(dc, shown ? RGB(255, 255, 255) : RGB(200, 200, 200));
+        DrawTextA(dc, (std::string(row.plural) + ": " + (name.empty() ? std::string("unknown") : Ansi(name))).c_str(), -1, &words,
+                  DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
     }
 }
 
@@ -387,23 +470,28 @@ void Command(State& s, int id)
         const auto* entry = Current(s);
         if (!entry) throw std::runtime_error("Select a preset to apply.");
         const auto name = Ansi(entry->at("name").get<std::string>());
-        StatusText(s, "Applying " + name + ": importing its pictures and compiling...");
+        const std::string plural = Lower(Presets::TeamOf(*entry).plural);
+        StatusText(s, "Applying " + name + " to the " + plural + ": importing its pictures and compiling...");
         UpdateWindow(s.window);
         SetCursor(LoadCursor(nullptr, IDC_WAIT));
         const auto settings = Editor::ApplySkinPreset(entry->at("id").get<std::string>());
+        // The other team's unapplied edits in the Character Skins window are not kept:
+        // Save Current now keeps what the map has.
         s.current = {{"slots", settings.at("slots")}, {"models", settings.at("models")}, {"goggles", settings.at("goggles")}};
         s.applied = true;
-        StatusText(s, "Applied " + name + ". Save the map, then play it to see the result; the editor viewports show the stock look.");
+        Select(s, s.selected); // what each team wears now
+        StatusText(s, "Applied " + name + " to the " + plural + ". Save the map, then play it to see the result; the editor viewports show the stock look.");
     }
     else if (id == SaveCurrent)
     {
         const auto values = CurrentValues(s);
-        Json suggested = {{"name", "My skins"}, {"category", "Other"}, {"description", ""}};
-        auto details = WorkflowTools::AskDetails(s.window, suggested, "Save current skins as a preset", s.view.at("categories"));
+        const std::string team = Lower(s.team->label);
+        Json suggested = {{"name", "My " + team + " skins"}, {"category", "Other"}, {"description", ""}};
+        auto details = WorkflowTools::AskDetails(s.window, suggested, ("Save current " + team + " skins as a preset").c_str(), s.view.at("categories"));
         if (details.is_null()) return;
-        auto saved = Editor::SaveSkinPreset(values.at("slots"), values.at("models"), values.at("goggles"), details);
+        auto saved = Editor::SaveSkinPreset(s.team->id, values.at("slots"), values.at("models"), values.at("goggles"), details);
         Select(s, saved.at("id"));
-        StatusText(s, "Saved " + Ansi(saved.at("name").get<std::string>()) + " to your presets.");
+        StatusText(s, "Saved " + Ansi(saved.at("name").get<std::string>()) + " to your " + team + " presets.");
     }
     else if (id == Rename)
     {
@@ -450,8 +538,12 @@ void Command(State& s, int id)
         const auto file = PickFile(s.window, false, {});
         if (file.empty()) return;
         auto saved = Editor::ImportSkinPreset(file);
-        Select(s, saved.at("id"));
-        StatusText(s, "Imported " + Ansi(saved.at("name").get<std::string>()) + " into your presets.");
+        if (saved.empty()) return;
+        Select(s, saved[0].at("id"));
+        std::string what;
+        for (const auto& entry : saved)
+            what += std::string(what.empty() ? "" : " and ") + Ansi(entry.at("name").get<std::string>()) + " (" + Lower(Presets::TeamOf(entry).label) + ")";
+        StatusText(s, "Imported " + what + " into your presets." + (saved.size() > 1 ? " The file dressed both teams, so it became a spy preset and a merc preset." : ""));
     }
 }
 
@@ -470,13 +562,15 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
             GetClientRect(window, &r);
             const int left = 300, right = 250, bottom = r.bottom - 40;
             const int mx = left + 20, mw = r.right - left - right - 40, rx = r.right - right - 8;
-            Control(*s, "EDIT", "", ES_AUTOHSCROLL | WS_TABSTOP, Search, 12, 12, left - 4, 23, WS_EX_CLIENTEDGE);
-            SendDlgItemMessageA(window, Search, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"Search presets"));
-            s->tree = Control(*s, WC_TREEVIEWA, "", TVS_HASBUTTONS | TVS_SHOWSELALWAYS | TVS_NOHSCROLL | WS_TABSTOP | WS_VSCROLL, Tree, 12, 42, left - 4, bottom - 46, WS_EX_CLIENTEDGE);
+            // The team switch: spy and merc presets are separate lists.
+            Control(*s, "BUTTON", "Spy presets", BS_AUTORADIOBUTTON | BS_PUSHLIKE | WS_GROUP | WS_TABSTOP, TeamSpy, 12, 10, (left - 8) / 2, 27);
+            Control(*s, "BUTTON", "Merc presets", BS_AUTORADIOBUTTON | BS_PUSHLIKE, TeamMerc, 12 + (left - 8) / 2 + 4, 10, (left - 8) / 2, 27);
+            Control(*s, "EDIT", "", ES_AUTOHSCROLL | WS_TABSTOP | WS_GROUP, Search, 12, 44, left - 4, 23, WS_EX_CLIENTEDGE);
+            s->tree = Control(*s, WC_TREEVIEWA, "", TVS_HASBUTTONS | TVS_SHOWSELALWAYS | TVS_NOHSCROLL | WS_TABSTOP | WS_VSCROLL, Tree, 12, 74, left - 4, bottom - 78, WS_EX_CLIENTEDGE);
             s->icons = ImageList_Create(Thumb * 2 + 2, ThumbSide, ILC_COLOR32, 16, 16);
             {
                 // Index 0: a blank icon for the category rows.
-                std::vector<CharacterSkins::Image> blank(4);
+                std::vector<CharacterSkins::Image> blank(2);
                 auto bitmap = Icon(blank);
                 ImageList_Add(s->icons, bitmap, nullptr);
                 DeleteObject(bitmap);
@@ -484,10 +578,9 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
             TreeView_SetImageList(s->tree, s->icons, TVSIL_NORMAL);
             TreeView_SetItemHeight(s->tree, ThumbSide + 4);
             TreeView_SetIndent(s->tree, 12);
-            Control(*s, "STATIC", "", SS_OWNERDRAW, Preview, mx, 12, mw, bottom - 40);
-            Control(*s, "STATIC",
-                    "Applying imports the preset's pictures into this map and compiles its Character Skins, as Apply does in the Character Skins window.",
-                    0, Hint, mx, bottom - 24, mw, 30);
+            Control(*s, "STATIC", "", SS_OWNERDRAW, Preview, mx, 12, mw, bottom - 64);
+            Control(*s, "STATIC", "", SS_NOPREFIX | SS_ENDELLIPSIS, Wearing, mx, bottom - 48, mw, 20);
+            Control(*s, "STATIC", "", 0, Hint, mx, bottom - 24, mw, 30);
             s->heading = CreateFontA(-18, 0, 0, 0, FW_BOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, "Segoe UI");
             SendMessage(Control(*s, "STATIC", "", SS_ENDELLIPSIS | SS_NOPREFIX, Name, rx, 10, right - 4, 26), WM_SETFONT, reinterpret_cast<WPARAM>(s->heading), TRUE);
             Control(*s, "STATIC", "", SS_NOPREFIX, Category, rx, 38, right - 4, 18);
@@ -508,7 +601,8 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
             Control(*s, "BUTTON", "Export Preset File...", WS_TABSTOP, ExportFile, rx, y, right - 4, 27);
             Control(*s, "STATIC", "", SS_ENDELLIPSIS | SS_NOPREFIX, Status, 12, r.bottom - 32, r.right - 130, 24);
             Control(*s, "BUTTON", "Close", WS_TABSTOP, IDCANCEL, r.right - 108, r.bottom - 36, 95, 27);
-            StatusText(*s, "Pick a preset to preview it; Apply to This Map dresses this map's spies and mercs in it.");
+            StatusText(*s, "Spy and merc presets are separate: pick a team, then a preset to preview it. Applying one changes only that team.");
+            ShowTeam(*s, Presets::Teams[lastTeam < Presets::Teams.size() ? lastTeam : 0]);
             Refresh(*s);
             Fill(*s);
             SetFocus(s->tree);
@@ -553,6 +647,18 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
             if (id == IDCANCEL)
             {
                 EndDialog(window, IDCANCEL);
+                return TRUE;
+            }
+            if ((id == TeamSpy || id == TeamMerc) && HIWORD(w) == BN_CLICKED)
+            {
+                const auto& team = Presets::Teams[id == TeamSpy ? 0 : 1];
+                if (s->team != &team)
+                {
+                    ShowTeam(*s, team);
+                    s->selected.clear();
+                    Fill(*s);
+                    InvalidateRect(GetDlgItem(window, Preview), nullptr, TRUE);
+                }
                 return TRUE;
             }
             if (id == IDOK) Command(*s, Apply);

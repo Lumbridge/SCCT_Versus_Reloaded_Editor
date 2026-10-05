@@ -1,9 +1,11 @@
 // Character Skin presets (CharacterSkinPresetsModel.h): the library in
 // skin_presets.json beside library.json, each user preset's pictures in
 // skin_presets\<id>\<Slot>.tga, and the built-ins compiled into the DLL, which are
-// painted over the stock textures when shown or applied and never written.
-// Applying goes through ImportCharacterSkin and ApplyCharacterSkins, so a preset
-// lands in the map exactly as the Character Skins window's own Import and Apply do.
+// painted over the stock textures when shown or applied and never written. Each
+// preset dresses one team. Applying goes through ImportCharacterSkin and
+// ApplyCharacterSkins with the other team's values read back from the map, so a
+// preset lands in the map exactly as the Character Skins window's own Import and
+// Apply do and the other team keeps what it wears.
 // Included by WorkflowEditor.cpp after CharacterSkinsNative.inl.
 namespace
 {
@@ -14,9 +16,37 @@ namespace
         if(!PresetModel::IsUserId(id))throw std::runtime_error("Only your own presets keep pictures.");
         return Directory()/PresetModel::ImageFolder/id;
     }
+    CharacterSkins::Bytes ReadBytes(const std::filesystem::path& file,size_t limit);
+    // A version 1 file (presets for both teams) is split into team presets the first time
+    // it is read: the old file is kept as skin_presets.before-teams.json, and the merc
+    // half of each split preset gets its pictures copied into its own folder.
     Json SkinPresetDocument()
     {
-        try { return PresetModel::Document(ReadDocument(SkinPresetFile(),PresetModel::EmptyDocument())); }
+        Json raw;
+        try
+        {
+            const auto file=SkinPresetFile();
+            if(!std::filesystem::exists(file))raw=PresetModel::EmptyDocument();
+            else{const auto bytes=ReadBytes(file,64u<<20);raw=Json::parse(bytes.begin(),bytes.end());}
+        }
+        catch(const std::exception&) { throw std::runtime_error(PresetModel::DamagedFile()); }
+        if(raw.is_object() && raw.value("version",0)==1)
+        {
+            auto migration=PresetModel::Migrate(raw);
+            std::error_code ignored;
+            const auto backup=Directory()/"skin_presets.before-teams.json";
+            if(!std::filesystem::exists(backup))std::filesystem::copy_file(SkinPresetFile(),backup,ignored);
+            for(const auto& copy:migration.copies)
+            {
+                const auto from=SkinPresetFolder(copy.from)/PresetModel::ImageFile(copy.property);
+                const auto to=SkinPresetFolder(copy.to)/PresetModel::ImageFile(copy.property);
+                std::filesystem::create_directories(to.parent_path(),ignored);
+                if(!std::filesystem::exists(to))std::filesystem::copy_file(from,to,ignored);
+            }
+            try{WriteDocument(SkinPresetFile(),migration.document);}catch(const std::exception&){} // still listed, migrated in memory
+            raw=std::move(migration.document);
+        }
+        try { return PresetModel::Document(raw); }
         catch(const std::exception&) { throw std::runtime_error(PresetModel::DamagedFile()); }
     }
     CharacterSkins::Bytes ReadBytes(const std::filesystem::path& file,size_t limit)
@@ -117,6 +147,12 @@ namespace
         for(const auto& [property,bytes]:images)WriteBytes(SkinPresetFolder(id)/PresetModel::ImageFile(property),bytes.data(),bytes.size());
     }
     Json SkinPresetEntry(const std::string& id) { return PresetModel::Find(SkinPresets()["entries"],id); }
+    // The map's applied Character Skins values {slots, models, goggles}.
+    Json MapSkinValues()
+    {
+        const auto settings=CharacterSkinSettings();
+        return {{"slots",settings.at("slots")},{"models",settings.at("models")},{"goggles",settings.at("goggles")}};
+    }
 }
 
 Json SkinPresets()
@@ -125,15 +161,45 @@ Json SkinPresets()
     try{file=SkinPresetDocument();for(auto& p:PresetModel::Problems(file))problems.push_back(p);}
     catch(const std::exception& e){file=PresetModel::EmptyDocument();problems.push_back(e.what());}
     auto entries=PresetModel::Merge(PresetModel::Builtins(),file);
-    return {{"entries",entries},{"categories",PresetModel::Categories(entries)},{"problems",problems}};
+    Json wearing=Json::object();
+    try
+    {
+        const auto values=MapSkinValues();
+        for(const auto& team:PresetModel::Teams)wearing[team.id]=PresetModel::Wearing(team,values,entries,file.at("imports"));
+    }
+    catch(const std::exception&){for(const auto& team:PresetModel::Teams)wearing[team.id]="";}
+    return {{"entries",entries},{"categories",PresetModel::Categories(entries)},{"problems",problems},{"wearing",wearing}};
+}
+
+std::vector<CharacterSkins::Image> MapSkinImages(int size)
+{
+    std::vector<CharacterSkins::Image> out;
+    Json slots=Json::object();
+    try{slots=CharacterSkinSettings().at("slots");}catch(const std::exception&){}
+    for(const auto& slot:CharacterSkins::Slots)
+    {
+        CharacterSkins::Image image;
+        try
+        {
+            const auto path=slots.value(slot.property,std::string{});
+            if(path.empty())image=StockSkinImages()[SlotIndex(slot.property)];
+            else if(const auto material=Find(path);material && IsA(material,"Texture"))image=LoadedTextureImage(material);
+        }
+        catch(const std::exception&){image={};}
+        if(size>0 && image.width>0 && (image.width!=size || image.height!=size))image=PresetModel::Shrink(image,size,size);
+        out.push_back(std::move(image));
+    }
+    return out;
 }
 
 std::vector<CharacterSkins::Image> SkinPresetImages(const Json& entry,int size)
 {
     std::vector<CharacterSkins::Image> out;
     const auto slots=entry.value("slots",Json::object());
+    const auto& team=PresetModel::TeamOf(entry);
     for(const auto& slot:CharacterSkins::Slots)
     {
+        if(!PresetModel::Owns(team,slot.property))continue;
         CharacterSkins::Image image;
         try
         {
@@ -158,10 +224,12 @@ std::vector<CharacterSkins::Image> SkinPresetImages(const Json& entry,int size)
 Json ApplySkinPreset(const std::string& id)
 {
     const auto entry=SkinPresetEntry(id);
+    const auto& team=PresetModel::TeamOf(entry);
     const auto package=Path(Read<Address>(Level()+0x18));
-    Json slots=Json::object(),models=Json::object(),goggles=Json::object();
+    std::map<std::string,std::string> paths,imported; // slot -> material; texture name -> preset id
     for(const auto& slot:CharacterSkins::Slots)
     {
+        if(!PresetModel::Owns(team,slot.property))continue;
         std::string path;
         if(entry.at("slots").contains(slot.property))
         {
@@ -186,26 +254,30 @@ Json ApplySkinPreset(const std::string& id)
                     catch(...){std::error_code ignored;std::filesystem::remove(file,ignored);throw;}
                     std::error_code ignored;std::filesystem::remove(file,ignored);
                 }
+                imported[PresetModel::ObjectName(path)]=id;
             }
         }
-        slots[slot.property]=path;
+        if(!path.empty())paths[slot.property]=path;
     }
-    const auto presetModels=entry.value("models",Json::object()),presetGoggles=entry.value("goggles",Json::object());
-    for(const auto& model:CharacterSkins::Models)
-    {
-        models[model.property]=presetModels.value(model.property,std::string{});
-        goggles[model.goggles]=presetGoggles.contains(model.goggles)?presetGoggles.at(model.goggles):Json::array({0,0,0});
-    }
-    return ApplyCharacterSkins(slots,models,goggles);
+    // The other team's values exactly as the map has them.
+    const auto values=PresetModel::Dress(entry,MapSkinValues(),paths);
+    auto settings=ApplyCharacterSkins(values.at("slots"),values.at("models"),values.at("goggles"));
+    // Remembered so the browser can name what each team wears; never fails the apply.
+    if(!imported.empty())
+        try{auto file=SkinPresetDocument();PresetModel::RecordImports(file,imported);WriteDocument(SkinPresetFile(),file);}catch(const std::exception&){}
+    return settings;
 }
 
-Json SaveSkinPreset(const Json& slots,const Json& models,const Json& goggles,const Json& details)
+Json SaveSkinPreset(const std::string& teamId,const Json& slots,const Json& models,const Json& goggles,const Json& details)
 {
+    const auto* team=PresetModel::FindTeam(teamId);
+    if(!team)throw std::runtime_error("Choose spies or mercs to save.");
     auto file=SkinPresetDocument();
     const auto package=Fold(Path(Read<Address>(Level()+0x18)));
     std::set<std::string> local;std::map<std::string,CharacterSkins::Bytes> images;
     for(const auto& slot:CharacterSkins::Slots)
     {
+        if(!PresetModel::Owns(*team,slot.property))continue;
         const auto path=slots.is_object()?slots.value(slot.property,std::string{}):std::string{};
         const auto folded=Fold(path);
         if(path.empty() || (folded.rfind(package+".",0)!=0 && folded.rfind("mylevel.",0)!=0))continue;
@@ -216,7 +288,7 @@ Json SaveSkinPreset(const Json& slots,const Json& models,const Json& goggles,con
         catch(const std::exception& e){throw std::runtime_error(std::string(slot.label)+": "+path+" cannot be saved in a preset ("+e.what()+"). Only textures stored in the map can be kept as pictures.");}
         local.insert(slot.property);
     }
-    auto entry=PresetModel::Capture(slots,models,goggles,local);
+    auto entry=PresetModel::Capture(*team,slots,models,goggles,local);
     for(const char* key:{"name","category","description"})if(details.contains(key))entry[key]=details.at(key);
     auto saved=PresetModel::Save(file,entry);
     WritePictures(saved.at("id"),images);
@@ -260,19 +332,30 @@ Json ImportSkinPreset(const std::filesystem::path& source)
     const auto bytes=ReadBytes(source,128u<<20);
     Json document;
     try{document=Json::parse(bytes.begin(),bytes.end());}catch(const std::exception&){throw std::runtime_error("This is not an RE+ skin preset file.");}
-    auto shared=PresetModel::ReadShared(document);
-    // A built-in shared as it is carries recipes: paint them, the user entry keeps pictures.
-    shared.entry["id"]="builtin.shared";
-    auto entry=Painted(shared.entry,shared.images);
-    entry.erase("id");
-    // A preset of the same name already listed (a built-in shared as it is) gets a number.
+    auto parts=PresetModel::ReadShared(document); // an old two-team file gives a spy and a merc preset
     const auto listed=SkinPresets()["entries"];
-    const auto base=entry.value("name",std::string("Imported preset"));
-    auto taken=[&](const std::string& name){return std::any_of(listed.begin(),listed.end(),[&](const Json& e){return Fold(e.value("name",std::string{}))==Fold(name);});};
-    for(int n=2;taken(entry.value("name",std::string{}));++n)entry["name"]=base+" ("+std::to_string(n)+")";
+    std::vector<std::pair<Json,std::map<std::string,CharacterSkins::Bytes>>> ready;
+    for(auto& shared:parts)
+    {
+        // A built-in shared as it is carries recipes: paint them, the user entry keeps pictures.
+        shared.entry["id"]=std::string("builtin.")+shared.entry.value("team",std::string("spy"))+".shared";
+        auto entry=Painted(shared.entry,shared.images);
+        entry.erase("id");
+        // A preset of the same name and team already listed (a built-in shared as it is) gets a number.
+        const auto base=entry.value("name",std::string("Imported preset"));
+        auto taken=[&](const std::string& name){return std::any_of(listed.begin(),listed.end(),[&](const Json& e){
+            return Fold(e.value("name",std::string{}))==Fold(name) && e.value("team",std::string{})==entry.value("team",std::string{});});};
+        for(int n=2;taken(entry.value("name",std::string{}));++n)entry["name"]=base+" ("+std::to_string(n)+")";
+        ready.push_back({std::move(entry),std::move(shared.images)});
+    }
     auto file=SkinPresetDocument();
-    auto saved=PresetModel::Save(file,entry);
-    WritePictures(saved.at("id"),shared.images);
+    Json saved=Json::array();
+    for(auto& [entry,images]:ready)
+    {
+        auto stored=PresetModel::Save(file,entry);
+        WritePictures(stored.at("id"),images);
+        saved.push_back(stored);
+    }
     WriteDocument(SkinPresetFile(),file);
     return saved;
 }
