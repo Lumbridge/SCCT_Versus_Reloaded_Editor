@@ -82,7 +82,7 @@ inline Offset SuggestedGoggles(const std::string& modelProperty, const std::stri
 {
     if (modelProperty == "SpyModel" && mesh == "SPerso.DEF_01") return {4, 0, 0};
     // The hazmat suit (tools/models/hazmat): the lights sit on its visor.
-    if (modelProperty == "MercModel" && mesh == "MyLevel.HazmatMerc") return {-0.2, -1.4, 0};
+    if (modelProperty == "MercModel" && mesh == "MyLevel.HazmatMerc") return {-0.1, -2.8, -0.8};
     return {};
 }
 inline std::string Number(double v)

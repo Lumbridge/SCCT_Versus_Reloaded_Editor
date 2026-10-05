@@ -130,7 +130,7 @@ int main()
         suggested = SuggestedGoggles("MercModel", "SPerso.DEF_01");
         Check(suggested.x == 0 && suggested.y == 0 && suggested.z == 0, "no suggestion for a merc's own model");
         suggested = SuggestedGoggles("MercModel", "MyLevel.HazmatMerc");
-        Check(suggested.x == -0.2 && suggested.y == -1.4 && suggested.z == 0, "hazmat suit visor");
+        Check(suggested.x == -0.1 && suggested.y == -2.8 && suggested.z == -0.8, "hazmat suit visor");
     }
     catch (const std::exception& e)
     {
