@@ -99,7 +99,10 @@ namespace
                 const auto asset=AssetOf(o);
                 if(!IsA(asset,"Level") && !IsA(asset,"Actor") && !IsA(asset,"LevelSummary"))carried.insert(asset);
             }
-            for(const auto& ref:ReferencesOf(o,false))if(ref.target && !visited.count(ref.target))stack.push_back(ref.target);
+            // One object whose properties cannot be read does not stop the scan:
+            // anything missed shows in the saved copy's imports and moves then.
+            try{for(const auto& ref:ReferencesOf(o,false))if(ref.target && !visited.count(ref.target))stack.push_back(ref.target);}
+            catch(const std::exception& e){Logger::log("Optimise Map Assets: skipped the references of "+Path(o)+": "+e.what());}
         }
         std::vector<UsedObject> out;
         for(auto a:assets)out.push_back({a,{Path(a),NameOf(Read<Address>(a+0x24))}});
