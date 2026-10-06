@@ -49,6 +49,8 @@ Plan Inspect(const std::filesystem::path &gameRoot, const std::filesystem::path 
 std::string Report(const Plan &plan);
 // True only for byte-identical files in a user-selected base installation.
 std::vector<bool> MatchBaseFiles(const Plan &plan, const std::filesystem::path &baseRoot);
+// True when both files exist and hold the same bytes (sizes compared first).
+bool IdenticalFiles(const std::filesystem::path &a, const std::filesystem::path &b);
 // Writes to a private temporary directory and publishes without replacement.
 void Write(const Plan &plan, const std::filesystem::path &destination);
 } // namespace MapPackage

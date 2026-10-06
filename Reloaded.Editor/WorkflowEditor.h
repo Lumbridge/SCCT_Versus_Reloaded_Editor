@@ -301,7 +301,9 @@ namespace Workflow::Editor
     // (destination "map") or in options.assetPackage.usx ("package"), and puts every
     // asset back; options.overwrite replaces existing files. Returns {moved:[{from,
     // to}], written:[{file, size}], needs:[{name, file, size}], left, rounds}.
-    Json OptimiseReport();
+    // With a base install, a pack whose file is identical there is installed
+    // (players have it): never suggested, and listed last.
+    Json OptimiseReport(const std::filesystem::path& base={});
     Json OptimiseRelease(const Json& options);
     Json StairSmoothState(bool surfaces);
     Json SmoothStairs(bool surfaces);

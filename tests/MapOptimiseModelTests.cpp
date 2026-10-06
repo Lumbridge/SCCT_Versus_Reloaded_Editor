@@ -184,6 +184,29 @@ int main()
         Check(report[1].file.empty() && !report[1].suggested && !report[1].assets[0].found,
               "a pack with no file is reported, not suggested");
         Check(Text(report).find("Pack.Walls.Metal (Texture, 5 KB)") != std::string::npos, "report text");
+        {
+            std::vector<Pack> packs(3);
+            packs[0].name = "Stock", packs[0].file = "Stock.usx", packs[0].suggested = true;
+            packs[1].name = "Port", packs[1].file = "Port.usx", packs[1].suggested = true;
+            packs[2].name = "Missing";
+            MarkInstalled(packs, [](const Pack &p) { return p.name != "Port"; });
+            Check(packs[0].name == "Port" && packs[0].suggested && !packs[0].installed, "a pack players lack stays suggested");
+            Check(packs[2].name == "Stock" && packs[2].installed && !packs[2].suggested,
+                  "a pack in the base install is not suggested and goes last");
+            Check(packs[1].name == "Missing" && !packs[1].installed, "a pack with no file is never installed");
+            Check(Text(packs).find("Stock (Stock.usx): 0 asset(s), 0 bytes of 0 bytes  [in the base install]") !=
+                      std::string::npos,
+                  "installed in the report text");
+        }
+        {
+            auto a = root / "a.bin", b = root / "b.bin", c = root / "c.bin";
+            std::ofstream(a, std::ios::binary) << "same bytes";
+            std::ofstream(b, std::ios::binary) << "same bytes";
+            std::ofstream(c, std::ios::binary) << "SAME bytes";
+            Check(MapPackage::IdenticalFiles(a, b) && !MapPackage::IdenticalFiles(a, c) &&
+                      !MapPackage::IdenticalFiles(a, root / "none.bin"),
+                  "identical files");
+        }
         auto top = TopLevel({{"A.B", "x"}, {"A.B.C", "y"}, {"A.BC", "z"}, {"a.b", "x"}});
         Check(top.size() == 2 && top[0].path == "A.B" && top[1].path == "A.BC", "inner and repeated assets dropped");
 

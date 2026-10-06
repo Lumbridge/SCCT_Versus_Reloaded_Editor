@@ -45,6 +45,7 @@ struct Pack
     std::uint64_t fileSize = 0, usedSize = 0;
     std::vector<UsedAsset> assets;
     bool suggested = false;
+    bool installed = false; // The same file is in the base install: players have it.
 };
 
 // An asset's size is its own export and everything inside it (a mesh's
@@ -135,6 +136,20 @@ inline std::vector<Pack> Report(const std::vector<Asset> &used,
         return sa > sb;
     });
     return packs;
+}
+
+// Packs players already have (the same file is in the base install) are never
+// shipped, so moving their assets saves nothing and only makes the map bigger:
+// they are not suggested, and go last.
+inline void MarkInstalled(std::vector<Pack> &packs, const std::function<bool(const Pack &)> &installed)
+{
+    for (auto &p : packs)
+        if (!p.file.empty() && installed(p))
+        {
+            p.installed = true;
+            p.suggested = false;
+        }
+    std::stable_partition(packs.begin(), packs.end(), [](const Pack &p) { return !p.installed; });
 }
 
 inline std::string Size(std::uint64_t bytes)
@@ -238,7 +253,7 @@ inline std::string Text(const std::vector<Pack> &packs)
     {
         out << p.name << (p.file.empty() ? " (no package file found)" : " (" + p.file + ")") << ": "
             << p.assets.size() << " asset(s), " << Size(p.usedSize) << " of " << Size(p.fileSize)
-            << (p.suggested ? "  [suggested]" : "") << "\r\n";
+            << (p.suggested ? "  [suggested]" : "") << (p.installed ? "  [in the base install]" : "") << "\r\n";
         for (const auto &a : p.assets)
             out << "  " << a.path << " (" << a.className << ", " << (a.found ? Size(a.size) : "size unknown") << ")\r\n";
         out << "\r\n";
