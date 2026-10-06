@@ -31,6 +31,7 @@ namespace
     std::atomic<bool> crashed{false}, ended{false};
     std::optional<Sessions::Marker> abandoned; // the session to offer, until offered
     DWORD idleSince = 0;
+    std::optional<std::string> frameMap; // the open map when the offer's timer first ran
 
     fs::path SessionsDirectory() { return Workflow::Editor::Directory() / "Sessions"; }
     fs::path MapsEd() { return Workflow::Editor::Directory().parent_path().parent_path() / "Packages" / "MapsEd"; }
@@ -197,6 +198,8 @@ bool CrashRecovery::OfferWhenIdle(HWND frame)
     {
         std::lock_guard<std::mutex> lock(markerLock);
         if (!abandoned) return true;
+        // What was open when the frame came up, before anyone could open a map.
+        if (!frameMap) frameMap = self.map;
     }
     GUITHREADINFO gui{ sizeof(gui) };
     GetGUIThreadInfo(GetWindowThreadProcessId(frame, nullptr), &gui);
@@ -207,12 +210,17 @@ bool CrashRecovery::OfferWhenIdle(HWND frame)
     if (GetTickCount() - idleSince < kSettleMs) return false;
 
     Sessions::Marker session;
+    std::string opened;
     {
         std::lock_guard<std::mutex> lock(markerLock);
         session = *abandoned;
         abandoned.reset();
+        opened = self.map;
     }
     if (!OfferAtStartup()) { Logger::log("Crash recovery: offer turned off ([CrashRecovery] OfferAtStartup=0)"); return true; }
+    // A map opened before the offer (an autosave from File > Open, say) is the
+    // recovery already chosen: the offer would open another over it.
+    if (opened != *frameMap) { Logger::log("Crash recovery: not offered, " + opened + " was opened first"); return true; }
     try
     {
         const auto autosave = Sessions::NewestAutosave(Files(MapsEd(), "Auto*.sdc"), session.created);

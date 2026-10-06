@@ -449,16 +449,28 @@ Plan Inspect(const std::filesystem::path &gameRoot, const std::filesystem::path 
 {
     Plan plan;
     auto root = fs::canonical(gameRoot), map = fs::canonical(playableMap);
-    Require(Fold(map.extension().string()) == ".sdc" && fs::equivalent(map.parent_path(), root / "Packages" / "Maps"),
-            "Choose a saved playable .sdc from this game's Packages/Maps folder.");
+    // The map is in a Packages/Maps folder: the game's, or a release folder laid
+    // out like it (Optimise Map Assets), whose files are taken first.
+    Require(Fold(map.extension().string()) == ".sdc" && Fold(map.parent_path().filename().string()) == "maps" &&
+                Fold(map.parent_path().parent_path().filename().string()) == "packages",
+            "Choose a saved playable .sdc from a Packages/Maps folder.");
+    const auto mapRoot = map.parent_path().parent_path().parent_path();
     std::map<std::string, std::vector<fs::path>> candidates;
     const std::set<std::string> extensions = {".usx", ".utx", ".utc", ".uax", ".ukx", ".u"};
-    for (const auto &directory : {root / "Packages" / "StaticMeshes", root / "Packages" / "Textures",
-                                  root / "Packages" / "Sounds", root / "Packages" / "Animations", root / "System"})
-        if (fs::exists(directory))
-            for (const auto &file : fs::directory_iterator(directory))
-                if (file.is_regular_file() && extensions.count(Fold(file.path().extension().string())))
-                    candidates[Fold(file.path().stem().string())].push_back(file.path());
+    for (const auto &base : {mapRoot, root})
+    {
+        std::map<std::string, std::vector<fs::path>> found;
+        for (const auto &directory : {base / "Packages" / "StaticMeshes", base / "Packages" / "Textures",
+                                      base / "Packages" / "Sounds", base / "Packages" / "Animations", base / "System"})
+            if (fs::exists(directory))
+                for (const auto &file : fs::directory_iterator(directory))
+                    if (file.is_regular_file() && extensions.count(Fold(file.path().extension().string())))
+                        found[Fold(file.path().stem().string())].push_back(file.path());
+        for (auto &[name, paths] : found)
+            candidates.emplace(name, std::move(paths));
+        if (fs::equivalent(mapRoot, root))
+            break;
+    }
     std::map<std::string, size_t> visited;
     std::set<std::string> runtime;
     auto add = [&](const fs::path &path, const std::string &by) {
@@ -473,7 +485,10 @@ Plan Inspect(const std::filesystem::path &gameRoot, const std::filesystem::path 
         }
         Require(plan.files.size() < 4096, "Dependency limit exceeded (4096 packages).");
         visited[key] = plan.files.size();
-        auto utf8 = path.lexically_relative(root).generic_u8string();
+        // Where the file goes in the game: relative to the release folder it came
+        // from, else to the game folder.
+        const auto inRelease = !fs::equivalent(mapRoot, root) && path.lexically_relative(mapRoot).native().rfind(L"..", 0) != 0;
+        auto utf8 = path.lexically_relative(inRelease ? mapRoot : root).generic_u8string();
         plan.files.push_back({path,
                               std::string(utf8.begin(), utf8.end()),
                               {by},

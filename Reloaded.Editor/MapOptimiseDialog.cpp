@@ -3,6 +3,7 @@
 #undef max
 #include "MapOptimiseDialog.h"
 #include "MapOptimiseModel.h"
+#include "MapPackageDialog.h"
 #include "WorkflowEditor.h"
 #include <commctrl.h>
 #include <fstream>
@@ -25,8 +26,8 @@ enum : int
     kIntoMap = 104,
     kIntoPackage = 105,
     kPackageName = 106,
-    kReleaseLabel = 107,
-    kReleaseName = 108,
+    kFolderLabel = 107,
+    kFolder = 108,
     kBaseLabel = 109,
     kBase = 110,
     kBaseBrowse = 111,
@@ -37,6 +38,7 @@ struct State
     Json report;
     bool ready = false;
     std::string base; // The base install last scanned against.
+    bool baseUsed = false; // It was valid, so the list reflects it.
 };
 // A copy of the game as players get it ([MapOptimise] BaseInstall in
 // Reloaded_Editor.ini): packages identical there are not shipped.
@@ -120,9 +122,11 @@ void Fill(HWND window, State &state)
     state.ready = false;
     state.base = Text(window, kBase);
     std::string baseError;
+    state.baseUsed = false;
     try
     {
         state.report = Workflow::Editor::OptimiseReport(state.base);
+        state.baseUsed = !state.base.empty();
     }
     catch (const std::exception &e)
     {
@@ -199,11 +203,11 @@ void Create(HWND window, State &state)
     const bool intoMap = IsDlgButtonChecked(window, kIntoMap) == BST_CHECKED;
     Json options = {{"packs", packs},
                     {"destination", intoMap ? "map" : "package"},
-                    {"release", Text(window, kReleaseName)},
+                    {"folder", Text(window, kFolder)},
                     {"assetPackage", Text(window, kPackageName)}};
     const auto map = state.report.value("map", std::string());
-    auto question = "Save " + map + " and write the release copy " + options["release"].get<std::string>() +
-                    "?\r\n\r\nThe assets the map uses from the ticked packages go " +
+    auto question = "Save " + map + " and write its release copy, also named " + map + ", into " +
+                    options["folder"].get<std::string>() + "?\r\n\r\nThe assets the map uses from the ticked packages go " +
                     (intoMap ? std::string("inside the release copy")
                              : "into " + options["assetPackage"].get<std::string>() + ".usx") +
                     ". Your working map stays as it is, using the packages.";
@@ -258,9 +262,12 @@ void Create(HWND window, State &state)
                 "editor log for the list.";
     for (const auto &path : result.at("left"))
         Workflow::Editor::Exec("LOG Optimise Map Assets: still taken from its package: " + path.get<std::string>());
-    text += "\r\nShare it with Package Map for Sharing, choosing the release copy.";
+    text += "\r\n\r\nPackage the release copy for sharing now?";
     Summary(window, state);
-    MessageBoxA(window, text.c_str(), "Optimise Map Assets", MB_OK | MB_ICONINFORMATION);
+    if (MessageBoxA(window, text.c_str(), "Optimise Map Assets", MB_YESNO | MB_ICONINFORMATION) == IDYES)
+        // Packaged against the same base install: what players have stays out.
+        MapPackageDialog::Preview(window, result.at("playable").get<std::string>(),
+                                    state.baseUsed ? std::filesystem::path(state.base) : std::filesystem::path());
 }
 INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
 {
@@ -310,9 +317,11 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
             Control(window, "EDIT", (map + "_Assets").c_str(), WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, kPackageName,
                     440, y + 21, width - 428, 22);
             CheckDlgButton(window, kIntoMap, BST_CHECKED);
-            Control(window, "STATIC", "Release copy name:", 0, kReleaseLabel, 12, y + 54, 110, 20);
-            Control(window, "EDIT", (map + "_Release").c_str(), WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, kReleaseName,
-                    125, y + 51, 260, 22);
+            // The release copy keeps the map's name, which the game needs, so it
+            // goes into a folder of its own laid out like the game's.
+            Control(window, "STATIC", "Release folder:", 0, kFolderLabel, 12, y + 54, 110, 20);
+            Control(window, "EDIT", Workflow::Editor::ReleaseFolder(map).string().c_str(),
+                    WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, kFolder, 125, y + 51, width - 113, 22);
             Control(window, "STATIC", "Scanning the map...", 0, kStatus, 12, r.bottom - 74, width, 32);
             Control(window, "BUTTON", "Create Release Copy", WS_TABSTOP | BS_DEFPUSHBUTTON, IDOK, r.right - 260,
                     r.bottom - 36, 150, 27);

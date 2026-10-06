@@ -21,7 +21,7 @@ namespace
 {
 struct State
 {
-    std::filesystem::path root, map, output;
+    std::filesystem::path root, map, output, base;
     MapPackage::Plan plan;
     std::future<MapPackage::Plan> scan;
     std::future<void> write;
@@ -70,6 +70,16 @@ void Checks(HWND window, State &state)
     Status(window, message);
     EnableWindow(GetDlgItem(window, IDOK),
                  !state.busy && state.plan.errors.empty() && !state.plan.files.empty() && state.plan.files[0].include);
+}
+// Unchecks the dependencies identical in a base install, off the UI thread.
+void ExcludeBase(HWND window, State &state, const std::filesystem::path &base)
+{
+    state.busy = true;
+    EnableWindow(GetDlgItem(window, 100), FALSE);
+    EnableWindow(GetDlgItem(window, IDOK), FALSE);
+    Status(window, "Comparing dependencies with the base installation...");
+    state.baseline = std::async(std::launch::async,
+                                [plan = state.plan, base] { return MapPackage::MatchBaseFiles(plan, base); });
 }
 bool Destination(HWND owner, State &state)
 {
@@ -172,6 +182,8 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
                 EnableWindow(GetDlgItem(window, 103), TRUE);
                 EnableWindow(GetDlgItem(window, 104), TRUE);
                 Checks(window, *state);
+                if (!state->base.empty())
+                    ExcludeBase(window, *state, state->base);
             }
             if (state->baseline.valid() &&
                 state->baseline.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
@@ -230,14 +242,7 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
                     OleUninitialize();
                 if (!picked)
                     return TRUE;
-                state->busy = true;
-                EnableWindow(GetDlgItem(window, 100), FALSE);
-                EnableWindow(GetDlgItem(window, IDOK), FALSE);
-                Status(window, "Comparing dependencies with the base installation...");
-                state->baseline =
-                    std::async(std::launch::async, [plan = state->plan, base = std::filesystem::path(path)] {
-                        return MapPackage::MatchBaseFiles(plan, base);
-                    });
+                ExcludeBase(window, *state, path);
                 return TRUE;
             }
             if (LOWORD(w) == IDCANCEL)
@@ -304,10 +309,16 @@ void Open(HWND owner)
     state.root = Workflow::Editor::Directory().parent_path().parent_path();
     auto directory = state.root / "Packages" / "Maps";
     wchar_t path[32768]{};
-    auto key = Workflow::Editor::MapKey();
-    if (!key.empty())
+    // The open map, chosen already: its release copy (Optimise Map Assets) when
+    // it has one, else its playable copy.
+    const auto file = Workflow::Editor::MapFile();
+    if (!file.empty())
     {
-        auto map = directory / std::filesystem::path(key).filename();
+        const auto name = std::filesystem::path(file).filename();
+        const auto release = Workflow::Editor::ReleaseFolder(name.stem().string()) / "Packages" / "Maps" / name;
+        std::error_code error;
+        const auto map = std::filesystem::exists(release, error) ? release : directory / name;
+        directory = map.parent_path();
         wcscpy_s(path, map.c_str());
     }
     OPENFILENAMEW choose{sizeof(choose)};
@@ -322,11 +333,12 @@ void Open(HWND owner)
         return;
     Preview(owner, path);
 }
-void Preview(HWND owner, const std::filesystem::path &map)
+void Preview(HWND owner, const std::filesystem::path &map, const std::filesystem::path &base)
 {
     State state;
     state.root = Workflow::Editor::Directory().parent_path().parent_path();
     state.map = map;
+    state.base = base;
     std::vector<WORD> bytes((sizeof(DLGTEMPLATE) + 1) / 2 + 3, 0);
     auto dialog = reinterpret_cast<DLGTEMPLATE *>(bytes.data());
     dialog->style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | DS_CENTER;
