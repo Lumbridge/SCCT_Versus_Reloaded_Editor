@@ -163,6 +163,9 @@
     <ClInclude Include="BrushGridSnapModel.h" />
     <ClInclude Include="MapPackage.h" />
     <ClInclude Include="MapPackageDialog.h" />
+    <ClInclude Include="MapOptimiseDialog.h" />
+    <ClInclude Include="MapOptimiseModel.h" />
+    <ClInclude Include="MapOptimiseNative.inl" />
     <ClInclude Include="MapUsages.h" />
     <ClInclude Include="MapUsagesModel.h" />
     <ClInclude Include="MapUsagesWindow.h" />
@@ -302,6 +305,7 @@
     <ClCompile Include="WorkflowModel.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="MapPackage.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="MapPackageDialog.cpp" />
+    <ClCompile Include="MapOptimiseDialog.cpp" />
     <ClCompile Include="MapUsages.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="MapUsagesWindow.cpp" />
     <ClCompile Include="LightingBudget.cpp" />

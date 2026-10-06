@@ -13,6 +13,10 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 /I %ZLIB%\include tests\MapUsagesFil
 if errorlevel 1 goto failed
 "%TEMP%\MapUsagesFileTests.exe"
 if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 /I %ZLIB%\include tests\MapOptimiseModelTests.cpp Reloaded.Editor\MapPackage.cpp Reloaded.Editor\RecoveredAssetPackage.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MapOptimiseModelTests.exe" /link /LIBPATH:%ZLIB%\lib zlib.lib
+if errorlevel 1 goto failed
+"%TEMP%\MapOptimiseModelTests.exe"
+if errorlevel 1 goto failed
 popd
 exit /b 0
 :failed

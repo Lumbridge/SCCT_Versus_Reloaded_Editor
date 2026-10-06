@@ -166,6 +166,25 @@ void CALLBACK AnswerJsonDialog(HWND,UINT,UINT_PTR,DWORD)
         return TRUE;
     },0);
 }
+// File > Optimise Map Assets...: once its scan has filled the list, the rows,
+// ticked rows and status line are read, the window is captured and closed.
+int optimiseRows=-1,optimiseTicked=-1,optimiseTicks=0;std::string optimiseStatus;std::filesystem::path optimiseShot;
+void CALLBACK InspectOptimiseDialog(HWND,UINT,UINT_PTR,DWORD)
+{
+    EnumThreadWindows(GetCurrentThreadId(),[](HWND w,LPARAM)->BOOL {
+        char title[256]{};GetWindowTextA(w,title,256);
+        if(strcmp(title,"Optimise Map Assets"))return TRUE;
+        auto list=GetDlgItem(w,100);
+        const int rows=list?static_cast<int>(SendMessage(list,LVM_GETITEMCOUNT,0,0)):0;
+        if(rows==0 && ++optimiseTicks<100)return FALSE; // Still scanning.
+        optimiseRows=rows;optimiseTicked=0;
+        for(int i=0;i<rows;++i)if(((SendMessage(list,LVM_GETITEMSTATE,i,LVIS_STATEIMAGEMASK)&LVIS_STATEIMAGEMASK)>>12)==2)++optimiseTicked;
+        char status[1024]{};GetDlgItemTextA(w,102,status,sizeof(status));optimiseStatus=status;
+        if(!optimiseShot.empty())Screenshot(w,optimiseShot);
+        PostMessage(w,WM_COMMAND,IDCANCEL,0);
+        return FALSE;
+    },0);
+}
 HWND FindDialog(const char* title)
 {
     struct Search { const char* title;HWND result; } search{title,nullptr};
@@ -253,7 +272,7 @@ void Screenshot(HWND window,const std::filesystem::path& path)
     DeleteObject(bitmap);DeleteDC(dc);ReleaseDC(window,screen);
 }
 }
-void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=false, bool snapOnly=false, bool charactersOnly=false, bool stairsOnly=false)
+void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=false, bool snapOnly=false, bool charactersOnly=false, bool stairsOnly=false, bool optimiseOnly=false)
 {
     using J=nlohmann::json;
     try
@@ -495,6 +514,105 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             if(!hadHash)reinterpret_cast<SetCollision>(0x1111eb30)(level,0,1);
         };
         if(stairsOnly){stairSmoothing();finish("Smooth Staircase");return;}
+        // Optimise Map Assets: a mesh from a small pack (in a group, using a material
+        // from a texture pack) is reported with its size, and release copies carry it
+        // inside the map or in a package of their own; the working map keeps using the
+        // packs, and each copy loads without them.
+        auto optimiseAssets=[&]()
+        {
+            const std::string mesh="EST_STM.STM.GAR_aeration_E";
+            auto fold=[](std::string s){for(auto& c:s)c=static_cast<char>(std::tolower(static_cast<unsigned char>(c)));return s;};
+            auto same=[&](const J& value,const std::string& text){return value.is_string() && fold(value.get<std::string>())==fold(text);};
+            const J definition={{"id","optimise"},{"actors",J::array({{{"name","OptimiseMesh"},{"class","Engine.StaticMeshActor"},{"path","MyLevel.OptimiseMesh"},
+                {"text","Begin Actor Class=StaticMeshActor Name=OptimiseMesh\nStaticMesh=StaticMesh'"+mesh+"'\nEnd Actor\n"},{"position",{0,0,64}},{"rotation",{0,0,0}},{"tag","None"},{"event","None"}}})},
+                {"bindings",J::array()},{"dependencies",J::array({mesh})}};
+            call({{"op","assembly.place"},{"definition",definition},{"position",{0,0,64}},{"rotation",{0,0,0}},{"bindings",J::object()}});
+            const auto actorCount=call({{"op","actors"}}).size();
+            auto report=call({{"op","optimise.report"}});
+            Record("optimise_report",report.dump().substr(0,4000).c_str());
+            auto pack=[](const J& r,const std::string& name){for(auto& p:r.at("packs"))if(p.at("name")==name)return p;return J();};
+            auto stm=pack(report,"EST_STM");
+            bool listed=false;
+            if(!stm.is_null())for(auto& a:stm.at("assets"))if(same(a.at("path"),mesh) && a.at("found")==true && a.at("size")==22577)listed=true;
+            require(listed && stm.value("fileSize",0)==61088 && stm.value("usedSize",0)==22577,"the report lists the mesh with its size and its package's");
+            require(!pack(report,"EST_TXT").is_null(),"the mesh's material's package is reported too");
+            // The generated fixture was saved without the frame, which leaves it no file name.
+            if(report.at("mapFile").get<std::string>().empty() && !stm.is_null())
+                call({{"op","map.setfile"},{"file",(std::filesystem::path(stm.at("file").get<std::string>()).parent_path().parent_path()/"MapsEd"/"NativeFixture.sdc").string()}});
+            const auto mapFile=call({{"op","map.file"}}).get<std::string>();
+            {
+                WorkflowProbe::optimiseShot=directory/"optimise_dialog.bmp";
+                auto timer=SetTimer(nullptr,0,100,WorkflowProbe::InspectOptimiseDialog);
+                SendMessage(frameWindow,WM_COMMAND,41390,0); // File > Optimise Map Assets...
+                KillTimer(nullptr,timer);
+                Record("optimise_dialog",(std::to_string(WorkflowProbe::optimiseRows)+" rows, "+std::to_string(WorkflowProbe::optimiseTicked)+" ticked: "+WorkflowProbe::optimiseStatus).c_str());
+                require(WorkflowProbe::optimiseRows==static_cast<int>(report.at("packs").size()) && WorkflowProbe::optimiseTicked>=1 && WorkflowProbe::optimiseStatus.rfind("Ticked:",0)==0,
+                        "the File menu opens the window with a row per package and the suggested ones ticked");
+            }
+            const auto mapName=report.at("map").get<std::string>();
+            auto inside=call({{"op","optimise.release"},{"packs",{"EST_STM","EST_TXT"}},{"destination","map"},{"release","NativeFixture_Release"},{"overwrite",true}});
+            Record("optimise_inside",inside.dump().substr(0,4000).c_str());
+            bool movedMesh=false;for(auto& m:inside.at("moved"))if(same(m.at("from"),mesh) && same(m.at("to"),mapName+".EST_STM.STM.GAR_aeration_E"))movedMesh=true;
+            bool needsPack=false;for(auto& n:inside.at("needs"))if(n.at("name")=="EST_STM" || n.at("name")=="EST_TXT")needsPack=true;
+            require(movedMesh && inside.at("written").size()==2 && inside.at("left").empty() && !needsPack,"the release copy carries the mesh and its material and needs neither pack");
+            auto after=call({{"op","optimise.report"}});
+            require(after.at("mapFile")==mapFile && !mapFile.empty() && !pack(after,"EST_STM").is_null() && pack(after,"EST_STM").at("assets")==stm.at("assets"),"the working map still uses the packs, as before");
+            require(call({{"op","actors"}}).size()==actorCount,"the working map's actors are untouched");
+            auto own=call({{"op","optimise.release"},{"packs",{"EST_STM","EST_TXT"}},{"destination","package"},{"release","NativeFixture_Release2"},{"assetPackage","NativeFixture_Assets"},{"overwrite",true}});
+            Record("optimise_package",own.dump().substr(0,4000).c_str());
+            bool needsOwn=false;needsPack=false;
+            for(auto& n:own.at("needs")){if(n.at("name")=="NativeFixture_Assets")needsOwn=true;if(n.at("name")=="EST_STM" || n.at("name")=="EST_TXT")needsPack=true;}
+            require(own.at("written").size()==3 && own.at("left").empty() && needsOwn && !needsPack,"the second copy takes its assets from its own package only");
+            require(!pack(call({{"op","optimise.report"}}),"EST_STM").is_null(),"the working map is back on the packs");
+            // Each copy loads and keeps the mesh without the packs' assets. A saved map
+            // drops editor-only actors, so the mesh actor is looked up by name.
+            const auto maps=std::filesystem::path(mapFile).parent_path();
+            Exec("MAP LOAD FILE=\""+(maps/"NativeFixture_Release.sdc").string()+"\"");
+            auto loaded=call({{"op","optimise.report"}});
+            Record("optimise_loaded",loaded.dump().substr(0,2000).c_str());
+            bool carried=false;for(auto& a:loaded.at("inside"))if(same(a.at("path"),loaded.at("map").get<std::string>()+".EST_STM.STM.GAR_aeration_E"))carried=true;
+            require(carried && pack(loaded,"EST_STM").is_null() && pack(loaded,"EST_TXT").is_null(),"the release copy loads with the mesh inside it");
+            Exec("MAP LOAD FILE=\""+(maps/"NativeFixture_Release2.sdc").string()+"\"");
+            auto loaded2=call({{"op","optimise.report"}});
+            Record("optimise_loaded2",loaded2.dump().substr(0,2000).c_str());
+            auto assets=pack(loaded2,"NativeFixture_Assets");
+            bool fromOwn=false;if(!assets.is_null())for(auto& a:assets.at("assets"))if(same(a.at("path"),"NativeFixture_Assets.EST_STM.STM.GAR_aeration_E") && a.at("found")==true)fromOwn=true;
+            require(fromOwn && pack(loaded2,"EST_STM").is_null(),"the second copy loads its mesh from its own package");
+            // A full-size case when the runner copies one in (-OptimiseExtraMap), e.g. a
+            // CoD4 port map: every pack it uses is moved into the release copy.
+            const auto big=maps/"COD4_shipment.sdc";
+            if(std::filesystem::exists(big))
+            {
+                Exec("MAP LOAD FILE=\""+big.string()+"\"");
+                call({{"op","map.setfile"},{"file",big.string()}});
+                auto started=GetTickCount64();
+                auto bigReport=call({{"op","optimise.report"}});
+                const auto scanTime=GetTickCount64()-started;
+                J ticked=J::array();std::string rows;
+                for(auto& p:bigReport.at("packs"))
+                {
+                    rows+=p.at("name").get<std::string>()+" "+std::to_string(p.at("assets").size())+" assets "+std::to_string(p.at("usedSize").get<std::uint64_t>()/1024)+" of "+std::to_string(p.at("fileSize").get<std::uint64_t>()/1024)+" KB"+(p.at("suggested")==true?" suggested":"")+"; ";
+                    ticked.push_back(p.at("name")); // Every pack: the most there is to move.
+                }
+                Record("optimise_big_report",(std::to_string(scanTime)+" ms: "+rows).c_str());
+                require(!bigReport.at("packs").empty(),"the big map's packs are reported");
+                if(!ticked.empty())
+                {
+                    started=GetTickCount64();
+                    auto bigRelease=call({{"op","optimise.release"},{"packs",ticked},{"destination","map"},{"release","COD4_shipment_Release"},{"overwrite",true}});
+                    const auto releaseTime=GetTickCount64()-started;
+                    std::string summary=std::to_string(releaseTime)+" ms, rounds "+std::to_string(bigRelease.at("rounds").get<int>())+", moved "+std::to_string(bigRelease.at("moved").size())+", left "+std::to_string(bigRelease.at("left").size())+", written: ";
+                    for(auto& f:bigRelease.at("written"))summary+=f.at("file").get<std::string>()+" "+std::to_string(f.at("size").get<std::uint64_t>()/1024)+" KB; ";
+                    summary+="needs: ";for(auto& n:bigRelease.at("needs"))summary+=n.at("name").get<std::string>()+" ";
+                    Record("optimise_big_release",summary.c_str());
+                    bool needsTicked=false;for(auto& n:bigRelease.at("needs"))for(auto& t:ticked)if(n.at("name")==t)needsTicked=true;
+                    require(bigRelease.at("left").empty() && !needsTicked,"the big map's release copy needs none of the ticked packs");
+                    auto again=call({{"op","optimise.report"}});
+                    require(again.at("packs").size()==bigReport.at("packs").size(),"the big map is back on its packs");
+                }
+            }
+        };
+        if(optimiseOnly){optimiseAssets();finish("Optimise Map Assets");return;}
         auto checkSurfaceBrushSelection=[&](size_t minimumBrushes)
         {
             auto read=[](uintptr_t p){return *reinterpret_cast<uintptr_t*>(p);};

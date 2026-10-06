@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <set>
 #include <sstream>
@@ -160,6 +161,134 @@ std::vector<std::string> RawImports(const fs::path &path)
     }
     return {dependencies.begin(), dependencies.end()};
 }
+// Names, imports and exports, read the way RawImports reads imports: each
+// name XORed with its file offset from version 175 on, and SCCT writing a
+// name's index and hash as two compact integers.
+Tables RawTables(const fs::path &path, const std::string &package, std::uint64_t fileSize)
+{
+    Reader r(path);
+    Require(r.U32() == 0x9e2a83c1, "Invalid Unreal package magic.");
+    auto version = r.U32();
+    Require((version >= 171 && version <= 175) || version == 300,
+            "Unsupported SCCT package version: " + std::to_string(version));
+    r.U32();
+    auto count = r.U32(), offset = r.U32();
+    auto exportCount = r.U32(), exportOffset = r.U32();
+    auto importCount = r.U32(), importOffset = r.U32();
+    Require(count > 0 && count <= 1000000 && importCount <= 1000000 && exportCount <= 1000000 && offset >= 36 &&
+                importOffset >= 36 && exportOffset >= 36,
+            "Invalid package table counts or offsets.");
+    std::vector<std::string> names;
+    names.reserve(count);
+    r.Seek(offset);
+    for (unsigned i = 0; i < count; ++i)
+    {
+        int length = r.Compact();
+        Require(length > 0 && length <= 1024, "Invalid SCCT name length.");
+        std::string name;
+        for (int j = 0; j < length; ++j)
+        {
+            auto position = r.pos;
+            auto c = static_cast<char>(r.Byte() ^ (version >= 175 ? (position & 255) : 0));
+            Require(j == length - 1 ? c == 0 : c != 0, "Invalid SCCT name terminator.");
+            if (j < length - 1)
+                name += c;
+        }
+        r.U32();
+        names.push_back(std::move(name));
+    }
+    auto name = [&]() {
+        int index = r.Compact();
+        r.Compact();
+        Require(index >= 0 && static_cast<size_t>(index) < names.size(), "Invalid name index.");
+        return names[index];
+    };
+    struct RawImport
+    {
+        std::string classPackage, className, name;
+        int outer;
+    };
+    std::vector<RawImport> imports;
+    r.Seek(importOffset);
+    for (unsigned i = 0; i < importCount; ++i)
+    {
+        RawImport row;
+        row.classPackage = name();
+        row.className = name();
+        row.outer = static_cast<int32_t>(r.U32());
+        row.name = name();
+        Require(row.outer <= 0 && row.outer >= -static_cast<int64_t>(importCount), "Invalid imported object owner.");
+        imports.push_back(std::move(row));
+    }
+    struct RawExport
+    {
+        int type, outer;
+        std::string name;
+        std::uint64_t size;
+    };
+    std::vector<RawExport> exports;
+    r.Seek(exportOffset);
+    for (unsigned i = 0; i < exportCount; ++i)
+    {
+        RawExport row{};
+        row.type = r.Compact();
+        r.Compact(); // Super
+        row.outer = static_cast<int32_t>(r.U32());
+        row.name = name();
+        r.U32(); // Object flags
+        auto size = r.Compact();
+        Require(size >= 0, "Invalid export size.");
+        row.size = static_cast<std::uint64_t>(size);
+        if (size > 0)
+        {
+            auto at = r.Compact();
+            Require(at >= 0 && static_cast<std::uint64_t>(at) + row.size <= r.size, "Export data lies outside the file.");
+        }
+        Require(row.outer >= 0 && row.outer <= static_cast<int64_t>(exportCount) &&
+                    row.type >= -static_cast<int64_t>(importCount) && row.type <= static_cast<int64_t>(exportCount),
+                "Invalid export owner or class.");
+        exports.push_back(std::move(row));
+    }
+    // Full paths, owners first; a cycle or a chain deeper than the table is refused.
+    std::vector<std::string> importPaths(imports.size()), exportPaths(exports.size());
+    std::vector<int> state(imports.size());
+    std::function<const std::string &(size_t, int)> importPath = [&](size_t i, int depth) -> const std::string & {
+        Require(depth <= 64 && state[i] != 1, "Invalid import owner chain.");
+        if (state[i] == 2)
+            return importPaths[i];
+        state[i] = 1;
+        importPaths[i] = imports[i].outer == 0 ? imports[i].name
+                                               : importPath(static_cast<size_t>(-imports[i].outer - 1), depth + 1) +
+                                                     "." + imports[i].name;
+        state[i] = 2;
+        return importPaths[i];
+    };
+    std::vector<int> exportState(exports.size());
+    std::function<const std::string &(size_t, int)> exportPath = [&](size_t i, int depth) -> const std::string & {
+        Require(depth <= 64 && exportState[i] != 1, "Invalid export owner chain.");
+        if (exportState[i] == 2)
+            return exportPaths[i];
+        exportState[i] = 1;
+        exportPaths[i] = (exports[i].outer == 0 ? package : exportPath(static_cast<size_t>(exports[i].outer - 1), depth + 1)) +
+                         "." + exports[i].name;
+        exportState[i] = 2;
+        return exportPaths[i];
+    };
+    Tables tables;
+    tables.package = package;
+    tables.fileSize = fileSize;
+    for (size_t i = 0; i < imports.size(); ++i)
+        tables.imports.push_back({importPath(i, 0), imports[i].className, imports[i].classPackage});
+    for (size_t i = 0; i < exports.size(); ++i)
+    {
+        const auto type = exports[i].type;
+        std::string className = type < 0   ? imports[static_cast<size_t>(-type - 1)].name
+                                : type > 0 ? exports[static_cast<size_t>(type - 1)].name
+                                           : "Class";
+        tables.exports.push_back({exportPath(i, 0), className, exports[i].size});
+    }
+    return tables;
+}
 bool Runtime(const std::string &name)
 {
     // These SCCT Versus packages are supplied by the native game executable.
@@ -288,6 +417,23 @@ ZipEntry ZipFile(std::ostream &out, const std::string &name, std::istream &input
     return entry;
 }
 } // namespace
+bool RuntimePackage(const std::string &name)
+{
+    return Runtime(name);
+}
+Tables ReadTables(const std::filesystem::path &package)
+{
+    const auto name = package.stem().string();
+    const auto size = fs::file_size(package);
+    Reader header(package);
+    if (header.U32() == 0x9e2a83c1)
+        return RawTables(package, name, size);
+    Scratch scratch(std::filesystem::temp_directory_path());
+    auto decoded = scratch.directory / "decoded.package";
+    std::string error;
+    Require(RecoveredAssetPackage::Write(package, decoded, error), error);
+    return RawTables(decoded, name, size);
+}
 std::vector<std::string> Imports(const std::filesystem::path &package)
 {
     Reader header(package);

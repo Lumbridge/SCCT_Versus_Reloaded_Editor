@@ -293,6 +293,16 @@ namespace Workflow::Editor
     // BlockingVolume ramp over each staircase's step edges in one Undo step,
     // replacing its earlier ramps; returns {ramps, replaced, steps, winding,
     // brushes}. RemoveStairSmoothing deletes those ramps; returns the count.
+    // Optimise Map Assets (MapOptimiseModel.h). Report: {map, mapFile, packs:[{name,
+    // file, fileSize, usedSize, suggested, assets:[{path, class, size, found}]}],
+    // inside:[{path, class}], text, unreadable}: every asset the map reaches outside
+    // itself and the game's code packages, by package, and the ones it carries. Release saves the map, then writes a copy named
+    // options.release carrying the assets it uses from options.packs, inside it
+    // (destination "map") or in options.assetPackage.usx ("package"), and puts every
+    // asset back; options.overwrite replaces existing files. Returns {moved:[{from,
+    // to}], written:[{file, size}], needs:[{name, file, size}], left, rounds}.
+    Json OptimiseReport();
+    Json OptimiseRelease(const Json& options);
     Json StairSmoothState(bool surfaces);
     Json SmoothStairs(bool surfaces);
     size_t RemoveStairSmoothing(bool surfaces);
