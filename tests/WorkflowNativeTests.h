@@ -499,6 +499,18 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 // The slab is centred on its own location and 16 thick: its middle is
                 // solid, the space 40 above and below it and far away is not.
                 const auto at=reinterpret_cast<float*>(WorkflowProbe::MagicActor(slab[0])+0x80);
+                // It starts at the floor (z 0) a step in front of the first riser, so
+                // the bottom step is smoothed too: its lowest corner is a rise (16)
+                // below the floor.
+                {
+                    auto model=*reinterpret_cast<unsigned char**>(WorkflowProbe::MagicActor(slab[0])+0x238);
+                    auto polys=*reinterpret_cast<unsigned char**>(model+0x50);
+                    auto data=*reinterpret_cast<unsigned char**>(polys+0x28);const int count=*reinterpret_cast<int*>(polys+0x2c);
+                    float lowest=1e9f;
+                    for(int i=0;i<count;++i){auto poly=data+i*0x14c;const int n=*reinterpret_cast<unsigned short*>(poly+0x148);for(int k=0;k<n;++k){const float z=reinterpret_cast<float*>(poly+0x18)[k*3+2]+at[2];if(z<lowest)lowest=z;}}
+                    Record("stairs_flight_lowest",std::to_string(lowest).c_str());
+                    require(std::abs(lowest+16)<0.5f,"the flight ramp starts at the floor, so the bottom step is smoothed");
+                }
                 require(solidAt(slab[0],at[0],at[1],at[2]) && !solidAt(slab[0],at[0],at[1],at[2]+40) && !solidAt(slab[0],at[0],at[1],at[2]-40) && !solidAt(slab[0],at[0]+5000,at[1],at[2]),"the flight ramp is solid inside and open outside");
             }
             SendMessage(frameWindow,WM_COMMAND,40019,0);SendMessage(frameWindow,WM_COMMAND,40019,0);

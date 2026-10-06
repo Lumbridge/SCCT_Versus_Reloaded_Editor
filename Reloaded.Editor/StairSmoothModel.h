@@ -1,5 +1,6 @@
 #pragma once
 #include "MapDesignModel.h"
+#include <limits>
 #include <optional>
 
 // Smooth Staircase: an invisible blocking volume laid over a staircase's step
@@ -8,7 +9,8 @@
 // on the brush they add, so a staircase is recognised by its shape: treads are
 // the upward faces, and two treads are consecutive steps when the lower one's
 // back edge lies under the upper one's front edge (the nosing). The ramp's top
-// runs through every nosing; a straight flight is one flat slab, a winding one
+// runs through every nosing and on down to the floor one step in front of the
+// first, so the bottom step is smoothed too; a straight flight is one flat slab, a winding one
 // (curved or spiral) a helical slab of triangles, closed into one solid either
 // way so there are no seams to catch on.
 namespace Workflow::StairSmooth
@@ -153,9 +155,10 @@ namespace Detail
         for(const auto& e:level.edges)if(SegmentDistance2(p,e.p,e.q)<=1.0)return true;
         return false;
     }
-    // The front edge of the lowest tread, which no tread below marks: the
-    // step from the first nosing to the second, taken back one step.
-    inline std::optional<Nosing> FirstNosing(const Nosing& n1,const Nosing& n2,const Level& lowest)
+    // The step from one nosing to the next, taken back one step from the
+    // first, at height z: a turn and a shift in plan, so it follows a spiral
+    // as well as a straight flight.
+    inline Nosing StepBack(const Nosing& n1,const Nosing& n2,double z)
     {
         const Vector d1=Sub(n1.b,n1.a),d2=Sub(n2.b,n2.a);
         const double turn=std::atan2(Cross2(d1,d2),Dot2(d1,d2)),c=std::cos(turn),s=std::sin(turn);
@@ -163,7 +166,13 @@ namespace Detail
         const Vector shift=Sub(n2.a,rotate(n1.a,1));
         // n1 = R n0 + shift, so n0 = R^-1 (n1 - shift).
         Nosing n0{rotate(Sub(n1.a,shift),-1),rotate(Sub(n1.b,shift),-1)};
-        n0.a[2]=n0.b[2]=lowest.z;
+        n0.a[2]=n0.b[2]=z;
+        return n0;
+    }
+    // The front edge of the lowest tread, which no tread below marks.
+    inline std::optional<Nosing> FirstNosing(const Nosing& n1,const Nosing& n2,const Level& lowest)
+    {
+        const auto n0=StepBack(n1,n2,lowest.z);
         if(!OnLevelEdge(n0.a,lowest) || !OnLevelEdge(n0.b,lowest) || !OnLevelEdge(Mid(n0.a,n0.b),lowest))return std::nullopt;
         return n0;
     }
@@ -224,6 +233,8 @@ inline Result Analyse(const std::vector<std::vector<Face>>& brushes)
     using namespace Detail;
     for(const auto& faces:brushes)for(const auto& f:faces)for(const auto& p:f)Design::CheckVector(p);
     const auto levels=Levels(brushes);
+    double lowestPoint=std::numeric_limits<double>::max();
+    for(const auto& faces:brushes)for(const auto& f:faces)for(const auto& p:f)lowestPoint=std::min(lowestPoint,p[2]);
     if(levels.size()<3)throw std::runtime_error("A staircase needs at least three treads.");
     std::vector<std::optional<Nosing>> nosings(levels.size());
     for(size_t k=1;k<levels.size();++k)
@@ -260,19 +271,36 @@ inline Result Analyse(const std::vector<std::vector<Face>>& brushes)
             if(usual>0 && depths[i-1]>kLandingRatio*usual)runs.push_back({});
             runs.back().push_back(flight[i]);
         }
+        auto sortedRises=rises;std::nth_element(sortedRises.begin(),sortedRises.begin()+sortedRises.size()/2,sortedRises.end());
+        const double rise=sortedRises[sortedRises.size()/2];
+        const double thickness=std::clamp(rise,8.0,32.0);
+        auto alignTo=[&](Nosing n,const Nosing& next)
+        {
+            if(Length2(Sub(n.a,next.a))>Length2(Sub(n.a,next.b)))std::swap(n.a,n.b);
+            return n;
+        };
         // The lowest tread's front edge, when it lines up with the rest.
         if(runs[0].size()>=2)if(auto n0=FirstNosing(runs[0][0],runs[0][1],levels[first-1]))
+            runs[0].insert(runs[0].begin(),alignTo(*n0,runs[0][0]));
+        // Then one more step back, down at the floor: the bottom riser becomes
+        // part of the slope instead of a step up onto the ramp. The floor is a
+        // rise below the lowest tread, and never below the stairs themselves.
+        bool floor=false;
+        if(runs[0].size()>=2)
         {
-            if(Length2(Sub(n0->a,runs[0][0].a))>Length2(Sub(n0->a,runs[0][0].b)))std::swap(n0->a,n0->b);
-            runs[0].insert(runs[0].begin(),*n0);
+            const double z=std::max(runs[0][0].a[2]-rise,lowestPoint);
+            if(runs[0][0].a[2]-z>kTolerance)
+            {
+                runs[0].insert(runs[0].begin(),alignTo(StepBack(runs[0][0],runs[0][1],z),runs[0][0]));
+                floor=true;
+            }
         }
-        auto sortedRises=rises;std::nth_element(sortedRises.begin(),sortedRises.begin()+sortedRises.size()/2,sortedRises.end());
-        const double thickness=std::clamp(sortedRises[sortedRises.size()/2],8.0,32.0);
-        for(const auto& run:runs)
+        for(size_t r=0;r<runs.size();++r)
         {
+            const auto& run=runs[r];
             if(run.size()<2)continue;
             result.ramps.push_back({RampSolid(run,thickness,result.winding),0});
-            result.steps+=static_cast<int>(run.size());
+            result.steps+=static_cast<int>(run.size())-(r==0 && floor?1:0);
         }
     }
     if(result.ramps.empty())throw std::runtime_error("No staircase found: select a brush with at least three steps, each tread starting where the one below ends.");

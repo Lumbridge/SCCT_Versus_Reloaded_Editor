@@ -73,16 +73,19 @@ int main()
         const auto& ramp=r.ramps[0].solid;
         CheckClosed(ramp,"straight ramp is closed");
         Check(ramp.faces.size()==6,"straight ramp is one slab");
-        Check(Near(TopZ(ramp,0),34) && Near(TopZ(ramp,224),272),"the ramp runs from the first nosing to the last");
-        // Thickness: one rise.
+        Check(Near(TopZ(ramp,-32),0) && Near(TopZ(ramp,224),272),"the ramp runs from the floor a step in front to the last nosing");
+        // Thickness: one rise, under the floor at its start.
         double lowest=1e9;for(const auto& f:ramp.faces)for(const auto& p:f)lowest=std::min(lowest,p[2]);
-        Check(Near(lowest,2),"ramp is a rise thick (34 clamps to 32)");
+        Check(Near(lowest,-32),"ramp is a rise thick (34 clamps to 32)");
+        // One slope, 34 up for every 32 along from the floor, on top and 32 below.
+        for(const auto& f:ramp.faces)for(const auto& p:f)
+            Check(Near(p[2],(p[1]+32)*34/32) || Near(p[2],(p[1]+32)*34/32-32),"one slope from the floor");
         for(const auto& f:ramp.faces)for(const auto& p:f)Check(p[0]>=-64-1e-9 && p[0]<=64+1e-9,"ramp keeps to the stair's width");
         // The engine may hand polygons wound the other way round.
         auto reversed=OneBrush(steps);for(auto& f:reversed)std::reverse(f.begin(),f.end());
         auto again=Smooth({reversed});
         Check(again.ramps.size()==1 && again.steps==8,"reversed winding reads the same");
-        Check(Near(TopZ(again.ramps[0].solid,0),34),"reversed winding gives the same ramp");
+        Check(Near(TopZ(again.ramps[0].solid,-32),0),"reversed winding gives the same ramp");
         // A flight turned 30 degrees round: still flat.
         const Pose turn{{100,-50,8},{0,5461,0}};
         auto turned=OneBrush(steps);for(auto& f:turned)for(auto& p:f)p=TransformPoint(p,turn);
