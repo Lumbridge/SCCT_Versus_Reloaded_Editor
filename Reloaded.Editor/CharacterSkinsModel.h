@@ -9,20 +9,24 @@
 
 // Character Skins: a map's own materials and models for spies and mercs. The editor
 // compiles the script below into the map package (MyLevel) and places one actor of it.
-// In game every machine runs its own copy of the actor (RemoteRole=ROLE_None,
-// bNoDelete), so nothing is replicated and the game and Reloaded patch are untouched.
+// In game every machine runs its own copy of the actor: it is bNoDelete, so each
+// client keeps the map's copy, and RemoteRole=ROLE_SimulatedProxy with simulated
+// functions lets that copy run there. (A client swaps a map actor's Role and
+// RemoteRole on load; with RemoteRole=ROLE_None the client's copy had no role and
+// never ran, so only the host saw the map's look.) No variable is replicated, and
+// the game and Reloaded patch are untouched.
 namespace CharacterSkins
 {
 // Raise with every change to Script(). Each version is its own class, so a map's
 // older actor can be read and replaced instead of recompiling a class in use: a
 // change needs a class name of its own, and this one moves to LegacyClassNames.
 // Named like the game's own S classes (SMagicEvent), so the placed actor is
-// SCharacterSkins0 like any other.
-constexpr int Version = 6;
-constexpr const char* ClassName = "SCharacterSkins";
+// SCharacterOutfits0 like any other.
+constexpr int Version = 7;
+constexpr const char* ClassName = "SCharacterOutfits";
 // Earlier versions' classes, newest first, whose actors the panel migrates.
-inline constexpr std::array<const char*, 5> LegacyClassNames = {
-    {"ReloadedCharacterSkins5", "ReloadedCharacterSkins4", "ReloadedCharacterSkins3", "ReloadedCharacterSkins2", "ReloadedCharacterSkins"}};
+inline constexpr std::array<const char*, 6> LegacyClassNames = {
+    {"SCharacterSkins", "ReloadedCharacterSkins5", "ReloadedCharacterSkins4", "ReloadedCharacterSkins3", "ReloadedCharacterSkins2", "ReloadedCharacterSkins"}};
 // Tag of the characters the addbot console command stands in an editor Play Level.
 constexpr const char* BotTag = "ReloadedTestBot";
 // Their controller, compiled into the map beside the actor: Controller itself is
@@ -119,8 +123,8 @@ inline std::string Script()
     std::string s =
         "//=============================================================================\r\n"
         "// " + std::string(ClassName) + ": this map's spy and merc materials and models,\r\n"
-        "// written by RE+ Tools > Character Skins. Each machine runs its own copy;\r\n"
-        "// nothing replicates.\r\n"
+        "// written by RE+ Tools > Character Skins. Each machine runs its own copy\r\n"
+        "// (simulated on clients); nothing replicates.\r\n"
         "//=============================================================================\r\n"
         "class " + ClassName + " extends Info\r\n"
         "\tplaceable;\r\n"
@@ -139,7 +143,7 @@ inline std::string Script()
         "var string Typed;\r\n"
         "var int Entered;\r\n"
         "\r\n"
-        "function PostBeginPlay()\r\n"
+        "simulated function PostBeginPlay()\r\n"
         "{\r\n";
     for (size_t i = 0; i < Slots.size(); ++i)
         s += "\tDressed[" + std::to_string(i) + "] = Wrap(" + Slots[i].property + ", HeatTextureModifier'" +
@@ -147,7 +151,7 @@ inline std::string Script()
     s +=
         "}\r\n"
         "\r\n"
-        "function Material Wrap(Material Base, HeatTextureModifier StockLayer)\r\n"
+        "simulated function Material Wrap(Material Base, HeatTextureModifier StockLayer)\r\n"
         "{\r\n"
         "\tlocal HeatTextureModifier Heat;\r\n"
         "\tlocal EMFTextureModifier EMF, LayerEMF;\r\n"
@@ -171,7 +175,7 @@ inline std::string Script()
         "\treturn Heat;\r\n"
         "}\r\n"
         "\r\n"
-        "function Tick(float DeltaTime)\r\n"
+        "simulated function Tick(float DeltaTime)\r\n"
         "{\r\n"
         "\tlocal Pawn P;\r\n"
         "\r\n"
@@ -194,7 +198,7 @@ inline std::string Script()
         "// looking at the other team. The console runs a typed line as a player command,\r\n"
         "// which never reaches a map's script, so the actor watches it: the line it held\r\n"
         "// when its command history moved is the one just entered.\r\n"
-        "function CheckCommands()\r\n"
+        "simulated function CheckCommands()\r\n"
         "{\r\n"
         "\tlocal PlayerController PC;\r\n"
         "\r\n"
@@ -205,7 +209,7 @@ inline std::string Script()
         "\tbCommands = InStr(Caps(Level.GetLocalURL()), \"?EDITEUR=TRUE\") >= 0;\r\n"
         "}\r\n"
         "\r\n"
-        "function WatchConsole()\r\n"
+        "simulated function WatchConsole()\r\n"
         "{\r\n"
         "\tlocal PlayerController PC;\r\n"
         "\tlocal Console C;\r\n"
@@ -234,7 +238,7 @@ inline std::string Script()
         "\r\n"
         "// The Reloaded patch reads every name in the player list, and an empty one\r\n"
         "// crashes it: never leave one empty while bots are about.\r\n"
-        "function NameBots(PlayerController PC)\r\n"
+        "simulated function NameBots(PlayerController PC)\r\n"
         "{\r\n"
         "\tlocal GameReplicationInfo GRI;\r\n"
         "\tlocal int i;\r\n"
@@ -248,7 +252,7 @@ inline std::string Script()
         "}\r\n"
         "\r\n"
         "// A merc's game crashes on a character without a controller: keep one on each bot.\r\n"
-        "function ControlBots()\r\n"
+        "simulated function ControlBots()\r\n"
         "{\r\n"
         "\tlocal Pawn P;\r\n"
         "\r\n"
@@ -263,7 +267,7 @@ inline std::string Script()
         "\r\n"
         "// A character of the other team, with a do-nothing controller, standing in front of the\r\n"
         "// player, a little to the right, facing them; a merc holds its gun. The player's own team is refused.\r\n"
-        "function AddBot(PlayerController PC, string Team)\r\n"
+        "simulated function AddBot(PlayerController PC, string Team)\r\n"
         "{\r\n"
         "\tlocal class<Pawn> BotClass;\r\n"
         "\tlocal Pawn Bot;\r\n"
@@ -323,7 +327,7 @@ inline std::string Script()
         "\tPC.ClientMessage(\"addbot: added \" $ Bot.Class.Name $ \". killbots removes it.\");\r\n"
         "}\r\n"
         "\r\n"
-        "function KillBots(PlayerController PC)\r\n"
+        "simulated function KillBots(PlayerController PC)\r\n"
         "{\r\n"
         "\tlocal Pawn P;\r\n"
         "\tlocal SWeaponDefenseDummy Gun;\r\n"
@@ -343,7 +347,7 @@ inline std::string Script()
         "\r\n"
         "// A team's model, keeping the team's own animations so its moves still play, with\r\n"
         "// the goggle lights moved onto the new head; or its materials on the stock model.\r\n"
-        "function Outfit(Pawn P, SkeletalMesh Model, MeshAnimation Moves, vector Goggles, int First)\r\n"
+        "simulated function Outfit(Pawn P, SkeletalMesh Model, MeshAnimation Moves, vector Goggles, int First)\r\n"
         "{\r\n"
         "\tlocal int i;\r\n"
         "\tlocal SBasePawn B;\r\n"
@@ -378,7 +382,7 @@ inline std::string Script()
         "\r\n"
         "// A pawn's own skins, remembered the first time it is seen: the look the game\r\n"
         "// restores after an effect, so the map's material may replace it.\r\n"
-        "function int PawnIndex(Pawn P)\r\n"
+        "simulated function int PawnIndex(Pawn P)\r\n"
         "{\r\n"
         "\tlocal int i, j, Free;\r\n"
         "\r\n"
@@ -399,14 +403,14 @@ inline std::string Script()
         "\treturn Free;\r\n"
         "}\r\n"
         "\r\n"
-        "function Material Current(Pawn P, int Slot)\r\n"
+        "simulated function Material Current(Pawn P, int Slot)\r\n"
         "{\r\n"
         "\tif (Slot < P.Skins.Length)\r\n"
         "\t\treturn P.Skins[Slot];\r\n"
         "\treturn None;\r\n"
         "}\r\n"
         "\r\n"
-        "function Dress(Pawn P, int Index, int Slot, Material M)\r\n"
+        "simulated function Dress(Pawn P, int Index, int Slot, Material M)\r\n"
         "{\r\n"
         "\tlocal Material Now;\r\n"
         "\r\n"
@@ -422,7 +426,7 @@ inline std::string Script()
         "\tbStatic=False\r\n"
         "\tbNoDelete=True\r\n"
         "\tbAlwaysTick=True\r\n"
-        "\tRemoteRole=ROLE_None\r\n"
+        "\tRemoteRole=ROLE_SimulatedProxy\r\n"
         "\tVersion=" + std::to_string(Version) + "\r\n"
         "}\r\n";
     return s;

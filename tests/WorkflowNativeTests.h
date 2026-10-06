@@ -352,7 +352,7 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             require(reopened["viewport"]==true && reopened["viewportsOpened"].get<int>()==closed["viewportsOpened"].get<int>()+1,"reopening the character preview opens a new viewport");
             call({{"op","characters.close"}});
         };
-        // Character Skins on the map: Apply compiles SCharacterSkins into the map
+        // Character Skins on the map: Apply compiles SCharacterOutfits into the map
         // package and places one actor of it, named like any other actor.
         auto characterSkinsActor=[&]()
         {
@@ -368,8 +368,8 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             require(applied["placed"]==true && applied["compiled"]==true && applied["legacy"]==false && applied["extra"]==false,"Apply compiles the class and places one actor");
             require(applied["slots"]["SpyBody"]=="SPersoTextures.alpha_DEF01.DEF01_heat_bodu","Apply sets the slot");
             auto first=skins();
-            require(first.size()==1 && first[0]["class"]=="MyLevel.SCharacterSkins","the actor's class is SCharacterSkins");
-            require(first.size()==1 && first[0]["name"]=="SCharacterSkins0","the actor is named SCharacterSkins0");
+            require(first.size()==1 && first[0]["class"]=="MyLevel.SCharacterOutfits","the actor's class is SCharacterOutfits");
+            require(first.size()==1 && first[0]["name"]=="SCharacterOutfits0","the actor is named SCharacterOutfits0");
             auto again=call({{"op","skins.apply"},{"slots",{{"MercBody","SPersoTextures.alpha_DEF01.DEF01_heat_bodu"}}}});
             auto second=skins();
             require(again["slots"]["MercBody"]=="SPersoTextures.alpha_DEF01.DEF01_heat_bodu" && again["slots"]["SpyBody"]=="" && second==first,"applying again edits the same renamed actor");
@@ -378,7 +378,7 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             call({{"op","skins.apply"}});
             auto third=skins();
             const auto name=third.size()==1?third[0]["name"].get<std::string>():std::string();
-            require(name.size()==16 && name.rfind("SCharacterSkins",0)==0,"after a removal the new actor takes the lowest free number");
+            require(name.size()==18 && name.rfind("SCharacterOutfits",0)==0,"after a removal the new actor takes the lowest free number");
             call({{"op","skins.remove"}});
             require(call({{"op","actors"}}).size()==beforeActors.size(),"the map is back as it was");
         };
