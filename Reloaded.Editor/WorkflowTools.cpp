@@ -1170,7 +1170,7 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="design.spawns")result=Editor::DesignSpawns();
         else if(op=="design.clearances")result=Editor::DesignClearances();
         else if(op=="design.play"){Editor::DesignPlay(q.at("start"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()},q.value("launch",false));result=true;}
-        else if(op=="optimise.report") result=Editor::OptimiseReport();
+        else if(op=="optimise.report") result=Editor::OptimiseReport(q.value("base",std::string()));
         else if(op=="optimise.release") result=Editor::OptimiseRelease(q);
         else if(op=="package.preview") {MapPackageDialog::Preview(GetActiveWindow(),q.at("map").get<std::string>());result=true;}
         else if(op=="authoring.export") result=Editor::ExportMapAuthoring();

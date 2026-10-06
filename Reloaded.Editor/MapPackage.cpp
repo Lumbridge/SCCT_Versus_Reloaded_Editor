@@ -613,6 +613,25 @@ std::vector<bool> MatchBaseFiles(const Plan &plan, const std::filesystem::path &
     }
     return matches;
 }
+bool IdenticalFiles(const std::filesystem::path &a, const std::filesystem::path &b)
+{
+    std::error_code error;
+    if (!fs::is_regular_file(a, error) || !fs::is_regular_file(b, error) || fs::file_size(a, error) != fs::file_size(b, error) || error)
+        return false;
+    std::ifstream left(a, std::ios::binary), right(b, std::ios::binary);
+    if (!left || !right)
+        return false;
+    std::vector<char> x(1 << 20), y(1 << 20);
+    while (left && right)
+    {
+        left.read(x.data(), static_cast<std::streamsize>(x.size()));
+        right.read(y.data(), static_cast<std::streamsize>(y.size()));
+        if (left.gcount() != right.gcount() ||
+            !std::equal(x.begin(), x.begin() + static_cast<ptrdiff_t>(left.gcount()), y.begin()))
+            return false;
+    }
+    return !left.bad() && !right.bad();
+}
 void Write(const Plan &plan, const std::filesystem::path &destination)
 {
     Require(plan.errors.empty(), "Resolve all dependency errors before packaging.");

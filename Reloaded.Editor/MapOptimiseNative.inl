@@ -99,7 +99,10 @@ namespace
                 const auto asset=AssetOf(o);
                 if(!IsA(asset,"Level") && !IsA(asset,"Actor") && !IsA(asset,"LevelSummary"))carried.insert(asset);
             }
-            for(const auto& ref:ReferencesOf(o,false))if(ref.target && !visited.count(ref.target))stack.push_back(ref.target);
+            // One object whose properties cannot be read does not stop the scan:
+            // anything missed shows in the saved copy's imports and moves then.
+            try{for(const auto& ref:ReferencesOf(o,false))if(ref.target && !visited.count(ref.target))stack.push_back(ref.target);}
+            catch(const std::exception& e){Logger::log("Optimise Map Assets: skipped the references of "+Path(o)+": "+e.what());}
         }
         std::vector<UsedObject> out;
         for(auto a:assets)out.push_back({a,{Path(a),NameOf(Read<Address>(a+0x24))}});
@@ -139,9 +142,16 @@ namespace
         return true;
     }
 }
-Json OptimiseReport()
+Json OptimiseReport(const std::filesystem::path& base)
 {
     Engine();
+    const auto root=Directory().parent_path().parent_path();
+    if(!base.empty())
+    {
+        std::error_code error;
+        if(!std::filesystem::is_directory(base/"Packages",error))throw std::runtime_error("The base install has no Packages folder: "+base.string());
+        if(std::filesystem::equivalent(base,root,error))throw std::runtime_error("Choose a separate base install, not the one the editor is running from.");
+    }
     const auto files=OptimisePackageFiles();
     std::vector<MapOptimise::Asset> used;
     std::vector<UsedObject> carried;
@@ -156,12 +166,17 @@ Json OptimiseReport()
         try{return std::make_pair(file->second.string(),MapPackage::ReadTables(file->second));}
         catch(const std::exception& e){unreadable.push_back(name+": "+e.what());return std::nullopt;}
     });
+    if(!base.empty())
+        MapOptimise::MarkInstalled(packs,[&](const MapOptimise::Pack& p)
+        {
+            return MapPackage::IdenticalFiles(p.file,base/std::filesystem::path(p.file).lexically_relative(root));
+        });
     Json rows=Json::array();
     for(const auto& p:packs)
     {
         Json assets=Json::array();
         for(const auto& a:p.assets)assets.push_back({{"path",a.path},{"class",a.className},{"size",a.size},{"found",a.found}});
-        rows.push_back({{"name",p.name},{"file",p.file},{"fileSize",p.fileSize},{"usedSize",p.usedSize},{"suggested",p.suggested},{"assets",assets}});
+        rows.push_back({{"name",p.name},{"file",p.file},{"fileSize",p.fileSize},{"usedSize",p.usedSize},{"suggested",p.suggested},{"installed",p.installed},{"assets",assets}});
     }
     auto text=MapOptimise::Text(packs);
     if(!carried.empty())

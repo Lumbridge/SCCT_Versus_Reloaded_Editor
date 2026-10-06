@@ -295,6 +295,9 @@ namespace
         {
             auto inner=Read<Address>(p+0x64); auto stride=Read<unsigned short>(inner+0x32);
             if(!stride) return;
+            // Arrays of bytes, numbers or names hold no references: not read at all.
+            auto innerKind=NameOf(Read<Address>(inner+0x24));
+            if(innerKind!="ObjectProperty" && innerKind!="ClassProperty" && innerKind!="StructProperty" && innerKind!="ArrayProperty") return;
             size_t i=0; for(auto at:Array(slot,stride)) WalkProperty(owner,inner,at,key+"["+std::to_string(i++)+"]",editable,depth+1,out);
         }
         else if(kind=="StructProperty")

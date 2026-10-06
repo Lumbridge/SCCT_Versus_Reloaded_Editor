@@ -7,6 +7,9 @@
 #include <commctrl.h>
 #include <fstream>
 #include <shellapi.h>
+#include <shlobj.h>
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "ole32.lib")
 
 namespace MapOptimiseDialog
 {
@@ -24,13 +27,35 @@ enum : int
     kPackageName = 106,
     kReleaseLabel = 107,
     kReleaseName = 108,
+    kBaseLabel = 109,
+    kBase = 110,
+    kBaseBrowse = 111,
     kScan = WM_APP + 1
 };
 struct State
 {
     Json report;
     bool ready = false;
+    std::string base; // The base install last scanned against.
 };
+// A copy of the game as players get it ([MapOptimise] BaseInstall in
+// Reloaded_Editor.ini): packages identical there are not shipped.
+std::string IniPath()
+{
+    char exe[MAX_PATH]{};
+    GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    return (std::filesystem::path(exe).parent_path() / "Reloaded_Editor.ini").string();
+}
+std::string SavedBase()
+{
+    char value[MAX_PATH]{};
+    GetPrivateProfileStringA("MapOptimise", "BaseInstall", "", value, sizeof(value), IniPath().c_str());
+    return value;
+}
+void SaveBase(const std::string &base)
+{
+    WritePrivateProfileStringA("MapOptimise", "BaseInstall", base.c_str(), IniPath().c_str());
+}
 HWND Control(HWND window, const char *type, const char *text, DWORD style, int id, int x, int y, int width, int height)
 {
     auto control =
@@ -41,7 +66,7 @@ HWND Control(HWND window, const char *type, const char *text, DWORD style, int i
 }
 std::string Text(HWND window, int id)
 {
-    char text[256]{};
+    char text[1024]{};
     GetDlgItemTextA(window, id, text, sizeof(text));
     return text;
 }
@@ -74,11 +99,17 @@ void Summary(HWND window, const State &state)
             used += rows[i].at("usedSize").get<std::uint64_t>();
             ++count;
         }
+    size_t installed = 0;
+    for (const auto &row : rows)
+        installed += row.value("installed", false) ? 1 : 0;
     std::string text;
+    if (installed)
+        text = std::to_string(installed) + " package(s) are in the base install, so players have them: left unticked "
+                                           "and listed last. ";
     if (!count)
-        text = "Tick the packages to take assets from. Leave a package unticked when players already have it.";
+        text += "Tick the packages to take assets from. Leave a package unticked when players already have it.";
     else
-        text = "Ticked: " + std::to_string(count) + " package(s). Instead of shipping " + MapOptimise::Size(whole) +
+        text += "Ticked: " + std::to_string(count) + " package(s). Instead of shipping " + MapOptimise::Size(whole) +
                " of packages, the release copy carries about " + MapOptimise::Size(used) +
                " of assets. Your working map keeps using the packages, which are not changed.";
     Status(window, text);
@@ -86,18 +117,34 @@ void Summary(HWND window, const State &state)
 }
 void Fill(HWND window, State &state)
 {
-    state.report = Workflow::Editor::OptimiseReport();
+    state.ready = false;
+    state.base = Text(window, kBase);
+    std::string baseError;
+    try
+    {
+        state.report = Workflow::Editor::OptimiseReport(state.base);
+    }
+    catch (const std::exception &e)
+    {
+        if (state.base.empty())
+            throw;
+        baseError = e.what();
+        state.report = Workflow::Editor::OptimiseReport();
+    }
     auto list = GetDlgItem(window, kList);
     ListView_DeleteAllItems(list);
     int row = 0;
     for (const auto &pack : state.report.at("packs"))
     {
         const auto whole = pack.at("fileSize").get<std::uint64_t>(), used = pack.at("usedSize").get<std::uint64_t>();
+        const bool installed = pack.value("installed", false);
         std::string values[] = {pack.at("name").get<std::string>(), std::to_string(pack.at("assets").size()),
                                 MapOptimise::Size(used),
                                 pack.at("file").get<std::string>().empty() ? std::string("no file found")
                                                                             : MapOptimise::Size(whole),
-                                whole > used ? MapOptimise::Size(whole - used) : std::string("-")};
+                                installed      ? std::string("players have it")
+                                : whole > used ? MapOptimise::Size(whole - used)
+                                               : std::string("-")};
         LVITEMA item{};
         item.mask = LVIF_TEXT;
         item.iItem = row;
@@ -121,6 +168,30 @@ void Fill(HWND window, State &state)
         return;
     }
     Summary(window, state);
+    if (!baseError.empty())
+        MessageBoxA(window, ("The base install was not used: " + baseError).c_str(), "Optimise Map Assets",
+                    MB_OK | MB_ICONWARNING);
+}
+void BrowseBase(HWND window, State &state)
+{
+    auto initialized = OleInitialize(nullptr);
+    BROWSEINFOW browse{};
+    browse.hwndOwner = window;
+    browse.lpszTitle = L"Choose a copy of the game as players have it (the folder holding System and Packages). "
+                       L"Packages identical there are not shipped.";
+    browse.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    auto selected = SHBrowseForFolderW(&browse);
+    wchar_t path[MAX_PATH]{};
+    const bool picked = selected && SHGetPathFromIDListW(selected, path);
+    CoTaskMemFree(selected);
+    if (SUCCEEDED(initialized))
+        OleUninitialize();
+    if (!picked)
+        return;
+    SetDlgItemTextW(window, kBase, path);
+    SaveBase(Text(window, kBase));
+    SetCursor(LoadCursor(nullptr, IDC_WAIT));
+    Fill(window, state);
 }
 void Create(HWND window, State &state)
 {
@@ -210,7 +281,7 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
                     "Your working map keeps using the packages, and they are not changed.",
                     0, kIntro, 12, 10, width, 42);
             auto list = Control(window, WC_LISTVIEWA, "", WS_TABSTOP | LVS_REPORT | LVS_SHOWSELALWAYS | WS_BORDER,
-                                kList, 12, 56, width, r.bottom - 266);
+                                kList, 12, 56, width, r.bottom - 296);
             ListView_SetExtendedListViewStyle(list, LVS_EX_FULLROWSELECT | LVS_EX_CHECKBOXES | LVS_EX_DOUBLEBUFFER);
             const char *columns[] = {"Package", "Assets used", "Used size", "Whole package", "Saving"};
             const int widths[] = {width - 400, 85, 100, 105, 100};
@@ -222,6 +293,10 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
                 col.pszText = const_cast<char *>(columns[i]);
                 SendMessageA(list, LVM_INSERTCOLUMNA, i, reinterpret_cast<LPARAM>(&col));
             }
+            Control(window, "STATIC", "Players already have:", 0, kBaseLabel, 12, r.bottom - 233, 120, 20);
+            Control(window, "EDIT", SavedBase().c_str(), WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, kBase, 135,
+                    r.bottom - 236, width - 223, 22);
+            Control(window, "BUTTON", "Base Install...", WS_TABSTOP, kBaseBrowse, r.right - 100, r.bottom - 237, 88, 25);
             int y = r.bottom - 202;
             Control(window, "BUTTON", "Show Assets...", WS_TABSTOP, kAssets, 12, y, 110, 25);
             y += 34;
@@ -266,6 +341,19 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
             if (LOWORD(w) == IDCANCEL)
             {
                 EndDialog(window, IDCANCEL);
+                return TRUE;
+            }
+            if (LOWORD(w) == kBaseBrowse && state->ready)
+            {
+                BrowseBase(window, *state);
+                return TRUE;
+            }
+            // A base install typed or pasted in is used once the field is left.
+            if (LOWORD(w) == kBase && HIWORD(w) == EN_KILLFOCUS && state->ready && Text(window, kBase) != state->base)
+            {
+                SaveBase(Text(window, kBase));
+                SetCursor(LoadCursor(nullptr, IDC_WAIT));
+                Fill(window, *state);
                 return TRUE;
             }
             if (LOWORD(w) == kAssets && state->ready)
