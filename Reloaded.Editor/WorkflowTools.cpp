@@ -1253,6 +1253,9 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="characters.clear"){CharacterPreview::Clear();result=CharacterPreview::State();}
         else if(op=="characters.close"){CharacterPreview::CloseTestWindow();result=CharacterPreview::State();}
         else if(op=="characters.state") result=CharacterPreview::State();
+        else if(op=="skins.settings") result=Editor::CharacterSkinSettings();
+        else if(op=="skins.apply") result=Editor::ApplyCharacterSkins(q.value("slots",Json::object()),q.value("models",Json::object()),q.value("goggles",Json::object()));
+        else if(op=="skins.remove") {Editor::RemoveCharacterSkins();result=Editor::CharacterSkinSettings();}
         else if(op=="characters.camera"){if(q.contains("camera"))CharacterPreview::SetCamera(q.at("camera"));result=CharacterPreview::Camera();}
         else if(op=="map") result={{"key",Editor::MapKey()},{"level",Editor::LevelPath()}};
         else throw std::runtime_error("Unknown workflow request.");
