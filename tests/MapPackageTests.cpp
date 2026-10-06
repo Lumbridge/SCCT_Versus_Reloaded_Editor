@@ -192,6 +192,37 @@ int main(int argc, char **argv)
             Check(broken.errors.empty() && broken.files.size() == 2,
                   "an unreadable workspace ships without its images and never fails the package");
         }
+        {
+            // A release copy in its own folder laid out like the game (Optimise Map
+            // Assets) keeps the map's name: its files are taken first, the rest
+            // from the game, and each lands where the game reads it.
+            auto game = root / "release-game", folder = game / "Releases/ShipD";
+            Save(game / "Packages/Maps/ShipD.sdc", Compressed(Package({"Shared", "Big"})));
+            Save(game / "Packages/Textures/ShipD-i.utc", Package({}));
+            Save(game / "Packages/Textures/Shared.utx", Package({}));
+            Save(game / "Packages/StaticMeshes/Big.usx", Package({}));
+            fs::create_directories(game / "System");
+            auto release = folder / "Packages/Maps/ShipD.sdc";
+            Save(release, Compressed(Package({"Shared", "Own"})));
+            Save(folder / "Packages/Textures/ShipD-i.utc", Package({"Engine"}));
+            Save(folder / "Packages/StaticMeshes/Own.usx", Package({}));
+            auto releasePlan = MapPackage::Inspect(game, release);
+            Check(releasePlan.errors.empty() && releasePlan.files.size() == 4, "release folder plan");
+            auto at = [&](const std::string &destination) -> const MapPackage::Entry * {
+                for (const auto &f : releasePlan.files)
+                    if (f.destination == destination)
+                        return &f;
+                return nullptr;
+            };
+            auto mapEntry = at("Packages/Maps/ShipD.sdc"), image = at("Packages/Textures/ShipD-i.utc"),
+                 own = at("Packages/StaticMeshes/Own.usx"), shared = at("Packages/Textures/Shared.utx");
+            Check(mapEntry && fs::equivalent(mapEntry->source, release), "the release copy, at the game's path");
+            Check(image && fs::equivalent(image->source, folder / "Packages/Textures/ShipD-i.utc") && own,
+                  "the release folder's own files are taken before the game's");
+            Check(shared && fs::equivalent(shared->source, game / "Packages/Textures/Shared.utx") &&
+                      !at("Packages/StaticMeshes/Big.usx"),
+                  "the rest comes from the game, and only what the release copy uses");
+        }
         auto invalid = root / "invalid.usx";
         auto bytes = Package({"Mesh"});
         bytes.resize(bytes.size() - 1);

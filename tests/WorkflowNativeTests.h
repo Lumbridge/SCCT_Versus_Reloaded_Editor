@@ -562,34 +562,45 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                         "the File menu opens the window with a row per package and the suggested ones ticked");
             }
             const auto mapName=report.at("map").get<std::string>();
-            auto inside=call({{"op","optimise.release"},{"packs",{"EST_STM","EST_TXT"}},{"destination","map"},{"release","NativeFixture_Release"},{"overwrite",true}});
+            // Release copies keep the map's name (the game needs it), each in a
+            // folder of its own laid out like the game's.
+            const auto game=std::filesystem::path(mapFile).parent_path().parent_path().parent_path();
+            const auto folderA=game/"Releases"/"NativeFixtureA",folderB=game/"Releases"/"NativeFixtureB";
+            auto inside=call({{"op","optimise.release"},{"packs",{"EST_STM","EST_TXT"}},{"destination","map"},{"folder",folderA.string()},{"overwrite",true}});
             Record("optimise_inside",inside.dump().substr(0,4000).c_str());
             bool movedMesh=false;for(auto& m:inside.at("moved"))if(same(m.at("from"),mesh) && same(m.at("to"),mapName+".EST_STM.STM.GAR_aeration_E"))movedMesh=true;
             bool needsPack=false;for(auto& n:inside.at("needs"))if(n.at("name")=="EST_STM" || n.at("name")=="EST_TXT")needsPack=true;
-            require(movedMesh && inside.at("written").size()==2 && inside.at("left").empty() && !needsPack,"the release copy carries the mesh and its material and needs neither pack");
+            const auto releaseFile=folderA/"Packages"/"Maps"/(std::filesystem::path(mapFile).stem().string()+".sdc");
+            require(movedMesh && inside.at("written").size()>=2 && inside.at("left").empty() && !needsPack && std::filesystem::exists(releaseFile) &&
+                    std::filesystem::exists(folderA/"Packages"/"MapsEd"/releaseFile.filename()) && inside.at("playable").get<std::string>()==releaseFile.string(),
+                    "the release copy, under the map's name in its folder's MapsEd and Maps, carries the mesh and its material and needs neither pack");
             auto after=call({{"op","optimise.report"}});
             require(after.at("mapFile")==mapFile && !mapFile.empty() && !pack(after,"EST_STM").is_null() && pack(after,"EST_STM").at("assets")==stm.at("assets"),"the working map still uses the packs, as before");
             require(call({{"op","actors"}}).size()==actorCount,"the working map's actors are untouched");
-            auto own=call({{"op","optimise.release"},{"packs",{"EST_STM","EST_TXT"}},{"destination","package"},{"release","NativeFixture_Release2"},{"assetPackage","NativeFixture_Assets"},{"overwrite",true}});
+            auto own=call({{"op","optimise.release"},{"packs",{"EST_STM","EST_TXT"}},{"destination","package"},{"folder",folderB.string()},{"assetPackage","NativeFixture_Assets"},{"overwrite",true}});
             Record("optimise_package",own.dump().substr(0,4000).c_str());
             bool needsOwn=false;needsPack=false;
             for(auto& n:own.at("needs")){if(n.at("name")=="NativeFixture_Assets")needsOwn=true;if(n.at("name")=="EST_STM" || n.at("name")=="EST_TXT")needsPack=true;}
-            require(own.at("written").size()==3 && own.at("left").empty() && needsOwn && !needsPack,"the second copy takes its assets from its own package only");
+            require(own.at("written").size()>=3 && own.at("left").empty() && needsOwn && !needsPack,"the second copy takes its assets from its own package only");
             require(!pack(call({{"op","optimise.report"}}),"EST_STM").is_null(),"the working map is back on the packs");
             // Each copy loads and keeps the mesh without the packs' assets. A saved map
             // drops editor-only actors, so the mesh actor is looked up by name.
             const auto maps=std::filesystem::path(mapFile).parent_path();
-            Exec("MAP LOAD FILE=\""+(maps/"NativeFixture_Release.sdc").string()+"\"");
+            Exec("MAP LOAD FILE=\""+(folderA/"Packages"/"MapsEd"/releaseFile.filename()).string()+"\"");
             auto loaded=call({{"op","optimise.report"}});
             Record("optimise_loaded",loaded.dump().substr(0,2000).c_str());
             bool carried=false;for(auto& a:loaded.at("inside"))if(same(a.at("path"),loaded.at("map").get<std::string>()+".EST_STM.STM.GAR_aeration_E"))carried=true;
             require(carried && pack(loaded,"EST_STM").is_null() && pack(loaded,"EST_TXT").is_null(),"the release copy loads with the mesh inside it");
-            Exec("MAP LOAD FILE=\""+(maps/"NativeFixture_Release2.sdc").string()+"\"");
+            // Its asset package is read from the game's folders, as it is once installed.
+            const auto installedAssets=game/"Packages"/"StaticMeshes"/"NativeFixture_Assets.usx";
+            std::filesystem::copy_file(folderB/"Packages"/"StaticMeshes"/"NativeFixture_Assets.usx",installedAssets,std::filesystem::copy_options::overwrite_existing);
+            Exec("MAP LOAD FILE=\""+(folderB/"Packages"/"MapsEd"/releaseFile.filename()).string()+"\"");
             auto loaded2=call({{"op","optimise.report"}});
             Record("optimise_loaded2",loaded2.dump().substr(0,2000).c_str());
             auto assets=pack(loaded2,"NativeFixture_Assets");
             bool fromOwn=false;if(!assets.is_null())for(auto& a:assets.at("assets"))if(same(a.at("path"),"NativeFixture_Assets.EST_STM.STM.GAR_aeration_E") && a.at("found")==true)fromOwn=true;
             require(fromOwn && pack(loaded2,"EST_STM").is_null(),"the second copy loads its mesh from its own package");
+            {std::error_code error;std::filesystem::remove(installedAssets,error);}
             // A full-size case when the runner copies one in (-OptimiseExtraMap), e.g. a
             // CoD4 port map: every pack it uses is moved into the release copy.
             const auto big=maps/"COD4_shipment.sdc";
@@ -611,7 +622,7 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 if(!ticked.empty())
                 {
                     started=GetTickCount64();
-                    auto bigRelease=call({{"op","optimise.release"},{"packs",ticked},{"destination","map"},{"release","COD4_shipment_Release"},{"overwrite",true}});
+                    auto bigRelease=call({{"op","optimise.release"},{"packs",ticked},{"destination","map"},{"overwrite",true}});
                     const auto releaseTime=GetTickCount64()-started;
                     std::string summary=std::to_string(releaseTime)+" ms, rounds "+std::to_string(bigRelease.at("rounds").get<int>())+", moved "+std::to_string(bigRelease.at("moved").size())+", left "+std::to_string(bigRelease.at("left").size())+", written: ";
                     for(auto& f:bigRelease.at("written"))summary+=f.at("file").get<std::string>()+" "+std::to_string(f.at("size").get<std::uint64_t>()/1024)+" KB; ";

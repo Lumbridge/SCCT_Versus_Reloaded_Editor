@@ -3,7 +3,7 @@
 //
 // A release copy is made by moving the assets the map uses out of the chosen
 // packs and into the map (or a package of the map's own) with the stock OBJ
-// RENAME, saving the map under the release name, and moving every asset back
+// RENAME, saving the map into its release folder, and moving every asset back
 // with UObject::Rename (0x10faef00): pointers to an object do not change when it
 // moves, so the actors follow, and the working map and the packs end as they
 // were. The saved copy's own import table is then the check: anything it still
@@ -12,6 +12,9 @@
 namespace
 {
     constexpr unsigned kObjectTransient=0x4000;
+    // UPackage's changed flag: the editor asks to save every loaded package with
+    // it set (the loop over the object list at 0x10e40e40).
+    constexpr size_t kPackageDirty=0x30;
     Address OuterMost(Address o)
     {
         for(int i=0;i<64 && Read<Address>(o+0x18);++i)o=Read<Address>(o+0x18);
@@ -134,6 +137,28 @@ namespace
         const auto flags=Read<unsigned>(object+0x1c);
         Write(object+0x1c,transient?flags|kObjectTransient:flags&~kObjectTransient);
     }
+    // The map's interface package (<Map>-i: map-selection picture, loading
+    // screens, briefing and map settings) is found by the map's name, which the
+    // release copy shares. The stock save brings the working package up to date
+    // (the map save does not write it), then its files are copied beside the
+    // release. Returns the files written.
+    std::vector<std::filesystem::path> OptimiseInterface(const std::string& mapName,const std::filesystem::path& root,const std::filesystem::path& folder)
+    {
+        const auto name=mapName+"-i";
+        if(Find(name))Exec("SAVEMAPPROP MAP=\""+mapName+"\"");
+        std::vector<std::filesystem::path> written;
+        for(const char* extension:{".utc",".utx"})
+        {
+            const auto from=root/"Packages"/"Textures"/(name+extension),to=folder/"Packages"/"Textures"/(name+extension);
+            std::error_code error;
+            if(!std::filesystem::exists(from))continue;
+            std::filesystem::create_directories(to.parent_path(),error);
+            if(!std::filesystem::copy_file(from,to,std::filesystem::copy_options::overwrite_existing,error))
+                throw std::runtime_error("Cannot copy "+from.string()+" to "+to.string()+": "+error.message());
+            written.push_back(to);
+        }
+        return written;
+    }
     bool OptimiseSave(const std::filesystem::path& file)
     {
         const auto path=file.string();
@@ -186,6 +211,10 @@ Json OptimiseReport(const std::filesystem::path& base)
     }
     return {{"map",NameOf(OuterMost(Level()))},{"mapFile",MapFile()},{"packs",rows},{"inside",inside},{"text",text},{"unreadable",unreadable}};
 }
+std::filesystem::path ReleaseFolder(const std::string& map)
+{
+    return Directory().parent_path().parent_path()/"Releases"/map;
+}
 Json OptimiseRelease(const Json& options)
 {
     Engine();
@@ -194,27 +223,35 @@ Json OptimiseRelease(const Json& options)
     for(const auto& p:options.at("packs"))packs.push_back(p.get<std::string>());
     if(packs.empty())throw std::runtime_error("Tick at least one package to take assets from.");
     const bool intoMap=options.value("destination",std::string("map"))=="map";
-    const auto release=options.at("release").get<std::string>();
     const auto assetPackage=options.value("assetPackage",std::string());
     const bool overwrite=options.value("overwrite",false);
-    if(!MapOptimise::ValidName(release))throw std::runtime_error("Name the release copy with letters, digits and underscores only.");
     if(!intoMap && !MapOptimise::ValidName(assetPackage))throw std::runtime_error("Name the asset package with letters, digits and underscores only.");
     const auto working=MapFile();
-    if(working.empty())throw std::runtime_error("Save the map first: the release copy is made alongside it.");
+    if(working.empty())throw std::runtime_error("Save the map first: the release copy is made from it.");
     const auto mapPackage=OuterMost(Level());
     const auto mapName=std::filesystem::path(working).stem().string();
-    if(Fold(release)==Fold(mapName) || Fold(release)==Fold(NameOf(mapPackage)))throw std::runtime_error("Give the release copy a name of its own, so your working map is not replaced.");
-    for(const auto& p:packs)if(Fold(p)==Fold(release) || (!intoMap && Fold(p)==Fold(assetPackage)))throw std::runtime_error("The release name or asset package name is the name of a package the map uses: "+p);
+    // The game needs the map's own name (four letters and the mode's), so the
+    // release copy keeps it and goes into a folder laid out like the game's:
+    // the editor writes the playable copy into the Maps folder beside MapsEd.
+    const std::filesystem::path folder=options.value("folder",std::string()).empty()?ReleaseFolder(mapName):std::filesystem::path(options.at("folder").get<std::string>());
+    {
+        std::error_code error;
+        if(std::filesystem::equivalent(folder,root,error))throw std::runtime_error("The release folder cannot be the game folder: your working map would be replaced.");
+        // The engine reads "[" in a package path as a platform tag.
+        if(folder.string().find('[')!=std::string::npos)throw std::runtime_error("The release folder's path cannot contain [: "+folder.string());
+    }
+    for(const auto& p:packs)if(!intoMap && Fold(p)==Fold(assetPackage))throw std::runtime_error("The asset package name is the name of a package the map uses: "+p);
     const auto files=OptimisePackageFiles();
-    if(!intoMap && (Fold(assetPackage)==Fold(release) || Fold(assetPackage)==Fold(mapName)))throw std::runtime_error("Give the asset package a name of its own.");
-    const auto releaseSource=root/"Packages"/"MapsEd"/(release+".sdc"),releasePlayable=root/"Packages"/"Maps"/(release+".sdc");
-    const auto assetFile=root/"Packages"/"StaticMeshes"/(assetPackage+".usx");
+    if(!intoMap && Fold(assetPackage)==Fold(mapName))throw std::runtime_error("Give the asset package a name of its own.");
+    const auto releaseSource=folder/"Packages"/"MapsEd"/(mapName+".sdc"),releasePlayable=folder/"Packages"/"Maps"/(mapName+".sdc");
+    const auto assetFile=folder/"Packages"/"StaticMeshes"/(assetPackage+".usx");
     std::vector<std::filesystem::path> existing;
-    for(const auto& f:{releaseSource,releasePlayable})if(std::filesystem::exists(f))existing.push_back(f);
+    for(const auto& f:{releaseSource,releasePlayable,folder/"Packages"/"Textures"/(mapName+"-i.utc"),folder/"Packages"/"Textures"/(mapName+"-i.utx")})
+        if(std::filesystem::exists(f))existing.push_back(f);
     if(!intoMap)
     {
         if(std::filesystem::exists(assetFile))existing.push_back(assetFile);
-        if(auto other=files.find(Fold(assetPackage));other!=files.end() && Fold(other->second.string())!=Fold(assetFile.string()))
+        if(auto other=files.find(Fold(assetPackage));other!=files.end())
             throw std::runtime_error("There is already a package called "+assetPackage+" ("+other->second.string()+"). Choose another name.");
     }
     if(!existing.empty() && !overwrite)
@@ -222,9 +259,18 @@ Json OptimiseRelease(const Json& options)
         std::string list;for(const auto& f:existing)list+="\n"+f.string();
         throw std::runtime_error("These files exist already:"+list);
     }
+    for(const auto& f:existing)
+        if(std::error_code error;!std::filesystem::remove(f,error) && error)throw std::runtime_error("Cannot replace "+f.string()+": "+error.message());
+    {
+        std::error_code error;
+        for(const char* sub:{"MapsEd","Maps"})std::filesystem::create_directories(folder/"Packages"/sub,error);
+        if(!intoMap)std::filesystem::create_directories(assetFile.parent_path(),error);
+        if(!std::filesystem::is_directory(folder/"Packages"/"Maps"))throw std::runtime_error("Cannot make the release folder "+folder.string()+": "+error.message());
+    }
     // The working map is saved as it is: the release copy is made from it, and
     // the editor would otherwise count the copy's save as saving the map.
     if(!OptimiseSave(working))throw std::runtime_error("The editor could not save the map.");
+    const auto interfaceFiles=OptimiseInterface(mapName,root,folder);
     const auto destinationName=intoMap?NameOf(mapPackage):assetPackage;
     struct Moved { Address object; std::string name; Address outer; MapOptimise::Move move; Address newOuter=0; };
     struct State
@@ -233,6 +279,9 @@ Json OptimiseRelease(const Json& options)
         std::string working;
         Address mapPackage=0;
         std::string assetPackage;
+        // The packs' changed flags before their assets moved: moving them out and
+        // back changes nothing, so the editor should not ask to save them.
+        std::vector<std::pair<Address,unsigned>> dirty;
         ~State()
         {
             try
@@ -248,7 +297,9 @@ Json OptimiseRelease(const Json& options)
                     {
                         OptimiseTransient(package,true);
                         OptimiseRename(package,assetPackage+"_Moved_"+Id().substr(0,8),0);
+                        Write(package+kPackageDirty,0u);
                     }
+                for(const auto& [package,flag]:dirty)Write(package+kPackageDirty,flag);
                 SetMapFile(working);
             }
             catch(const std::exception& e){Logger::log(std::string("Optimise Map Assets: could not put every asset back: ")+e.what());}
@@ -256,6 +307,7 @@ Json OptimiseRelease(const Json& options)
     } state;
     state.working=working;state.mapPackage=mapPackage;
     if(!intoMap)state.assetPackage=assetPackage;
+    for(const auto& p:packs)if(auto package=Find(p))state.dirty.emplace_back(package,Read<unsigned>(package+kPackageDirty));
 
     std::vector<Address> pending;
     for(const auto& u:OptimiseUsed(files))
@@ -314,6 +366,7 @@ Json OptimiseRelease(const Json& options)
     Json written=Json::array();
     auto note=[&](const std::filesystem::path& f){if(std::filesystem::exists(f))written.push_back({{"file",f.string()},{"size",std::filesystem::file_size(f)}});};
     note(releaseSource);note(releasePlayable);
+    for(const auto& f:interfaceFiles)note(f);
     std::vector<std::string> needs=MapOptimise::ImportedPackages(saved);
     if(!intoMap)
     {
@@ -329,5 +382,5 @@ Json OptimiseRelease(const Json& options)
         auto file=now.find(Fold(p));
         packages.push_back({{"name",p},{"file",file==now.end()?std::string():file->second.string()},{"size",file==now.end()?0:std::filesystem::file_size(file->second)}});
     }
-    return {{"moved",moved},{"written",written},{"needs",packages},{"left",left},{"rounds",rounds+1},{"release",release},{"intoMap",intoMap}};
+    return {{"moved",moved},{"written",written},{"needs",packages},{"left",left},{"rounds",rounds+1},{"release",mapName},{"folder",folder.string()},{"playable",releasePlayable.string()},{"intoMap",intoMap}};
 }

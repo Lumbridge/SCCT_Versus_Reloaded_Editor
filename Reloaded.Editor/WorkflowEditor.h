@@ -296,15 +296,20 @@ namespace Workflow::Editor
     // Optimise Map Assets (MapOptimiseModel.h). Report: {map, mapFile, packs:[{name,
     // file, fileSize, usedSize, suggested, assets:[{path, class, size, found}]}],
     // inside:[{path, class}], text, unreadable}: every asset the map reaches outside
-    // itself and the game's code packages, by package, and the ones it carries. Release saves the map, then writes a copy named
-    // options.release carrying the assets it uses from options.packs, inside it
-    // (destination "map") or in options.assetPackage.usx ("package"), and puts every
-    // asset back; options.overwrite replaces existing files. Returns {moved:[{from,
-    // to}], written:[{file, size}], needs:[{name, file, size}], left, rounds}.
+    // itself and the game's code packages, by package, and the ones it carries. Release saves the map, then writes a copy under the
+    // map's own name into options.folder (default ReleaseFolder), laid out like the
+    // game (Packages/MapsEd, Maps, Textures/<Map>-i), carrying the assets it uses
+    // from options.packs, inside it (destination "map") or in
+    // options.assetPackage.usx ("package"), and puts every asset back;
+    // options.overwrite replaces existing files. Returns {moved:[{from, to}],
+    // written:[{file, size}], needs:[{name, file, size}], left, rounds, release,
+    // folder, playable}.
     // With a base install, a pack whose file is identical there is installed
     // (players have it): never suggested, and listed last.
     Json OptimiseReport(const std::filesystem::path& base={});
     Json OptimiseRelease(const Json& options);
+    // Where a map's release copy goes by default: <game>/Releases/<Map>.
+    std::filesystem::path ReleaseFolder(const std::string& map);
     Json StairSmoothState(bool surfaces);
     Json SmoothStairs(bool surfaces);
     size_t RemoveStairSmoothing(bool surfaces);
