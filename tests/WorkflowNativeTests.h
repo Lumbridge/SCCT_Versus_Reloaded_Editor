@@ -333,7 +333,37 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             require(reopened["viewport"]==true && reopened["viewportsOpened"].get<int>()==closed["viewportsOpened"].get<int>()+1,"reopening the character preview opens a new viewport");
             call({{"op","characters.close"}});
         };
-        if(charactersOnly){characterPreview();finish("character skins 3D preview");return;}
+        // Character Skins on the map: Apply compiles SCharacterSkins into the map
+        // package and places one actor of it, named like any other actor.
+        auto characterSkinsActor=[&]()
+        {
+            const auto beforeActors=call({{"op","actors"}});
+            auto skins=[&]()
+            {
+                J found=J::array();
+                for(auto& a:call({{"op","actors"}}))if(a.at("class").get<std::string>().find("CharacterSkins")!=std::string::npos)found.push_back(a);
+                Record("character_skins_actor",found.dump().c_str());
+                return found;
+            };
+            auto applied=call({{"op","skins.apply"},{"slots",{{"SpyBody","SPersoTextures.alpha_DEF01.DEF01_heat_bodu"}}}});
+            require(applied["placed"]==true && applied["compiled"]==true && applied["legacy"]==false && applied["extra"]==false,"Apply compiles the class and places one actor");
+            require(applied["slots"]["SpyBody"]=="SPersoTextures.alpha_DEF01.DEF01_heat_bodu","Apply sets the slot");
+            auto first=skins();
+            require(first.size()==1 && first[0]["class"]=="MyLevel.SCharacterSkins","the actor's class is SCharacterSkins");
+            require(first.size()==1 && first[0]["name"]=="SCharacterSkins0","the actor is named SCharacterSkins0");
+            auto again=call({{"op","skins.apply"},{"slots",{{"MercBody","SPersoTextures.alpha_DEF01.DEF01_heat_bodu"}}}});
+            auto second=skins();
+            require(again["slots"]["MercBody"]=="SPersoTextures.alpha_DEF01.DEF01_heat_bodu" && again["slots"]["SpyBody"]=="" && second==first,"applying again edits the same renamed actor");
+            auto removed=call({{"op","skins.remove"}});
+            require(removed["placed"]==false && call({{"op","actors"}}).size()==beforeActors.size(),"Remove from Map deletes the actor");
+            call({{"op","skins.apply"}});
+            auto third=skins();
+            const auto name=third.size()==1?third[0]["name"].get<std::string>():std::string();
+            require(name.size()==16 && name.rfind("SCharacterSkins",0)==0,"after a removal the new actor takes the lowest free number");
+            call({{"op","skins.remove"}});
+            require(call({{"op","actors"}}).size()==beforeActors.size(),"the map is back as it was");
+        };
+        if(charactersOnly){characterPreview();characterSkinsActor();finish("character skins 3D preview and map actor");return;}
         auto checkSurfaceBrushSelection=[&](size_t minimumBrushes)
         {
             auto read=[](uintptr_t p){return *reinterpret_cast<uintptr_t*>(p);};

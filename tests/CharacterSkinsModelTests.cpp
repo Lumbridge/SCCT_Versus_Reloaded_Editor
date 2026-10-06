@@ -21,10 +21,10 @@ int main()
     {
         const auto script = Script();
         // The stock compiler wants the class declaration first and CRLF text.
-        Check(Contains(script, "class ReloadedCharacterSkins5 extends Info\r\n\tplaceable;"), "class header");
-        Check(std::string(ClassName) == "ReloadedCharacterSkins5" && Version == 5, "versioned class name");
-        Check(std::string(LegacyClassNames[0]) == "ReloadedCharacterSkins4" && std::string(LegacyClassNames[3]) == "ReloadedCharacterSkins",
-              "versions 1 to 4 are migrated");
+        Check(Contains(script, "class SCharacterSkins extends Info\r\n\tplaceable;"), "class header");
+        Check(std::string(ClassName) == "SCharacterSkins" && Version == 6, "versioned class name");
+        Check(std::string(LegacyClassNames[0]) == "ReloadedCharacterSkins5" && std::string(LegacyClassNames[4]) == "ReloadedCharacterSkins",
+              "versions 1 to 5 are migrated");
         Check(script.find("\n") == script.find("\r\n") + 1, "CRLF line ends");
         for (const auto& slot : Slots)
         {

@@ -14,12 +14,15 @@
 namespace CharacterSkins
 {
 // Raise with every change to Script(). Each version is its own class, so a map's
-// older actor can be read and replaced instead of recompiling a class in use.
-constexpr int Version = 5;
-constexpr const char* ClassName = "ReloadedCharacterSkins5";
+// older actor can be read and replaced instead of recompiling a class in use: a
+// change needs a class name of its own, and this one moves to LegacyClassNames.
+// Named like the game's own S classes (SMagicEvent), so the placed actor is
+// SCharacterSkins0 like any other.
+constexpr int Version = 6;
+constexpr const char* ClassName = "SCharacterSkins";
 // Earlier versions' classes, newest first, whose actors the panel migrates.
-inline constexpr std::array<const char*, 4> LegacyClassNames = {
-    {"ReloadedCharacterSkins4", "ReloadedCharacterSkins3", "ReloadedCharacterSkins2", "ReloadedCharacterSkins"}};
+inline constexpr std::array<const char*, 5> LegacyClassNames = {
+    {"ReloadedCharacterSkins5", "ReloadedCharacterSkins4", "ReloadedCharacterSkins3", "ReloadedCharacterSkins2", "ReloadedCharacterSkins"}};
 // Tag of the characters the addbot console command stands in an editor Play Level.
 constexpr const char* BotTag = "ReloadedTestBot";
 // Their controller, compiled into the map beside the actor: Controller itself is
