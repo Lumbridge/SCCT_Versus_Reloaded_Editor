@@ -21,6 +21,7 @@
 #include "MapAuthoringDialog.h"
 #include "MapAuthoringModel.h"
 #include "MapPackageDialog.h"
+#include "MapOptimiseDialog.h"
 #include "MapUsagesWindow.h"
 #include "MapRecovery.h"
 #include "MemoryWriter.h"
@@ -1056,6 +1057,7 @@ bool HandleCommand(UINT command)
     if(command==MapRecovery::kRecalculateLightingCommandId){MapRecovery::RecalculateLighting(GetActiveWindow());return true;}
     if(command==MapRecovery::kRecalculateSelectedLightingCommandId){MapRecovery::RecalculateSelectedLighting(GetActiveWindow());return true;}
     if(command==MapRecovery::kMatchSelectedLightingCommandId){MapRecovery::RecalculateSelectedLighting(GetActiveWindow(),true);return true;}
+    if(command==MapOptimiseDialog::Command){try{MapOptimiseDialog::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Optimise Map Assets",MB_OK|MB_ICONERROR);}return true;}
     if(command==MapPackageDialog::Command){try{MapPackageDialog::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Map Packaging",MB_OK|MB_ICONERROR);}return true;}
     if(command==MapAuthoringDialog::Export || command==MapAuthoringDialog::Import){MapAuthoringDialog::Open(GetActiveWindow(),command==MapAuthoringDialog::Export);return true;}
     if(command==MagicEventWorkbench::Command){try{MagicEventWorkbench::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"SMagicEvent Workbench",MB_OK|MB_ICONERROR);}return true;}
@@ -1126,6 +1128,7 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         Json q=Json::parse(request),result; std::string op=q.at("op");
         if(op=="actors") result=Editor::Actors(q.value("selected",false));
         else if(op=="map.file")result=Editor::MapFile();
+        else if(op=="map.setfile"){Editor::SetMapFile(q.at("file").get<std::string>());result=Editor::MapFile();}
         else if(op=="design.scene")result=Editor::DesignScene();
         else if(op=="design.block")result=Editor::DesignBlockout(q.at("spec"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()},q.value("previous",Json{}));
         else if(op=="design.align"){Editor::DesignAlign(q.at("scene"),q.at("axis"),q.at("mode"),q.value("spacing",0.0));result=true;}
@@ -1167,6 +1170,8 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="design.spawns")result=Editor::DesignSpawns();
         else if(op=="design.clearances")result=Editor::DesignClearances();
         else if(op=="design.play"){Editor::DesignPlay(q.at("start"),{q.at("position").get<Vector>(),q.at("rotation").get<Rotation>()},q.value("launch",false));result=true;}
+        else if(op=="optimise.report") result=Editor::OptimiseReport();
+        else if(op=="optimise.release") result=Editor::OptimiseRelease(q);
         else if(op=="package.preview") {MapPackageDialog::Preview(GetActiveWindow(),q.at("map").get<std::string>());result=true;}
         else if(op=="authoring.export") result=Editor::ExportMapAuthoring();
         else if(op=="authoring.preview"){auto document=q.at("document");Authoring::Rebase(document,Authoring::Utf8Path(q.value("baseDirectory",std::string{})));result=Editor::PreviewMapAuthoring(document);}

@@ -467,6 +467,18 @@ stale snapshots, one-step undo/redo, and the actual Save/Open dialogs including
 cancellation. `magic_event_export.json` and `event-ui-roundtrip.json` are retained
 in the disposable native fixture. See [SMagicEventJson.md](SMagicEventJson.md).
 
+`MapOptimiseModelTests.cpp` (built by `tools\test_map_package.cmd`) reads a
+synthetic version 300 package's export and import tables back with full
+paths, classes and sizes, and covers the per-package report, asset sizes
+(an asset and everything inside it), move planning and the stock rename
+command, and finding what a saved copy still imports. The native
+`-OptimiseAssetsOnly` run places a mesh from EST_STM (in a group, with a
+material from EST_TXT), checks the report and the File menu window, writes a
+release copy into the map and another with its own asset package, checks the
+working map is back on the packs, and loads both copies. With
+`-OptimiseExtraMap <map.sdc>` it also moves every pack of a full-size map (a
+CoD4 port: 841 assets in about 10 seconds).
+
 `StairSmoothModelTests.cpp` covers staircase recognition (straight, curved and
 spiral flights, one brush or a brush per step, either polygon winding, turned
 flights, landings, several staircases at once, and shapes that are not

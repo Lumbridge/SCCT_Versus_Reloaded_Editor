@@ -18,6 +18,7 @@
 #include "UndoHistory.h"
 #include "FavoritesWindow.h"
 #include "MapPackageDialog.h"
+#include "MapOptimiseDialog.h"
 #include "EditorExtras.h"
 #include "PlacementTools.h"
 
@@ -205,6 +206,12 @@ static void InjectReloadedMenuItems(HWND frame)
     {
         if (MenuPosByCommand(file, MapPackageDialog::Command) < 0)
             AppendMenuA(file, MF_STRING, MapPackageDialog::Command, "Package Map for &Sharing...");
+        if (MenuPosByCommand(file, MapOptimiseDialog::Command) < 0)
+        {
+            const int sharing = MenuPosByCommand(file, MapPackageDialog::Command);
+            InsertMenuA(file, sharing >= 0 ? sharing : -1, MF_BYPOSITION | MF_STRING, MapOptimiseDialog::Command,
+                        "&Optimise Map Assets...");
+        }
         // File starts with New, Open, then a separator in the stock editor.
         if (MenuPosByCommand(file, MapRecovery::kCommandId) < 0)
             InsertMenuA(file, 2, MF_BYPOSITION | MF_STRING,
