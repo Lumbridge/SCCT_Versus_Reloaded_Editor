@@ -1,4 +1,4 @@
-// Character Skins (CharacterSkinsModel.h): compiles SCharacterSkins into the
+// Character Skins (CharacterSkinsModel.h): compiles SCharacterOutfits into the
 // open map's package and edits the one actor of it. Included by WorkflowEditor.cpp.
 //
 // The stock compiler cannot build a map class unaided in this build:
@@ -250,8 +250,8 @@ Json ApplyCharacterSkins(const Json& slots,const Json& models,const Json& goggle
         if(!Exec(std::string("ACTOR ADD CLASS=")+CharacterSkins::ClassName))throw std::runtime_error("The editor refused to place the Character Skins actor.");
         actors=SkinActors();
         if(actors.empty())throw std::runtime_error("The editor did not place the Character Skins actor.");
-        // ACTOR ADD numbers the actor from a running count (SCharacterSkins299 in a
-        // fresh map); it takes the lowest free number instead, SCharacterSkins0 unless a
+        // ACTOR ADD numbers the actor from a running count (SCharacterOutfits299 in a
+        // fresh map); it takes the lowest free number instead, SCharacterOutfits0 unless a
         // removed one is still held for Undo. UObject::Rename (0x10faef00, thiscall
         // name, new outer) rehashes the object but does not check for a clash.
         for(int n=0;n<100;++n)

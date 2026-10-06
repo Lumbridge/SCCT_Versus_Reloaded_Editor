@@ -21,9 +21,9 @@ int main()
     {
         const auto script = Script();
         // The stock compiler wants the class declaration first and CRLF text.
-        Check(Contains(script, "class SCharacterSkins extends Info\r\n\tplaceable;"), "class header");
-        Check(std::string(ClassName) == "SCharacterSkins" && Version == 6, "versioned class name");
-        Check(std::string(LegacyClassNames[0]) == "ReloadedCharacterSkins5" && std::string(LegacyClassNames[4]) == "ReloadedCharacterSkins",
+        Check(Contains(script, "class SCharacterOutfits extends Info\r\n\tplaceable;"), "class header");
+        Check(std::string(ClassName) == "SCharacterOutfits" && Version == 7, "versioned class name");
+        Check(std::string(LegacyClassNames[0]) == "SCharacterSkins" && std::string(LegacyClassNames[5]) == "ReloadedCharacterSkins",
               "versions 1 to 5 are migrated");
         Check(script.find("\n") == script.find("\r\n") + 1, "CRLF line ends");
         for (const auto& slot : Slots)
@@ -42,7 +42,11 @@ int main()
         Check(Contains(script, "var() SkeletalMesh SpyModel;") && Contains(script, "var() vector MercGoggleOffset;"), "model variables");
         Check(Contains(script, "Swapped[Free] = 0;"), "a reused pawn slot swaps again");
         // Local per machine, never replicated; game effect skins are left alone.
-        Check(Contains(script, "RemoteRole=ROLE_None") && Contains(script, "bNoDelete=True"), "local actor");
+        Check(Contains(script, "RemoteRole=ROLE_SimulatedProxy") && Contains(script, "bNoDelete=True"), "a map actor every client runs");
+        // A client runs only simulated functions on its copy; every one of the actor's must be.
+        Check(!Contains(script, "\nfunction ") && Contains(script, "simulated function Tick(float DeltaTime)") &&
+                  Contains(script, "simulated function PostBeginPlay()"),
+              "simulated on clients");
         Check(Contains(script, "Now == None || Now == Stock[Index * 3 + Slot]"), "effect skins left alone");
         // The merc's DEF_01 has its body on skins 0 and 2 (skin 2 is most of it); all three
         // stock skins are remembered.
