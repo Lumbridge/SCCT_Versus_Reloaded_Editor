@@ -803,6 +803,7 @@ namespace
     }
     using LoadMenuFn=HMENU(WINAPI*)(HINSTANCE,LPCSTR); LoadMenuFn previousLoadMenu=nullptr;
     bool builderMenuOnSurface=false; // the Builder Brush submenu was last built for a BSP surface popup
+    bool stairMenuOnSurface=false; // Smooth Staircase was last offered on a BSP surface popup
     using TrackMenuFn=BOOL(WINAPI*)(HMENU,UINT,int,int,int,HWND,const RECT*);
     TrackMenuFn previousTrackMenu=nullptr;
     BOOL WINAPI TrackMenuHook(HMENU menu,UINT flags,int x,int y,int reserved,HWND window,const RECT* rect)
@@ -851,6 +852,24 @@ namespace
                         AppendMenuA(snap,MF_STRING,first+3,"&All axes");
                         AppendMenuA(context,MF_POPUP,reinterpret_cast<UINT_PTR>(snap),"Snap brush &edge to grid");
                     }
+                }
+            }
+            // Smooth Staircase goes at the top, under Properties, when a selected
+            // brush (or on the surface menu a selected face's brush) is a
+            // staircase, or already has a smoothing ramp to remove.
+            if(id==107 || id==108) if(auto sub=GetSubMenu(menu,0))
+            {
+                Json state;
+                try{state=Editor::StairSmoothState(id==108);}catch(const std::exception&){}
+                const bool stairs=state.is_object() && state.value("stairs",false);
+                const bool ramps=state.is_object() && state.value("ramps",0)>0;
+                if(stairs || ramps)
+                {
+                    stairMenuOnSurface=id==108;
+                    UINT at=2;
+                    if(stairs)InsertMenuA(sub,at++,MF_BYPOSITION|MF_STRING,kSmoothStairs,ramps?"Re-&smooth Staircase":"&Smooth Staircase");
+                    if(ramps)InsertMenuA(sub,at++,MF_BYPOSITION|MF_STRING,kRemoveStairSmoothing,"Remove Staircase Smoothing");
+                    InsertMenuA(sub,at,MF_BYPOSITION|MF_SEPARATOR,0,nullptr);
                 }
             }
             // Actor context resource 107 (verified native menu resource).
@@ -1016,6 +1035,18 @@ bool HandleCommand(UINT command)
         catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Position Builder Brush",MB_OK|MB_ICONINFORMATION); }
         return true;
     }
+    if(command==kSmoothStairs)
+    {
+        try { Editor::SmoothStairs(stairMenuOnSurface); }
+        catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Smooth Staircase",MB_OK|MB_ICONINFORMATION); }
+        return true;
+    }
+    if(command==kRemoveStairSmoothing)
+    {
+        try { Editor::RemoveStairSmoothing(stairMenuOnSurface); }
+        catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Remove Staircase Smoothing",MB_OK|MB_ICONINFORMATION); }
+        return true;
+    }
     if(command==kPlaceBuilderBrush || command==kRebuildPlaceBuilderBrush)
     {
         try { Editor::PlaceBuilderBrushAtClick(command==kRebuildPlaceBuilderBrush,builderMenuOnSurface); }
@@ -1169,6 +1200,9 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="brush.snap.bounds") result=Editor::BrushSnapBounds(q.value("surfaces",false));
         else if(op=="vertex.selection") result=Editor::SelectedBrushVertices();
         else if(op=="vertex.portal") result=Editor::AddVertexPortal();
+        else if(op=="stairs.state") result=Editor::StairSmoothState(q.value("surfaces",false));
+        else if(op=="stairs.smooth") result=Editor::SmoothStairs(q.value("surfaces",false));
+        else if(op=="stairs.remove") result=Editor::RemoveStairSmoothing(q.value("surfaces",false));
         else if(op=="vertex.snap") {Editor::SnapSelectedBrushVertices(q.at("axes").get<unsigned>());result=true;}
         else if(op=="brush.snap") {Editor::SnapBrushesToGrid(q.at("axes").get<unsigned>(),q.value("surfaces",false));result=true;}
         else if(op=="tag.preview") result=Editor::PreviewTagRename(q.at("actor"),q.at("tag"));

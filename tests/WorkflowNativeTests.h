@@ -253,7 +253,7 @@ void Screenshot(HWND window,const std::filesystem::path& path)
     DeleteObject(bitmap);DeleteDC(dc);ReleaseDC(window,screen);
 }
 }
-void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=false, bool snapOnly=false, bool charactersOnly=false)
+void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=false, bool snapOnly=false, bool charactersOnly=false, bool stairsOnly=false)
 {
     using J=nlohmann::json;
     try
@@ -334,6 +334,137 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             call({{"op","characters.close"}});
         };
         if(charactersOnly){characterPreview();finish("character skins 3D preview");return;}
+        // Smooth Staircase: a spiral of a brush per step (Map Design) and a
+        // straight flight in one brush (as the linear builder adds it) each get
+        // one invisible BlockingVolume ramp with its own collision BSP, from the
+        // actor menu's command; smoothing again replaces it, Remove deletes it,
+        // and each is one Undo step (the frame's Undo and Redo, which refile
+        // colliding actors in the collision hash).
+        auto stairSmoothing=[&]()
+        {
+            // A map opened from the frame has a collision hash (ULevel+0x3a4c) and
+            // the volume must be filed in it; the generated fixture has none.
+            auto level=*reinterpret_cast<unsigned char**>(*reinterpret_cast<unsigned char**>(kEditor)+0x130);
+            using SetCollision=void(__thiscall*)(void*,int,int);
+            const bool hadHash=*reinterpret_cast<void**>(level+0x3a4c)!=nullptr;
+            if(!hadHash)reinterpret_cast<SetCollision>(0x1111eb30)(level,1,0);
+            require(*reinterpret_cast<void**>(level+0x3a4c)!=nullptr,"the level has a collision hash, as a map opened from the frame does");
+            const auto beforeActors=call({{"op","actors"}});
+            auto ramps=[&]()
+            {
+                J found=J::array();
+                for(auto& a:call({{"op","actors"}}))if(a.at("class")=="Engine.BlockingVolume" && a.at("name").get<std::string>().rfind("StairRamp_",0)==0)found.push_back(a);
+                return found;
+            };
+            auto rampPolygons=[&](const J& ramp)
+            {
+                auto native=WorkflowProbe::MagicActor(ramp);
+                auto model=*reinterpret_cast<unsigned char**>(native+0x238);
+                auto polys=model?*reinterpret_cast<unsigned char**>(model+0x50):nullptr;
+                require(model && *reinterpret_cast<int*>(model+0x58)>0,"the ramp volume has its own collision BSP");
+                return polys?*reinterpret_cast<int*>(polys+0x2c):0;
+            };
+            // Walks a ramp's own BSP from the root for a world point (nodes: plane
+            // at +0, then UE2's iBack +0x30 before iFront +0x34, stride 0x5c; the
+            // volume has no rotation or pivot): ending behind a plane is solid.
+            auto solidAt=[&](const J& ramp,double x,double y,double z)
+            {
+                auto native=WorkflowProbe::MagicActor(ramp);const auto at=reinterpret_cast<float*>(native+0x80);
+                auto model=*reinterpret_cast<unsigned char**>(native+0x238);
+                auto nodes=*reinterpret_cast<unsigned char**>(model+0x54);const int count=*reinterpret_cast<int*>(model+0x58);
+                x-=at[0];y-=at[1];z-=at[2];
+                int node=0,guard=0;bool front=true;
+                while(node>=0 && node<count && guard++<100000)
+                {
+                    auto n=nodes+node*0x5c;auto f=reinterpret_cast<float*>(n);
+                    front=f[0]*x+f[1]*y+f[2]*z-f[3]>=0;node=*reinterpret_cast<int*>(n+(front?0x34:0x30));
+                }
+                return !front;
+            };
+            using Load=HMENU(WINAPI*)(HINSTANCE,LPCSTR);
+            auto menuHas=[&](UINT command)
+            {
+                auto menu=(*reinterpret_cast<Load*>(0x11af23f0))(GetModuleHandle(nullptr),MAKEINTRESOURCEA(107));
+                const bool has=menu && GetMenuState(GetSubMenu(menu,0),command,MF_BYCOMMAND)!=UINT(-1);
+                if(menu)DestroyMenu(menu);
+                return has;
+            };
+            auto names=[](const J& list){std::set<std::string> s;for(auto& a:list)s.insert(a.at("path").get<std::string>());return s;};
+            constexpr UINT smooth=41385,remove=41386; // WorkflowTools::kSmoothStairs, kRemoveStairSmoothing
+            const J spec={{"kind","Spiral"},{"construction","Carve"},{"width",384},{"length",384},{"height",272},{"thickness",16},{"steps",17},{"ceiling",false},{"portal",false},{"name","Stair smoothing spiral"}};
+            auto spiral=call({{"op","design.block"},{"spec",spec},{"position",{6144,6144,0}},{"rotation",{0,0,0}}});
+            const auto members=spiral.at("members");
+            auto state=call({{"op","stairs.state"}});Record("stairs_spiral_state",state.dump().c_str());
+            require(state["stairs"]==true && state["winding"]==true && state["steps"]==17 && state["ramps"]==0,"a Map Design spiral reads as a winding 17-step staircase");
+            require(menuHas(smooth) && !menuHas(remove),"the actor menu offers Smooth Staircase for a selected staircase");
+            SendMessage(frameWindow,WM_COMMAND,smooth,0);
+            const auto first=ramps();
+            require(first.size()==1 && call({{"op","actors"}}).size()==beforeActors.size()+members.size()+1,"Smooth Staircase adds one ramp volume");
+            if(first.size()==1)require(rampPolygons(first[0])>17*2,"the spiral ramp is one helical solid");
+            if(first.size()==1)
+            {
+                // Halfway between the 5th and 6th step edges at mid-radius the ramp top
+                // is 88 up (treads rise 16; the first edge is 16 up at angle 0), and it
+                // is 16 thick.
+                const double angle=3.14159265358979323846*2*4.5/17,x=6144+120*std::cos(angle),y=6144+120*std::sin(angle);
+                require(solidAt(first[0],x,y,80) && !solidAt(first[0],x,y,100) && !solidAt(first[0],x,y,60) && !solidAt(first[0],6144,6144,80),"the spiral ramp is solid under its top and open above, below and at the post");
+            }
+            require(names(call({{"op","actors"},{"selected",true}}))==names(members),"smoothing keeps the staircase selected");
+            require(menuHas(smooth) && menuHas(remove),"a smoothed staircase offers Re-smooth and Remove");
+            auto again=call({{"op","stairs.smooth"}});Record("stairs_resmooth",again.dump().c_str());
+            const auto second=ramps();
+            require(again["replaced"]==1 && second.size()==1 && names(second)!=names(first),"smoothing again replaces the ramp");
+            SendMessage(frameWindow,WM_COMMAND,40019,0);require(names(ramps())==names(first),"Undo brings back the earlier ramp");
+            SendMessage(frameWindow,WM_COMMAND,40019,0);require(ramps().empty(),"Undo removes the first ramp in one step");
+            SendMessage(frameWindow,WM_COMMAND,40020,0);require(names(ramps())==names(first),"Redo smooths again");
+            if(!ramps().empty())rampPolygons(ramps()[0]);
+            require(call({{"op","stairs.remove"}})==1 && ramps().empty(),"Remove Staircase Smoothing deletes the ramp");
+            SendMessage(frameWindow,WM_COMMAND,40019,0);require(ramps().size()==1,"Remove undoes in one step");
+            SendMessage(frameWindow,WM_COMMAND,40019,0);require(ramps().empty(),"back to the bare spiral");
+            SendMessage(frameWindow,WM_COMMAND,40019,0);require(call({{"op","actors"}}).size()==beforeActors.size(),"the spiral undoes");
+            // A straight flight in one brush: eight 128 x 32 x 16 steps.
+            std::ostringstream text;
+            text<<"Begin Actor Class=Engine.Brush Name=Flight\nCsgOper=CSG_Add\nBegin Brush Name=FlightModel\nBegin PolyList\n";
+            const int corners[6][4]={{1,3,7,5},{0,4,6,2},{2,6,7,3},{0,1,5,4},{4,5,7,6},{0,2,3,1}};
+            for(int i=0;i<8;++i)
+            {
+                const double lo[3]={-64,32.0*i,0},hi[3]={64,32.0*(i+1),16.0*(i+1)};
+                for(auto& face:corners)
+                {
+                    text<<"Begin Polygon\n";
+                    for(int c:face)text<<"Vertex "<<(c&1?hi[0]:lo[0])<<","<<(c&2?hi[1]:lo[1])<<","<<(c&4?hi[2]:lo[2])<<"\n";
+                    text<<"End Polygon\n";
+                }
+            }
+            text<<"End PolyList\nEnd Brush\nBrush=Model'MyLevel.FlightModel'\nEnd Actor\n";
+            const J definition={{"id","flight"},{"actors",J::array({{{"name","Flight"},{"class","Engine.Brush"},{"path","MyLevel.Flight"},{"text",text.str()},{"position",{0,0,0}},{"rotation",{0,0,0}},{"tag","None"},{"event","None"}}})},{"bindings",J::array()},{"dependencies",J::array()}};
+            auto placed=call({{"op","assembly.place"},{"definition",definition},{"position",{-6144,6144,0}},{"rotation",{0,0,0}},{"bindings",J::object()}});
+            call({{"op","select"},{"actors",placed.at("members")}});
+            state=call({{"op","stairs.state"}});Record("stairs_flight_state",state.dump().c_str());
+            require(state["stairs"]==true && state["winding"]==false && state["steps"]==8,"a one-brush straight flight reads as an 8-step staircase");
+            call({{"op","stairs.smooth"}});
+            const auto slab=ramps();
+            require(slab.size()==1 && rampPolygons(slab[0])==6,"a straight flight gets one flat slab");
+            if(slab.size()==1)
+            {
+                // The slab is centred on its own location and 16 thick: its middle is
+                // solid, the space 40 above and below it and far away is not.
+                const auto at=reinterpret_cast<float*>(WorkflowProbe::MagicActor(slab[0])+0x80);
+                require(solidAt(slab[0],at[0],at[1],at[2]) && !solidAt(slab[0],at[0],at[1],at[2]+40) && !solidAt(slab[0],at[0],at[1],at[2]-40) && !solidAt(slab[0],at[0]+5000,at[1],at[2]),"the flight ramp is solid inside and open outside");
+            }
+            SendMessage(frameWindow,WM_COMMAND,40019,0);SendMessage(frameWindow,WM_COMMAND,40019,0);
+            require(call({{"op","actors"}}).size()==beforeActors.size(),"the flight undoes");
+            // Not a staircase: nothing offered.
+            auto plain=std::find_if(beforeActors.begin(),beforeActors.end(),[](const J& a){return a.at("class")=="Engine.Brush" && a.value("authorable",false);});
+            if(plain!=beforeActors.end())
+            {
+                call({{"op","select"},{"actors",J::array({*plain})}});
+                require(call({{"op","stairs.state"}})["stairs"]==false && !menuHas(smooth),"a plain brush offers no smoothing");
+            }
+            call({{"op","select"},{"actors",J::array()}});
+            if(!hadHash)reinterpret_cast<SetCollision>(0x1111eb30)(level,0,1);
+        };
+        if(stairsOnly){stairSmoothing();finish("Smooth Staircase");return;}
         auto checkSurfaceBrushSelection=[&](size_t minimumBrushes)
         {
             auto read=[](uintptr_t p){return *reinterpret_cast<uintptr_t*>(p);};

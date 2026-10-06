@@ -97,6 +97,8 @@
     <ClInclude Include="MeasureTool.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="PlacementModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="PlacementNative.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="StairSmoothModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="StairSmoothNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="PlacementTools.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapDesignNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapDesignPanel.inl"><Filter>Header Files</Filter></ClInclude>

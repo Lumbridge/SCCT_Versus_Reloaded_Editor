@@ -286,4 +286,14 @@ namespace Workflow::Editor
     // (Placement::Copy), pasted in one Undo step; the originals and copies
     // end up selected. Returns the copies' identities.
     Json PlacementCopy(const Json& members, const Json& copies, const std::string& label);
+    // Smooth Staircase (StairSmoothModel.h). The selected CSG brushes, plus on
+    // the surface menu the brushes of the selected faces. State: {stairs,
+    // steps, winding, ramps (earlier smoothing found)}, never throws for a
+    // selection that is not a staircase. SmoothStairs lays an invisible
+    // BlockingVolume ramp over each staircase's step edges in one Undo step,
+    // replacing its earlier ramps; returns {ramps, replaced, steps, winding,
+    // brushes}. RemoveStairSmoothing deletes those ramps; returns the count.
+    Json StairSmoothState(bool surfaces);
+    Json SmoothStairs(bool surfaces);
+    size_t RemoveStairSmoothing(bool surfaces);
 }

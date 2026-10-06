@@ -212,6 +212,8 @@
     <ClInclude Include="MeasureTool.h" />
     <ClInclude Include="PlacementModel.h" />
     <ClInclude Include="PlacementNative.inl" />
+    <ClInclude Include="StairSmoothModel.h" />
+    <ClInclude Include="StairSmoothNative.inl" />
     <ClInclude Include="PlacementTools.h" />
     <ClInclude Include="SecurityModel.h" />
     <ClInclude Include="SecurityNative.inl" />

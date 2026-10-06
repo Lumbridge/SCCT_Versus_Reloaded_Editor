@@ -467,6 +467,17 @@ stale snapshots, one-step undo/redo, and the actual Save/Open dialogs including
 cancellation. `magic_event_export.json` and `event-ui-roundtrip.json` are retained
 in the disposable native fixture. See [SMagicEventJson.md](SMagicEventJson.md).
 
+`StairSmoothModelTests.cpp` covers staircase recognition (straight, curved and
+spiral flights, one brush or a brush per step, either polygon winding, turned
+flights, landings, several staircases at once, and shapes that are not
+stairs) and checks every ramp is a closed, outward-wound solid. The native
+`-StairSmoothOnly` run smooths a Map Design spiral from the actor menu's
+command and a one-brush straight flight, with the level's collision hash
+present, and checks the BlockingVolume has its own BSP that is solid under
+the ramp top and open above, below and outside, that smoothing again replaces
+the ramp, Remove deletes it, the frame's Undo and Redo take each in one step,
+and a plain brush is offered nothing.
+
 The native workflow suite checks the static-mesh **Position the builder brush
 around this** menu action with signed nonuniform scale, rotation and PrePivot,
 then verifies the six box faces, centered placement, multiple-mesh bounds,

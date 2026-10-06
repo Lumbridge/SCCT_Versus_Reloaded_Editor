@@ -16,6 +16,7 @@ namespace WorkflowTools
     constexpr UINT kFitBuilderBrushToBrush = 40980;
     constexpr UINT kAddVertexPortal = 40981;
     constexpr UINT kPlaceBuilderBrush = 40982, kRebuildPlaceBuilderBrush = 40983;
+    constexpr UINT kSmoothStairs = 41385, kRemoveStairSmoothing = 41386;
     constexpr UINT kSaveToEmitterLibrary = 40968;
     constexpr UINT kBrushSnapX = 40936, kBrushSnapY = 40937, kBrushSnapZ = 40938, kBrushSnapAll = 40939;
     constexpr UINT kSurfaceSnapX = 40940, kSurfaceSnapY = 40941, kSurfaceSnapZ = 40942, kSurfaceSnapAll = 40943;
