@@ -419,7 +419,7 @@ LRESULT CALLBACK SecurityProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 const auto path=s->securityRows[row].get<std::string>();
                 if(path.empty())return 0;
                 for(const auto& actor:s->securityActors)
-                    if(actor.at("path")==path){Editor::Select(Json::array({actor}),true);DesignRefresh(*s);}
+                    if(actor.at("path")==path){Editor::Select(Json::array({actor}),true);DesignCatchUp(*s);}
                 return 0;
             }
             if(notification!=BN_CLICKED && notification!=0)return 0;

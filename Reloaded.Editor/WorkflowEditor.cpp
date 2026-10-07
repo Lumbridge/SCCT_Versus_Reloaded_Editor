@@ -80,7 +80,10 @@ namespace
         auto method=Read<Address>(Read<Address>(object)+slot);
         return reinterpret_cast<R(__thiscall*)(void*,Args...)>(method)(reinterpret_cast<void*>(object),args...);
     }
-    unsigned revision=0,mapGeneration=0;
+    // revision counts every change, selection included; contentRevision
+    // leaves out transactions that only select, so views that rebuild from
+    // the map do not do so for every click in a viewport.
+    unsigned revision=0,contentRevision=0,mapGeneration=0;
     using ExecFn=int(__thiscall*)(void*,const char*,void*);
     using EndFn=void(__thiscall*)(void*);
     ExecFn previousExec=nullptr;EndFn previousEnd=nullptr;
@@ -90,10 +93,41 @@ namespace
         const bool map=command.rfind("map new",0)==0 || command.rfind("map load",0)==0 || command.rfind("map import",0)==0;
         int result=previousExec(self,text,output);
         if(map) ++mapGeneration;
-        if(map || command.rfind("map rebuild",0)==0 || command.rfind("bsp ",0)==0 || command.rfind("transaction ",0)==0) ++revision;
+        if(map || command.rfind("map rebuild",0)==0 || command.rfind("bsp ",0)==0 || command.rfind("transaction ",0)==0) {++revision;++contentRevision;}
         return result;
     }
-    void __fastcall ObserveEnd(void* self,void*) { previousEnd(self);++revision; }
+    // Titles the stock editor gives transactions that change only which
+    // actors or surfaces are selected (UnEdClick, edactSelect*, POLY SELECT).
+    // Vertex selection is left out: its drags can share the transaction.
+    bool SelectionTitle(const std::string& title)
+    {
+        static const std::set<std::string> titles{
+            "clicking on actors","select surfaces","select surface for editing","Select None",
+            "Selecting Brushes","Selecting Actors","Selecting ...","Select flagged Lights",
+            "Select Multiple Static Meshes","Select All Actors in Matching Zone","Select Matching Static Mesh",
+            "Select deleted","Select subclass of class","Select of class","Select Invert","Select Inside","Select All"};
+        return titles.count(title)!=0;
+    }
+    void __fastcall ObserveEnd(void* self,void*)
+    {
+        // Only the outermost End closes the transaction Begin left in GUndo
+        // (0x11691d6c); its FTransaction keeps the title FString at +0x14.
+        bool selection=false;
+        try
+        {
+            if(Read<int>(reinterpret_cast<Address>(self)+0x44)==1)
+                if(auto transaction=Read<Address>(0x11691d6c))
+                    if(auto title=Read<Address>(transaction+0x14))
+                    {
+                        char text[64]{};
+                        if(CopyMemorySafe(text,reinterpret_cast<void*>(title),sizeof(text)-1))selection=SelectionTitle(text);
+                    }
+        }
+        catch(const std::exception&) { selection=false; }
+        previousEnd(self);
+        ++revision;
+        if(!selection)++contentRevision;
+    }
     void Observe(Address e)
     {
         if(!previousExec)
@@ -422,6 +456,7 @@ std::filesystem::path Directory()
 }
 uintptr_t LevelIdentity() { return Level(); }
 unsigned Revision() { Engine();return revision; }
+unsigned ContentRevision() { Engine();return contentRevision; }
 unsigned MapGeneration() { Engine();return mapGeneration; }
 std::string LevelPath() { return Path(Read<Address>(Level()+0x18)); }
 std::string MapKey()
@@ -512,6 +547,12 @@ Json Actors(bool selectedOnly)
     return result;
 }
 Json SelectedIdentities() { return Actors(true); }
+std::vector<std::string> SelectedActorPaths()
+{
+    std::vector<std::string> paths;
+    for(auto a:LiveActors()) if(Read<unsigned>(a+0x2f4)&0x40) paths.push_back(Path(a));
+    return paths;
+}
 namespace
 {
     // Exclusive categories: specialized brushes must precede ordinary CSG.
@@ -652,6 +693,8 @@ void Select(const Json& identities,bool focus)
         if(want!=is) reinterpret_cast<void(__thiscall*)(void*,void*,void*,int,int)>(0x10eb9a20)(reinterpret_cast<void*>(e),reinterpret_cast<void*>(level),reinterpret_cast<void*>(a),want?1:0,0);
     }
     if(focus && !selected.empty()) Exec("CAMERA ALIGN");
+    // No transaction of its own, so nothing else marks the selection change.
+    ++revision;
     Call(e,0xe4); Redraw();
 }
 Json CaptureView()

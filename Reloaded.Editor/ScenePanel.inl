@@ -377,7 +377,7 @@ void SceneDelete(DesignState& s,const Json& members)
     if(members.empty())return;
     DesignDeactivate(s);
     Editor::Select(members,false);
-    DesignRefresh(s);
+    DesignCatchUp(s);
     DesignDeleteSelection(s);
 }
 void SceneAction(DesignState& s,int choice,const std::vector<int>& rows)
@@ -399,11 +399,11 @@ void SceneAction(DesignState& s,int choice,const std::vector<int>& rows)
         if(group.empty())group=own;
         else if(Fold(group)!=Fold(own)){group.clear();break;}
     }
-    if(choice==DScnCtxSelect){Editor::Select(members,true);DesignRefresh(s);DesignStatus(s,"Selected "+std::to_string(members.size())+" actor(s) in the editor.");}
+    if(choice==DScnCtxSelect){Editor::Select(members,true);DesignCatchUp(s);DesignStatus(s,"Selected "+std::to_string(members.size())+" actor(s) in the editor.");}
     else if(choice==DScnCtxFrame)
     {
         Editor::Select(members,false);
-        DesignRefresh(s);
+        DesignCatchUp(s);
         SceneFrame(s,members);
         if(one && single.piece && (s.pending.is_null() || !s.previous.is_null()))DesignActivate(s,single.data);
         DesignStatus(s,"Showing "+(one?single.name:std::to_string(members.size())+" actors")+" in the plan.");
@@ -411,7 +411,7 @@ void SceneAction(DesignState& s,int choice,const std::vector<int>& rows)
     else if(choice==DScnCtxEdit && one && single.piece)
     {
         Editor::Select(members,false);
-        DesignRefresh(s);
+        DesignCatchUp(s);
         DesignActivate(s,single.data);
         SceneFrame(s,members);
         DesignWarn(s,"Editing "+single.name+". Drag it, drag a square to resize, use the arrow keys, or edit its fields.");
@@ -449,7 +449,7 @@ void SceneAction(DesignState& s,int choice,const std::vector<int>& rows)
         if(index<layers.size())SceneGroupAdd(s,layers[index].first,members);
     }
     else if(choice==DScnCtxRemoveGroup)SceneGroupRemove(s,members);
-    else if(choice==DScnCtxSelectGroup && !group.empty()){Editor::Select(SceneGroupMembers(s,group),true);DesignRefresh(s);DesignStatus(s,"Selected the group "+group+".");}
+    else if(choice==DScnCtxSelectGroup && !group.empty()){Editor::Select(SceneGroupMembers(s,group),true);DesignCatchUp(s);DesignStatus(s,"Selected the group "+group+".");}
     else if(choice==DScnCtxRenameGroup && !group.empty())
     {
         std::string name=group;
@@ -462,7 +462,7 @@ void SceneAction(DesignState& s,int choice,const std::vector<int>& rows)
         std::vector<int> same;
         for(int i=0;i<static_cast<int>(s.sceneRows.size());++i)if(!s.sceneRows[i].header && s.sceneRows[i].type==single.type)same.push_back(i);
         Editor::Select(SceneMembersOf(s,same),false);
-        DesignRefresh(s);
+        DesignCatchUp(s);
         DesignStatus(s,"Selected every "+single.type+" entry ("+std::to_string(same.size())+").");
     }
     else if(choice==DScnCtxRename && one && single.piece)SceneRenamePiece(s,single);
@@ -693,7 +693,7 @@ LRESULT CALLBACK SceneProc(HWND window,UINT message,WPARAM w,LPARAM l)
             if(s->sceneSyncing)return 0;
             const auto rows=SceneSelectedRows(GetDlgItem(window,DScnList));
             Editor::Select(SceneMembersOf(*s,rows),false);
-            DesignRefresh(*s);
+            DesignCatchUp(*s);
             return 0;
         }
         if(message==WM_CLOSE){DestroyWindow(window);return 0;}

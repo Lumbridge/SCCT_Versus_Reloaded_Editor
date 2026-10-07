@@ -114,7 +114,7 @@ namespace
             const auto map = Editor::MapFile();
             if (map == lastMap) return;
             lastMap = map;
-            lastCleanRevision = Editor::Revision();
+            lastCleanRevision = Editor::ContentRevision();
             CrashRecovery::NoteMap(map);
             // An opened autosave is a moment, not a map to come back to.
             if (!Sessions::IsAutosaveName(map)) NoteMap(map);
@@ -139,7 +139,7 @@ namespace
             // After the stock save the map is as clean as it will get: opening
             // a recent map from here needs no warning.
             const LRESULT result = DefSubclassProc(window, message, w, l);
-            try { lastCleanRevision = Editor::Revision(); } catch (const std::exception&) {}
+            try { lastCleanRevision = Editor::ContentRevision(); } catch (const std::exception&) {}
             return result;
         }
         if (message == WM_COMMAND)
@@ -499,14 +499,14 @@ namespace
 
 bool EditorExtras::OpenMap(const std::string& path, HWND owner, const char* title, bool confirmDiscard)
 {
-    if (confirmDiscard && Editor::Revision() != lastCleanRevision
+    if (confirmDiscard && Editor::ContentRevision() != lastCleanRevision
         && MessageBoxA(owner, ("Open " + std::filesystem::path(path).filename().string() + "?\n\nUnsaved changes in the current map will be lost.").c_str(),
                        title, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
         return false;
     if (!Editor::Exec("MAP LOAD FILE=\"" + path + "\"")) throw std::runtime_error("The editor could not open\n" + path);
     Editor::SetMapFile(path);
     lastMap = path;
-    lastCleanRevision = Editor::Revision();
+    lastCleanRevision = Editor::ContentRevision();
     CrashRecovery::NoteMap(path);
     if (!Sessions::IsAutosaveName(path)) NoteMap(path);
     Editor::Redraw();

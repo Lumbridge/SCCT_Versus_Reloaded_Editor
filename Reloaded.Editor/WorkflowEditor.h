@@ -19,9 +19,13 @@ namespace Workflow::Editor
     std::string LevelPath();
     uintptr_t LevelIdentity();
     unsigned Revision();
+    // Revision without the transactions that only change the selection.
+    unsigned ContentRevision();
     unsigned MapGeneration();
     Json Actors(bool selectedOnly = false);
     Json SelectedIdentities();
+    // Paths of the selected actors, cheaper than SelectedIdentities.
+    std::vector<std::string> SelectedActorPaths();
     Json BrushVisibility();
     void SetBrushVisibility(int category, const std::string& action);
     Json HiddenActors();

@@ -585,7 +585,7 @@ LRESULT CALLBACK StageProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 pick(mission);
                 for(const auto& path:current->value("objectives",Json::array()))pick(Stages::ByPath(s->stageActors,path.get<std::string>()));
                 if(mission)pick(Stages::ByTag(s->stageActors,mission->value("event",std::string())));
-                if(!chosen.empty()){Editor::Select(chosen,true);DesignRefresh(*s);}
+                if(!chosen.empty()){Editor::Select(chosen,true);DesignCatchUp(*s);}
                 return 0;
             }
             if(id==DStgObjectives && notification==LBN_SELCHANGE){StageObjectivesChanged(*s);return 0;}
@@ -597,7 +597,7 @@ LRESULT CALLBACK StageProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 if(const auto* actor=Stages::ByPath(s->stageActors,action.value("target",std::string())))
                 {
                     Editor::Select(Json::array({{{"path",actor->at("path")},{"class",actor->at("class")}}}),true);
-                    DesignRefresh(*s);
+                    DesignCatchUp(*s);
                 }
                 return 0;
             }
