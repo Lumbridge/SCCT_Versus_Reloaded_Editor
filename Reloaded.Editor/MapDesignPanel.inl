@@ -665,6 +665,7 @@ bool ObjectiveAimHandleAt(DesignState& s,double x,double y,Json& start);
 std::string ObjectiveLabel(const Json& actor);
 ObjectivePlayers::Missions ObjectiveMissions(const DesignState& s);
 ObjectivePlayers::Rules ObjectiveRules(const DesignState& s);
+ObjectivePlayers::Targets ObjectiveTargets(const DesignState& s);
 void ElementClick(DesignState& s,const Vector& at);
 void ElementCancel(DesignState& s);
 void ElementPaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void(const std::string&,Gdiplus::PointF)>& label);
@@ -3448,8 +3449,10 @@ void DesignCheck(DesignState& s)
         for(const auto& actor:s.objectives)if(actor.value("kind",std::string())=="Mission")names[ObjectivePlayers::Fold(actor.value("path",std::string()))]=ObjectiveLabel(actor);
         for(const auto& text:ObjectivePlayers::Problems(ObjectiveMissions(s),ObjectiveRules(s),names))
             s.issues.push_back({{"severity","error"},{"text",text},{"piece",-1},{"index",0}});
+        for(const auto& text:ObjectivePlayers::TargetWarnings(ObjectiveMissions(s),ObjectiveRules(s),ObjectiveTargets(s),names))
+            s.issues.push_back({{"severity","warning"},{"text",text},{"piece",-1},{"index",0}});
         if(const int players=s.objectivePlayers.value("playLevel",0))
-            s.issues.push_back({{"severity","info"},{"text","Play Level plays the map as a "+std::to_string(players)+"-player match ("+ObjectivePlayers::Summary(ObjectiveMissions(s),ObjectiveRules(s),players)+"); set it back to every objective with the Play Level list on the editor's top bar."},{"piece",-1},{"index",0}});
+            s.issues.push_back({{"severity","info"},{"text","Play Level plays the map as a "+std::to_string(players)+"-player match ("+ObjectivePlayers::Summary(ObjectiveMissions(s),ObjectiveRules(s),players,ObjectiveTargets(s))+"); set it back to every objective with the Play Level list on the editor's top bar."},{"piece",-1},{"index",0}});
     }
     for(const auto& text:LightIssues(s))
         s.issues.push_back({{"severity","warning"},{"text",text},{"piece",-1},{"index",0}});

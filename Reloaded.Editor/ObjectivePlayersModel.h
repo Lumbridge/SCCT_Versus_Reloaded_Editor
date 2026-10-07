@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <map>
 #include <stdexcept>
@@ -27,15 +28,27 @@
 // nothing); inside it, it works as built, or with OpenInRange opens and locks open.
 // The server moves it once, on the first tick after the movers have begun play, and
 // the game replicates a mover's position to every client.
+//
+// Missions can also ask for a different number of objectives to win (their
+// MinimumObjectives) by match size: 1v1, 2v2, ... 8v8, an uneven lobby counting as
+// its bigger team (3 players is 2v2). It is set as the objectives are left out, so a
+// mission never asks for more than the match can still give.
 namespace ObjectivePlayers
 {
 // Raise with every change to Script(), and give the class a new name: a map's actor
 // of an older version is read and replaced instead of recompiling a class in use.
-constexpr int Version = 2;
-constexpr const char* ClassName = "SPlayerCountRules";
-// Version 1, objectives only: its table (Objective, MinPlayers, MaxPlayers,
-// PlayLevelPlayers) is read and moved to the current class.
-constexpr const char* LegacyClassName = "SObjectivePlayers";
+constexpr int Version = 3;
+constexpr const char* ClassName = "SMatchSizeRules";
+// Earlier versions, newest first, whose tables are read and moved to the current
+// class: 2 (SPlayerCountRules: Subject, MinPlayers, MaxPlayers, OpenInRange,
+// PlayLevelPlayers) and 1 (SObjectivePlayers: Objective for Subject, no movers).
+inline constexpr std::array<const char*, 2> LegacyClassNames = {{"SPlayerCountRules", "SObjectivePlayers"}};
+// Team sizes a mission's objectives to win can be set for (1v1 to 8v8), and how many
+// missions can have them.
+constexpr int TeamSizes = 8;
+constexpr int TargetMissions = 16;
+// The most objectives to win the lists offer.
+constexpr int MostTargets = 32;
 // Objectives and movers one map can give a rule.
 constexpr int Capacity = 64;
 // The largest count the panel offers; the game's own limit is 16 (MaxPlayers).
@@ -123,7 +136,44 @@ struct Mission
 };
 using Missions = std::map<std::string, Mission>;
 using Rules = std::map<std::string, Rule>; // folded objective path -> rule
+// Objectives to win by team size: [0] for 1v1 ... [7] for 8v8, 0 keeping the map's own.
+using Targets = std::map<std::string, std::array<int, TeamSizes>>; // folded mission path
 
+// The match size a lobby plays as: its bigger team.
+inline int TeamSize(int players) { return (std::clamp)((players + 1) / 2, 1, TeamSizes); }
+inline std::string SizeLabel(int size) { return std::to_string(size) + "v" + std::to_string(size); }
+// The lists' choices: "Map" (the mission's own number) or 1 to MostTargets.
+inline std::vector<std::string> TargetChoices()
+{
+    std::vector<std::string> out{"Map"};
+    for (int n = 1; n <= MostTargets; ++n) out.push_back(std::to_string(n));
+    return out;
+}
+inline std::string TargetText(int target) { return target ? std::to_string(target) : std::string("Map"); }
+inline int TargetCount(const std::string& text)
+{
+    if (text.empty() || text == "Map") return 0;
+    size_t used = 0;
+    int value = 0;
+    try { value = std::stoi(text, &used); }
+    catch (const std::exception&) { used = 0; }
+    if (used != text.size() || value < 1 || value > MostTargets)
+        throw std::runtime_error("Choose from 1 to " + std::to_string(MostTargets) + " objectives to win, or Map.");
+    return value;
+}
+inline bool EmptyTargets(const std::array<int, TeamSizes>& sizes)
+{
+    for (int t : sizes) if (t) return false;
+    return true;
+}
+// "1v1 2, 2v2 4, 3v3 5"; empty when every size keeps the map's own.
+inline std::string TargetsText(const std::array<int, TeamSizes>& sizes)
+{
+    std::string out;
+    for (int i = 0; i < TeamSizes; ++i)
+        if (sizes[i]) out += (out.empty() ? "" : ", ") + SizeLabel(i + 1) + " " + std::to_string(sizes[i]);
+    return out;
+}
 // A mission with no mission above it: the game mode's own, never left out.
 inline std::vector<std::string> Roots(const Missions& missions)
 {
@@ -161,7 +211,7 @@ inline void Drop(Outcome& out, const std::string& path, int depth)
     for (const auto& child : sub->second.objectives)
         if (!child.empty()) Drop(out, child, depth + 1);
 }
-inline void Prune(Outcome& out, const Rules& rules, const std::string& key, int players, int depth)
+inline void Prune(Outcome& out, const Rules& rules, const Targets& targets, const std::string& key, int players, int depth)
 {
     auto& m = out.missions.at(key);
     int fewer = 0, capacity = 0;
@@ -184,7 +234,7 @@ inline void Prune(Outcome& out, const Rules& rules, const std::string& key, int 
             continue;
         }
         const int before = Needs(sub->second);
-        Prune(out, rules, sub->first, players, depth + 1);
+        Prune(out, rules, targets, sub->first, players, depth + 1);
         const auto& after = out.missions.at(sub->first);
         if (after.objectives.empty())
         {
@@ -203,14 +253,47 @@ inline void Prune(Outcome& out, const Rules& rules, const std::string& key, int 
         if (self.minimum < 1 && !self.objectives.empty()) self.minimum = 1;
         if (self.minimum < 0) self.minimum = 0;
     }
+    // The author's number for this match size, as far as the objectives left can reach.
+    const auto target = targets.find(key);
+    if (target != targets.end() && target->second[TeamSize(players) - 1] > 0)
+    {
+        self.minimum = (std::min)(target->second[TeamSize(players) - 1], capacity);
+        if (self.minimum < 1 && !self.objectives.empty()) self.minimum = 1;
+    }
 }
 } // namespace Detail
 
-inline Outcome Apply(const Missions& missions, const Rules& rules, int players)
+inline Outcome Apply(const Missions& missions, const Rules& rules, int players, const Targets& targets = {})
 {
     Outcome out{missions, {}};
     if (players <= 0) return out;
-    for (const auto& root : Roots(missions)) Detail::Prune(out, rules, root, players, 0);
+    for (const auto& root : Roots(missions)) Detail::Prune(out, rules, targets, root, players, 0);
+    return out;
+}
+
+// Match sizes where a mission's objectives to win asks for more than the match can
+// give: "In 3v3, mission Main asks for 5 objectives to win but only 4 can be done
+// there; it will ask for 4."
+inline std::vector<std::string> TargetWarnings(const Missions& missions, const Rules& rules, const Targets& targets,
+                                               const std::map<std::string, std::string>& names = {})
+{
+    std::vector<std::string> out;
+    for (const auto& [path, sizes] : targets)
+    {
+        if (!missions.count(path)) continue;
+        const auto name = names.count(path) ? names.at(path) : path;
+        for (int size = 1; size <= TeamSizes; ++size)
+        {
+            const int wanted = sizes[size - 1];
+            if (!wanted) continue;
+            const auto outcome = Apply(missions, rules, size * 2, targets);
+            const auto found = outcome.missions.find(path);
+            if (found == outcome.missions.end() || found->second.objectives.empty()) continue;
+            if (found->second.minimum < wanted)
+                out.push_back("In " + SizeLabel(size) + ", " + name + " asks for " + std::to_string(wanted) + " objectives to win but only " +
+                              std::to_string(found->second.minimum) + " can be done there; it will ask for " + std::to_string(found->second.minimum) + ".");
+        }
+    }
     return out;
 }
 
@@ -242,9 +325,9 @@ inline std::vector<std::string> Problems(const Missions& missions, const Rules& 
     return out;
 }
 // The objectives a lobby size plays, for the status line: "6 players: 5 objectives, the spies need 3".
-inline std::string Summary(const Missions& missions, const Rules& rules, int players)
+inline std::string Summary(const Missions& missions, const Rules& rules, int players, const Targets& targets = {})
 {
-    const auto outcome = Apply(missions, rules, players);
+    const auto outcome = Apply(missions, rules, players, targets);
     int objectives = 0, needed = 0;
     for (const auto& root : Roots(missions))
     {
@@ -272,8 +355,8 @@ inline std::string Script()
     const auto cap = std::to_string(Capacity), depth = std::to_string(MaxDepth);
     return std::string(
         "//=============================================================================\r\n"
-        "// ") + ClassName + ": objectives and movers for some numbers of players, written\r\n"
-        "// by RE+. The server leaves objectives out as the map loads, before the missions\r\n"
+        "// ") + ClassName + ": objectives, movers and objectives to win for some numbers of\r\n"
+        "// players, written by RE+. The server leaves objectives out as the map loads, before the missions\r\n"
         "// prepare them, and closes and locks (or opens) movers on its first tick.\r\n"
         "//=============================================================================\r\n"
         "class " + ClassName + " extends Info\r\n"
@@ -284,8 +367,10 @@ inline std::string Script()
         "var() byte MaxPlayers[" + cap + "];\r\n"
         "var() byte OpenInRange[" + cap + "];\r\n"
         "var() byte PlayLevelPlayers;\r\n"
+        "var() SMission WinMission[" + std::to_string(TargetMissions) + "];\r\n"
+        "var() byte WinTarget[" + std::to_string(TargetMissions * TeamSizes) + "];\r\n"
         "var const int Version;\r\n"
-        "var int Players, LeftOut, Shut, Opened;\r\n"
+        "var int Players, Size, LeftOut, Shut, Opened;\r\n"
         "var bool bMoversDone;\r\n"
         "\r\n"
         "function PostBeginPlay()\r\n"
@@ -297,6 +382,8 @@ inline std::string Script()
         "\tPlayers = CountPlayers();\r\n"
         "\tif (Players <= 0)\r\n"
         "\t\treturn;\r\n"
+        "\t// The match size: its bigger team, 1v1 to " + SizeLabel(TeamSizes) + ".\r\n"
+        "\tSize = Clamp((Players + 1) / 2, 1, " + std::to_string(TeamSizes) + ");\r\n"
         "\tforeach AllActors(class'SMission', M)\r\n"
         "\t\tif (IsTop(M))\r\n"
         "\t\t\tPrune(M, 0);\r\n"
@@ -389,6 +476,16 @@ inline std::string Script()
         "\treturn false;\r\n"
         "}\r\n"
         "\r\n"
+        "function int WinTargetFor(SMission M)\r\n"
+        "{\r\n"
+        "\tlocal int i;\r\n"
+        "\r\n"
+        "\tfor (i = 0; i < " + std::to_string(TargetMissions) + "; i++)\r\n"
+        "\t\tif (WinMission[i] == M)\r\n"
+        "\t\t\treturn WinTarget[i * " + std::to_string(TeamSizes) + " + Size - 1];\r\n"
+        "\treturn 0;\r\n"
+        "}\r\n"
+        "\r\n"
         "// How many completions a mission asks for.\r\n"
         "function int Needs(SMission M)\r\n"
         "{\r\n"
@@ -402,7 +499,7 @@ inline std::string Script()
         "// many fewer as its zones lost, and never more than its objectives can reach.\r\n"
         "function Prune(SMission M, int Depth)\r\n"
         "{\r\n"
-        "\tlocal int i, Fewer, Capacity, Before;\r\n"
+        "\tlocal int i, Fewer, Capacity, Before, Target;\r\n"
         "\tlocal SObjective O;\r\n"
         "\tlocal SMission Sub;\r\n"
         "\r\n"
@@ -444,6 +541,15 @@ inline std::string Script()
         "\t\t\tM.MinimumObjectives = 1;\r\n"
         "\t\tif (M.MinimumObjectives < 0)\r\n"
         "\t\t\tM.MinimumObjectives = 0;\r\n"
+        "\t}\r\n"
+        "\t// The author's number of objectives to win for this match size, as far as the\r\n"
+        "\t// objectives left can reach.\r\n"
+        "\tTarget = WinTargetFor(M);\r\n"
+        "\tif (Target > 0)\r\n"
+        "\t{\r\n"
+        "\t\tM.MinimumObjectives = Min(Target, Capacity);\r\n"
+        "\t\tif (M.MinimumObjectives < 1 && M.Objectives.Length > 0)\r\n"
+        "\t\t\tM.MinimumObjectives = 1;\r\n"
         "\t}\r\n"
         "\tif (M.RandomObjectives > M.Objectives.Length)\r\n"
         "\t\tM.RandomObjectives = M.Objectives.Length;\r\n"

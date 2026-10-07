@@ -47,6 +47,7 @@ ObjectivePlayers::Rule ObjectiveRule(const DesignState& s,const std::string& pat
 }
 ObjectivePlayers::Rules ObjectiveRules(const DesignState& s){return PlayerRules(s.objectivePlayers);}
 ObjectivePlayers::Missions ObjectiveMissions(const DesignState& s){return PlayerMissions(s.objectives);}
+ObjectivePlayers::Targets ObjectiveTargets(const DesignState& s){return PlayerTargets(s.objectivePlayers);}
 bool ObjectiveTopMission(const DesignState& s,const Json& actor)
 {
     if(actor.value("kind",std::string())!="Mission")return false;

@@ -110,10 +110,48 @@ int main()
         Check(Summary(ShipD(), {{"mylevel.zone2", {6, 0}}}, 4) == "4 players: 7 objectives, the spies need 2", "summary");
         Check(Summary(ShipD(), {}, 1) == "1 player: 11 objectives, the spies need 4", "summary of the whole map");
 
+        // Objectives to win by match size: an uneven lobby plays as its bigger team.
+        Check(TeamSize(1) == 1 && TeamSize(2) == 1 && TeamSize(3) == 2 && TeamSize(6) == 3 && TeamSize(16) == 8 && TeamSize(40) == 8, "match sizes");
+        Check(SizeLabel(3) == "3v3" && TargetText(0) == "Map" && TargetText(5) == "5" && TargetCount("Map") == 0 && TargetCount("5") == 5 &&
+                  Throws([] { TargetCount("33"); }) && TargetChoices().size() == 33,
+              "target choices");
+        // A flat mission of six: 1v1 needs 2, 2v2 needs 4, 3v3 needs 5, bigger games the map's own 3.
+        Missions six{{"mylevel.m", {{"MyLevel.O1", "MyLevel.O2", "MyLevel.O3", "MyLevel.O4", "MyLevel.O5", "MyLevel.O6"}, 3}}};
+        Targets byes{{"mylevel.m", {2, 4, 5, 0, 0, 0, 0, 0}}};
+        Check(TargetsText(byes.at("mylevel.m")) == "1v1 2, 2v2 4, 3v3 5" && EmptyTargets({}) && !EmptyTargets(byes.at("mylevel.m")), "targets text");
+        Check(Apply(six, {}, 2, byes).missions.at("mylevel.m").minimum == 2, "1v1 needs 2");
+        Check(Apply(six, {}, 3, byes).missions.at("mylevel.m").minimum == 4 && Apply(six, {}, 4, byes).missions.at("mylevel.m").minimum == 4, "2v2 needs 4");
+        Check(Apply(six, {}, 6, byes).missions.at("mylevel.m").minimum == 5, "3v3 needs 5");
+        Check(Apply(six, {}, 8, byes).missions.at("mylevel.m").minimum == 3, "4v4 keeps the map's own");
+        // Never more than the match can give: two objectives are 3v3+ only, so 2v2 has four.
+        Rules bigOnly{{"mylevel.o5", {6, 0}}, {"mylevel.o6", {6, 0}}};
+        Targets greedy{{"mylevel.m", {0, 5, 0, 0, 0, 0, 0, 0}}};
+        Check(Apply(six, bigOnly, 4, greedy).missions.at("mylevel.m").minimum == 4, "asks for what is left");
+        auto warnings = TargetWarnings(six, bigOnly, greedy, {{"mylevel.m", "mission Main"}});
+        Check(warnings.size() == 1 && warnings[0] == "In 2v2, mission Main asks for 5 objectives to win but only 4 can be done there; it will ask for 4.",
+              "warned");
+        Check(TargetWarnings(six, {}, byes).empty(), "no warning when it fits");
+        // A zone's target feeds the top mission: zone 1 needs 1 in 1v1, so the match needs one fewer.
+        Targets zone{{"mylevel.zone1", {1, 0, 0, 0, 0, 0, 0, 0}}};
+        auto small = Apply(ShipD(), {}, 2, zone);
+        Check(small.missions.at("mylevel.zone1").minimum == 1 && small.missions.at("mylevel.top").minimum == 3, "zone targets feed the top");
+        // And the top mission's own target wins over that.
+        zone["mylevel.top"] = {2, 0, 0, 0, 0, 0, 0, 0};
+        Check(Apply(ShipD(), {}, 2, zone).missions.at("mylevel.top").minimum == 2, "the top's own target");
+        // The zones give four at most: a top target of 6 asks for 4.
+        Check(Apply(ShipD(), {}, 2, {{"mylevel.top", {6, 0, 0, 0, 0, 0, 0, 0}}}).missions.at("mylevel.top").minimum == 4, "top capped by its zones");
+        Check(Summary(six, {}, 6, byes) == "6 players: 6 objectives, the spies need 5", "summary with targets");
+
         // The script.
         const auto script = Script();
-        Check(Contains(script, "class SPlayerCountRules extends Info\r\n\tplaceable;"), "class header");
-        Check(std::string(LegacyClassName) == "SObjectivePlayers", "version 1's class is read and replaced");
+        Check(Contains(script, "class SMatchSizeRules extends Info\r\n\tplaceable;"), "class header");
+        Check(std::string(LegacyClassNames[0]) == "SPlayerCountRules" && std::string(LegacyClassNames[1]) == "SObjectivePlayers",
+              "versions 2 and 1 are read and replaced");
+        Check(Contains(script, "var() SMission WinMission[16];") && Contains(script, "var() byte WinTarget[128];"), "objectives to win table");
+        Check(Contains(script, "\tSize = Clamp((Players + 1) / 2, 1, 8);"), "match size in script");
+        Check(Contains(script, "\tTarget = WinTargetFor(M);\r\n\tif (Target > 0)\r\n\t{\r\n\t\tM.MinimumObjectives = Min(Target, Capacity);"),
+              "target applied as far as the objectives reach");
+        Check(Contains(script, "\t\t\treturn WinTarget[i * 8 + Size - 1];"), "target lookup");
         Check(script.find("\n") == script.find("\r\n") + 1, "CRLF line ends");
         Check(Contains(script, "var() Actor Subject[64];") && Contains(script, "var() byte MinPlayers[64];") &&
                   Contains(script, "var() byte MaxPlayers[64];") && Contains(script, "var() byte OpenInRange[64];") &&
@@ -134,7 +172,7 @@ int main()
         Check(Contains(script, "O.Triggers[i].Desactivate();") && Contains(script, "O.Desactivate();"), "switched off the game's way");
         Check(Contains(script, "M.Objectives.Remove(i, 1);"), "out of the mission's list");
         Check(Contains(script, "M.MinimumObjectives = Min(M.MinimumObjectives - Fewer, Capacity);"), "thresholds as the model has them");
-        Check(Contains(script, "Version=2\r\n") && Version == 2, "versioned");
+        Check(Contains(script, "Version=3\r\n") && Version == 3, "versioned");
         std::cout << "ObjectivePlayersModelTests: " << checks << " checks passed\n";
         return 0;
     }
