@@ -181,6 +181,9 @@
     <ClInclude Include="RenderBudget.h" />
     <ClInclude Include="RenderBudgetModel.h" />
     <ClInclude Include="LevelSnapshot.h" />
+    <ClInclude Include="PlayLevelPlayers.h" />
+    <ClInclude Include="LargeAddress.h" />
+    <ClInclude Include="LargeAddressModel.h" />
     <ClInclude Include="LevelSnapshotModel.h" />
     <ClInclude Include="FavoritesModel.h" />
     <ClInclude Include="FavoritesWindow.h" />
@@ -198,6 +201,8 @@
     <ClInclude Include="EmitterPreview.h" />
     <ClInclude Include="CharacterSkinsImage.h" />
     <ClInclude Include="CharacterSkinsModel.h" />
+    <ClInclude Include="ObjectivePlayersModel.h" />
+    <ClInclude Include="ObjectivePlayersNative.inl" />
     <ClInclude Include="CharacterSkinsWindow.h" />
     <ClInclude Include="CharacterSkinPresetsModel.h" />
     <ClInclude Include="CharacterSkinPresetsWindow.h" />
@@ -314,6 +319,8 @@
     <ClCompile Include="RenderBudget.cpp" />
     <ClCompile Include="MinimapWindow.cpp" />
     <ClCompile Include="LevelSnapshot.cpp" />
+    <ClCompile Include="PlayLevelPlayers.cpp" />
+    <ClCompile Include="LargeAddress.cpp" />
     <ClCompile Include="SelfUpdater.cpp" />
     <ClCompile Include="WorkflowEditor.cpp" />
     <ClCompile Include="WorkflowGraph.cpp" />

@@ -200,9 +200,11 @@ LRESULT CALLBACK CanvasProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
             if(command==1)FocusActor(*s);
             if(command==2){s->selected=node.id;SendMessage(s->window,WM_COMMAND,Rename,0);}
             if(command==3)MagicEventWorkbench::Open(s->window,node.id);
-            if(command>=WorkflowTools::kAddObjective && command<=WorkflowTools::kAddFlagObjective)
+            if((command>=WorkflowTools::kAddObjective && command<=WorkflowTools::kAddFlagObjective) ||
+               (command>=WorkflowTools::kObjectivePlayersFirst && command<=WorkflowTools::kObjectivePlayersLast))
             {
-                WorkflowTools::RunObjectiveCommand(command,objectiveSnapshot);
+                try{WorkflowTools::RunObjectiveCommand(command,objectiveSnapshot);}
+                catch(const std::exception& e){MessageBoxA(w,e.what(),"Objectives",MB_OK|MB_ICONERROR);}
                 Rebuild(*s,true,true);
             }
             return 0;

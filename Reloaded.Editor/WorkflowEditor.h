@@ -123,6 +123,22 @@ namespace Workflow::Editor
     // with their lightmap UVs and atlases, the in-game lights at their render
     // spheres, and the BSP planes for line of sight.
     void LightShadowScene(LightShadow::Scene& scene);
+    // Player count rules (ObjectivePlayersModel.h): the map's SPlayerCountRules actor
+    // (or a version 1 SObjectivePlayers one, moved over on the next change). Rules:
+    // {placed, legacy, extra, compiled, actor, playLevel (the count an editor Play Level
+    // plays with, 0 for every objective), rules:[{path, min, max, open, mover}]}. Setting
+    // an objective's, zone mission's or mover's range compiles and places the actor when
+    // needed, in one Undo step; 0 and 0 clears the rule, and the actor goes once nothing
+    // is left. open (movers only): opens and locks open inside the range.
+    Json ObjectivePlayerRules();
+    Json SetObjectivePlayers(const Json& subject, int minimum, int maximum, bool open = false);
+    Json SetObjectivePlayLevelPlayers(int players);
+    // The identity of a live SObjective (or SMission) or Mover actor at that address, as
+    // a Properties window holds it, with mover:true for a mover; null for anything else.
+    Json ObjectivePlayersSubject(uintptr_t object);
+    // The SMission actors only, as ObjectiveActors lists them (path, objectives,
+    // minimum): it never touches the selection.
+    Json ObjectiveMissions();
     // Character Skins (CharacterSkinsModel.h): the map's Character Skins actor.
     // Settings: {placed, legacy, extra, compiled, slots:{SpyBody,...: material path or ""},
     // models:{SpyModel,...: skeletal mesh path or ""}, goggles:{SpyGoggleOffset,...: [x,y,z]}}.

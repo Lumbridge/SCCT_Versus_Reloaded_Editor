@@ -177,15 +177,46 @@ void SheetShowLight(DesignState& s,const Json& light)
 }
 // A game actor is not a security device: the editor's property window holds
 // its settings. What the plan can edit is where it faces, which is what the
-// arrow on its icon shows and its handle turns.
+// arrow on its icon shows and its handle turns, and for an objective or a zone's
+// mission the lobby sizes it is in the match for (ObjectivePlayersModel.h).
+bool SheetHasPlayers(DesignState& s,const Json& actor)
+{
+    const auto kind=actor.value("kind",std::string());
+    return kind=="Objective" || (kind=="Mission" && !ObjectiveTopMission(s,actor));
+}
 void SheetShowGameActor(DesignState& s,const Json& actor)
 {
     std::vector<SheetField> fields={
         {"yaw","Facing (degrees)",Design::Round(ObjectiveYaw(actor)*360.0/65536,1),{}},
         {"z","Height (Z)",Design::Round(actor.at("position").get<Vector>()[2]),{}}};
-    SheetBuild(s,"actor",actor,ObjectiveLabel(actor),fields,{"Select in editor"});
-    DesignStatus(s,ObjectiveLabel(actor)+" faces "+Design::Round(ObjectiveYaw(actor)*360.0/65536)
-        +" degrees. Drag the handle on its arrow to turn it, or type the angle here; its name and settings are in the editor's property window.");
+    if(SheetHasPlayers(s,actor))
+    {
+        const auto rule=ObjectiveRule(s,actor.value("path",std::string()));
+        fields.push_back({"minPlayers","Minimum players",ObjectivePlayers::ChoiceText(rule.minimum),ObjectivePlayers::Choices()});
+        fields.push_back({"maxPlayers","Maximum players",ObjectivePlayers::ChoiceText(rule.maximum),ObjectivePlayers::Choices()});
+    }
+    SheetBuild(s,"actor",actor,ObjectiveLabel(actor)+ObjectivePlayersTag(s,actor),fields,{"Select in editor"});
+    std::string text=ObjectiveLabel(actor)+" faces "+Design::Round(ObjectiveYaw(actor)*360.0/65536)
+        +" degrees. Drag the handle on its arrow to turn it, or type the angle here; its name and settings are in the editor's property window.";
+    if(SheetHasPlayers(s,actor))
+        text+=" It is "+ObjectivePlayers::Describe(ObjectiveRule(s,actor.value("path",std::string())))+".";
+    DesignStatus(s,text);
+}
+// The status after a player rule changes: the rule, what the lobby sizes at its
+// edges play, and any lobby size that leaves a mission with nothing to do.
+std::string SheetPlayersStatus(DesignState& s,const Json& actor)
+{
+    const auto rule=ObjectiveRule(s,actor.value("path",std::string()));
+    std::string text=ObjectiveLabel(actor)+" is now "+ObjectivePlayers::Describe(rule)+".";
+    const auto missions=ObjectiveMissions(s);
+    const auto rules=ObjectiveRules(s);
+    std::set<int> counts;
+    if(rule.minimum>0){if(rule.minimum>1)counts.insert(rule.minimum-1);counts.insert(rule.minimum);}
+    if(rule.maximum>0){counts.insert(rule.maximum);if(rule.maximum<ObjectivePlayers::MostPlayers)counts.insert(rule.maximum+1);}
+    for(int n:counts)text+=" "+ObjectivePlayers::Summary(missions,rules,n)+".";
+    const auto problems=ObjectivePlayers::Problems(missions,rules);
+    if(!problems.empty())text+=" "+problems.front();
+    return text;
 }
 void SheetShowDevice(DesignState& s,const Json& device)
 {
@@ -367,6 +398,15 @@ void SheetApply(DesignState& s)
     }
     if(kind=="actor")
     {
+        if(values.count("minPlayers") && (values["minPlayers"]!=s.sheet.shown["minPlayers"] || values["maxPlayers"]!=s.sheet.shown["maxPlayers"]))
+        {
+            try{Editor::SetObjectivePlayers(subject,ObjectivePlayers::ChoiceCount(values["minPlayers"]),ObjectivePlayers::ChoiceCount(values["maxPlayers"]));}
+            catch(const std::exception& e){DesignStatus(s,e.what());SheetRefreshLater(s);return;}
+            s.sheet.shown=values;
+            DesignRefresh(s);
+            DesignStatus(s,SheetPlayersStatus(s,subject));
+            return;
+        }
         Pose pose{subject.at("position").get<Vector>(),subject.at("rotation").get<Rotation>()};
         const double degrees=std::fmod(Design::Number(values["yaw"],-100000,100000),360.0);
         pose.rotation[1]=((static_cast<int>(std::lround(degrees*65536/360))%65536)+65536)%65536;

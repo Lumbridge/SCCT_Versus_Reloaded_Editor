@@ -160,6 +160,8 @@ struct DesignState
     Json lights=Json::array();
     // Player starts, the mission, objectives and their devices.
     Json objectives=Json::array();
+    // The objectives that need a number of players (ObjectivePlayersModel.h).
+    Json objectivePlayers=Json::object();
     // A gameplay element being placed: its kind, points so far, stage, and
     // the top view's depth to return to.
     std::string elementKind;
@@ -608,6 +610,8 @@ void ObjectivePaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void
 Json ObjectiveAt(DesignState& s,double x,double y);
 bool ObjectiveAimHandleAt(DesignState& s,double x,double y,Json& start);
 std::string ObjectiveLabel(const Json& actor);
+ObjectivePlayers::Missions ObjectiveMissions(const DesignState& s);
+ObjectivePlayers::Rules ObjectiveRules(const DesignState& s);
 void ElementClick(DesignState& s,const Vector& at);
 void ElementCancel(DesignState& s);
 void ElementPaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void(const std::string&,Gdiplus::PointF)>& label);
@@ -627,6 +631,7 @@ void DesignRefresh(DesignState& s)
     try{s.securityActors=Editor::SecurityActors();}catch(const std::exception&){s.securityActors=Json::array();}
     try{s.lights=Editor::Lights();}catch(const std::exception&){s.lights=Json::array();}
     try{s.objectives=Editor::ObjectiveActors();}catch(const std::exception&){s.objectives=Json::array();}
+    try{s.objectivePlayers=Editor::ObjectivePlayerRules();}catch(const std::exception&){s.objectivePlayers=Json::object();}
     try{s.stageActors=Editor::StageActors();}catch(const std::exception&){s.stageActors=Json::array();}
     SecurityRefreshList(s);
     StageRefreshList(s);
@@ -3255,6 +3260,16 @@ void DesignCheck(DesignState& s)
         s.issues.push_back({{"severity",issue.severity},{"text",issue.text},{"piece",-1},{"index",0}});
     for(const auto& issue:Stages::Issues(s.stageActors))
         s.issues.push_back({{"severity",issue.severity},{"text",issue.text},{"piece",-1},{"index",0}});
+    // Objective player counts: a lobby size the rules leave with nothing to play,
+    // and the count Play Level stands in for.
+    {
+        std::map<std::string,std::string> names;
+        for(const auto& actor:s.objectives)if(actor.value("kind",std::string())=="Mission")names[ObjectivePlayers::Fold(actor.value("path",std::string()))]=ObjectiveLabel(actor);
+        for(const auto& text:ObjectivePlayers::Problems(ObjectiveMissions(s),ObjectiveRules(s),names))
+            s.issues.push_back({{"severity","error"},{"text",text},{"piece",-1},{"index",0}});
+        if(const int players=s.objectivePlayers.value("playLevel",0))
+            s.issues.push_back({{"severity","info"},{"text","Play Level plays the map as a "+std::to_string(players)+"-player match ("+ObjectivePlayers::Summary(ObjectiveMissions(s),ObjectiveRules(s),players)+"); set it back to every objective with the Play Level list on the editor's top bar."},{"piece",-1},{"index",0}});
+    }
     for(const auto& text:LightIssues(s))
         s.issues.push_back({{"severity","warning"},{"text",text},{"piece",-1},{"index",0}});
     if(DesignGeometryStale(s))s.issues.push_back({{"severity","warning"},{"text","Brushes changed since the last geometry build; press B in the design view."},{"piece",-1},{"index",0}});

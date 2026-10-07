@@ -584,6 +584,60 @@ Right-click an **alarm** for **When triggered, lock the selected doors, lifts an
 objective triggers**: the selected movers join its `MoversToLock` and the selected
 objective triggers its `ObjectiveTriggersToLock`, so they lock while it sounds.
 
+### Objectives for some lobby sizes
+
+An objective's sheet (and a zone's mission's, though not the top mission's) has
+**Minimum players** and **Maximum players**: the objective is only in matches
+whose lobby has that many players, counting both teams. A third laptop for 3v3
+only is Minimum 6; a shortcut objective for 1v1 and 2v2 only is Maximum 4; Any is
+no limit. The plan labels it, for example `objective Server Room [6+ players]`,
+and the status line says what the lobby sizes either side of the rule play, for
+example `4 players: 5 objectives, the spies need 3`.
+
+The editor's own **Properties** window (F4, or double-click the objective) has
+them too: while it shows one objective or zone mission, a strip under the filter
+box reads **Players in match: Min [Any] Max [Any]**. Picking a value applies it
+at once, in one Undo step; a minimum above the maximum moves the maximum up with
+it, and the other way round.
+
+The same choices are on the editor's own right-click menus: right-click an
+objective or a zone's mission in a viewport (or in the Connections list or
+graph) for **Players in Match**, which ticks the current rule and offers Every
+match, 2+, 4+, 6+ and 8+ players, Up to 2, 4 or 6 players, and **Custom...** for
+any range. A choice that leaves some lobby size with nothing to play says so
+straight away.
+
+### Rooms for bigger games: movers
+
+Movers (doors, lifts, sliding walls) take the same rule, so an author can build
+extra rooms that only open when the lobby is big enough: put a door at each way
+in and give it **6+ players**. Right-click the mover in a viewport for **Players
+in Match**, or set Min and Max in its Properties strip. Outside its range a mover
+is closed and locked as the match starts (as an alarm locks a door: its triggers
+and buttons do nothing); inside it, it works as built. Tick **Open at the start
+when in range** (in the menu, or **Opens at start** in the Properties strip) for a
+door or wall that should simply be out of the way in big games: it opens as the
+match starts and stays open. The host moves it and the game shows every player
+the same. Movers are not drawn on the Map Design plan.
+
+The first rule compiles a small script actor, `SPlayerCountRules0`, into the map
+package (one Undo step), as Character Skins does; clearing the last rule removes
+it. A map saved with the first version's `SObjectivePlayers0` keeps its rules: the
+next change moves them over. In game the host decides once, as the map loads and before the missions set
+up: the lobby's player count arrives in the map's URL (`NBPlayers`, which the game
+also keeps as `SGameInfo.PlayersToWait`), each objective outside its range comes
+out of its mission and is switched off the game's own way, which hides its
+terminals, bomb targets and flags, and a whole zone goes when it is left with
+none. A mission then asks for no more completions than its remaining objectives
+can give, and the top mission for as many fewer as its zones lost, so the match
+stays winnable. Players who join later do not change it.
+
+An editor Play Level has one player and no lobby, so it keeps every objective
+unless the **Play Level** list on the editor's top button bar, beside the Play
+Level and Story buttons, names a lobby size to test with ("Play Level: 6
+players"). It is saved with the map and real matches ignore it. The design check reports a lobby size that would leave the match with
+nothing to do as an error, and notes when Play Level is set to a count.
+
 ## 12. Gameplay elements
 
 Zip lines, hand-over-hand bars, pipes, ladders, climbable fences, poles and

@@ -150,8 +150,29 @@ Json ObjectiveActors()
         catch(const std::exception&){}
         item["name"]=name;
         if(kind=="Player start")item["team"]=StartTeam(actor);
-        if(kind=="Mission")item["objectives"]=NameList(actor,"Objectives");
+        if(kind=="Mission")
+        {
+            item["objectives"]=NameList(actor,"Objectives");
+            item["minimum"]=static_cast<int>(NumberProperty(actor,"MinimumObjectives",0));
+        }
         if(kind=="Objective")item["triggers"]=NameList(actor,"Triggers");
+        result.push_back(item);
+    }
+    return result;
+}
+// The missions alone, as ObjectiveActors lists them, for the objective player counts.
+// No player starts: reading a start's team can copy it, which selects it for a moment,
+// and the Properties window that asked would follow the selection to it and back.
+Json ObjectiveMissions()
+{
+    Json result=Json::array();
+    for(auto actor:LiveActors())
+    {
+        if(!IsA(actor,"SBase.SMission"))continue;
+        Json item=Identity(actor);
+        item["kind"]="Mission";
+        item["objectives"]=NameList(actor,"Objectives");
+        item["minimum"]=static_cast<int>(NumberProperty(actor,"MinimumObjectives",0));
         result.push_back(item);
     }
     return result;

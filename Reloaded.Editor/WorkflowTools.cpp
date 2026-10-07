@@ -7,6 +7,7 @@
 #include "EmitterLibraryWindow.h"
 #include "EditorExtras.h"
 #include "StoreyFilter.h"
+#include "PropertySearch.h"
 #include "UndoHistory.h"
 #include "FavoritesWindow.h"
 #include "LightingBudget.h"
@@ -28,6 +29,7 @@
 #include "MapDesignModel.h"
 #include "SecurityModel.h"
 #include "StageModel.h"
+#include "ObjectivePlayersModel.h"
 #include "EmitterPreview.h"
 #include "CharacterPreview.h"
 #include "MeasureTool.h"
@@ -66,6 +68,85 @@ namespace
         for(const auto& actor:actors)if(actor.at("path")==path)return actor;
         return {};
     }
+    // Objective player counts (ObjectivePlayersModel.h), shared by the native menus
+    // and Map Design: the missions (from ObjectiveMissions or ObjectiveActors) and the
+    // map's rules (from ObjectivePlayerRules) as the model plays them out. The menus and
+    // the Properties strip read ObjectiveMissions only: ObjectiveActors can select a
+    // player start to read its team, and the Properties window follows the selection.
+    ObjectivePlayers::Missions PlayerMissions(const Json& objectiveActors)
+    {
+        ObjectivePlayers::Missions missions;
+        for(const auto& actor:objectiveActors)
+        {
+            if(actor.value("kind",std::string())!="Mission")continue;
+            ObjectivePlayers::Mission mission;
+            for(const auto& reference:actor.value("objectives",Json::array()))
+                if(reference.is_string())mission.objectives.push_back(ObjectivePlayers::ReferencePath(reference.get<std::string>()));
+            mission.minimum=actor.value("minimum",0);
+            missions[ObjectivePlayers::Fold(actor.value("path",std::string()))]=mission;
+        }
+        return missions;
+    }
+    ObjectivePlayers::Rules PlayerRules(const Json& state)
+    {
+        ObjectivePlayers::Rules rules;
+        for(const auto& rule:state.value("rules",Json::array()))
+            rules[ObjectivePlayers::Fold(rule.value("path",std::string()))]={rule.value("min",0),rule.value("max",0)};
+        return rules;
+    }
+    // The top mission is the game mode's own: no rule may leave it out.
+    bool PlayerRuleAllowed(const Json& objectiveActors,const std::string& path)
+    {
+        if(!Editor::Compatible(path,"SBase.SMission"))return true;
+        const auto roots=ObjectivePlayers::Roots(PlayerMissions(objectiveActors));
+        return std::find(roots.begin(),roots.end(),ObjectivePlayers::Fold(path))==roots.end();
+    }
+    // The presets of the Players in Match submenu, by command.
+    const std::pair<UINT,ObjectivePlayers::Rule> kPlayerPresets[]={
+        {kObjectivePlayersFirst,{0,0}},{kObjectivePlayersFirst+1,{2,0}},{kObjectivePlayersFirst+2,{4,0}},{kObjectivePlayersFirst+3,{6,0}},
+        {kObjectivePlayersFirst+4,{8,0}},{kObjectivePlayersFirst+5,{0,2}},{kObjectivePlayersFirst+6,{0,4}},{kObjectivePlayersFirst+7,{0,6}}};
+    // Whether a mover's rule opens it inside its range.
+    bool PlayerOpen(const Json& state,const std::string& path)
+    {
+        for(const auto& rule:state.value("rules",Json::array()))
+            if(ObjectivePlayers::Fold(rule.value("path",std::string()))==ObjectivePlayers::Fold(path))return rule.value("open",false);
+        return false;
+    }
+    void PlayersMenu(HMENU menu,const std::string& path)
+    {
+        const auto actors=Editor::ObjectiveMissions();
+        if(!PlayerRuleAllowed(actors,path))return;
+        const auto state=Editor::ObjectivePlayerRules();
+        const auto rules=PlayerRules(state);
+        const auto found=rules.find(ObjectivePlayers::Fold(path));
+        const ObjectivePlayers::Rule current=found==rules.end()?ObjectivePlayers::Rule{}:found->second;
+        const bool mover=Editor::Compatible(path,"Mover");
+        auto sub=CreatePopupMenu();if(!sub)return;
+        if(mover)
+        {
+            AppendMenuA(sub,MF_STRING|MF_GRAYED,0,"Outside the range: closed and locked");
+            AppendMenuA(sub,MF_SEPARATOR,0,nullptr);
+        }
+        bool preset=false;
+        for(const auto& [command,rule]:kPlayerPresets)
+        {
+            const bool checked=rule==current;preset|=checked;
+            const auto label=ObjectivePlayers::Empty(rule)?std::string("&Every match"):
+                             rule.minimum?"&"+std::to_string(rule.minimum)+"+ players":"Up to &"+std::to_string(rule.maximum)+" players";
+            AppendMenuA(sub,MF_STRING|(checked?MF_CHECKED:0),command,label.c_str());
+            if(command==kObjectivePlayersFirst || command==kObjectivePlayersFirst+4)AppendMenuA(sub,MF_SEPARATOR,0,nullptr);
+        }
+        const auto custom=preset?std::string("&Custom..."):"&Custom ("+ObjectivePlayers::Short(current)+")...";
+        AppendMenuA(sub,MF_STRING|(preset?0:MF_CHECKED),kObjectivePlayersCustom,custom.c_str());
+        if(mover)
+        {
+            AppendMenuA(sub,MF_SEPARATOR,0,nullptr);
+            AppendMenuA(sub,MF_STRING|(PlayerOpen(state,path)?MF_CHECKED:0)|(ObjectivePlayers::Empty(current)?MF_GRAYED:0),kObjectivePlayersOpen,
+                        "&Open at the start when in range");
+        }
+        const auto title="&Players in Match ("+(ObjectivePlayers::Empty(current)?std::string("every match"):ObjectivePlayers::Short(current))+")";
+        AppendMenuA(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(sub),title.c_str());
+    }
     bool ObjectiveMenu(HMENU menu,const Json& owner)
     {
         if(owner.is_null())return false;
@@ -77,7 +158,14 @@ namespace
             AppendMenuA(menu,MF_STRING,kAddBombObjective,"Add SBombTargetObjectiveTrigger");
             AppendMenuA(menu,MF_STRING,kAddFlagObjective,"Add SFlag && SFlagDropZone");
         }
+        else if(Editor::Compatible(path,"Mover"))
+        {
+            // A mover takes a player count only: rooms that open in big games.
+            try{PlayersMenu(menu,path);}catch(const std::exception&){return false;}
+            return true;
+        }
         else return false;
+        try{PlayersMenu(menu,path);}catch(const std::exception&){ /* The objective items still work. */ }
         return true;
     }
     void AddObjective(UINT command,const Json& snapshot)
@@ -280,6 +368,168 @@ namespace
         name=fields[0].value;
         if(name.empty() || name.size()>120 || name.find_first_of("\r\n")!=std::string::npos) throw std::runtime_error("Enter a name between 1 and 120 characters."); return true;
     }
+    // Sets one objective's, zone mission's or mover's range (open: a mover opens inside
+    // it), and warns when the map's rules leave some lobby size with nothing to play.
+    void ApplyObjectivePlayers(const Json& identity,const ObjectivePlayers::Rule& rule,HWND owner,bool open=false)
+    {
+        Editor::SetObjectivePlayers(identity,rule.minimum,rule.maximum,open);
+        const auto actors=Editor::ObjectiveMissions();
+        std::map<std::string,std::string> names;
+        for(const auto& actor:actors)
+            if(actor.value("kind",std::string())=="Mission")
+            {
+                const auto missionPath=actor.value("path",std::string());
+                names[ObjectivePlayers::Fold(missionPath)]="mission "+missionPath.substr(missionPath.find('.')+1);
+            }
+        const auto problems=ObjectivePlayers::Problems(PlayerMissions(actors),PlayerRules(Editor::ObjectivePlayerRules()),names);
+        if(!problems.empty())
+        {
+            std::string text;for(const auto& problem:problems)text+=problem+"\n";
+            MessageBoxA(owner,(text+"\nGive another objective a wider range, or change this one back.").c_str(),"Players in Match",MB_OK|MB_ICONWARNING);
+        }
+    }
+    // A Players in Match choice from a right-click menu: a preset or a range asked
+    // for. (The count Play Level plays with is on the top bar: PlayLevelPlayers.h.)
+    void RunObjectivePlayers(UINT command,const Json& identity,HWND owner)
+    {
+        auto state=Editor::ObjectivePlayerRules();
+        const auto path=identity.at("path").get<std::string>();
+        if(!Editor::Compatible(path,"SBase.SObjective") && !Editor::Compatible(path,"Mover"))throw std::runtime_error("Select exactly one objective, zone mission or mover.");
+        if(!PlayerRuleAllowed(Editor::ObjectiveMissions(),path))throw std::runtime_error("The top mission is in every match: give its objectives or zones a player count instead.");
+        auto rules=PlayerRules(state);
+        ObjectivePlayers::Rule rule=rules.count(ObjectivePlayers::Fold(path))?rules.at(ObjectivePlayers::Fold(path)):ObjectivePlayers::Rule{};
+        bool open=PlayerOpen(state,path);
+        if(command==kObjectivePlayersOpen)
+        {
+            if(ObjectivePlayers::Empty(rule))throw std::runtime_error("Give the mover a player range first: it opens at the start only inside it.");
+            ApplyObjectivePlayers(identity,rule,owner,!open);
+            return;
+        }
+        bool chosen=false;
+        for(const auto& [id,preset]:kPlayerPresets)if(id==command){rule=preset;chosen=true;}
+        if(!chosen)
+        {
+            if(command!=kObjectivePlayersCustom)throw std::runtime_error("Invalid player count command.");
+            std::vector<InputField> fields={{"Minimum players (both teams)",ObjectivePlayers::ChoiceText(rule.minimum),ObjectivePlayers::Choices()},
+                                            {"Maximum players (both teams)",ObjectivePlayers::ChoiceText(rule.maximum),ObjectivePlayers::Choices()}};
+            if(!Ask(owner,"Players in Match",fields))return;
+            rule={ObjectivePlayers::ChoiceCount(fields[0].value),ObjectivePlayers::ChoiceCount(fields[1].value)};
+        }
+        ApplyObjectivePlayers(identity,rule,owner,open);
+    }
+    // The Players in Match strip of the editor's Properties windows (F4, double-click;
+    // PropertySearch.h): a row under the filter box while the window edits one
+    // objective, zone mission or mover. Min and Max set its rule as the menus do; a
+    // mover also has "Opens at start".
+    enum StripControl { kStripBack=0x5300,kStripLabel,kStripMinLabel,kStripMin,kStripMaxLabel,kStripMax,kStripOpen,kStripEnd };
+    constexpr int kStripHeight=28;
+    std::map<HWND,Json> playersStrips; // window -> the objective it shows
+    void StripSelect(HWND window,int id,const std::string& text)
+    {
+        const auto combo=GetDlgItem(window,id);
+        const LRESULT at=SendMessageA(combo,CB_FINDSTRINGEXACT,static_cast<WPARAM>(-1),reinterpret_cast<LPARAM>(text.c_str()));
+        SendMessageA(combo,CB_SETCURSEL,at==CB_ERR?0:at,0);
+    }
+    std::string StripText(HWND window,int id)
+    {
+        const auto combo=GetDlgItem(window,id);
+        const LRESULT at=SendMessageA(combo,CB_GETCURSEL,0,0);
+        if(at==CB_ERR)return {};
+        char text[64]{};SendMessageA(combo,CB_GETLBTEXT,at,reinterpret_cast<LPARAM>(text));
+        return text;
+    }
+    void StripFill(HWND window,const Json& subject)
+    {
+        const auto state=Editor::ObjectivePlayerRules();
+        const auto rules=PlayerRules(state);
+        const auto found=rules.find(ObjectivePlayers::Fold(subject.at("path").get<std::string>()));
+        const auto rule=found==rules.end()?ObjectivePlayers::Rule{}:found->second;
+        StripSelect(window,kStripMin,ObjectivePlayers::ChoiceText(rule.minimum));
+        StripSelect(window,kStripMax,ObjectivePlayers::ChoiceText(rule.maximum));
+        const auto path=subject.at("path").get<std::string>();
+        if(auto box=GetDlgItem(window,kStripOpen))
+        {
+            const bool mover=subject.value("mover",false);
+            ShowWindow(box,mover?SW_SHOWNA:SW_HIDE);
+            SendMessageA(box,BM_SETCHECK,PlayerOpen(state,path)?BST_CHECKED:BST_UNCHECKED,0);
+            EnableWindow(box,!ObjectivePlayers::Empty(rule));
+        }
+    }
+    void StripRemove(HWND window)
+    {
+        for(int id=kStripBack;id<kStripEnd;++id)if(auto control=GetDlgItem(window,id))DestroyWindow(control);
+        playersStrips.erase(window);
+    }
+    int StripUpdate(HWND window,const std::vector<uintptr_t>& objects)
+    {
+        Json subject;
+        try
+        {
+            if(objects.size()==1)subject=Editor::ObjectivePlayersSubject(objects[0]);
+            if(!subject.is_null() && !PlayerRuleAllowed(Editor::ObjectiveMissions(),subject.at("path").get<std::string>()))subject=Json();
+        }
+        catch(const std::exception&){subject=Json();}
+        if(subject.is_null()){StripRemove(window);return 0;}
+        if(!GetDlgItem(window,kStripBack))
+        {
+            const auto instance=reinterpret_cast<HINSTANCE>(GetWindowLongPtrA(window,GWLP_HINSTANCE));
+            const auto font=reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT));
+            auto make=[&](const char* type,const char* text,DWORD style,int id)
+            {
+                auto control=CreateWindowExA(0,type,text,WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS|style,0,0,10,10,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);
+                SendMessageA(control,WM_SETFONT,font,FALSE);
+                return control;
+            };
+            auto combo=[&](int id,const std::vector<std::string>& choices)
+            {
+                auto control=make("COMBOBOX","",CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP,id);
+                for(const auto& choice:choices)SendMessageA(control,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(choice.c_str()));
+            };
+            make("STATIC","",0,kStripBack);
+            make("STATIC"," Players in match:",SS_LEFT|SS_CENTERIMAGE,kStripLabel);
+            make("STATIC","Min",SS_RIGHT|SS_CENTERIMAGE,kStripMinLabel);
+            combo(kStripMin,ObjectivePlayers::Choices());
+            make("STATIC","Max",SS_RIGHT|SS_CENTERIMAGE,kStripMaxLabel);
+            combo(kStripMax,ObjectivePlayers::Choices());
+            make("BUTTON","Opens at start",BS_AUTOCHECKBOX|WS_TABSTOP,kStripOpen);
+            SetWindowPos(GetDlgItem(window,kStripBack),HWND_BOTTOM,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+        }
+        playersStrips[window]=subject;
+        try{StripFill(window,subject);}catch(const std::exception&){}
+        return kStripHeight;
+    }
+    void StripLayout(HWND window,int top,int width)
+    {
+        auto place=[&](int id,int x,int y,int w,int h){if(auto control=GetDlgItem(window,id))MoveWindow(control,x,y,w,h,TRUE);};
+        place(kStripBack,0,top,width,kStripHeight);
+        place(kStripLabel,0,top+3,100,21);
+        place(kStripMinLabel,100,top+3,24,21);
+        place(kStripMin,128,top+3,56,300);
+        place(kStripMaxLabel,186,top+3,28,21);
+        place(kStripMax,218,top+3,56,300);
+        place(kStripOpen,290,top+3,110,21);
+    }
+    bool StripCommand(HWND window,WPARAM w,LPARAM)
+    {
+        const int id=LOWORD(w);
+        if(id!=kStripMin && id!=kStripMax && id!=kStripOpen)return false;
+        if(id==kStripOpen?HIWORD(w)!=BN_CLICKED:HIWORD(w)!=CBN_SELCHANGE)return true;
+        const auto found=playersStrips.find(window);
+        if(found==playersStrips.end())return true;
+        const Json subject=found->second;
+        try
+        {
+            // A minimum above the maximum moves the other end with it, not an error.
+            ObjectivePlayers::Rule rule{ObjectivePlayers::ChoiceCount(StripText(window,kStripMin)),ObjectivePlayers::ChoiceCount(StripText(window,kStripMax))};
+            if(id!=kStripOpen && rule.minimum && rule.maximum && rule.minimum>rule.maximum)(id==kStripMin?rule.maximum:rule.minimum)=id==kStripMin?rule.minimum:rule.maximum;
+            const bool open=subject.value("mover",false) && SendMessageA(GetDlgItem(window,kStripOpen),BM_GETCHECK,0,0)==BST_CHECKED;
+            ApplyObjectivePlayers(subject,rule,window,open);
+        }
+        catch(const std::exception& e){MessageBoxA(window,e.what(),"Players in Match",MB_OK|MB_ICONERROR);}
+        try{StripFill(window,subject);}catch(const std::exception&){}
+        return true;
+    }
+    void StripClosed(HWND window){playersStrips.erase(window);}
     #include "MapDesignPanel.inl"
     struct TagPreviewText { std::string title,summary; Json* preview; bool ready=false; };
     void UpdateTagChecks(HWND window,TagPreviewText& data)
@@ -628,7 +878,7 @@ namespace
                 auto menu=CreatePopupMenu();if(!menu)throw std::runtime_error("Cannot open objective menu.");
                 ObjectiveMenu(menu,owner);POINT point{};GetCursorPos(&point);
                 auto choice=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,point.x,point.y,0,s.window,nullptr);DestroyMenu(menu);
-                if(choice){AddObjective(choice,snapshot);Populate(s);}
+                if(choice){RunObjectiveCommand(choice,snapshot);Populate(s);}
             }
             else Activate(s);
             return;
@@ -811,6 +1061,8 @@ namespace
     {
         bool objective=false;for(UINT id=kAddObjective;id<=kAddFlagObjective;++id)
             if(GetMenuState(menu,id,MF_BYCOMMAND)!=UINT(-1))objective=true;
+        for(UINT id=kObjectivePlayersFirst;id<=kObjectivePlayersLast;++id)
+            if(GetMenuState(menu,id,MF_BYCOMMAND)!=UINT(-1))objective=true;
         if(!objective)return previousTrackMenu(menu,flags,x,y,reserved,window,rect);
         try
         {
@@ -823,6 +1075,10 @@ namespace
             if(result>=kAddObjective && result<=kAddFlagObjective)
             {
                 AddObjective(result,snapshot);return (flags&TPM_RETURNCMD)?0:TRUE;
+            }
+            if(result>=kObjectivePlayersFirst && result<=kObjectivePlayersLast)
+            {
+                RunObjectivePlayers(result,owner,window);return (flags&TPM_RETURNCMD)?0:TRUE;
             }
             if(flags&TPM_RETURNCMD)return result;
             if(result && !(flags&TPM_NONOTIFY))PostMessage(window,WM_COMMAND,MAKEWPARAM(result,0),0);
@@ -954,6 +1210,11 @@ Json AskDetails(HWND owner,const Json& entry,const char* title,const Json& choic
 }
 void RunObjectiveCommand(UINT command,const Json& snapshot)
 {
+    if(command>=kObjectivePlayersFirst && command<=kObjectivePlayersLast)
+    {
+        RunObjectivePlayers(command,snapshot.at("actor"),GetActiveWindow());
+        return;
+    }
     if(command<kAddObjective || command>kAddFlagObjective)throw std::runtime_error("Invalid objective command.");
     AddObjective(command,snapshot);
 }
@@ -996,6 +1257,16 @@ bool HandleCommand(UINT command)
             AddObjective(command,Editor::InspectActor(owner));
         }
         catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Add Objective / Trigger",MB_OK|MB_ICONERROR);}
+        return true;
+    }
+    if(command>=kObjectivePlayersFirst && command<=kObjectivePlayersLast)
+    {
+        try
+        {
+            auto owner=ObjectiveOwner();if(owner.is_null())throw std::runtime_error("Select exactly one objective or zone mission.");
+            RunObjectivePlayers(command,owner,GetActiveWindow());
+        }
+        catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Players in Match",MB_OK|MB_ICONERROR);}
         return true;
     }
     if(command==MapUsagesWindow::kFindMaterial || command==MapUsagesWindow::kFindMesh)
@@ -1109,6 +1380,8 @@ void RenameActorTag(HWND owner,std::string path,std::string type)
 void Initialize()
 {
     Editor::Initialize();
+    PropertySearch::Strip strip;strip.update=StripUpdate;strip.layout=StripLayout;strip.command=StripCommand;strip.closed=StripClosed;
+    PropertySearch::SetStrip(strip);
     INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_LISTVIEW_CLASSES}; InitCommonControlsEx(&controls);
     previousLoadMenu=*reinterpret_cast<LoadMenuFn*>(0x11AF23F0);
     auto hook=&LoadMenuHook; MemoryWriter::WriteBytes(0x11AF23F0,&hook,sizeof(hook));
@@ -1116,6 +1389,17 @@ void Initialize()
     auto track=&TrackMenuHook;MemoryWriter::WriteBytes(0x11af23c0,&track,sizeof(track));
     MemoryWriter::WriteJump(0x10e045e9,reinterpret_cast<void(*)()>(&VertexClickHook));
 }
+}
+
+// Requests the bridge below does not take itself: its else-if chain is at the
+// compiler's nesting limit (C1061), so newer features add theirs here.
+static Workflow::Json MoreWorkflowRequests(const std::string& op,const Workflow::Json& q)
+{
+    using namespace Workflow;
+    if(op=="objectiveplayers.state") return Editor::ObjectivePlayerRules();
+    if(op=="objectiveplayers.set") return Editor::SetObjectivePlayers(q.at("objective"),q.value("min",0),q.value("max",0),q.value("open",false));
+    if(op=="objectiveplayers.playlevel") return Editor::SetObjectivePlayLevelPlayers(q.value("players",0));
+    throw std::runtime_error("Unknown workflow request.");
 }
 
 // JSON bridge used by the isolated native integration probe. Calls must be made
@@ -1263,7 +1547,7 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="skins.remove") {Editor::RemoveCharacterSkins();result=Editor::CharacterSkinSettings();}
         else if(op=="characters.camera"){if(q.contains("camera"))CharacterPreview::SetCamera(q.at("camera"));result=CharacterPreview::Camera();}
         else if(op=="map") result={{"key",Editor::MapKey()},{"level",Editor::LevelPath()}};
-        else throw std::runtime_error("Unknown workflow request.");
+        else result=MoreWorkflowRequests(op,q);
         auto text=Json({{"ok",true},{"result",result}}).dump(); if(text.size()+1>capacity) return -static_cast<int>(text.size()+1);
         memcpy(output,text.c_str(),text.size()+1); return 1;
     }
