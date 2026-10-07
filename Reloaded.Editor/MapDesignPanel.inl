@@ -142,6 +142,9 @@ struct DesignState
     // Whether built BSP still matches the brushes, from the build counter.
     unsigned long builds=0;
     unsigned builtRevision=0;
+    // Editor::Revision when the selection flags were last read: a change
+    // that only selects updates the flags instead of reading the map again.
+    unsigned selectionRevision=0;
     // Workspace edits (annotations, references, guides, layers) have their own
     // history, used when they were the most recent thing that changed.
     std::vector<Json> workspaceUndo,workspaceRedo;
@@ -318,7 +321,7 @@ void DesignSave(DesignState& s,const Json& data,bool record=true)
         s.workspaceUndo.push_back(s.data);
         if(s.workspaceUndo.size()>50)s.workspaceUndo.erase(s.workspaceUndo.begin());
         s.workspaceRedo.clear();
-        s.workspaceRevision=Editor::Revision();
+        s.workspaceRevision=Editor::ContentRevision();
     }
     Json next=document;
     next["maps"][mapKey]["design"]=data;
@@ -684,7 +687,8 @@ void DesignRefresh(DesignState& s)
         {
             // Tried at this revision: the timer waits for the next change
             // instead of reading the whole map again every tick.
-            s.revision=Editor::Revision();
+            s.revision=Editor::ContentRevision();
+            s.selectionRevision=Editor::Revision();
             throw;
         }
         s.scene=std::move(scene);
@@ -698,7 +702,8 @@ void DesignRefresh(DesignState& s)
     for(size_t i=0;i<s.scene.size();++i)s.sceneIndex[s.scene[i].at("path").get<std::string>()]=i;
     // The tally is by place in the scene, so a new scene needs a new one.
     s.typeRevision=~0u;
-    s.revision=Editor::Revision();
+    s.revision=Editor::ContentRevision();
+    s.selectionRevision=Editor::Revision();
     try{s.securityActors=Editor::SecurityActors();}catch(const std::exception&){s.securityActors=Json::array();}
     try{s.lights=Editor::Lights();}catch(const std::exception&){s.lights=Json::array();}
     try{s.objectives=Editor::ObjectiveActors();}catch(const std::exception&){s.objectives=Json::array();}
@@ -717,6 +722,38 @@ void DesignRefresh(DesignState& s)
     DesignVerifyActive(s);
     SheetRefreshLater(s);
     InvalidateRect(s.canvas,nullptr,FALSE);
+}
+// Only the selection changed (a click in a viewport, Select All and the
+// like): the lists the panel holds take the new flags, and the scene, hulls
+// and actor lists are not read again. On a large map that read takes seconds.
+void DesignSyncSelection(DesignState& s)
+{
+    const auto paths=Editor::SelectedActorPaths();
+    const std::set<std::string> selected(paths.begin(),paths.end());
+    auto mark=[&](Json& list)
+    {
+        for(auto& item:list)
+        {
+            if(!item.is_object())continue;
+            const auto path=item.find("path"),flag=item.find("selected");
+            if(path==item.end() || flag==item.end() || !path->is_string())continue;
+            *flag=selected.count(path->get_ref<const std::string&>())!=0;
+        }
+    };
+    mark(s.scene);mark(s.securityActors);mark(s.lights);mark(s.objectives);mark(s.stageActors);
+    s.selectionRevision=Editor::Revision();
+    SecurityRefreshList(s);
+    StageRefreshList(s);
+    SceneRefreshList(s);
+    SheetRefreshLater(s);
+    InvalidateRect(s.canvas,nullptr,FALSE);
+}
+// Brings the panel up to date with the map: a full read after an edit, the
+// selection flags alone after a change that only selects.
+void DesignCatchUp(DesignState& s)
+{
+    if(s.epoch!=mapEpoch || s.revision!=Editor::ContentRevision())DesignRefresh(s);
+    else if(s.selectionRevision!=Editor::Revision())DesignSyncSelection(s);
 }
 void DesignFit(DesignState& s)
 {
@@ -2200,7 +2237,7 @@ void DesignSelectAll(DesignState& s)
         if(DesignShows(s,actor) && !DesignLockedPath(s,actor.at("path").get<std::string>()))all.push_back(actor);
     if(all.empty())throw std::runtime_error("Nothing to select on this storey.");
     Editor::Select(all,false);
-    DesignRefresh(s);
+    DesignCatchUp(s);
     InvalidateRect(s.canvas,nullptr,FALSE);
     DesignStatus(s,"Selected "+std::to_string(all.size())+" actor(s) shown on this storey; locked ones were skipped. Ctrl+C copies the pieces among them, Delete removes them.");
 }
@@ -2332,13 +2369,13 @@ void DesignCommand(DesignState& s,int id)
         // Workspace edits first, when nothing in the map changed after them.
         auto& from=id==DUndo?s.workspaceUndo:s.workspaceRedo;
         auto& to=id==DUndo?s.workspaceRedo:s.workspaceUndo;
-        if(!from.empty() && Editor::Revision()==s.workspaceRevision)
+        if(!from.empty() && Editor::ContentRevision()==s.workspaceRevision)
         {
             Json restored=from.back();
             from.pop_back();
             to.push_back(s.data);
             DesignSave(s,restored,false);
-            s.workspaceRevision=Editor::Revision();
+            s.workspaceRevision=Editor::ContentRevision();
             s.images.clear();
             InvalidateRect(s.canvas,nullptr,FALSE);
             DesignStatus(s,id==DUndo?"Undid the last annotation, reference, guide or layer change.":"Redid the last workspace change.");
@@ -2369,7 +2406,7 @@ void DesignCommand(DesignState& s,int id)
         try{DesignOrderPiecesLast(s);}catch(const std::exception&){}
         Editor::BuildGeometry();
         s.builds=Editor::GeometryBuilds();
-        s.builtRevision=Editor::Revision();
+        s.builtRevision=Editor::ContentRevision();
         DesignRefresh(s);
         DesignStatus(s,std::string("Geometry rebuilt. ")+(repaired?std::to_string(repaired)+" stair brush(es) had their flags repaired first. ":"")+"Lighting is not rebuilt here; use Build > Rebuild Lighting when the layout settles.");
         return;
@@ -2764,7 +2801,7 @@ void DesignPick(DesignState& s,double x,double y,bool add)
     }
     else if(!add)identities=Json::array();
     Editor::Select(identities,false);
-    DesignRefresh(s);
+    DesignCatchUp(s);
     if(selected.is_null() && !add)DesignStatus(s,"Nothing to select here. Click a brush edge, a light, a device or a game actor; drag to box-select.");
     // Clicking a generated brush picks up its whole piece for editing.
     auto piece=DesignSelectedPiece(s);
@@ -2872,7 +2909,7 @@ void DesignBoxSelect(DesignState& s,const DesignDrag& drag,bool add)
             push(actor);++others;
         }
     Editor::Select(identities,false);
-    DesignRefresh(s);
+    DesignCatchUp(s);
     const std::string hint=crossing?" Hold Alt while dragging to select only what lies wholly inside.":" Without Alt, the rectangle selects anything it touches.";
     if(pieces+brushes+others==0)
     {
@@ -3095,7 +3132,7 @@ void DesignPlaytest(DesignState& s,int choice,const Pose& pose)
 }
 bool DesignGeometryStale(DesignState& s)
 {
-    return Editor::Revision()!=s.builtRevision;
+    return Editor::ContentRevision()!=s.builtRevision;
 }
 // Design check: the model's layout issues for the pieces still in the map,
 // plus what a Versus map needs before it can be played at all.
@@ -3300,7 +3337,7 @@ LRESULT CALLBACK DesignCheckProc(HWND window,UINT message,WPARAM w,LPARAM l)
             const auto index=issue.at("index").get<size_t>();
             if(index>=pieces.size())return 0;
             Editor::Select(pieces[index].at("members"),true);
-            DesignRefresh(*s);
+            DesignCatchUp(*s);
             DesignActivate(*s,pieces[index]);
             return 0;
         }
@@ -3905,7 +3942,7 @@ void DesignEndDrag(DesignState& s,bool add)
         if(!drag.moved)
         {
             Editor::Select(Json::array({drag.device}),false);
-            DesignRefresh(s);
+            DesignCatchUp(s);
             if(!s.pending.is_null())DesignDeactivate(s);
             SheetShowLight(s,drag.device);
             DesignStatus(s,"Selected "+SecurityName(drag.device)+". Edit it in the panel; drag it to move it, drag its rim to set the reach.");
@@ -3921,7 +3958,7 @@ void DesignEndDrag(DesignState& s,bool add)
         if(!drag.moved)
         {
             Editor::Select(Json::array({drag.device}),false);
-            DesignRefresh(s);
+            DesignCatchUp(s);
             if(!s.pending.is_null())DesignDeactivate(s);
             if(drag.device.contains("kind"))SheetShowDevice(s,drag.device);
             else SheetShowLight(s,drag.device);
@@ -4681,7 +4718,7 @@ void DesignContextMenu(DesignState& s,POINT at)
     if(choice==DCtxSelectDevice)
     {
         Editor::Select(Json::array({device}),true);
-        DesignRefresh(s);
+        DesignCatchUp(s);
         DesignStatus(s,"Selected "+SecurityName(device)+" in the editor. Its properties are in the editor's property window.");
         return;
     }
@@ -4713,7 +4750,7 @@ void DesignContextMenu(DesignState& s,POINT at)
     if(choice==DCtxSelectObjective)
     {
         Editor::Select(Json::array({gameActor}),true);
-        DesignRefresh(s);
+        DesignCatchUp(s);
         DesignStatus(s,"Selected "+ObjectiveLabel(gameActor)+" in the editor; its name and settings are in the property window.");
         return;
     }
@@ -4735,7 +4772,7 @@ void DesignContextMenu(DesignState& s,POINT at)
     if(choice==DCtxSelectLight)
     {
         Editor::Select(Json::array({light}),true);
-        DesignRefresh(s);
+        DesignCatchUp(s);
         DesignStatus(s,"Selected "+SecurityName(light)+" in the editor.");
         return;
     }
@@ -4825,7 +4862,7 @@ void DesignContextMenu(DesignState& s,POINT at)
         if(s.previous.is_null() || s.previous.at("members")!=piece.at("members"))
         {
             Editor::Select(piece.at("members"),false);
-            DesignRefresh(s);
+            DesignCatchUp(s);
             DesignActivate(s,piece);
         }
         DesignTurn(s,choice==DCtxTurnCW?90:-90);
@@ -4835,7 +4872,7 @@ void DesignContextMenu(DesignState& s,POINT at)
     if(choice==DCtxEditPiece || choice==DCtxSelectPiece)
     {
         Editor::Select(piece.at("members"),choice==DCtxSelectPiece);
-        DesignRefresh(s);
+        DesignCatchUp(s);
         if(choice==DCtxEditPiece)
         {
             DesignActivate(s,piece);
@@ -4871,7 +4908,7 @@ void DesignContextMenu(DesignState& s,POINT at)
             Json identities=Json::array();
             for(const auto& actor:s.scene)if(paths.count(actor.at("path").get<std::string>()))identities.push_back(actor);
             Editor::Select(identities,false);
-            DesignRefresh(s);
+            DesignCatchUp(s);
         }
         if(choice==DCtxCopyPiece)DesignCopy(s);else DesignDuplicate(s);
         return;
@@ -4965,7 +5002,7 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             if(GetCapture()==window)ReleaseCapture();
             // The menu describes what is there now, even if the timer has not
             // caught up with an edit made elsewhere.
-            if(s->drag.kind==DesignDrag::Kind::None && (s->epoch!=mapEpoch || s->revision!=Editor::Revision()))DesignRefresh(*s);
+            if(s->drag.kind==DesignDrag::Kind::None)DesignCatchUp(*s);
             if(!s->mode.empty() || s->drag.kind!=DesignDrag::Kind::None)
             {
                 // Right-click ends whatever is being placed or dragged.
@@ -5170,7 +5207,7 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             Sync();
             // A click after the map or its revision changed elsewhere first
             // catches the panel up, then still counts as a click.
-            if(s->epoch!=mapEpoch || s->revision!=Editor::Revision())DesignRefresh(*s);
+            DesignCatchUp(*s);
             DesignUpdateGrid(*s);
             POINT at{GET_X_LPARAM(l),GET_Y_LPARAM(l)};
             auto p=DesignSnap(*s,DesignWorld(*s,at.x,at.y));
@@ -5351,7 +5388,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             Control(window,"BUTTON","Overlays",BS_AUTOCHECKBOX,DOverlays,290,12,70,25);
             SendDlgItemMessage(window,DOverlays,BM_SETCHECK,BST_CHECKED,0);
             s->builds=Editor::GeometryBuilds();
-            s->builtRevision=Editor::Revision();
+            s->builtRevision=Editor::ContentRevision();
             // The menu bar holds every action; the side panel keeps the everyday
             // ones, and the right-click menu offers what applies at a point.
             HMENU bar=CreateMenu();
@@ -5548,13 +5585,14 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
             Sync();
             // Not in the middle of a drag: the drag holds on to the scene it
             // started from, and the end of it refreshes anyway.
-            if(s->epoch!=mapEpoch || (s->drag.kind==DesignDrag::Kind::None && s->revision!=Editor::Revision()))DesignRefresh(*s);
+            if(s->epoch!=mapEpoch)DesignRefresh(*s);
+            else if(s->drag.kind==DesignDrag::Kind::None)DesignCatchUp(*s);
             // A finished geometry build makes the current brushes the built ones.
             const auto builds=Editor::GeometryBuilds();
             if(builds!=s->builds)
             {
                 s->builds=builds;
-                s->builtRevision=Editor::Revision();
+                s->builtRevision=Editor::ContentRevision();
                 InvalidateRect(s->canvas,nullptr,FALSE);
             }
             return 0;
@@ -5616,7 +5654,7 @@ Json DesignView()
             {"depth",s->depth},{"snap",s->snap},{"status",Text(s->status)},
             {"stale",DesignGeometryStale(*s)},{"issues",s->issues.size()},
             {"badge",s->hoverPiece.is_null()?Json{}:Json{{"x",s->hoverAt.x},{"y",s->hoverAt.y},{"wall",s->hoverWall}}},
-            {"followed",s->followed},{"epoch",s->epoch},{"mapEpoch",mapEpoch},{"revision",s->revision},{"editorRevision",Editor::Revision()},
+            {"followed",s->followed},{"epoch",s->epoch},{"mapEpoch",mapEpoch},{"revision",s->revision},{"editorRevision",Editor::ContentRevision()},
             {"mode",s->mode},{"drag",static_cast<int>(s->drag.kind)},{"floorFilter",s->floorFilter},{"pending",!s->pending.is_null()}};
 }
 void OpenDesign(HWND owner)
