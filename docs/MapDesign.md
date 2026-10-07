@@ -596,16 +596,16 @@ example `4 players: 5 objectives, the spies need 3`.
 
 The editor's own **Properties** window (F4, or double-click the objective) has
 them too: while it shows one objective or zone mission, a strip under the filter
-box reads **Players in match: Min [Any] Max [Any]** and **Play Level as [Every
-objective]**. Picking a value applies it at once, in one Undo step; a minimum
-above the maximum moves the maximum up with it, and the other way round.
+box reads **Players in match: Min [Any] Max [Any]**. Picking a value applies it
+at once, in one Undo step; a minimum above the maximum moves the maximum up with
+it, and the other way round.
 
 The same choices are on the editor's own right-click menus: right-click an
 objective or a zone's mission in a viewport (or in the Connections list or
 graph) for **Players in Match**, which ticks the current rule and offers Every
-match, 2+, 4+, 6+ and 8+ players, Up to 2, 4 or 6 players, **Custom...** for any
-range, and **Play Level as...**. A choice that leaves some lobby size with
-nothing to play says so straight away.
+match, 2+, 4+, 6+ and 8+ players, Up to 2, 4 or 6 players, and **Custom...** for
+any range. A choice that leaves some lobby size with nothing to play says so
+straight away.
 
 The first rule compiles a small script actor, `SObjectivePlayers0`, into the map
 package (one Undo step), as Character Skins does; clearing the last rule removes
@@ -619,8 +619,9 @@ can give, and the top mission for as many fewer as its zones lost, so the match
 stays winnable. Players who join later do not change it.
 
 An editor Play Level has one player and no lobby, so it keeps every objective
-unless **Play Level as (players)** on any objective's sheet names a lobby size to
-test with. The design check reports a lobby size that would leave the match with
+unless the **Play Level** list on the editor's top button bar, beside the Play
+Level and Story buttons, names a lobby size to test with ("Play Level: 6
+players"). It is saved with the map and real matches ignore it. The design check reports a lobby size that would leave the match with
 nothing to do as an error, and notes when Play Level is set to a count.
 
 ## 12. Gameplay elements

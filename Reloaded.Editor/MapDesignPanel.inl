@@ -3268,7 +3268,7 @@ void DesignCheck(DesignState& s)
         for(const auto& text:ObjectivePlayers::Problems(ObjectiveMissions(s),ObjectiveRules(s),names))
             s.issues.push_back({{"severity","error"},{"text",text},{"piece",-1},{"index",0}});
         if(const int players=s.objectivePlayers.value("playLevel",0))
-            s.issues.push_back({{"severity","info"},{"text","Play Level plays the map as a "+std::to_string(players)+"-player match ("+ObjectivePlayers::Summary(ObjectiveMissions(s),ObjectiveRules(s),players)+"); set it back to Every objective on any objective's sheet."},{"piece",-1},{"index",0}});
+            s.issues.push_back({{"severity","info"},{"text","Play Level plays the map as a "+std::to_string(players)+"-player match ("+ObjectivePlayers::Summary(ObjectiveMissions(s),ObjectiveRules(s),players)+"); set it back to every objective with the Play Level list on the editor's top bar."},{"piece",-1},{"index",0}});
     }
     for(const auto& text:LightIssues(s))
         s.issues.push_back({{"severity","warning"},{"text",text},{"piece",-1},{"index",0}});

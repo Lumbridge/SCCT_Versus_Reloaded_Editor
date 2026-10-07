@@ -194,10 +194,6 @@ void SheetShowGameActor(DesignState& s,const Json& actor)
         const auto rule=ObjectiveRule(s,actor.value("path",std::string()));
         fields.push_back({"minPlayers","Minimum players",ObjectivePlayers::ChoiceText(rule.minimum),ObjectivePlayers::Choices()});
         fields.push_back({"maxPlayers","Maximum players",ObjectivePlayers::ChoiceText(rule.maximum),ObjectivePlayers::Choices()});
-        auto counts=ObjectivePlayers::Choices();
-        counts.front()="Every objective";
-        const int playLevel=s.objectivePlayers.value("playLevel",0);
-        fields.push_back({"playLevel","Play Level as (players)",playLevel?std::to_string(playLevel):counts.front(),counts});
     }
     SheetBuild(s,"actor",actor,ObjectiveLabel(actor)+ObjectivePlayersTag(s,actor),fields,{"Select in editor"});
     std::string text=ObjectiveLabel(actor)+" faces "+Design::Round(ObjectiveYaw(actor)*360.0/65536)
@@ -409,18 +405,6 @@ void SheetApply(DesignState& s)
             s.sheet.shown=values;
             DesignRefresh(s);
             DesignStatus(s,SheetPlayersStatus(s,subject));
-            return;
-        }
-        if(values.count("playLevel") && values["playLevel"]!=s.sheet.shown["playLevel"])
-        {
-            const int players=values["playLevel"]=="Every objective"?0:ObjectivePlayers::ChoiceCount(values["playLevel"]);
-            try{Editor::SetObjectivePlayLevelPlayers(players);}
-            catch(const std::exception& e){DesignStatus(s,e.what());SheetRefreshLater(s);return;}
-            s.sheet.shown=values;
-            DesignRefresh(s);
-            DesignStatus(s,players?"Play Level now plays the map as a "+std::to_string(players)+"-player match: objectives for other lobby sizes are left out. "
-                                    +ObjectivePlayers::Summary(ObjectiveMissions(s),ObjectiveRules(s),players)+".":
-                                   std::string("Play Level now keeps every objective. Real matches still use the lobby's player count."));
             return;
         }
         Pose pose{subject.at("position").get<Vector>(),subject.at("rotation").get<Rotation>()};

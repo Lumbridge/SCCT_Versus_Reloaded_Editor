@@ -125,10 +125,6 @@ namespace
         }
         const auto custom=preset?std::string("&Custom..."):"&Custom ("+ObjectivePlayers::Short(current)+")...";
         AppendMenuA(sub,MF_STRING|(preset?0:MF_CHECKED),kObjectivePlayersCustom,custom.c_str());
-        AppendMenuA(sub,MF_SEPARATOR,0,nullptr);
-        const int playLevel=state.value("playLevel",0);
-        const auto test="&Play Level as... ("+(playLevel?std::to_string(playLevel)+" players":std::string("every objective"))+")";
-        AppendMenuA(sub,MF_STRING,kPlayLevelPlayers,test.c_str());
         const auto title="&Players in Match ("+(ObjectivePlayers::Empty(current)?std::string("every match"):ObjectivePlayers::Short(current))+")";
         AppendMenuA(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(sub),title.c_str());
     }
@@ -367,20 +363,11 @@ namespace
             MessageBoxA(owner,(text+"\nGive another objective a wider range, or change this one back.").c_str(),"Players in Match",MB_OK|MB_ICONWARNING);
         }
     }
-    // A Players in Match choice from a right-click menu: a preset, a range asked
-    // for, or the count an editor Play Level plays the map with.
+    // A Players in Match choice from a right-click menu: a preset or a range asked
+    // for. (The count Play Level plays with is on the top bar: PlayLevelPlayers.h.)
     void RunObjectivePlayers(UINT command,const Json& identity,HWND owner)
     {
         auto state=Editor::ObjectivePlayerRules();
-        if(command==kPlayLevelPlayers)
-        {
-            auto counts=ObjectivePlayers::Choices();counts.front()="Every objective";
-            const int now=state.value("playLevel",0);
-            std::vector<InputField> fields={{"Play Level plays the map as (players)",now?std::to_string(now):counts.front(),counts}};
-            if(!Ask(owner,"Play Level Player Count",fields))return;
-            Editor::SetObjectivePlayLevelPlayers(fields[0].value==counts.front()?0:ObjectivePlayers::ChoiceCount(fields[0].value));
-            return;
-        }
         const auto path=identity.at("path").get<std::string>();
         if(!Editor::Compatible(path,"SBase.SObjective"))throw std::runtime_error("Select exactly one objective or zone mission.");
         if(!PlayerRuleAllowed(Editor::ObjectiveMissions(),path))throw std::runtime_error("The top mission is in every match: give its objectives or zones a player count instead.");
@@ -399,13 +386,11 @@ namespace
         ApplyObjectivePlayers(identity,rule,owner);
     }
     // The Players in Match strip of the editor's Properties windows (F4, double-click;
-    // PropertySearch.h): two rows under the filter box while the window edits one
-    // objective or zone mission. Min and Max set its rule as the menus do; Play Level
-    // as is the map's count for an editor Play Level.
-    enum StripControl { kStripBack=0x5300,kStripLabel,kStripMinLabel,kStripMin,kStripMaxLabel,kStripMax,kStripTestLabel,kStripTest,kStripEnd };
-    constexpr int kStripHeight=54;
+    // PropertySearch.h): a row under the filter box while the window edits one
+    // objective or zone mission. Min and Max set its rule as the menus do.
+    enum StripControl { kStripBack=0x5300,kStripLabel,kStripMinLabel,kStripMin,kStripMaxLabel,kStripMax,kStripEnd };
+    constexpr int kStripHeight=28;
     std::map<HWND,Json> playersStrips; // window -> the objective it shows
-    std::vector<std::string> PlayLevelChoices(){auto counts=ObjectivePlayers::Choices();counts.front()="Every objective";return counts;}
     void StripSelect(HWND window,int id,const std::string& text)
     {
         const auto combo=GetDlgItem(window,id);
@@ -428,8 +413,6 @@ namespace
         const auto rule=found==rules.end()?ObjectivePlayers::Rule{}:found->second;
         StripSelect(window,kStripMin,ObjectivePlayers::ChoiceText(rule.minimum));
         StripSelect(window,kStripMax,ObjectivePlayers::ChoiceText(rule.maximum));
-        const int playLevel=state.value("playLevel",0);
-        StripSelect(window,kStripTest,playLevel?std::to_string(playLevel):PlayLevelChoices().front());
     }
     void StripRemove(HWND window)
     {
@@ -467,8 +450,6 @@ namespace
             combo(kStripMin,ObjectivePlayers::Choices());
             make("STATIC","Max",SS_RIGHT|SS_CENTERIMAGE,kStripMaxLabel);
             combo(kStripMax,ObjectivePlayers::Choices());
-            make("STATIC"," Play Level as:",SS_LEFT|SS_CENTERIMAGE,kStripTestLabel);
-            combo(kStripTest,PlayLevelChoices());
             SetWindowPos(GetDlgItem(window,kStripBack),HWND_BOTTOM,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
         }
         playersStrips[window]=subject;
@@ -484,31 +465,21 @@ namespace
         place(kStripMin,128,top+3,56,300);
         place(kStripMaxLabel,186,top+3,28,21);
         place(kStripMax,218,top+3,56,300);
-        place(kStripTestLabel,0,top+29,100,21);
-        place(kStripTest,128,top+29,146,300);
     }
     bool StripCommand(HWND window,WPARAM w,LPARAM)
     {
         const int id=LOWORD(w);
-        if(id!=kStripMin && id!=kStripMax && id!=kStripTest)return false;
+        if(id!=kStripMin && id!=kStripMax)return false;
         if(HIWORD(w)!=CBN_SELCHANGE)return true;
         const auto found=playersStrips.find(window);
         if(found==playersStrips.end())return true;
         const Json subject=found->second;
         try
         {
-            if(id==kStripTest)
-            {
-                const auto text=StripText(window,kStripTest);
-                Editor::SetObjectivePlayLevelPlayers(text==PlayLevelChoices().front()?0:ObjectivePlayers::ChoiceCount(text));
-            }
-            else
-            {
-                // A minimum above the maximum moves the other end with it, not an error.
-                ObjectivePlayers::Rule rule{ObjectivePlayers::ChoiceCount(StripText(window,kStripMin)),ObjectivePlayers::ChoiceCount(StripText(window,kStripMax))};
-                if(rule.minimum && rule.maximum && rule.minimum>rule.maximum)(id==kStripMin?rule.maximum:rule.minimum)=id==kStripMin?rule.minimum:rule.maximum;
-                ApplyObjectivePlayers(subject,rule,window);
-            }
+            // A minimum above the maximum moves the other end with it, not an error.
+            ObjectivePlayers::Rule rule{ObjectivePlayers::ChoiceCount(StripText(window,kStripMin)),ObjectivePlayers::ChoiceCount(StripText(window,kStripMax))};
+            if(rule.minimum && rule.maximum && rule.minimum>rule.maximum)(id==kStripMin?rule.maximum:rule.minimum)=id==kStripMin?rule.minimum:rule.maximum;
+            ApplyObjectivePlayers(subject,rule,window);
         }
         catch(const std::exception& e){MessageBoxA(window,e.what(),"Players in Match",MB_OK|MB_ICONERROR);}
         try{StripFill(window,subject);}catch(const std::exception&){}

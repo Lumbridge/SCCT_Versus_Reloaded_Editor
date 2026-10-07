@@ -189,7 +189,7 @@ inline void Prune(Outcome& out, const Rules& rules, const std::string& key, int 
     auto& self = out.missions.at(key);
     if (self.minimum > 0)
     {
-        self.minimum = std::min(self.minimum - fewer, capacity);
+        self.minimum = (std::min)(self.minimum - fewer, capacity);
         if (self.minimum < 1 && !self.objectives.empty()) self.minimum = 1;
         if (self.minimum < 0) self.minimum = 0;
     }

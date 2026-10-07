@@ -6,6 +6,7 @@
 #include "WorkflowEditor.h"
 #include "GEKeybindSwap.h"
 #include "LevelSnapshot.h"
+#include "PlayLevelPlayers.h"
 #include "SelfUpdater.h"
 #include "Version.h"
 #include "logger.h"
@@ -101,6 +102,7 @@ namespace
     void Tick()
     {
         EditorConfigBits::Apply();
+        PlayLevelPlayers::Attach(frameWindow);
         static bool reported = false;
         if (!InstallMenus() && !reported)
         {
@@ -251,6 +253,8 @@ namespace
             EditorConfigBits::Apply();
             installStep = "LevelSnapshot::Attach";
             LevelSnapshot::Attach(frameWindow);
+            installStep = "PlayLevelPlayers::Attach";
+            PlayLevelPlayers::Attach(frameWindow); // retried on the tick if the bar is not there yet
             installStep = "SetWindowSubclass";
             if (!SetWindowSubclass(frameWindow, FrameProc, 1, 0)) { error = "SetWindowSubclass failed"; return false; }
             installStep = "SetTimer";
