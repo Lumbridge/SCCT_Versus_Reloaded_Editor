@@ -182,6 +182,8 @@
     <ClInclude Include="RenderBudgetModel.h" />
     <ClInclude Include="LevelSnapshot.h" />
     <ClInclude Include="PlayLevelPlayers.h" />
+    <ClInclude Include="LargeAddress.h" />
+    <ClInclude Include="LargeAddressModel.h" />
     <ClInclude Include="LevelSnapshotModel.h" />
     <ClInclude Include="FavoritesModel.h" />
     <ClInclude Include="FavoritesWindow.h" />
@@ -318,6 +320,7 @@
     <ClCompile Include="MinimapWindow.cpp" />
     <ClCompile Include="LevelSnapshot.cpp" />
     <ClCompile Include="PlayLevelPlayers.cpp" />
+    <ClCompile Include="LargeAddress.cpp" />
     <ClCompile Include="SelfUpdater.cpp" />
     <ClCompile Include="WorkflowEditor.cpp" />
     <ClCompile Include="WorkflowGraph.cpp" />

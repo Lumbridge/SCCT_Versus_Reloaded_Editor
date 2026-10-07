@@ -40,6 +40,8 @@
     <ClInclude Include="RenderBudgetModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="LevelSnapshot.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="PlayLevelPlayers.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="LargeAddress.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="LargeAddressModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="LevelSnapshotModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="FavoritesModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="FavoritesWindow.h"><Filter>Header Files</Filter></ClInclude>
@@ -461,6 +463,7 @@
     <ClCompile Include="MinimapWindow.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="LevelSnapshot.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="PlayLevelPlayers.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="LargeAddress.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="SelfUpdater.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="CrashRecovery.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="WorkflowEditor.cpp"><Filter>Source Files</Filter></ClCompile>
