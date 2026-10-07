@@ -36,6 +36,48 @@ std::string ObjectiveLabel(const Json& actor)
     if(kind=="Player start")return std::string(actor.value("team",std::string())==kSpyTeam?"spy":"merc")+" start "+SecurityName(actor);
     return Fold(kind)+" "+(name.empty()?SecurityName(actor):name);
 }
+// Player counts (ObjectivePlayersModel.h): the rule an objective or zone mission
+// has, the missions and rules as the model plays them out, and whether a mission
+// is the game mode's own top mission, which no rule may leave out.
+ObjectivePlayers::Rule ObjectiveRule(const DesignState& s,const std::string& path)
+{
+    for(const auto& rule:s.objectivePlayers.value("rules",Json::array()))
+        if(Fold(rule.value("path",std::string()))==Fold(path))return {rule.value("min",0),rule.value("max",0)};
+    return {};
+}
+ObjectivePlayers::Rules ObjectiveRules(const DesignState& s)
+{
+    ObjectivePlayers::Rules rules;
+    for(const auto& rule:s.objectivePlayers.value("rules",Json::array()))
+        rules[ObjectivePlayers::Fold(rule.value("path",std::string()))]={rule.value("min",0),rule.value("max",0)};
+    return rules;
+}
+ObjectivePlayers::Missions ObjectiveMissions(const DesignState& s)
+{
+    ObjectivePlayers::Missions missions;
+    for(const auto& actor:s.objectives)
+    {
+        if(actor.value("kind",std::string())!="Mission")continue;
+        ObjectivePlayers::Mission mission;
+        for(const auto& reference:actor.value("objectives",Json::array()))
+            if(reference.is_string())mission.objectives.push_back(ObjectivePlayers::ReferencePath(reference.get<std::string>()));
+        mission.minimum=actor.value("minimum",0);
+        missions[ObjectivePlayers::Fold(actor.value("path",std::string()))]=mission;
+    }
+    return missions;
+}
+bool ObjectiveTopMission(const DesignState& s,const Json& actor)
+{
+    if(actor.value("kind",std::string())!="Mission")return false;
+    const auto roots=ObjectivePlayers::Roots(ObjectiveMissions(s));
+    return std::find(roots.begin(),roots.end(),ObjectivePlayers::Fold(actor.value("path",std::string())))!=roots.end();
+}
+// " [6+ players]" after a label, or nothing.
+std::string ObjectivePlayersTag(const DesignState& s,const Json& actor)
+{
+    const auto text=ObjectivePlayers::Short(ObjectiveRule(s,actor.value("path",std::string())));
+    return text.empty()?text:" ["+text+"]";
+}
 // The game actor nearest a point in the view.
 Json ObjectiveAt(DesignState& s,double x,double y)
 {
@@ -129,7 +171,7 @@ void ObjectivePaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void
             SolidBrush body(Color(240,240,180,40));
             g.FillPolygon(&body,star,10);
             g.DrawPolygon(&outline,star,10);
-            label("mission "+actor.value("name",std::string()),{at.X+12,at.Y-8});
+            label("mission "+actor.value("name",std::string())+ObjectivePlayersTag(s,actor),{at.X+12,at.Y-8});
         }
         else if(kind=="Objective")
         {
@@ -138,7 +180,7 @@ void ObjectivePaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void
             g.FillPolygon(&body,diamond,4);
             g.DrawPolygon(&outline,diamond,4);
             const int zone=Stages::ZoneOfObjective(s.stageActors,actor.value("path",std::string()));
-            label("objective "+actor.value("name",std::string())+(zone?" [zone "+std::to_string(zone)+"]":""),{at.X+12,at.Y-8});
+            label("objective "+actor.value("name",std::string())+(zone?" [zone "+std::to_string(zone)+"]":"")+ObjectivePlayersTag(s,actor),{at.X+12,at.Y-8});
         }
         else if(kind=="Flag" || kind=="Drop zone")
         {

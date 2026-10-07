@@ -28,6 +28,7 @@
 #include "MapDesignModel.h"
 #include "SecurityModel.h"
 #include "StageModel.h"
+#include "ObjectivePlayersModel.h"
 #include "EmitterPreview.h"
 #include "CharacterPreview.h"
 #include "MeasureTool.h"
@@ -1118,6 +1119,17 @@ void Initialize()
 }
 }
 
+// Requests the bridge below does not take itself: its else-if chain is at the
+// compiler's nesting limit (C1061), so newer features add theirs here.
+static Workflow::Json MoreWorkflowRequests(const std::string& op,const Workflow::Json& q)
+{
+    using namespace Workflow;
+    if(op=="objectiveplayers.state") return Editor::ObjectivePlayerRules();
+    if(op=="objectiveplayers.set") return Editor::SetObjectivePlayers(q.at("objective"),q.value("min",0),q.value("max",0));
+    if(op=="objectiveplayers.playlevel") return Editor::SetObjectivePlayLevelPlayers(q.value("players",0));
+    throw std::runtime_error("Unknown workflow request.");
+}
+
 // JSON bridge used by the isolated native integration probe. Calls must be made
 // on the editor UI thread, exactly like the corresponding dialog operations.
 extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char* request,char* output,unsigned capacity)
@@ -1263,7 +1275,7 @@ extern "C" __declspec(dllexport) int __cdecl ReloadedWorkflowRequest(const char*
         else if(op=="skins.remove") {Editor::RemoveCharacterSkins();result=Editor::CharacterSkinSettings();}
         else if(op=="characters.camera"){if(q.contains("camera"))CharacterPreview::SetCamera(q.at("camera"));result=CharacterPreview::Camera();}
         else if(op=="map") result={{"key",Editor::MapKey()},{"level",Editor::LevelPath()}};
-        else throw std::runtime_error("Unknown workflow request.");
+        else result=MoreWorkflowRequests(op,q);
         auto text=Json({{"ok",true},{"result",result}}).dump(); if(text.size()+1>capacity) return -static_cast<int>(text.size()+1);
         memcpy(output,text.c_str(),text.size()+1); return 1;
     }

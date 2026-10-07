@@ -584,6 +584,32 @@ Right-click an **alarm** for **When triggered, lock the selected doors, lifts an
 objective triggers**: the selected movers join its `MoversToLock` and the selected
 objective triggers its `ObjectiveTriggersToLock`, so they lock while it sounds.
 
+### Objectives for some lobby sizes
+
+An objective's sheet (and a zone's mission's, though not the top mission's) has
+**Minimum players** and **Maximum players**: the objective is only in matches
+whose lobby has that many players, counting both teams. A third laptop for 3v3
+only is Minimum 6; a shortcut objective for 1v1 and 2v2 only is Maximum 4; Any is
+no limit. The plan labels it, for example `objective Server Room [6+ players]`,
+and the status line says what the lobby sizes either side of the rule play, for
+example `4 players: 5 objectives, the spies need 3`.
+
+The first rule compiles a small script actor, `SObjectivePlayers0`, into the map
+package (one Undo step), as Character Skins does; clearing the last rule removes
+it. In game the host decides once, as the map loads and before the missions set
+up: the lobby's player count arrives in the map's URL (`NBPlayers`, which the game
+also keeps as `SGameInfo.PlayersToWait`), each objective outside its range comes
+out of its mission and is switched off the game's own way, which hides its
+terminals, bomb targets and flags, and a whole zone goes when it is left with
+none. A mission then asks for no more completions than its remaining objectives
+can give, and the top mission for as many fewer as its zones lost, so the match
+stays winnable. Players who join later do not change it.
+
+An editor Play Level has one player and no lobby, so it keeps every objective
+unless **Play Level as (players)** on any objective's sheet names a lobby size to
+test with. The design check reports a lobby size that would leave the match with
+nothing to do as an error, and notes when Play Level is set to a count.
+
 ## 12. Gameplay elements
 
 Zip lines, hand-over-hand bars, pipes, ladders, climbable fences, poles and

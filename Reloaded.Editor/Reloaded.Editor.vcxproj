@@ -198,6 +198,8 @@
     <ClInclude Include="EmitterPreview.h" />
     <ClInclude Include="CharacterSkinsImage.h" />
     <ClInclude Include="CharacterSkinsModel.h" />
+    <ClInclude Include="ObjectivePlayersModel.h" />
+    <ClInclude Include="ObjectivePlayersNative.inl" />
     <ClInclude Include="CharacterSkinsWindow.h" />
     <ClInclude Include="CharacterSkinPresetsModel.h" />
     <ClInclude Include="CharacterSkinPresetsWindow.h" />

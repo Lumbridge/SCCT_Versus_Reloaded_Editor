@@ -150,7 +150,11 @@ Json ObjectiveActors()
         catch(const std::exception&){}
         item["name"]=name;
         if(kind=="Player start")item["team"]=StartTeam(actor);
-        if(kind=="Mission")item["objectives"]=NameList(actor,"Objectives");
+        if(kind=="Mission")
+        {
+            item["objectives"]=NameList(actor,"Objectives");
+            item["minimum"]=static_cast<int>(NumberProperty(actor,"MinimumObjectives",0));
+        }
         if(kind=="Objective")item["triggers"]=NameList(actor,"Triggers");
         result.push_back(item);
     }

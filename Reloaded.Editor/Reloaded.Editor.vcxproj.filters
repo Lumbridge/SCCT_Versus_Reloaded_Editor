@@ -64,6 +64,8 @@
     <ClInclude Include="EmitterPreview.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CharacterSkinsImage.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CharacterSkinsModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="ObjectivePlayersModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="ObjectivePlayersNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CharacterSkinsWindow.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CharacterSkinPresetsModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CharacterSkinPresetsWindow.h"><Filter>Header Files</Filter></ClInclude>
