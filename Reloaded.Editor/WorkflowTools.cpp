@@ -69,8 +69,10 @@ namespace
         return {};
     }
     // Objective player counts (ObjectivePlayersModel.h), shared by the native menus
-    // and Map Design: the missions (from ObjectiveActors) and the map's rules (from
-    // ObjectivePlayerRules) as the model plays them out.
+    // and Map Design: the missions (from ObjectiveMissions or ObjectiveActors) and the
+    // map's rules (from ObjectivePlayerRules) as the model plays them out. The menus and
+    // the Properties strip read ObjectiveMissions only: ObjectiveActors can select a
+    // player start to read its team, and the Properties window follows the selection.
     ObjectivePlayers::Missions PlayerMissions(const Json& objectiveActors)
     {
         ObjectivePlayers::Missions missions;
@@ -105,7 +107,7 @@ namespace
         {kObjectivePlayersFirst+4,{8,0}},{kObjectivePlayersFirst+5,{0,2}},{kObjectivePlayersFirst+6,{0,4}},{kObjectivePlayersFirst+7,{0,6}}};
     void PlayersMenu(HMENU menu,const std::string& path)
     {
-        const auto actors=Editor::ObjectiveActors();
+        const auto actors=Editor::ObjectiveMissions();
         if(!PlayerRuleAllowed(actors,path))return;
         const auto state=Editor::ObjectivePlayerRules();
         const auto rules=PlayerRules(state);
@@ -350,7 +352,7 @@ namespace
     void ApplyObjectivePlayers(const Json& identity,const ObjectivePlayers::Rule& rule,HWND owner)
     {
         Editor::SetObjectivePlayers(identity,rule.minimum,rule.maximum);
-        const auto actors=Editor::ObjectiveActors();
+        const auto actors=Editor::ObjectiveMissions();
         std::map<std::string,std::string> names;
         for(const auto& actor:actors)
             if(actor.value("kind",std::string())=="Mission")
@@ -381,7 +383,7 @@ namespace
         }
         const auto path=identity.at("path").get<std::string>();
         if(!Editor::Compatible(path,"SBase.SObjective"))throw std::runtime_error("Select exactly one objective or zone mission.");
-        if(!PlayerRuleAllowed(Editor::ObjectiveActors(),path))throw std::runtime_error("The top mission is in every match: give its objectives or zones a player count instead.");
+        if(!PlayerRuleAllowed(Editor::ObjectiveMissions(),path))throw std::runtime_error("The top mission is in every match: give its objectives or zones a player count instead.");
         auto rules=PlayerRules(state);
         ObjectivePlayers::Rule rule=rules.count(ObjectivePlayers::Fold(path))?rules.at(ObjectivePlayers::Fold(path)):ObjectivePlayers::Rule{};
         bool chosen=false;
@@ -440,7 +442,7 @@ namespace
         try
         {
             if(objects.size()==1)subject=Editor::ObjectivePlayersSubject(objects[0]);
-            if(!subject.is_null() && !PlayerRuleAllowed(Editor::ObjectiveActors(),subject.at("path").get<std::string>()))subject=Json();
+            if(!subject.is_null() && !PlayerRuleAllowed(Editor::ObjectiveMissions(),subject.at("path").get<std::string>()))subject=Json();
         }
         catch(const std::exception&){subject=Json();}
         if(subject.is_null()){StripRemove(window);return 0;}

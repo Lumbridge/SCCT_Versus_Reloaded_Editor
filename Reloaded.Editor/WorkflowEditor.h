@@ -134,6 +134,9 @@ namespace Workflow::Editor
     // The identity of a live SObjective (or SMission) actor at that address, as a
     // Properties window holds it, or null for anything else.
     Json ObjectivePlayersSubject(uintptr_t object);
+    // The SMission actors only, as ObjectiveActors lists them (path, objectives,
+    // minimum): it never touches the selection.
+    Json ObjectiveMissions();
     // Character Skins (CharacterSkinsModel.h): the map's Character Skins actor.
     // Settings: {placed, legacy, extra, compiled, slots:{SpyBody,...: material path or ""},
     // models:{SpyModel,...: skeletal mesh path or ""}, goggles:{SpyGoggleOffset,...: [x,y,z]}}.
