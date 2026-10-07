@@ -46,7 +46,9 @@ namespace
     constexpr int kEditId = 0x52f0, kLabelId = 0x52f1;
     constexpr UINT_PTR kTimerId = 0x52f2;
     constexpr UINT_PTR kWindowSubclass = 0x52f3, kListSubclass = 0x52f4, kEditSubclass = 0x52f5;
-    UINT attachMessage = 0, reapplyMessage = 0;
+    UINT attachMessage = 0, reapplyMessage = 0, stripMessage = 0;
+    PropertySearch::Strip strip; // filled by SetStrip
+    constexpr int kStripFirstId = 0x5300, kStripLastId = 0x531f;
 
     template<class T> T At(Address a) { return *reinterpret_cast<T*>(a); }
     Address Slot(Address object, size_t offset) { return At<Address>(At<Address>(object) + offset); }
@@ -170,6 +172,7 @@ namespace
         HWND window = nullptr, list = nullptr, edit = nullptr, label = nullptr;
         Address owner = 0; // the WObjectProperties, known once the list has had a row
         bool applying = false, filtered = false;
+        int strip = 0; // the height of the strip under the filter box, 0 for none
         std::set<unsigned long long> expanded; // row ids expanded before filtering
     };
 
@@ -343,6 +346,55 @@ namespace
         // left there before it moved down; the window paints only below it.
         if (s.label) MoveWindow(s.label, 0, 0, client.right, kFilterBar, TRUE);
         if (s.edit) MoveWindow(s.edit, 40, 2, (std::max)(40, static_cast<int>(client.right) - 42), 20, TRUE);
+        if (s.strip && strip.layout) strip.layout(s.window, kFilterBar, client.right);
+    }
+
+    // The objects the window edits, from its root row.
+    void EditedObjects(SearchState& s, std::vector<uintptr_t>& out)
+    {
+        const Address owner = OwnerOf(s);
+        if (!owner) return;
+        const Address root = reinterpret_cast<Address(__thiscall*)(Address)>(Slot(owner, 0xe8))(owner);
+        if (!root || At<Address>(root) != kObjectsItemVtable) return;
+        const Address objects = At<Address>(root + 0x58);
+        const int count = At<int>(root + 0x5c);
+        if (count < 0 || count > 1000000 || (count && !objects)) return;
+        for (int i = 0; i < count; ++i) out.push_back(At<Address>(objects + i * 4));
+    }
+    bool EditedObjectsGuarded(SearchState& s, std::vector<uintptr_t>& out)
+    {
+        __try { EditedObjects(s, out); return true; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    }
+    void ResizeListGuarded(Address owner)
+    {
+        __try { if (owner) CallVoid(owner, 0xf0); }
+        __except (EXCEPTION_EXECUTE_HANDLER) {}
+    }
+
+    // The strip follows the objects the window edits: built, refreshed or
+    // removed, and the list moved under it.
+    void RefreshStrip(SearchState& s)
+    {
+        if (!strip.update || !s.list) return;
+        std::vector<uintptr_t> objects;
+        if (!EditedObjectsGuarded(s, objects)) objects.clear();
+        const int height = (std::max)(0, strip.update(s.window, objects));
+        const bool moved = height != s.strip;
+        s.strip = height;
+        LayoutBar(s);
+        if (!moved) return;
+        // ResizeList puts the list back at the top, where the subclass moves
+        // it under the bar and the strip.
+        ResizeListGuarded(s.owner);
+        RECT r{};
+        GetWindowRect(s.list, &r);
+        MapWindowPoints(nullptr, s.window, reinterpret_cast<POINT*>(&r), 2);
+        SetWindowPos(s.list, nullptr, r.left, 0, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+        RECT client{};
+        GetClientRect(s.window, &client);
+        RECT bar{0, 0, client.right, kFilterBar + 60};
+        InvalidateRect(s.window, &bar, TRUE);
     }
 
     LRESULT CALLBACK ListProc(HWND list, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR data)
@@ -354,7 +406,7 @@ namespace
             if (!(pos->flags & SWP_NOMOVE))
             {
                 const int height = (pos->flags & SWP_NOSIZE) ? [&] { RECT r{}; GetWindowRect(list, &r); return static_cast<int>(r.bottom - r.top); }() : pos->cy;
-                const auto placed = PropertyFilter::BelowBar(pos->y, height, kFilterBar, ListLimit(s));
+                const auto placed = PropertyFilter::BelowBar(pos->y, height, kFilterBar + s.strip, ListLimit(s));
                 pos->y = placed.y;
                 if (placed.height != height)
                 {
@@ -375,6 +427,7 @@ namespace
             // edit): filter them again once it has finished.
             const LRESULT result = DefSubclassProc(list, message, wParam, lParam);
             if (!s.applying && !PropertyFilter::Words(FilterText(s)).empty()) PostMessageA(s.window, reapplyMessage, 0, 0);
+            if (!s.applying && strip.update) PostMessageA(s.window, stripMessage, 0, 0);
             return result;
         }
         else if (message == WM_NCDESTROY) RemoveWindowSubclass(list, ListProc, kListSubclass);
@@ -425,6 +478,7 @@ namespace
         GetWindowRect(s.list, &r);
         MapWindowPoints(nullptr, s.window, reinterpret_cast<POINT*>(&r), 2);
         SetWindowPos(s.list, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+        if (strip.update) PostMessageA(s.window, stripMessage, 0, 0);
     }
 
     LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR data)
@@ -432,6 +486,7 @@ namespace
         auto* s = reinterpret_cast<SearchState*>(data);
         if (message == attachMessage) { Attach(*s); return 0; }
         if (message == reapplyMessage) { Apply(*s, false); return 0; }
+        if (message == stripMessage) { RefreshStrip(*s); return 0; }
         switch (message)
         {
         case WM_COMMAND:
@@ -440,9 +495,19 @@ namespace
                 if (HIWORD(wParam) == EN_CHANGE) SetTimer(window, kTimerId, 200, nullptr);
                 return 0;
             }
+            if (LOWORD(wParam) >= kStripFirstId && LOWORD(wParam) <= kStripLastId && strip.command && strip.command(window, wParam, lParam))
+            {
+                PostMessageA(window, stripMessage, 0, 0);
+                return 0;
+            }
+            break;
+        case WM_ACTIVATE:
+            // Back from an Undo or another tool: show the rule as it is now.
+            if (LOWORD(wParam) != WA_INACTIVE && strip.update) PostMessageA(window, stripMessage, 0, 0);
             break;
         case WM_CTLCOLORSTATIC:
-            if (reinterpret_cast<HWND>(lParam) == s->label)
+            if (reinterpret_cast<HWND>(lParam) == s->label ||
+                (GetDlgCtrlID(reinterpret_cast<HWND>(lParam)) >= kStripFirstId && GetDlgCtrlID(reinterpret_cast<HWND>(lParam)) <= kStripLastId))
             {
                 SetBkColor(reinterpret_cast<HDC>(wParam), GetSysColor(COLOR_BTNFACE));
                 return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
@@ -464,6 +529,7 @@ namespace
         }
         case WM_NCDESTROY:
             RemoveWindowSubclass(window, WindowProc, kWindowSubclass);
+            if (strip.closed) strip.closed(window);
             delete s;
             break;
         }
@@ -493,6 +559,8 @@ namespace
     }
 }
 
+void PropertySearch::SetStrip(const Strip& value) { strip = value; }
+
 void PropertySearch::Initialize()
 {
     static const BYTE preChange[] = { 0x55, 0x8B, 0xEC, 0x6A, 0xFF, 0x68, 0x90, 0x02, 0x41, 0x11 };
@@ -507,6 +575,7 @@ void PropertySearch::Initialize()
 
     attachMessage = RegisterWindowMessageA("ReloadedPropertySearchAttach");
     reapplyMessage = RegisterWindowMessageA("ReloadedPropertySearchReapply");
+    stripMessage = RegisterWindowMessageA("ReloadedPropertySearchStrip");
     // Chained with the Texture Browser's wrapper of the same import.
     previousCreateWindowExA = *reinterpret_cast<CreateWindowExAFn*>(kCreateWindowExAImport);
     const uintptr_t hook = reinterpret_cast<uintptr_t>(&CreateWindowExAHook);

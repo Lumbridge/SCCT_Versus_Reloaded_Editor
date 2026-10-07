@@ -594,6 +594,12 @@ no limit. The plan labels it, for example `objective Server Room [6+ players]`,
 and the status line says what the lobby sizes either side of the rule play, for
 example `4 players: 5 objectives, the spies need 3`.
 
+The editor's own **Properties** window (F4, or double-click the objective) has
+them too: while it shows one objective or zone mission, a strip under the filter
+box reads **Players in match: Min [Any] Max [Any]** and **Play Level as [Every
+objective]**. Picking a value applies it at once, in one Undo step; a minimum
+above the maximum moves the maximum up with it, and the other way round.
+
 The same choices are on the editor's own right-click menus: right-click an
 objective or a zone's mission in a viewport (or in the Connections list or
 graph) for **Players in Match**, which ticks the current rule and offers Every

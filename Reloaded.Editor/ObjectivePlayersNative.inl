@@ -132,6 +132,14 @@ Json SetObjectivePlayers(const Json& objective,int minimum,int maximum)
     return ObjectivePlayerRules();
 }
 
+Json ObjectivePlayersSubject(uintptr_t object)
+{
+    if(!object)return Json();
+    auto live=LiveActors();
+    if(std::find(live.begin(),live.end(),static_cast<Address>(object))==live.end() || !IsA(object,"SBase.SObjective"))return Json();
+    return Identity(object);
+}
+
 Json SetObjectivePlayLevelPlayers(int players)
 {
     if(players<0 || players>ObjectivePlayers::MostPlayers)throw std::runtime_error("Play Level can count 1 to "+std::to_string(ObjectivePlayers::MostPlayers)+" players, or every objective.");

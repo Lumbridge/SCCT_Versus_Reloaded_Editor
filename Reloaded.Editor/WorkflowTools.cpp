@@ -7,6 +7,7 @@
 #include "EmitterLibraryWindow.h"
 #include "EditorExtras.h"
 #include "StoreyFilter.h"
+#include "PropertySearch.h"
 #include "UndoHistory.h"
 #include "FavoritesWindow.h"
 #include "LightingBudget.h"
@@ -344,9 +345,28 @@ namespace
         name=fields[0].value;
         if(name.empty() || name.size()>120 || name.find_first_of("\r\n")!=std::string::npos) throw std::runtime_error("Enter a name between 1 and 120 characters."); return true;
     }
-    // A Players in Match choice for one objective or zone mission: a preset, a range
-    // asked for, or the count an editor Play Level plays the map with. Warns when the
-    // map's rules leave some lobby size with nothing to play.
+    // Sets one objective's (or zone mission's) range, and warns when the map's
+    // rules leave some lobby size with nothing to play.
+    void ApplyObjectivePlayers(const Json& identity,const ObjectivePlayers::Rule& rule,HWND owner)
+    {
+        Editor::SetObjectivePlayers(identity,rule.minimum,rule.maximum);
+        const auto actors=Editor::ObjectiveActors();
+        std::map<std::string,std::string> names;
+        for(const auto& actor:actors)
+            if(actor.value("kind",std::string())=="Mission")
+            {
+                const auto missionPath=actor.value("path",std::string());
+                names[ObjectivePlayers::Fold(missionPath)]="mission "+missionPath.substr(missionPath.find('.')+1);
+            }
+        const auto problems=ObjectivePlayers::Problems(PlayerMissions(actors),PlayerRules(Editor::ObjectivePlayerRules()),names);
+        if(!problems.empty())
+        {
+            std::string text;for(const auto& problem:problems)text+=problem+"\n";
+            MessageBoxA(owner,(text+"\nGive another objective a wider range, or change this one back.").c_str(),"Players in Match",MB_OK|MB_ICONWARNING);
+        }
+    }
+    // A Players in Match choice from a right-click menu: a preset, a range asked
+    // for, or the count an editor Play Level plays the map with.
     void RunObjectivePlayers(UINT command,const Json& identity,HWND owner)
     {
         auto state=Editor::ObjectivePlayerRules();
@@ -374,22 +394,125 @@ namespace
             if(!Ask(owner,"Players in Match",fields))return;
             rule={ObjectivePlayers::ChoiceCount(fields[0].value),ObjectivePlayers::ChoiceCount(fields[1].value)};
         }
-        Editor::SetObjectivePlayers(identity,rule.minimum,rule.maximum);
-        const auto actors=Editor::ObjectiveActors();
-        std::map<std::string,std::string> names;
-        for(const auto& actor:actors)
-            if(actor.value("kind",std::string())=="Mission")
-            {
-                const auto missionPath=actor.value("path",std::string());
-                names[ObjectivePlayers::Fold(missionPath)]="mission "+missionPath.substr(missionPath.find('.')+1);
-            }
-        const auto problems=ObjectivePlayers::Problems(PlayerMissions(actors),PlayerRules(Editor::ObjectivePlayerRules()),names);
-        if(!problems.empty())
-        {
-            std::string text;for(const auto& problem:problems)text+=problem+"\n";
-            MessageBoxA(owner,(text+"\nGive another objective a wider range, or change this one back.").c_str(),"Players in Match",MB_OK|MB_ICONWARNING);
-        }
+        ApplyObjectivePlayers(identity,rule,owner);
     }
+    // The Players in Match strip of the editor's Properties windows (F4, double-click;
+    // PropertySearch.h): two rows under the filter box while the window edits one
+    // objective or zone mission. Min and Max set its rule as the menus do; Play Level
+    // as is the map's count for an editor Play Level.
+    enum StripControl { kStripBack=0x5300,kStripLabel,kStripMinLabel,kStripMin,kStripMaxLabel,kStripMax,kStripTestLabel,kStripTest,kStripEnd };
+    constexpr int kStripHeight=54;
+    std::map<HWND,Json> playersStrips; // window -> the objective it shows
+    std::vector<std::string> PlayLevelChoices(){auto counts=ObjectivePlayers::Choices();counts.front()="Every objective";return counts;}
+    void StripSelect(HWND window,int id,const std::string& text)
+    {
+        const auto combo=GetDlgItem(window,id);
+        const LRESULT at=SendMessageA(combo,CB_FINDSTRINGEXACT,static_cast<WPARAM>(-1),reinterpret_cast<LPARAM>(text.c_str()));
+        SendMessageA(combo,CB_SETCURSEL,at==CB_ERR?0:at,0);
+    }
+    std::string StripText(HWND window,int id)
+    {
+        const auto combo=GetDlgItem(window,id);
+        const LRESULT at=SendMessageA(combo,CB_GETCURSEL,0,0);
+        if(at==CB_ERR)return {};
+        char text[64]{};SendMessageA(combo,CB_GETLBTEXT,at,reinterpret_cast<LPARAM>(text));
+        return text;
+    }
+    void StripFill(HWND window,const Json& subject)
+    {
+        const auto state=Editor::ObjectivePlayerRules();
+        const auto rules=PlayerRules(state);
+        const auto found=rules.find(ObjectivePlayers::Fold(subject.at("path").get<std::string>()));
+        const auto rule=found==rules.end()?ObjectivePlayers::Rule{}:found->second;
+        StripSelect(window,kStripMin,ObjectivePlayers::ChoiceText(rule.minimum));
+        StripSelect(window,kStripMax,ObjectivePlayers::ChoiceText(rule.maximum));
+        const int playLevel=state.value("playLevel",0);
+        StripSelect(window,kStripTest,playLevel?std::to_string(playLevel):PlayLevelChoices().front());
+    }
+    void StripRemove(HWND window)
+    {
+        for(int id=kStripBack;id<kStripEnd;++id)if(auto control=GetDlgItem(window,id))DestroyWindow(control);
+        playersStrips.erase(window);
+    }
+    int StripUpdate(HWND window,const std::vector<uintptr_t>& objects)
+    {
+        Json subject;
+        try
+        {
+            if(objects.size()==1)subject=Editor::ObjectivePlayersSubject(objects[0]);
+            if(!subject.is_null() && !PlayerRuleAllowed(Editor::ObjectiveActors(),subject.at("path").get<std::string>()))subject=Json();
+        }
+        catch(const std::exception&){subject=Json();}
+        if(subject.is_null()){StripRemove(window);return 0;}
+        if(!GetDlgItem(window,kStripBack))
+        {
+            const auto instance=reinterpret_cast<HINSTANCE>(GetWindowLongPtrA(window,GWLP_HINSTANCE));
+            const auto font=reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT));
+            auto make=[&](const char* type,const char* text,DWORD style,int id)
+            {
+                auto control=CreateWindowExA(0,type,text,WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS|style,0,0,10,10,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);
+                SendMessageA(control,WM_SETFONT,font,FALSE);
+                return control;
+            };
+            auto combo=[&](int id,const std::vector<std::string>& choices)
+            {
+                auto control=make("COMBOBOX","",CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP,id);
+                for(const auto& choice:choices)SendMessageA(control,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(choice.c_str()));
+            };
+            make("STATIC","",0,kStripBack);
+            make("STATIC"," Players in match:",SS_LEFT|SS_CENTERIMAGE,kStripLabel);
+            make("STATIC","Min",SS_RIGHT|SS_CENTERIMAGE,kStripMinLabel);
+            combo(kStripMin,ObjectivePlayers::Choices());
+            make("STATIC","Max",SS_RIGHT|SS_CENTERIMAGE,kStripMaxLabel);
+            combo(kStripMax,ObjectivePlayers::Choices());
+            make("STATIC"," Play Level as:",SS_LEFT|SS_CENTERIMAGE,kStripTestLabel);
+            combo(kStripTest,PlayLevelChoices());
+            SetWindowPos(GetDlgItem(window,kStripBack),HWND_BOTTOM,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+        }
+        playersStrips[window]=subject;
+        try{StripFill(window,subject);}catch(const std::exception&){}
+        return kStripHeight;
+    }
+    void StripLayout(HWND window,int top,int width)
+    {
+        auto place=[&](int id,int x,int y,int w,int h){if(auto control=GetDlgItem(window,id))MoveWindow(control,x,y,w,h,TRUE);};
+        place(kStripBack,0,top,width,kStripHeight);
+        place(kStripLabel,0,top+3,100,21);
+        place(kStripMinLabel,100,top+3,24,21);
+        place(kStripMin,128,top+3,56,300);
+        place(kStripMaxLabel,186,top+3,28,21);
+        place(kStripMax,218,top+3,56,300);
+        place(kStripTestLabel,0,top+29,100,21);
+        place(kStripTest,128,top+29,146,300);
+    }
+    bool StripCommand(HWND window,WPARAM w,LPARAM)
+    {
+        const int id=LOWORD(w);
+        if(id!=kStripMin && id!=kStripMax && id!=kStripTest)return false;
+        if(HIWORD(w)!=CBN_SELCHANGE)return true;
+        const auto found=playersStrips.find(window);
+        if(found==playersStrips.end())return true;
+        const Json subject=found->second;
+        try
+        {
+            if(id==kStripTest)
+            {
+                const auto text=StripText(window,kStripTest);
+                Editor::SetObjectivePlayLevelPlayers(text==PlayLevelChoices().front()?0:ObjectivePlayers::ChoiceCount(text));
+            }
+            else
+            {
+                // A minimum above the maximum moves the other end with it, not an error.
+                ObjectivePlayers::Rule rule{ObjectivePlayers::ChoiceCount(StripText(window,kStripMin)),ObjectivePlayers::ChoiceCount(StripText(window,kStripMax))};
+                if(rule.minimum && rule.maximum && rule.minimum>rule.maximum)(id==kStripMin?rule.maximum:rule.minimum)=id==kStripMin?rule.minimum:rule.maximum;
+                ApplyObjectivePlayers(subject,rule,window);
+            }
+        }
+        catch(const std::exception& e){MessageBoxA(window,e.what(),"Players in Match",MB_OK|MB_ICONERROR);}
+        try{StripFill(window,subject);}catch(const std::exception&){}
+        return true;
+    }
+    void StripClosed(HWND window){playersStrips.erase(window);}
     #include "MapDesignPanel.inl"
     struct TagPreviewText { std::string title,summary; Json* preview; bool ready=false; };
     void UpdateTagChecks(HWND window,TagPreviewText& data)
@@ -1238,6 +1361,8 @@ void RenameActorTag(HWND owner,std::string path,std::string type)
 void Initialize()
 {
     Editor::Initialize();
+    PropertySearch::Strip strip;strip.update=StripUpdate;strip.layout=StripLayout;strip.command=StripCommand;strip.closed=StripClosed;
+    PropertySearch::SetStrip(strip);
     INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_LISTVIEW_CLASSES}; InitCommonControlsEx(&controls);
     previousLoadMenu=*reinterpret_cast<LoadMenuFn*>(0x11AF23F0);
     auto hook=&LoadMenuHook; MemoryWriter::WriteBytes(0x11AF23F0,&hook,sizeof(hook));

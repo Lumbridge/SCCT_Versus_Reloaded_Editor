@@ -131,6 +131,9 @@ namespace Workflow::Editor
     Json ObjectivePlayerRules();
     Json SetObjectivePlayers(const Json& objective, int minimum, int maximum);
     Json SetObjectivePlayLevelPlayers(int players);
+    // The identity of a live SObjective (or SMission) actor at that address, as a
+    // Properties window holds it, or null for anything else.
+    Json ObjectivePlayersSubject(uintptr_t object);
     // Character Skins (CharacterSkinsModel.h): the map's Character Skins actor.
     // Settings: {placed, legacy, extra, compiled, slots:{SpyBody,...: material path or ""},
     // models:{SpyModel,...: skeletal mesh path or ""}, goggles:{SpyGoggleOffset,...: [x,y,z]}}.
