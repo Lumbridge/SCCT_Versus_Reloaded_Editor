@@ -7,6 +7,11 @@ selection and geometry. Native transactions refresh automatically. These views
 supplement the editor's normal textured/perspective view; image overlays are drawn
 in the design workspace. The window reopens where it was last closed.
 
+Large maps stay responsive: the views draw only what is on screen, and while
+minimised the window stops reading the map. A map with more than about a
+million distinct brush edges draws the rest as outlines of their bounds, and
+the status line says so.
+
 ## Selecting and editing
 
 Click a brush edge or an unlocked actor origin to select it in the editor. Hold

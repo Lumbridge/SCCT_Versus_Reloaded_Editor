@@ -300,10 +300,7 @@ void SecuritySnapToWall(DesignState& s,const Json& device)
     {
         const auto pieceKind=piece.at("spec").at("kind").get<std::string>();
         if(pieceKind!="Room" && pieceKind!="Corridor" && !Design::Crouching(pieceKind))continue;
-        bool live=false;
-        for(auto& member:piece.at("members"))
-            for(auto& actor:s.scene)
-                if(actor.at("path")==member.at("path"))live=true;
+        const bool live=DesignAnyLive(s,piece.at("members"));
         if(!live)continue;
         const Pose pose{piece.at("position").get<Vector>(),piece.at("rotation").get<Rotation>()};
         const double w=piece.at("spec").at("width"),l=piece.at("spec").at("length");

@@ -210,10 +210,7 @@ std::vector<std::string> LightIssues(DesignState& s)
     {
         const auto kind=piece.at("spec").at("kind").get<std::string>();
         if(kind!="Room" && kind!="Corridor")continue;
-        bool live=false;
-        for(auto& member:piece.at("members"))
-            for(auto& actor:s.scene)
-                if(actor.at("path")==member.at("path"))live=true;
+        const bool live=DesignAnyLive(s,piece.at("members"));
         if(!live)continue;
         Design::Extent bounds;
         try{bounds=DesignBoundsOf(piece.at("spec"),{piece.at("position").get<Vector>(),piece.at("rotation").get<Rotation>()});}

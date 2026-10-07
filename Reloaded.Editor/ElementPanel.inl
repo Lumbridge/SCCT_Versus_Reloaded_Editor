@@ -212,15 +212,13 @@ void ElementClick(DesignState& s,const Vector& at)
 void ElementPaintStored(DesignState& s,Gdiplus::Graphics& g,const std::function<void(const std::string&,Gdiplus::PointF)>& label)
 {
     using namespace Gdiplus;
-    Json data;
-    try{data=DesignData(s);}catch(const std::exception&){return;}
-    if(!data.contains("elements") || !data["elements"].is_array())return;
-    for(const auto& element:data["elements"])
+    // Read in place: a copy of the workspace on every repaint is wasted work.
+    const Json* data=nullptr;
+    try{data=&DesignData(s);}catch(const std::exception&){return;}
+    if(!data->contains("elements") || !data->at("elements").is_array())return;
+    for(const auto& element:data->at("elements"))
     {
-        bool live=false;
-        for(const auto& member:element.value("members",Json::array()))
-            for(const auto& actor:s.scene)
-                if(actor.at("path")==member.at("path"))live=true;
+        const bool live=DesignAnyLive(s,element.value("members",Json::array()));
         if(!live)continue;
         const auto& points=element.at("points");
         if(points.size()<2)continue;
@@ -291,10 +289,7 @@ void FloorDuplicate(DesignState& s,const Vector& at,bool up)
     Json items=Json::array();
     for(const auto& piece:DesignData(s).at("pieces"))
     {
-        bool live=false;
-        for(auto& member:piece.at("members"))
-            for(auto& actor:s.scene)
-                if(actor.at("path")==member.at("path"))live=true;
+        const bool live=DesignAnyLive(s,piece.at("members"));
         if(!live)continue;
         auto position=piece.at("position").get<Vector>();
         if(std::abs(position[2]-s.depth)>8)continue;
