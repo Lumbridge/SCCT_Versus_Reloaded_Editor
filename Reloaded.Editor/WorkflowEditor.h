@@ -149,8 +149,12 @@ namespace Workflow::Editor
     Json ObjectivePlayerRules();
     Json SetObjectivePlayers(const Json& subject, int minimum, int maximum, bool open = false);
     Json SetObjectivePlayLevelPlayers(int players);
+    // A mission's objectives to win by match size: sizes is [1v1, ..., 8v8], each 1 to
+    // ObjectivePlayers::MostTargets or 0 for the mission's own MinimumObjectives; all 0
+    // clears it. Rules gains targets:[{path, sizes}].
+    Json SetMissionTargets(const Json& mission, const Json& sizes);
     // The identity of a live SObjective (or SMission) or Mover actor at that address, as
-    // a Properties window holds it, with mover:true for a mover; null for anything else.
+    // a Properties window holds it, with mover and mission flags; null for anything else.
     Json ObjectivePlayersSubject(uintptr_t object);
     // The SMission actors only, as ObjectiveActors lists them (path, objectives,
     // minimum): it never touches the selection.

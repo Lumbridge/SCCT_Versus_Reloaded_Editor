@@ -95,6 +95,24 @@ namespace
             rules[ObjectivePlayers::Fold(rule.value("path",std::string()))]={rule.value("min",0),rule.value("max",0)};
         return rules;
     }
+    ObjectivePlayers::Targets PlayerTargets(const Json& state)
+    {
+        ObjectivePlayers::Targets targets;
+        for(const auto& entry:state.value("targets",Json::array()))
+        {
+            std::array<int,ObjectivePlayers::TeamSizes> sizes{};
+            const auto values=entry.value("sizes",Json::array());
+            for(int k=0;k<ObjectivePlayers::TeamSizes && k<static_cast<int>(values.size());++k)sizes[k]=values[k].get<int>();
+            targets[ObjectivePlayers::Fold(entry.value("path",std::string()))]=sizes;
+        }
+        return targets;
+    }
+    std::array<int,ObjectivePlayers::TeamSizes> MissionTargets(const Json& state,const std::string& path)
+    {
+        const auto targets=PlayerTargets(state);
+        const auto found=targets.find(ObjectivePlayers::Fold(path));
+        return found==targets.end()?std::array<int,ObjectivePlayers::TeamSizes>{}:found->second;
+    }
     // The top mission is the game mode's own: no rule may leave it out.
     bool PlayerRuleAllowed(const Json& objectiveActors,const std::string& path)
     {
@@ -152,7 +170,19 @@ namespace
     {
         if(owner.is_null())return false;
         const auto path=owner.at("path").get<std::string>();
-        if(Editor::Compatible(path,"SBase.SMission"))AppendMenuA(menu,MF_STRING,kAddObjective,"Add SObjective");
+        if(Editor::Compatible(path,"SBase.SMission"))
+        {
+            AppendMenuA(menu,MF_STRING,kAddObjective,"Add SObjective");
+            // Any mission, the top one included: how many objectives win it in each match size.
+            std::string label="Objectives to &Win by Match Size...";
+            try
+            {
+                const auto summary=ObjectivePlayers::TargetsText(MissionTargets(Editor::ObjectivePlayerRules(),path));
+                if(!summary.empty())label="Objectives to &Win by Match Size ("+summary+")...";
+            }
+            catch(const std::exception&){}
+            AppendMenuA(menu,MF_STRING,kObjectiveTargets,label.c_str());
+        }
         else if(Editor::Compatible(path,"SBase.SObjective"))
         {
             AppendMenuA(menu,MF_STRING,kAddComputerObjective,"Add SComputerObjectiveTrigger");
@@ -369,32 +399,62 @@ namespace
         name=fields[0].value;
         if(name.empty() || name.size()>120 || name.find_first_of("\r\n")!=std::string::npos) throw std::runtime_error("Enter a name between 1 and 120 characters."); return true;
     }
+    // After a change: lobby sizes the map's rules leave with nothing to play, and
+    // objectives to win a match size cannot reach.
+    void WarnPlayerCounts(HWND owner)
+    {
+        const auto actors=Editor::ObjectiveMissions();
+        const auto state=Editor::ObjectivePlayerRules();
+        std::map<std::string,std::string> names;
+        for(const auto& actor:actors)
+        {
+            const auto missionPath=actor.value("path",std::string());
+            names[ObjectivePlayers::Fold(missionPath)]="mission "+missionPath.substr(missionPath.find('.')+1);
+        }
+        const auto missions=PlayerMissions(actors);
+        auto problems=ObjectivePlayers::Problems(missions,PlayerRules(state),names);
+        for(const auto& warning:ObjectivePlayers::TargetWarnings(missions,PlayerRules(state),PlayerTargets(state),names))problems.push_back(warning);
+        if(problems.empty())return;
+        std::string text;for(const auto& problem:problems)text+=problem+"\n";
+        MessageBoxA(owner,(text+"\nWiden a player range, or ask for fewer objectives to win.").c_str(),"Players in Match",MB_OK|MB_ICONWARNING);
+    }
     // Sets one objective's, zone mission's or mover's range (open: a mover opens inside
-    // it), and warns when the map's rules leave some lobby size with nothing to play.
+    // it), then warns as WarnPlayerCounts does.
     void ApplyObjectivePlayers(const Json& identity,const ObjectivePlayers::Rule& rule,HWND owner,bool open=false)
     {
         Editor::SetObjectivePlayers(identity,rule.minimum,rule.maximum,open);
-        const auto actors=Editor::ObjectiveMissions();
-        std::map<std::string,std::string> names;
-        for(const auto& actor:actors)
-            if(actor.value("kind",std::string())=="Mission")
-            {
-                const auto missionPath=actor.value("path",std::string());
-                names[ObjectivePlayers::Fold(missionPath)]="mission "+missionPath.substr(missionPath.find('.')+1);
-            }
-        const auto problems=ObjectivePlayers::Problems(PlayerMissions(actors),PlayerRules(Editor::ObjectivePlayerRules()),names);
-        if(!problems.empty())
-        {
-            std::string text;for(const auto& problem:problems)text+=problem+"\n";
-            MessageBoxA(owner,(text+"\nGive another objective a wider range, or change this one back.").c_str(),"Players in Match",MB_OK|MB_ICONWARNING);
-        }
+        WarnPlayerCounts(owner);
+    }
+    void ApplyMissionTargets(const Json& identity,const std::array<int,ObjectivePlayers::TeamSizes>& sizes,HWND owner)
+    {
+        Editor::SetMissionTargets(identity,Json(sizes));
+        WarnPlayerCounts(owner);
+    }
+    // "1v1 (2 players)": the dialog's and the menu's names for a match size.
+    std::string SizeName(int size)
+    {
+        return ObjectivePlayers::SizeLabel(size)+" ("+std::to_string(size*2-1)+"-"+std::to_string(size*2)+" players)";
     }
     // A Players in Match choice from a right-click menu: a preset or a range asked
-    // for. (The count Play Level plays with is on the top bar: PlayLevelPlayers.h.)
+    // for, or a mission's objectives to win by match size. (The count Play Level plays
+    // with is on the top bar: PlayLevelPlayers.h.)
     void RunObjectivePlayers(UINT command,const Json& identity,HWND owner)
     {
         auto state=Editor::ObjectivePlayerRules();
         const auto path=identity.at("path").get<std::string>();
+        if(command==kObjectiveTargets)
+        {
+            if(!Editor::Compatible(path,"SBase.SMission"))throw std::runtime_error("Select exactly one mission.");
+            const auto current=MissionTargets(state,path);
+            std::vector<InputField> fields;
+            for(int size=1;size<=ObjectivePlayers::TeamSizes;++size)
+                fields.push_back({"Objectives to win in "+SizeName(size),ObjectivePlayers::TargetText(current[size-1]),ObjectivePlayers::TargetChoices()});
+            if(!Ask(owner,"Objectives to Win by Match Size (Map: the mission's own)",fields))return;
+            std::array<int,ObjectivePlayers::TeamSizes> sizes{};
+            for(int k=0;k<ObjectivePlayers::TeamSizes;++k)sizes[k]=ObjectivePlayers::TargetCount(fields[k].value);
+            ApplyMissionTargets(identity,sizes,owner);
+            return;
+        }
         if(!Editor::Compatible(path,"SBase.SObjective") && !Editor::Compatible(path,"Mover"))throw std::runtime_error("Select exactly one objective, zone mission or mover.");
         if(!PlayerRuleAllowed(Editor::ObjectiveMissions(),path))throw std::runtime_error("The top mission is in every match: give its objectives or zones a player count instead.");
         auto rules=PlayerRules(state);
@@ -419,12 +479,14 @@ namespace
         ApplyObjectivePlayers(identity,rule,owner,open);
     }
     // The Players in Match strip of the editor's Properties windows (F4, double-click;
-    // PropertySearch.h): a row under the filter box while the window edits one
-    // objective, zone mission or mover. Min and Max set its rule as the menus do; a
-    // mover also has "Opens at start".
-    enum StripControl { kStripBack=0x5300,kStripLabel,kStripMinLabel,kStripMin,kStripMaxLabel,kStripMax,kStripOpen,kStripEnd };
-    constexpr int kStripHeight=28;
-    std::map<HWND,Json> playersStrips; // window -> the objective it shows
+    // PropertySearch.h), under the filter box while the window edits one objective,
+    // mission or mover: a row of Min and Max players (not on the top mission; a mover
+    // also has "Opens at start"), and for a mission two rows of objectives to win, 1v1
+    // to 4v4 and 5v5 to 8v8.
+    enum StripControl { kStripBack=0x5300,kStripLabel,kStripMinLabel,kStripMin,kStripMaxLabel,kStripMax,kStripOpen,
+                        kStripWinLabel,kStripWinSize=0x5308,kStripWin=0x5310,kStripEnd=0x5318 };
+    constexpr int kStripRow=28,kStripWinRows=54;
+    std::map<HWND,Json> playersStrips; // window -> what it shows: the subject, with "players" and "targets" flags
     void StripSelect(HWND window,int id,const std::string& text)
     {
         const auto combo=GetDlgItem(window,id);
@@ -442,18 +504,28 @@ namespace
     void StripFill(HWND window,const Json& subject)
     {
         const auto state=Editor::ObjectivePlayerRules();
-        const auto rules=PlayerRules(state);
-        const auto found=rules.find(ObjectivePlayers::Fold(subject.at("path").get<std::string>()));
-        const auto rule=found==rules.end()?ObjectivePlayers::Rule{}:found->second;
-        StripSelect(window,kStripMin,ObjectivePlayers::ChoiceText(rule.minimum));
-        StripSelect(window,kStripMax,ObjectivePlayers::ChoiceText(rule.maximum));
         const auto path=subject.at("path").get<std::string>();
-        if(auto box=GetDlgItem(window,kStripOpen))
+        const bool players=subject.value("players",true),targets=subject.value("targets",false);
+        for(int id=kStripLabel;id<=kStripOpen;++id)if(auto control=GetDlgItem(window,id))ShowWindow(control,players?SW_SHOWNA:SW_HIDE);
+        for(int id=kStripWinLabel;id<kStripEnd;++id)if(auto control=GetDlgItem(window,id))ShowWindow(control,targets?SW_SHOWNA:SW_HIDE);
+        if(players)
         {
-            const bool mover=subject.value("mover",false);
-            ShowWindow(box,mover?SW_SHOWNA:SW_HIDE);
-            SendMessageA(box,BM_SETCHECK,PlayerOpen(state,path)?BST_CHECKED:BST_UNCHECKED,0);
-            EnableWindow(box,!ObjectivePlayers::Empty(rule));
+            const auto rules=PlayerRules(state);
+            const auto found=rules.find(ObjectivePlayers::Fold(path));
+            const auto rule=found==rules.end()?ObjectivePlayers::Rule{}:found->second;
+            StripSelect(window,kStripMin,ObjectivePlayers::ChoiceText(rule.minimum));
+            StripSelect(window,kStripMax,ObjectivePlayers::ChoiceText(rule.maximum));
+            if(auto box=GetDlgItem(window,kStripOpen))
+            {
+                ShowWindow(box,subject.value("mover",false)?SW_SHOWNA:SW_HIDE);
+                SendMessageA(box,BM_SETCHECK,PlayerOpen(state,path)?BST_CHECKED:BST_UNCHECKED,0);
+                EnableWindow(box,!ObjectivePlayers::Empty(rule));
+            }
+        }
+        if(targets)
+        {
+            const auto sizes=MissionTargets(state,path);
+            for(int k=0;k<ObjectivePlayers::TeamSizes;++k)StripSelect(window,kStripWin+k,ObjectivePlayers::TargetText(sizes[k]));
         }
     }
     void StripRemove(HWND window)
@@ -461,13 +533,22 @@ namespace
         for(int id=kStripBack;id<kStripEnd;++id)if(auto control=GetDlgItem(window,id))DestroyWindow(control);
         playersStrips.erase(window);
     }
+    int StripHeight(const Json& subject)
+    {
+        return (subject.value("players",true)?kStripRow:0)+(subject.value("targets",false)?kStripWinRows:0);
+    }
     int StripUpdate(HWND window,const std::vector<uintptr_t>& objects)
     {
         Json subject;
         try
         {
             if(objects.size()==1)subject=Editor::ObjectivePlayersSubject(objects[0]);
-            if(!subject.is_null() && !PlayerRuleAllowed(Editor::ObjectiveMissions(),subject.at("path").get<std::string>()))subject=Json();
+            if(!subject.is_null())
+            {
+                // A mission has objectives to win; any but the top one also has a player range.
+                subject["targets"]=subject.value("mission",false);
+                subject["players"]=PlayerRuleAllowed(Editor::ObjectiveMissions(),subject.at("path").get<std::string>());
+            }
         }
         catch(const std::exception&){subject=Json();}
         if(subject.is_null()){StripRemove(window);return 0;}
@@ -493,38 +574,71 @@ namespace
             make("STATIC","Max",SS_RIGHT|SS_CENTERIMAGE,kStripMaxLabel);
             combo(kStripMax,ObjectivePlayers::Choices());
             make("BUTTON","Opens at start",BS_AUTOCHECKBOX|WS_TABSTOP,kStripOpen);
+            make("STATIC"," Objectives to win:",SS_LEFT|SS_CENTERIMAGE,kStripWinLabel);
+            for(int k=0;k<ObjectivePlayers::TeamSizes;++k)
+            {
+                make("STATIC",ObjectivePlayers::SizeLabel(k+1).c_str(),SS_RIGHT|SS_CENTERIMAGE,kStripWinSize+k);
+                combo(kStripWin+k,ObjectivePlayers::TargetChoices());
+            }
             SetWindowPos(GetDlgItem(window,kStripBack),HWND_BOTTOM,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
         }
         playersStrips[window]=subject;
         try{StripFill(window,subject);}catch(const std::exception&){}
-        return kStripHeight;
+        return StripHeight(subject);
     }
     void StripLayout(HWND window,int top,int width)
     {
+        const auto found=playersStrips.find(window);
+        if(found==playersStrips.end())return;
+        const auto& subject=found->second;
         auto place=[&](int id,int x,int y,int w,int h){if(auto control=GetDlgItem(window,id))MoveWindow(control,x,y,w,h,TRUE);};
-        place(kStripBack,0,top,width,kStripHeight);
-        place(kStripLabel,0,top+3,100,21);
-        place(kStripMinLabel,100,top+3,24,21);
-        place(kStripMin,128,top+3,56,300);
-        place(kStripMaxLabel,186,top+3,28,21);
-        place(kStripMax,218,top+3,56,300);
-        place(kStripOpen,290,top+3,110,21);
+        place(kStripBack,0,top,width,StripHeight(subject));
+        if(subject.value("players",true))
+        {
+            place(kStripLabel,0,top+3,100,21);
+            place(kStripMinLabel,100,top+3,24,21);
+            place(kStripMin,128,top+3,56,300);
+            place(kStripMaxLabel,186,top+3,28,21);
+            place(kStripMax,218,top+3,56,300);
+            place(kStripOpen,290,top+3,110,21);
+            top+=kStripRow;
+        }
+        if(subject.value("targets",false))
+        {
+            place(kStripWinLabel,0,top+3,100,21);
+            for(int k=0;k<ObjectivePlayers::TeamSizes;++k)
+            {
+                const int x=100+(k%4)*86,y=top+3+(k/4)*26;
+                place(kStripWinSize+k,x,y,28,21);
+                place(kStripWin+k,x+32,y,50,300);
+            }
+        }
     }
     bool StripCommand(HWND window,WPARAM w,LPARAM)
     {
         const int id=LOWORD(w);
-        if(id!=kStripMin && id!=kStripMax && id!=kStripOpen)return false;
+        const bool target=id>=kStripWin && id<kStripEnd;
+        if(id!=kStripMin && id!=kStripMax && id!=kStripOpen && !target)return false;
         if(id==kStripOpen?HIWORD(w)!=BN_CLICKED:HIWORD(w)!=CBN_SELCHANGE)return true;
         const auto found=playersStrips.find(window);
         if(found==playersStrips.end())return true;
         const Json subject=found->second;
         try
         {
-            // A minimum above the maximum moves the other end with it, not an error.
-            ObjectivePlayers::Rule rule{ObjectivePlayers::ChoiceCount(StripText(window,kStripMin)),ObjectivePlayers::ChoiceCount(StripText(window,kStripMax))};
-            if(id!=kStripOpen && rule.minimum && rule.maximum && rule.minimum>rule.maximum)(id==kStripMin?rule.maximum:rule.minimum)=id==kStripMin?rule.minimum:rule.maximum;
-            const bool open=subject.value("mover",false) && SendMessageA(GetDlgItem(window,kStripOpen),BM_GETCHECK,0,0)==BST_CHECKED;
-            ApplyObjectivePlayers(subject,rule,window,open);
+            if(target)
+            {
+                std::array<int,ObjectivePlayers::TeamSizes> sizes{};
+                for(int k=0;k<ObjectivePlayers::TeamSizes;++k)sizes[k]=ObjectivePlayers::TargetCount(StripText(window,kStripWin+k));
+                ApplyMissionTargets(subject,sizes,window);
+            }
+            else
+            {
+                // A minimum above the maximum moves the other end with it, not an error.
+                ObjectivePlayers::Rule rule{ObjectivePlayers::ChoiceCount(StripText(window,kStripMin)),ObjectivePlayers::ChoiceCount(StripText(window,kStripMax))};
+                if(id!=kStripOpen && rule.minimum && rule.maximum && rule.minimum>rule.maximum)(id==kStripMin?rule.maximum:rule.minimum)=id==kStripMin?rule.minimum:rule.maximum;
+                const bool open=subject.value("mover",false) && SendMessageA(GetDlgItem(window,kStripOpen),BM_GETCHECK,0,0)==BST_CHECKED;
+                ApplyObjectivePlayers(subject,rule,window,open);
+            }
         }
         catch(const std::exception& e){MessageBoxA(window,e.what(),"Players in Match",MB_OK|MB_ICONERROR);}
         try{StripFill(window,subject);}catch(const std::exception&){}
@@ -1400,6 +1514,7 @@ static Workflow::Json MoreWorkflowRequests(const std::string& op,const Workflow:
     if(op=="objectiveplayers.state") return Editor::ObjectivePlayerRules();
     if(op=="objectiveplayers.set") return Editor::SetObjectivePlayers(q.at("objective"),q.value("min",0),q.value("max",0),q.value("open",false));
     if(op=="objectiveplayers.playlevel") return Editor::SetObjectivePlayLevelPlayers(q.value("players",0));
+    if(op=="objectiveplayers.targets") return Editor::SetMissionTargets(q.at("mission"),q.at("sizes"));
     throw std::runtime_error("Unknown workflow request.");
 }
 

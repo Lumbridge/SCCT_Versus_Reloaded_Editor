@@ -612,6 +612,24 @@ match, 2+, 4+, 6+ and 8+ players, Up to 2, 4 or 6 players, and **Custom...** for
 any range. A choice that leaves some lobby size with nothing to play says so
 straight away.
 
+### Objectives to win by match size
+
+A mission can ask for a different number of objectives to win in each match size:
+1v1, 2v2 and so on up to 8v8, an uneven lobby counting as its bigger team (3
+players is 2v2). Select the mission and open its **Properties** (F4): the strip
+under the filter box has **Objectives to win** with a list per size, **Map**
+meaning the mission's own `MinimumObjectives`. Right-click the mission for
+**Objectives to Win by Match Size...** to set them in one dialog. For the top
+mission this is what the spies need to win the match, for example 1v1 2, 2v2 4,
+3v3 5; a zone's mission sets how many end that zone, and the match then needs as
+many fewer (or more) as the zone changed. The host sets it as the map loads, after
+the objectives for other lobby sizes are left out, so a mission never asks for
+more than the match can give: the editor warns when a size asks for more, and the
+game then asks for all that is left. The game's own objective counter on the HUD
+counts what the zones still need, so when the top mission asks for fewer than the
+zones add up to it shows more than the spies need, as it does in a stock map set
+up that way.
+
 ### Rooms for bigger games: movers
 
 Movers (doors, lifts, sliding walls) take the same rule, so an author can build
@@ -625,10 +643,10 @@ door or wall that should simply be out of the way in big games: it opens as the
 match starts and stays open. The host moves it and the game shows every player
 the same. Movers are not drawn on the Map Design plan.
 
-The first rule compiles a small script actor, `SPlayerCountRules0`, into the map
+The first rule compiles a small script actor, `SMatchSizeRules0`, into the map
 package (one Undo step), as Character Skins does; clearing the last rule removes
-it. A map saved with the first version's `SObjectivePlayers0` keeps its rules: the
-next change moves them over. In game the host decides once, as the map loads and before the missions set
+it. A map saved with an earlier version's `SPlayerCountRules0` or
+`SObjectivePlayers0` keeps its rules: the next change moves them over. In game the host decides once, as the map loads and before the missions set
 up: the lobby's player count arrives in the map's URL (`NBPlayers`, which the game
 also keeps as `SGameInfo.PlayersToWait`), each objective outside its range comes
 out of its mission and is switched off the game's own way, which hides its

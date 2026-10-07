@@ -213,7 +213,7 @@ std::string SheetPlayersStatus(DesignState& s,const Json& actor)
     std::set<int> counts;
     if(rule.minimum>0){if(rule.minimum>1)counts.insert(rule.minimum-1);counts.insert(rule.minimum);}
     if(rule.maximum>0){counts.insert(rule.maximum);if(rule.maximum<ObjectivePlayers::MostPlayers)counts.insert(rule.maximum+1);}
-    for(int n:counts)text+=" "+ObjectivePlayers::Summary(missions,rules,n)+".";
+    for(int n:counts)text+=" "+ObjectivePlayers::Summary(missions,rules,n,ObjectiveTargets(s))+".";
     const auto problems=ObjectivePlayers::Problems(missions,rules);
     if(!problems.empty())text+=" "+problems.front();
     return text;
