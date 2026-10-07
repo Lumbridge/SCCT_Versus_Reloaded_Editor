@@ -607,9 +607,23 @@ match, 2+, 4+, 6+ and 8+ players, Up to 2, 4 or 6 players, and **Custom...** for
 any range. A choice that leaves some lobby size with nothing to play says so
 straight away.
 
-The first rule compiles a small script actor, `SObjectivePlayers0`, into the map
+### Rooms for bigger games: movers
+
+Movers (doors, lifts, sliding walls) take the same rule, so an author can build
+extra rooms that only open when the lobby is big enough: put a door at each way
+in and give it **6+ players**. Right-click the mover in a viewport for **Players
+in Match**, or set Min and Max in its Properties strip. Outside its range a mover
+is closed and locked as the match starts (as an alarm locks a door: its triggers
+and buttons do nothing); inside it, it works as built. Tick **Open at the start
+when in range** (in the menu, or **Opens at start** in the Properties strip) for a
+door or wall that should simply be out of the way in big games: it opens as the
+match starts and stays open. The host moves it and the game shows every player
+the same. Movers are not drawn on the Map Design plan.
+
+The first rule compiles a small script actor, `SPlayerCountRules0`, into the map
 package (one Undo step), as Character Skins does; clearing the last rule removes
-it. In game the host decides once, as the map loads and before the missions set
+it. A map saved with the first version's `SObjectivePlayers0` keeps its rules: the
+next change moves them over. In game the host decides once, as the map loads and before the missions set
 up: the lobby's player count arrives in the map's URL (`NBPlayers`, which the game
 also keeps as `SGameInfo.PlayersToWait`), each objective outside its range comes
 out of its mission and is switched off the game's own way, which hides its

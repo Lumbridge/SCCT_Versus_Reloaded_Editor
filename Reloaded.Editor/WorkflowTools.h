@@ -6,10 +6,11 @@ namespace WorkflowTools
 {
     constexpr UINT kConnections = 40920;
     constexpr UINT kAddObjective = 40949, kAddComputerObjective = 40950, kAddBombObjective = 40951, kAddFlagObjective = 40952;
-    // Players in Match on an objective's or zone mission's right-click menus
-    // (ObjectivePlayersModel.h): every match, the presets, Custom..., Play Level as....
-    constexpr UINT kObjectivePlayersFirst = 41400, kObjectivePlayersCustom = 41408, kPlayLevelPlayers = 41409,
-                   kObjectivePlayersLast = 41409;
+    // Players in Match on an objective's, zone mission's or mover's right-click menus
+    // (ObjectivePlayersModel.h): every match, the presets, Custom..., and for a mover
+    // Open at the start when in range. 41409 was Play Level as... (now the top bar).
+    constexpr UINT kObjectivePlayersFirst = 41400, kObjectivePlayersCustom = 41408, kObjectivePlayersOpen = 41410,
+                   kObjectivePlayersLast = 41410;
     constexpr UINT kViews = 40921;
     constexpr UINT kBrushVisibility = 40953;
     constexpr UINT kAssemblies = 40922;

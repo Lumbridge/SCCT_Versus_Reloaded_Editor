@@ -112,21 +112,29 @@ int main()
 
         // The script.
         const auto script = Script();
-        Check(Contains(script, "class SObjectivePlayers extends Info\r\n\tplaceable;"), "class header");
+        Check(Contains(script, "class SPlayerCountRules extends Info\r\n\tplaceable;"), "class header");
+        Check(std::string(LegacyClassName) == "SObjectivePlayers", "version 1's class is read and replaced");
         Check(script.find("\n") == script.find("\r\n") + 1, "CRLF line ends");
-        Check(Contains(script, "var() SObjective Objective[64];") && Contains(script, "var() byte MinPlayers[64];") &&
-                  Contains(script, "var() byte MaxPlayers[64];") && Contains(script, "var() byte PlayLevelPlayers;"),
+        Check(Contains(script, "var() Actor Subject[64];") && Contains(script, "var() byte MinPlayers[64];") &&
+                  Contains(script, "var() byte MaxPlayers[64];") && Contains(script, "var() byte OpenInRange[64];") &&
+                  Contains(script, "var() byte PlayLevelPlayers;"),
               "the table");
         Check(Contains(script, "Level.Game.ParseOption(URL, \"NBPlayers\")") && Contains(script, "SGameInfo(Level.Game).PlayersToWait"),
               "the lobby count, with the game's own copy as the fallback");
         Check(Contains(script, "\"?EDITEUR=TRUE\") >= 0)\r\n\t\treturn PlayLevelPlayers;"), "Play Level's own count");
-        // Decided once on the server, before the missions prepare: no Tick, nothing simulated.
+        // Decided once on the server, objectives before the missions prepare, movers on the
+        // first tick; nothing simulated: a mover's position replicates by itself.
         Check(Contains(script, "function PostBeginPlay()\r\n{\r\n\tlocal SMission M;\r\n\r\n\tif (Level.Game == None)\r\n\t\treturn;"), "server only");
-        Check(!Contains(script, "simulated") && !Contains(script, "Tick") && Contains(script, "RemoteRole=ROLE_None"), "nothing runs on clients");
+        Check(!Contains(script, "simulated") && Contains(script, "RemoteRole=ROLE_None"), "nothing runs on clients");
+        Check(Contains(script, "\tif (bMoversDone)\r\n\t\treturn;\r\n\tbMoversDone = true;\r\n\tif (Level.Game == None || Players <= 0)"), "movers once, on the server");
+        // Outside the range: shut and locked, as an alarm locks a door; inside: as built, or opened and locked open.
+        Check(Contains(script, "\t\tif (Outside(i))\r\n\t\t\tCloseMover(M);\r\n\t\telse if (OpenInRange[i] != 0)\r\n\t\t\tOpenMover(M);"), "mover rules");
+        Check(Contains(script, "\tif (M.KeyNum != 0)\r\n\t\tM.InterpolateTo(0, M.MoveTime);\r\n\tM.bAllowLock = true;\r\n\tM.Lock();"), "closed and locked");
+        Check(Contains(script, "\tif (M.NumKeys > 1 && M.KeyNum == 0)\r\n\t\tM.InterpolateTo(1, M.MoveTime);\r\n\tM.bAllowLock = true;\r\n\tM.Lock();"), "opened and locked open");
         Check(Contains(script, "O.Triggers[i].Desactivate();") && Contains(script, "O.Desactivate();"), "switched off the game's way");
         Check(Contains(script, "M.Objectives.Remove(i, 1);"), "out of the mission's list");
         Check(Contains(script, "M.MinimumObjectives = Min(M.MinimumObjectives - Fewer, Capacity);"), "thresholds as the model has them");
-        Check(Contains(script, "Version=1\r\n") && Version == 1, "versioned");
+        Check(Contains(script, "Version=2\r\n") && Version == 2, "versioned");
         std::cout << "ObjectivePlayersModelTests: " << checks << " checks passed\n";
         return 0;
     }

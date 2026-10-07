@@ -20,13 +20,23 @@
 // flags. The missions then need fewer completions where the remaining objectives
 // could not otherwise reach their MinimumObjectives, so the match stays winnable.
 // Clients are not touched: the server's mission is the one that scores.
+//
+// Movers take the same rules, so an author can build extra rooms behind a door that
+// only opens in big games: outside its range a mover closes and locks (Mover.Lock, as
+// an alarm locks doors, which leaves it in s_TemporaryInactive so its triggers do
+// nothing); inside it, it works as built, or with OpenInRange opens and locks open.
+// The server moves it once, on the first tick after the movers have begun play, and
+// the game replicates a mover's position to every client.
 namespace ObjectivePlayers
 {
 // Raise with every change to Script(), and give the class a new name: a map's actor
 // of an older version is read and replaced instead of recompiling a class in use.
-constexpr int Version = 1;
-constexpr const char* ClassName = "SObjectivePlayers";
-// Objectives one map can give a rule.
+constexpr int Version = 2;
+constexpr const char* ClassName = "SPlayerCountRules";
+// Version 1, objectives only: its table (Objective, MinPlayers, MaxPlayers,
+// PlayLevelPlayers) is read and moved to the current class.
+constexpr const char* LegacyClassName = "SObjectivePlayers";
+// Objectives and movers one map can give a rule.
 constexpr int Capacity = 64;
 // The largest count the panel offers; the game's own limit is 16 (MaxPlayers).
 constexpr int MostPlayers = 16;
@@ -262,19 +272,21 @@ inline std::string Script()
     const auto cap = std::to_string(Capacity), depth = std::to_string(MaxDepth);
     return std::string(
         "//=============================================================================\r\n"
-        "// ") + ClassName + ": objectives that are only in matches with some number of\r\n"
-        "// players, written by RE+ Map Design. The server leaves the others out as the\r\n"
-        "// map loads, before the missions prepare their objectives.\r\n"
+        "// ") + ClassName + ": objectives and movers for some numbers of players, written\r\n"
+        "// by RE+. The server leaves objectives out as the map loads, before the missions\r\n"
+        "// prepare them, and closes and locks (or opens) movers on its first tick.\r\n"
         "//=============================================================================\r\n"
         "class " + ClassName + " extends Info\r\n"
         "\tplaceable;\r\n"
         "\r\n"
-        "var() SObjective Objective[" + cap + "];\r\n"
+        "var() Actor Subject[" + cap + "];\r\n"
         "var() byte MinPlayers[" + cap + "];\r\n"
         "var() byte MaxPlayers[" + cap + "];\r\n"
+        "var() byte OpenInRange[" + cap + "];\r\n"
         "var() byte PlayLevelPlayers;\r\n"
         "var const int Version;\r\n"
-        "var int Players, LeftOut;\r\n"
+        "var int Players, LeftOut, Shut, Opened;\r\n"
+        "var bool bMoversDone;\r\n"
         "\r\n"
         "function PostBeginPlay()\r\n"
         "{\r\n"
@@ -289,6 +301,49 @@ inline std::string Script()
         "\t\tif (IsTop(M))\r\n"
         "\t\t\tPrune(M, 0);\r\n"
         "\tLog(\"" + ClassName + ": \" $ Players $ \" players, \" $ LeftOut $ \" objectives left out\");\r\n"
+        "}\r\n"
+        "\r\n"
+        "// Movers, once they have begun play: closed and locked outside their range,\r\n"
+        "// or opened and locked open inside it when OpenInRange says so.\r\n"
+        "function Tick(float DeltaTime)\r\n"
+        "{\r\n"
+        "\tlocal int i;\r\n"
+        "\tlocal Mover M;\r\n"
+        "\r\n"
+        "\tif (bMoversDone)\r\n"
+        "\t\treturn;\r\n"
+        "\tbMoversDone = true;\r\n"
+        "\tif (Level.Game == None || Players <= 0)\r\n"
+        "\t\treturn;\r\n"
+        "\tfor (i = 0; i < " + cap + "; i++)\r\n"
+        "\t{\r\n"
+        "\t\tM = Mover(Subject[i]);\r\n"
+        "\t\tif (M == None)\r\n"
+        "\t\t\tcontinue;\r\n"
+        "\t\tif (Outside(i))\r\n"
+        "\t\t\tCloseMover(M);\r\n"
+        "\t\telse if (OpenInRange[i] != 0)\r\n"
+        "\t\t\tOpenMover(M);\r\n"
+        "\t}\r\n"
+        "\tLog(\"" + ClassName + ": \" $ Shut $ \" movers closed, \" $ Opened $ \" opened\");\r\n"
+        "}\r\n"
+        "\r\n"
+        "function CloseMover(Mover M)\r\n"
+        "{\r\n"
+        "\tif (M.KeyNum != 0)\r\n"
+        "\t\tM.InterpolateTo(0, M.MoveTime);\r\n"
+        "\tM.bAllowLock = true;\r\n"
+        "\tM.Lock();\r\n"
+        "\tShut++;\r\n"
+        "}\r\n"
+        "\r\n"
+        "function OpenMover(Mover M)\r\n"
+        "{\r\n"
+        "\tif (M.NumKeys > 1 && M.KeyNum == 0)\r\n"
+        "\t\tM.InterpolateTo(1, M.MoveTime);\r\n"
+        "\tM.bAllowLock = true;\r\n"
+        "\tM.Lock();\r\n"
+        "\tOpened++;\r\n"
         "}\r\n"
         "\r\n"
         "// The lobby's player count, which the host puts in the map's URL.\r\n"
@@ -319,13 +374,18 @@ inline std::string Script()
         "\treturn true;\r\n"
         "}\r\n"
         "\r\n"
-        "function bool Excluded(SObjective O)\r\n"
+        "function bool Outside(int i)\r\n"
+        "{\r\n"
+        "\treturn (MinPlayers[i] > 0 && Players < MinPlayers[i]) || (MaxPlayers[i] > 0 && Players > MaxPlayers[i]);\r\n"
+        "}\r\n"
+        "\r\n"
+        "function bool Excluded(Actor A)\r\n"
         "{\r\n"
         "\tlocal int i;\r\n"
         "\r\n"
         "\tfor (i = 0; i < " + cap + "; i++)\r\n"
-        "\t\tif (Objective[i] == O)\r\n"
-        "\t\t\treturn (MinPlayers[i] > 0 && Players < MinPlayers[i]) || (MaxPlayers[i] > 0 && Players > MaxPlayers[i]);\r\n"
+        "\t\tif (Subject[i] == A)\r\n"
+        "\t\t\treturn Outside(i);\r\n"
         "\treturn false;\r\n"
         "}\r\n"
         "\r\n"
@@ -413,6 +473,7 @@ inline std::string Script()
         "{\r\n"
         "\tbStatic=False\r\n"
         "\tbNoDelete=True\r\n"
+        "\tbAlwaysTick=True\r\n"
         "\tRemoteRole=ROLE_None\r\n"
         "\tVersion=" + std::to_string(Version) + "\r\n"
         "}\r\n";
