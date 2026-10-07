@@ -86,6 +86,22 @@ namespace Workflow::Editor
     void BuildGeometry();
     unsigned long GeometryBuilds();
     Json DesignScene();
+    // A brush's wireframe for the Map Design panel, kept out of JSON: a
+    // medium map holds hundreds of thousands of edges, and as JSON each one
+    // costs the 32-bit editor a dozen allocations. Edges shared by two
+    // polygons are kept once. low and high bound every polygon vertex, even
+    // when the edges were left out to stay within the panel's budget.
+    struct DesignWire
+    {
+        std::vector<std::array<float,6>> edges;
+        Vector low{},high{};
+        bool measured=false;
+    };
+    // The panel's scene: DesignScene's actors without "edges", each with
+    // "index" into wires and "brush" when it has polygons. Polygons with
+    // unreadable vertices are skipped rather than failing the whole map, and
+    // past the edge budget brushes keep only their bounds (counted in dropped).
+    Json DesignScene(std::vector<DesignWire>& wires,size_t& dropped);
     Vector DesignGrid();
     // Followers move by delta inside the same transaction: a group keeping up
     // with one of its members.

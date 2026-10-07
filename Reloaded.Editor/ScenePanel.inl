@@ -15,10 +15,8 @@ std::string SceneShortName(const std::string& path){return path.substr(path.find
 // What a loose actor is, in the words the rest of the panel uses.
 std::string SceneType(DesignState& s,const Json& actor)
 {
-    const auto path=actor.at("path").get<std::string>();
-    for(const auto& device:s.securityActors)if(device.at("path")==path)return device.value("kind",std::string("Device"));
-    for(const auto& objective:s.objectives)if(objective.at("path")==path)return objective.value("kind",std::string("Game actor"));
-    for(const auto& light:s.lights)if(light.at("path")==path)return "Light";
+    const auto& path=actor.at("path").get_ref<const std::string&>();
+    if(const auto listed=s.listedKind.find(path);listed!=s.listedKind.end())return listed->second;
     if(actor.value("mover",false))return "Mover";
     if(actor.value("portal",false))return "Portal";
     if(actor.value("volume",false))return "Volume";
@@ -29,7 +27,7 @@ std::string SceneType(DesignState& s,const Json& actor)
     if(name.rfind("Design_",0)==0 && name.find("_Block")!=std::string::npos)return csg==2?"Orphan piece brush (carve)":"Orphan piece brush";
     if(csg==2)return "Brush (carve)";
     if(csg==1)return "Brush (add)";
-    if(!actor.at("edges").empty())return "Brush";
+    if(actor.value("brush",false))return "Brush";
     const auto cls=actor.value("class",std::string("Actor"));
     return cls.substr(cls.find_last_of('.')+1);
 }
@@ -231,14 +229,8 @@ void SceneFrame(DesignState& s,const Json& members)
         if(first){lo=hi=p;first=false;}
         else for(int i=0;i<3;++i){lo[i]=std::min(lo[i],p[i]);hi[i]=std::max(hi[i],p[i]);}
     };
-    for(auto& actor:s.scene)
-    {
-        bool wanted=false;
-        for(auto& m:members)if(m.at("path")==actor.at("path"))wanted=true;
-        if(!wanted)continue;
-        add(actor.at("position").get<Vector>());
-        for(auto& e:actor.at("edges")){add(e[0].get<Vector>());add(e[1].get<Vector>());}
-    }
+    for(auto& m:members)
+        if(const auto* actor=DesignActorAt(s,m.at("path")))DesignActorExtent(s,*actor,add);
     if(first)throw std::runtime_error("Those actors are not in the map any more. Refresh the list.");
     if(s.floorFilter && !Design::WithinFloor(s.floorLow,s.floorHigh,lo[2],hi[2]))
     {

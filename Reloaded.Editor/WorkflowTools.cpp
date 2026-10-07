@@ -47,6 +47,7 @@
 #include <memory>
 #include <set>
 #include <stdexcept>
+#include <unordered_map>
 #pragma comment(lib,"comctl32.lib")
 #pragma comment(lib,"gdiplus.lib")
 

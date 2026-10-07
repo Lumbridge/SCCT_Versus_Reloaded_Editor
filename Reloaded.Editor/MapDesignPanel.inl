@@ -101,6 +101,18 @@ struct DesignState
     HWND window{},canvas{},status{};
     unsigned epoch=0,revision=0,dataRevision=0;
     Json scene=Json::array(),pending,previous,points=Json::array(),data;
+    // Brush wireframes beside the scene (each actor's "index"), where each
+    // actor is by path, and the kind each device, game actor or light path
+    // has: rebuilt with the scene, so lookups do not search it.
+    std::vector<Editor::DesignWire> wires;
+    std::unordered_map<std::string,size_t> sceneIndex;
+    std::unordered_map<std::string,std::string> listedKind;
+    size_t droppedEdges=0;
+    // The canvas is drawn off screen into this, kept while its size holds.
+    std::unique_ptr<Gdiplus::Bitmap> back;
+    HDC backDC{};
+    HBITMAP backBitmap{},backOld{};
+    SIZE backSize{};
     Pose frame{};
     int plane=0;
     double zoom=.2,panX=300,panY=300,depth=0;
@@ -186,6 +198,7 @@ struct DesignState
     // abundant first, cached the same way; the kinds taken out of the plan by
     // their chip; and where those chips were painted, so clicks find them.
     std::map<std::string,std::string> typeOf;
+    std::vector<const std::string*> typeByIndex;
     std::vector<std::pair<std::string,size_t>> typeCounts;
     unsigned typeRevision=~0u,typeDataRevision=~0u;
     std::set<std::string> hiddenTypes;
@@ -245,6 +258,43 @@ const Json& DesignData(DesignState& s)
         s.dataRevision=documentRevision;
     }
     return s.data;
+}
+// The wireframe of a scene actor: empty for a point actor, or for an actor
+// from a scene older than the current one.
+const Editor::DesignWire& DesignWireOf(DesignState& s,const Json& actor)
+{
+    static const Editor::DesignWire none;
+    const auto found=actor.find("index");
+    if(found==actor.end() || !found->is_number_unsigned())return none;
+    const auto index=found->get<size_t>();
+    if(index>=s.wires.size() || index>=s.scene.size())return none;
+    const auto& listed=s.scene[index];
+    if(&listed!=&actor && listed.at("path")!=actor.at("path"))return none;
+    return s.wires[index];
+}
+// The scene actor at a path, or null when it is not in the map. The pointer
+// lasts until the next refresh.
+const Json* DesignActorAt(DesignState& s,const std::string& path)
+{
+    const auto found=s.sceneIndex.find(path);
+    return found==s.sceneIndex.end() || found->second>=s.scene.size()?nullptr:&s.scene[found->second];
+}
+const Json* DesignActorAt(DesignState& s,const Json& path)
+{
+    return path.is_string()?DesignActorAt(s,path.get_ref<const std::string&>()):nullptr;
+}
+// Whether any of a piece's brushes is still in the map.
+bool DesignAnyLive(DesignState& s,const Json& members)
+{
+    for(const auto& member:members)if(DesignActorAt(s,member.at("path")))return true;
+    return false;
+}
+// Hands add an actor's origin and, for a brush, the corners of its bounds.
+template<class Add> void DesignActorExtent(DesignState& s,const Json& actor,Add add)
+{
+    add(actor.at("position").get<Vector>());
+    const auto& wire=DesignWireOf(s,actor);
+    if(wire.measured){add(wire.low);add(wire.high);}
 }
 std::filesystem::path DesignWorkspacePath()
 {
@@ -365,9 +415,7 @@ const std::vector<DesignLevel>& DesignLevels(DesignState& s)
             const auto kind=spec.at("kind").get<std::string>();
             if(kind!="Room" && kind!="Corridor" && !Design::Crouching(kind))continue;
             if(spec.value("name",std::string())=="Stairwell")continue;
-            bool live=false;
-            for(auto& member:piece.at("members"))for(auto& actor:s.scene)if(actor.at("path")==member.at("path"))live=true;
-            if(!live)continue;
+            if(!DesignAnyLive(s,piece.at("members")))continue;
             const double base=piece.at("position").get<Vector>()[2];
             evidence.push_back({base,base+spec.value("height",256.0),
                                 std::sqrt(std::max(spec.value("width",256.0),1.0)*std::max(spec.value("length",256.0),1.0))});
@@ -387,18 +435,12 @@ const std::vector<DesignLevel>& DesignLevels(DesignState& s)
         for(const auto& actor:s.scene)
         {
             const int csg=actor.value("csg",0);
-            if((csg!=1 && csg!=2) || actor.at("edges").empty() || actor.value("portal",false))continue;
+            const auto& wire=DesignWireOf(s,actor);
+            if((csg!=1 && csg!=2) || !wire.measured || actor.value("portal",false))continue;
             Design::BrushBox brush;
             brush.carve=csg==2;
-            brush.low={1e18,1e18,1e18};
-            brush.high={-1e18,-1e18,-1e18};
-            for(auto& edge:actor.at("edges"))
-                for(int end=0;end<2;++end)
-                {
-                    const auto v=edge[end].get<Vector>();
-                    for(int axis=0;axis<3;++axis){brush.low[axis]=std::min(brush.low[axis],v[axis]);brush.high[axis]=std::max(brush.high[axis],v[axis]);}
-                }
-            if(brush.low[0]>brush.high[0])continue;
+            brush.low=wire.low;
+            brush.high=wire.high;
             for(int axis=0;axis<3;++axis){low[axis]=std::min(low[axis],brush.low[axis]);high[axis]=std::max(high[axis],brush.high[axis]);}
             brushes.push_back(brush);
         }
@@ -493,11 +535,15 @@ void DesignTallyTypes(DesignState& s)
     if(s.typeRevision==s.revision && s.typeDataRevision==s.dataRevision)return;
     std::map<std::string,size_t> counts;
     s.typeOf.clear();
+    s.typeByIndex.clear();
+    s.typeByIndex.reserve(s.scene.size());
     for(const auto& actor:s.scene)
     {
         auto type=SceneType(s,actor);
         ++counts[type];
-        s.typeOf[actor.at("path").get<std::string>()]=std::move(type);
+        auto& stored=s.typeOf[actor.at("path").get<std::string>()];
+        stored=std::move(type);
+        s.typeByIndex.push_back(&stored);
     }
     s.typeCounts.assign(counts.begin(),counts.end());
     std::stable_sort(s.typeCounts.begin(),s.typeCounts.end(),
@@ -509,7 +555,13 @@ const std::string& DesignTypeOf(DesignState& s,const Json& actor)
 {
     static const std::string unknown="Other";
     DesignTallyTypes(s);
-    const auto found=s.typeOf.find(actor.at("path").get<std::string>());
+    // By the actor's place in the scene when the tally is of this scene.
+    if(const auto index=actor.find("index");index!=actor.end() && index->is_number_unsigned() && s.typeByIndex.size()==s.scene.size())
+    {
+        const auto i=index->get<size_t>();
+        if(i<s.scene.size() && (&s.scene[i]==&actor || s.scene[i].at("path")==actor.at("path")))return *s.typeByIndex[i];
+    }
+    const auto found=s.typeOf.find(actor.at("path").get_ref<const std::string&>());
     return found==s.typeOf.end()?unknown:found->second;
 }
 // The same answer for the painters that work from their own lists — lights,
@@ -528,10 +580,11 @@ bool DesignShows(DesignState& s,const Json& actor)
     // cannot be clicked, box-selected or fitted to either.
     if(!s.hiddenTypes.empty() && s.hiddenTypes.count(DesignTypeOf(s,actor)))return false;
     if(!s.floorFilter)return true;
-    const auto& edges=actor.at("edges");
-    if(edges.empty())return DesignOnFloor(s,actor.at("position").get<Vector>()[2],actor.at("position").get<Vector>()[2]);
-    for(auto& edge:edges)if(DesignOnFloor(s,edge[0].get<Vector>()[2],edge[1].get<Vector>()[2]))return true;
-    return false;
+    // A brush's edges join up, so one of them reaches the storey exactly when
+    // its height range does.
+    if(const auto& wire=DesignWireOf(s,actor);wire.measured)return DesignOnFloor(s,wire.low[2],wire.high[2]);
+    const double z=actor.at("position").at(2).get<double>();
+    return DesignOnFloor(s,z,z);
 }
 std::vector<Json> DesignReferencesInView(DesignState& s,const Json& data)
 {
@@ -580,8 +633,8 @@ Json SceneGroupMembers(DesignState& s,const std::string& name);
 // Whether an actor is locked, by its path in the scene.
 bool DesignLockedPath(DesignState& s,const std::string& path)
 {
-    for(const auto& actor:s.scene)if(actor.at("path")==path)return actor.at("locked").get<bool>();
-    return false;
+    const auto* actor=DesignActorAt(s,path);
+    return actor && actor->at("locked").get<bool>();
 }
 std::string SecurityName(const Json& actor);
 bool LightHandleAt(DesignState& s,double x,double y,Json& light,bool& radiusHandle);
@@ -622,11 +675,38 @@ void DesignRefresh(DesignState& s)
         // Another map holds other kinds of actor: it starts with all of them.
         s.hiddenTypes.clear();
     }
-    s.scene=Editor::DesignScene();
+    {
+        std::vector<Editor::DesignWire> wires;
+        size_t dropped=0;
+        Json scene;
+        try{scene=Editor::DesignScene(wires,dropped);}
+        catch(...)
+        {
+            // Tried at this revision: the timer waits for the next change
+            // instead of reading the whole map again every tick.
+            s.revision=Editor::Revision();
+            throw;
+        }
+        s.scene=std::move(scene);
+        s.wires=std::move(wires);
+        if(dropped && !s.droppedEdges)
+            DesignStatus(s,"This map has more brush edges than the plan draws; the rest show as outlines of their bounds. Hide detail brushes or use the storey filter to see them.");
+        s.droppedEdges=dropped;
+    }
+    s.sceneIndex.clear();
+    s.sceneIndex.reserve(s.scene.size());
+    for(size_t i=0;i<s.scene.size();++i)s.sceneIndex[s.scene[i].at("path").get<std::string>()]=i;
+    // The tally is by place in the scene, so a new scene needs a new one.
+    s.typeRevision=~0u;
     s.revision=Editor::Revision();
     try{s.securityActors=Editor::SecurityActors();}catch(const std::exception&){s.securityActors=Json::array();}
     try{s.lights=Editor::Lights();}catch(const std::exception&){s.lights=Json::array();}
     try{s.objectives=Editor::ObjectiveActors();}catch(const std::exception&){s.objectives=Json::array();}
+    // First listing wins, in the order the Scene panel has always asked.
+    s.listedKind.clear();
+    for(const auto& device:s.securityActors)s.listedKind.emplace(device.at("path").get<std::string>(),device.value("kind",std::string("Device")));
+    for(const auto& objective:s.objectives)s.listedKind.emplace(objective.at("path").get<std::string>(),objective.value("kind",std::string("Game actor")));
+    for(const auto& light:s.lights)s.listedKind.emplace(light.at("path").get<std::string>(),"Light");
     try{s.stageActors=Editor::StageActors();}catch(const std::exception&){s.stageActors=Json::array();}
     SecurityRefreshList(s);
     StageRefreshList(s);
@@ -646,11 +726,7 @@ void DesignFit(DesignState& s)
         if(first){lo=hi=p;first=false;}
         else for(int i=0;i<3;++i){lo[i]=std::min(lo[i],p[i]);hi[i]=std::max(hi[i],p[i]);}
     };
-    for(auto& actor:s.scene)if(DesignShows(s,actor))
-    {
-        add(actor.at("position").get<Vector>());
-        for(auto& e:actor.at("edges")){add(e[0].get<Vector>());add(e[1].get<Vector>());}
-    }
+    for(auto& actor:s.scene)if(DesignShows(s,actor))DesignActorExtent(s,actor,add);
     const auto& data=DesignData(s);
     for(auto& reference:DesignReferencesInView(s,data))
         if(auto* image=DesignImage(s,reference.at("file")))
@@ -685,20 +761,27 @@ void DesignBuildHulls(DesignState& s)
     s.hullPlane=s.plane;
     s.hullRevision=s.revision;
     const int a=DesignHorizontal(s),b=DesignVertical(s);
-    size_t budget=400000;
-    for(size_t i=0;i<s.scene.size();++i)
+    size_t budget=2000000;
+    for(size_t i=0;i<s.scene.size() && i<s.wires.size();++i)
     {
-        const auto& edges=s.scene[i].at("edges");
-        if(edges.empty() || edges.size()*2>budget)continue;
-        budget-=edges.size()*2;
+        const auto& wire=s.wires[i];
+        if(!wire.measured)continue;
         std::vector<Design::Point> points;
-        points.reserve(edges.size()*2);
-        for(auto& edge:edges)
-            for(int end=0;end<2;++end)
+        if(wire.edges.empty() || wire.edges.size()*2>budget)
+        {
+            // A brush past the edge budget fills its bounds instead.
+            points={{wire.low[a],wire.low[b]},{wire.high[a],wire.low[b]},{wire.high[a],wire.high[b]},{wire.low[a],wire.high[b]}};
+        }
+        else
+        {
+            budget-=wire.edges.size()*2;
+            points.reserve(wire.edges.size()*2);
+            for(const auto& edge:wire.edges)
             {
-                auto v=edge[end].get<Vector>();
-                points.push_back({v[a],v[b]});
+                points.push_back({edge[a],edge[b]});
+                points.push_back({edge[3+a],edge[3+b]});
             }
+        }
         try{s.hulls[i]=Design::ConvexHull(std::move(points));}catch(const std::exception&){}
     }
 }
@@ -721,12 +804,10 @@ std::vector<Design::Extent> DesignNeighbourBounds(DesignState& s)
     for(size_t i=0;i<s.scene.size();++i)
     {
         const auto& actor=s.scene[i];
-        if(!DesignShows(s,actor) || actor.at("edges").empty())continue;
+        const auto& wire=DesignWireOf(s,actor);
+        if(!wire.measured || !DesignShows(s,actor))continue;
         if(mine.count(actor.at("path").get<std::string>()))continue;
-        std::vector<Vector> points;
-        for(auto& edge:actor.at("edges"))
-            for(int end=0;end<2;++end)points.push_back(edge[end].get<Vector>());
-        try{boxes.push_back(Design::Bounds(points));}catch(const std::exception&){}
+        boxes.push_back({wire.low,wire.high});
         if(boxes.size()>=4096)break;
     }
     return boxes;
@@ -774,8 +855,7 @@ void DesignTurnSelection(DesignState& s,double degrees)
         if(actor.at("locked").get<bool>()){++locked;continue;}
         selected.push_back(Json{{"path",actor.at("path")},{"class",actor.at("class")}});
         auto note=[&](const Vector& v){for(int axis=0;axis<3;++axis){lo[axis]=std::min(lo[axis],v[axis]);hi[axis]=std::max(hi[axis],v[axis]);}};
-        note(actor.at("position").get<Vector>());
-        for(const auto& edge:actor.at("edges")){note(edge[0].get<Vector>());note(edge[1].get<Vector>());}
+        DesignActorExtent(s,actor,note);
     }
     if(selected.empty())
         throw std::runtime_error(locked?"Everything selected is locked. Unlock it first (Ctrl+Shift+L)."
@@ -838,12 +918,59 @@ double DesignSegmentDistance(const Gdiplus::PointF& a,const Gdiplus::PointF& b,d
     return std::hypot(a.X+t*dx-x,a.Y+t*dy-y);
 }
 Design::Sight DesignSightOf(DesignState& s,const Json& annotation);
+void DesignReleaseBack(DesignState& s)
+{
+    s.back.reset();
+    if(s.backDC){SelectObject(s.backDC,s.backOld);DeleteDC(s.backDC);}
+    if(s.backBitmap)DeleteObject(s.backBitmap);
+    s.backDC=nullptr;s.backBitmap=nullptr;s.backOld=nullptr;s.backSize={};
+}
+// The off-screen canvas: a DIB section GDI+ draws straight into and BitBlt
+// copies out, made again only when the canvas changes size. A new full-size
+// bitmap on every repaint churned the editor's address space while panning.
+Gdiplus::Bitmap& DesignBackBuffer(DesignState& s,SIZE size)
+{
+    if(s.back && s.backSize.cx==size.cx && s.backSize.cy==size.cy)return *s.back;
+    DesignReleaseBack(s);
+    BITMAPINFO info{};
+    info.bmiHeader.biSize=sizeof(info.bmiHeader);
+    info.bmiHeader.biWidth=size.cx;
+    info.bmiHeader.biHeight=-size.cy;
+    info.bmiHeader.biPlanes=1;
+    info.bmiHeader.biBitCount=32;
+    info.bmiHeader.biCompression=BI_RGB;
+    void* bits=nullptr;
+    s.backBitmap=CreateDIBSection(nullptr,&info,DIB_RGB_COLORS,&bits,nullptr,0);
+    s.backDC=CreateCompatibleDC(nullptr);
+    if(!s.backBitmap || !s.backDC || !bits)
+    {
+        DesignReleaseBack(s);
+        throw std::runtime_error("There is not enough memory to draw the design view. Make the window smaller or close other tools.");
+    }
+    s.backOld=static_cast<HBITMAP>(SelectObject(s.backDC,s.backBitmap));
+    s.back=std::make_unique<Gdiplus::Bitmap>(size.cx,size.cy,size.cx*4,PixelFormat32bppPARGB,static_cast<BYTE*>(bits));
+    if(s.back->GetLastStatus()!=Gdiplus::Ok)
+    {
+        DesignReleaseBack(s);
+        throw std::runtime_error("There is not enough memory to draw the design view. Make the window smaller or close other tools.");
+    }
+    s.backSize=size;
+    return *s.back;
+}
+void DesignPaintInto(DesignState& s,Gdiplus::Graphics& g,const RECT& rect);
 void DesignPaint(DesignState& s,HDC dc)
 {
-    using namespace Gdiplus;
     RECT rect{};GetClientRect(s.canvas,&rect);
-    Bitmap buffer(std::max(1L,rect.right),std::max(1L,rect.bottom));
-    Graphics g(&buffer);
+    const SIZE size{std::max(1L,rect.right),std::max(1L,rect.bottom)};
+    {
+        Gdiplus::Graphics g(&DesignBackBuffer(s,size));
+        DesignPaintInto(s,g,rect);
+    }
+    BitBlt(dc,0,0,size.cx,size.cy,s.backDC,0,0,SRCCOPY);
+}
+void DesignPaintInto(DesignState& s,Gdiplus::Graphics& g,const RECT& rect)
+{
+    using namespace Gdiplus;
     // The background stands for this engine's solid space; carved rooms are
     // the light shapes cut out of it.
     g.Clear(Color(228,232,237));
@@ -885,12 +1012,21 @@ void DesignPaint(DesignState& s,HDC dc)
     auto line=[&](Pen& pen,Vector a,Vector b){g.DrawLine(&pen,DesignScreen(s,a),DesignScreen(s,b));};
     std::vector<std::pair<PointF,std::vector<std::string>>> selectedLabels;
     if(s.hullPlane!=s.plane || s.hullRevision!=s.revision)DesignBuildHulls(s);
+    // What the canvas shows, in world units along its two axes: brushes wholly
+    // outside it are not drawn at all.
+    const int across=DesignHorizontal(s),up=DesignVertical(s);
+    const double viewLeft=-s.panX/s.zoom-1,viewRight=(rect.right-s.panX)/s.zoom+1;
+    const double viewBottom=(s.panY-rect.bottom)/s.zoom-1,viewTop=s.panY/s.zoom+1;
+    auto offView=[&](const Editor::DesignWire& wire)
+    {
+        return wire.measured && (wire.high[across]<viewLeft || wire.low[across]>viewRight || wire.high[up]<viewBottom || wire.low[up]>viewTop);
+    };
     // Filled outlines first, so the plan reads as carved space, solid space,
     // portals and movers rather than a wireframe tangle.
     for(size_t i=0;i<s.scene.size() && i<s.hulls.size();++i)
     {
         const auto& actor=s.scene[i];
-        if(s.hulls[i].size()<3 || !DesignShows(s,actor))continue;
+        if(s.hulls[i].size()<3 || (i<s.wires.size() && offView(s.wires[i])) || !DesignShows(s,actor))continue;
         const int csg=actor.value("csg",0);
         Color fill=actor.value("portal",false)?Color(70,40,170,190)
             :actor.value("mover",false)?Color(60,220,150,40)
@@ -923,7 +1059,7 @@ void DesignPaint(DesignState& s,HDC dc)
     };
     if(s.overlays)for(auto& actor:s.scene)
     {
-        if(!DesignShows(s,actor))continue;
+        if((!actor.contains("light") && !actor.contains("camera")) || !DesignShows(s,actor))continue;
         const auto at=DesignScreen(s,actor.at("position").get<Vector>());
         if(actor.contains("light"))
         {
@@ -951,21 +1087,45 @@ void DesignPaint(DesignState& s,HDC dc)
             }
         }
     }
-    for(auto& actor:s.scene)
+    // The wireframe is most of the drawing on a large map. Edges are gathered
+    // by pen and drawn together, selected ones last so they stay on top; edges
+    // off the canvas or shorter than a pixel are left out, and a busy view
+    // draws them without antialiasing.
+    enum WireInk{Plain,Locked,Hovered,Chosen,Inks};
+    Pen inks[Inks]={Pen(Color(60,95,120),1.f),Pen(Color(160,165,175),1.f),Pen(Color(240,255,150,30),2.f),Pen(Color(230,90,30),2.f)};
+    std::vector<PointF> wires[Inks];
+    const float canvasRight=static_cast<float>(rect.right),canvasBottom=static_cast<float>(rect.bottom);
+    auto wire=[&](WireInk ink,const PointF& a,const PointF& b)
     {
-        if(!DesignShows(s,actor))continue;
+        if(std::abs(a.X-b.X)<.5f && std::abs(a.Y-b.Y)<.5f)return;
+        if(std::max(a.X,b.X)<0 || std::min(a.X,b.X)>canvasRight || std::max(a.Y,b.Y)<0 || std::min(a.Y,b.Y)>canvasBottom)return;
+        wires[ink].push_back(a);wires[ink].push_back(b);
+    };
+    auto project=[&](float h,float v){return PointF(static_cast<float>(s.panX+h*s.zoom),static_cast<float>(s.panY-v*s.zoom));};
+    for(size_t i=0;i<s.scene.size();++i)
+    {
+        const auto& actor=s.scene[i];
+        const auto& frame=i<s.wires.size()?s.wires[i]:DesignWireOf(s,actor);
+        if(offView(frame) || !DesignShows(s,actor))continue;
         const bool selected=actor.at("selected").get<bool>(),locked=actor.at("locked").get<bool>();
-        const bool hovered=!selected && s.drag.kind==DesignDrag::Kind::None && s.hoverPaths.count(actor.at("path").get<std::string>())>0;
-        Pen pen(selected?Color(230,90,30):hovered?Color(240,255,150,30):locked?Color(160,165,175):Color(60,95,120),selected||hovered?2.f:1.f);
-        for(auto& edge:actor.at("edges"))
+        const bool hovered=!selected && s.drag.kind==DesignDrag::Kind::None && !s.hoverPaths.empty() && s.hoverPaths.count(actor.at("path").get<std::string>())>0;
+        const WireInk ink=selected?Chosen:hovered?Hovered:locked?Locked:Plain;
+        for(const auto& edge:frame.edges)
         {
-            if(!DesignOnFloor(s,edge[0].get<Vector>()[2],edge[1].get<Vector>()[2]))continue;
-            line(pen,edge[0].get<Vector>(),edge[1].get<Vector>());
+            if(s.floorFilter && !DesignOnFloor(s,edge[2],edge[5]))continue;
+            wire(ink,project(edge[across],edge[up]),project(edge[3+across],edge[3+up]));
+        }
+        if(frame.measured && frame.edges.empty())
+        {
+            // Past the edge budget a brush is drawn as its bounds.
+            const auto lo=project(static_cast<float>(frame.low[across]),static_cast<float>(frame.low[up]));
+            const auto hi=project(static_cast<float>(frame.high[across]),static_cast<float>(frame.high[up]));
+            wire(ink,lo,{hi.X,lo.Y});wire(ink,{hi.X,lo.Y},hi);wire(ink,hi,{lo.X,hi.Y});wire(ink,{lo.X,hi.Y},lo);
         }
         auto p=DesignScreen(s,actor.at("position").get<Vector>());
-        if(actor.at("edges").empty())g.DrawEllipse(&pen,p.X-3,p.Y-3,6.f,6.f);
-        if(locked && actor.at("edges").empty())padlock(p.X+8,p.Y-8);
-        if(selected)
+        if(!frame.measured)g.DrawEllipse(&inks[ink],p.X-3,p.Y-3,6.f,6.f);
+        if(locked && !frame.measured)padlock(p.X+8,p.Y-8);
+        if(selected && selectedLabels.size()<256)
         {
             auto path=actor.at("path").get<std::string>();
             auto name=path.substr(path.find_last_of('.')+1);
@@ -975,12 +1135,19 @@ void DesignPaint(DesignState& s,HDC dc)
             else found->second.push_back(name);
         }
     }
+    {
+        size_t total=0;
+        for(const auto& list:wires)total+=list.size()/2;
+        if(total>20000)g.SetSmoothingMode(SmoothingModeHighSpeed);
+        for(int ink=0;ink<Inks;++ink)
+            for(size_t k=0;k+1<wires[ink].size();k+=2)g.DrawLine(&inks[ink],wires[ink][k],wires[ink][k+1]);
+        g.SetSmoothingMode(SmoothingModeAntiAlias);
+    }
     if(s.overlays)for(const auto& piece:DesignData(s).at("pieces"))
     {
         size_t live=0,lockedCount=0;
         for(auto& member:piece.at("members"))
-            for(auto& actor:s.scene)
-                if(actor.at("path")==member.at("path")){++live;if(actor.at("locked").get<bool>())++lockedCount;}
+            if(const auto* actor=DesignActorAt(s,member.at("path"))){++live;if(actor->at("locked").get<bool>())++lockedCount;}
         if(live==0 || lockedCount<live)continue;
         const Vector position=piece.at("position");
         if(!DesignOnFloor(s,position[2],position[2]+piece.at("spec").value("height",0.0)))continue;
@@ -1040,8 +1207,9 @@ void DesignPaint(DesignState& s,HDC dc)
                 for(auto& member:s.previous.at("members"))if(member.at("path")==actor.at("path"))own=true;
                 if(own)continue;
                 auto shifted=[&](const Vector& v){Vector w=v;for(int axis=0;axis<3;++axis)w[axis]+=delta[axis];return w;};
-                for(auto& edge:actor.at("edges"))line(ghost,shifted(edge[0].get<Vector>()),shifted(edge[1].get<Vector>()));
-                if(actor.at("edges").empty()){const auto p=DesignScreen(s,shifted(actor.at("position").get<Vector>()));g.DrawEllipse(&ghost,p.X-4,p.Y-4,8.f,8.f);}
+                const auto& frame=DesignWireOf(s,actor);
+                for(const auto& edge:frame.edges)line(ghost,shifted({edge[0],edge[1],edge[2]}),shifted({edge[3],edge[4],edge[5]}));
+                if(!frame.measured){const auto p=DesignScreen(s,shifted(actor.at("position").get<Vector>()));g.DrawEllipse(&ghost,p.X-4,p.Y-4,8.f,8.f);}
             }
         }
         // A new preview carries a tick to place it and a cross to discard it,
@@ -1317,8 +1485,6 @@ void DesignPaint(DesignState& s,HDC dc)
             x+=w+4;
         }
     }
-    Graphics target(dc);
-    target.DrawImage(&buffer,0,0);
 }
 Json DesignPiece(DesignState& s)
 {
@@ -1364,12 +1530,13 @@ Json DesignPieceOf(DesignState& s,const Json& actor)
 // The placed piece a selection belongs to, or null.
 Json DesignSelectedPiece(DesignState& s)
 {
+    std::set<std::string> selected;
+    for(const auto& actor:s.scene)if(actor.at("selected").get<bool>())selected.insert(actor.at("path").get<std::string>());
+    if(selected.empty())return Json{};
     const auto& data=DesignData(s);
     for(auto it=data.at("pieces").rbegin();it!=data.at("pieces").rend();++it)
-        for(auto& actor:s.scene)
-            if(actor.at("selected").get<bool>())
-                for(auto& member:it->at("members"))
-                    if(actor.at("path")==member.at("path"))return *it;
+        for(auto& member:it->at("members"))
+            if(selected.count(member.at("path").get_ref<const std::string&>()))return *it;
     return Json{};
 }
 // The preview must never disagree with the map. If the brushes of the piece
@@ -1378,19 +1545,17 @@ Json DesignSelectedPiece(DesignState& s)
 // The bounds a piece's brushes actually occupy, when all of them are in the map.
 bool DesignActualBounds(DesignState& s,const Json& piece,Design::Extent& bounds)
 {
-    std::vector<Vector> points;
-    size_t found=0;
+    bool any=false;
     for(auto& member:piece.at("members"))
-        for(auto& actor:s.scene)
-            if(actor.at("path")==member.at("path"))
-            {
-                ++found;
-                for(auto& edge:actor.at("edges"))
-                    for(int end=0;end<2;++end)points.push_back(edge[end].get<Vector>());
-            }
-    if(found!=piece.at("members").size() || points.empty())return false;
-    bounds=Design::Bounds(points);
-    return true;
+    {
+        const auto* actor=DesignActorAt(s,member.at("path"));
+        if(!actor)return false;
+        const auto& wire=DesignWireOf(s,*actor);
+        if(!wire.measured)continue;
+        if(!any){bounds={wire.low,wire.high};any=true;continue;}
+        for(int axis=0;axis<3;++axis){bounds.lo[axis]=std::min(bounds.lo[axis],wire.low[axis]);bounds.hi[axis]=std::max(bounds.hi[axis],wire.high[axis]);}
+    }
+    return any;
 }
 // Brushes moved in the editor's own viewports keep their piece: when a piece's
 // brushes sit somewhere else but still have their shape, the library follows
@@ -1440,17 +1605,8 @@ void DesignFollowEditorMoves(DesignState& s)
 void DesignVerifyActive(DesignState& s)
 {
     if(s.previous.is_null() || s.drag.kind!=DesignDrag::Kind::None)return;
-    std::vector<Vector> points;
-    size_t found=0;
-    for(auto& member:s.previous.at("members"))
-        for(auto& actor:s.scene)
-            if(actor.at("path")==member.at("path"))
-            {
-                ++found;
-                for(auto& edge:actor.at("edges"))
-                    for(int end=0;end<2;++end)points.push_back(edge[end].get<Vector>());
-            }
-    if(found!=s.previous.at("members").size() || points.empty())
+    Design::Extent actual;
+    if(!DesignActualBounds(s,s.previous,actual))
     {
         DesignDeactivate(s);
         DesignStatus(s,"The piece being edited is no longer in the map, so the preview was cleared.");
@@ -1458,7 +1614,6 @@ void DesignVerifyActive(DesignState& s)
     }
     try
     {
-        const auto actual=Design::Bounds(points);
         const auto expected=DesignBoundsOf(s.previous.at("spec"),{s.previous.at("position").get<Vector>(),s.previous.at("rotation").get<Rotation>()});
         double drift=0,reshape=0;
         for(int axis=0;axis<3;++axis)
@@ -1536,12 +1691,11 @@ Json DesignSelectedPieceContaining(DesignState& s,const Vector& world)
     {
         size_t live=0,selected=0;
         for(auto& member:it->at("members"))
-            for(auto& actor:s.scene)
-                if(actor.at("path")==member.at("path"))
-                {
-                    ++live;
-                    if(selectedNow(member.at("path").get<std::string>()) && !actor.at("locked").get<bool>())++selected;
-                }
+            if(const auto* actor=DesignActorAt(s,member.at("path")))
+            {
+                ++live;
+                if(selectedNow(member.at("path").get<std::string>()) && !actor->at("locked").get<bool>())++selected;
+            }
         if(live==0 || selected<live)continue;
         try
         {
@@ -1632,9 +1786,7 @@ std::vector<size_t> DesignAttachedDoorways(DesignState& s,const Json& piece)
         bool live=!other.at("members").empty();
         for(auto& member:other.at("members"))
         {
-            bool found=false;
-            for(auto& actor:s.scene)if(actor.at("path")==member.at("path"))found=true;
-            live=live && found;
+            live=live && DesignActorAt(s,member.at("path"))!=nullptr;
         }
         if(!live)continue;
         try
@@ -2061,8 +2213,7 @@ void DesignFitSelection(DesignState& s)
     for(const auto& actor:s.scene)
     {
         if(!actor.value("selected",false))continue;
-        add(actor.at("position").get<Vector>());
-        for(const auto& e:actor.at("edges")){add(e[0].get<Vector>());add(e[1].get<Vector>());}
+        DesignActorExtent(s,actor,add);
     }
     if(first && !s.pending.is_null())
         for(const auto& solid:Design::Geometry(s.pending))for(const auto& f:solid.faces)for(const auto& v:f)add(TransformPoint(v,s.frame));
@@ -2537,6 +2688,37 @@ void DesignCommand(DesignState& s,int id)
     }
     InvalidateRect(s.canvas,nullptr,FALSE);
 }
+// How far a canvas point is from an actor as drawn: from its origin, or from
+// its nearest edge on the storey shown plus a little, so an origin under the
+// cursor beats a wall through it. A brush whose bounds are already further
+// than best is not searched edge by edge.
+double DesignActorDistance(DesignState& s,const Json& actor,double x,double y,double best)
+{
+    double distance=DesignPointDistance(DesignScreen(s,actor.at("position").get<Vector>()),x,y);
+    const auto& wire=DesignWireOf(s,actor);
+    if(!wire.measured)return distance;
+    const auto lo=DesignScreen(s,wire.low),hi=DesignScreen(s,wire.high);
+    const double left=std::min(lo.X,hi.X),right=std::max(lo.X,hi.X),top=std::min(lo.Y,hi.Y),bottom=std::max(lo.Y,hi.Y);
+    const double outside=std::hypot(std::max({left-x,0.0,x-right}),std::max({top-y,0.0,y-bottom}));
+    if(outside+6>=std::min(distance,best))return distance;
+    if(wire.edges.empty())
+    {
+        // Past the edge budget a brush is its bounds.
+        const Gdiplus::PointF corners[4]={{static_cast<float>(left),static_cast<float>(top)},{static_cast<float>(right),static_cast<float>(top)},
+                                          {static_cast<float>(right),static_cast<float>(bottom)},{static_cast<float>(left),static_cast<float>(bottom)}};
+        for(int i=0;i<4;++i)distance=std::min(distance,DesignSegmentDistance(corners[i],corners[(i+1)%4],x,y)+6);
+        return distance;
+    }
+    const int a=DesignHorizontal(s),b=DesignVertical(s);
+    for(const auto& edge:wire.edges)
+    {
+        if(s.floorFilter && !DesignOnFloor(s,edge[2],edge[5]))continue;
+        const Gdiplus::PointF from{static_cast<float>(s.panX+edge[a]*s.zoom),static_cast<float>(s.panY-edge[b]*s.zoom)};
+        const Gdiplus::PointF to{static_cast<float>(s.panX+edge[3+a]*s.zoom),static_cast<float>(s.panY-edge[3+b]*s.zoom)};
+        distance=std::min(distance,DesignSegmentDistance(from,to,x,y)+6);
+    }
+    return distance;
+}
 // Picking: brush edges and actor origins, with Shift or Ctrl to add.
 void DesignPick(DesignState& s,double x,double y,bool add)
 {
@@ -2545,12 +2727,7 @@ void DesignPick(DesignState& s,double x,double y,bool add)
     for(auto& actor:s.scene)
     {
         if(!DesignShows(s,actor) || actor.at("locked").get<bool>())continue;
-        double distance=DesignPointDistance(DesignScreen(s,actor.at("position").get<Vector>()),x,y);
-        for(auto& edge:actor.at("edges"))
-        {
-            if(!DesignOnFloor(s,edge[0].get<Vector>()[2],edge[1].get<Vector>()[2]))continue;
-            distance=std::min(distance,DesignSegmentDistance(DesignScreen(s,edge[0].get<Vector>()),DesignScreen(s,edge[1].get<Vector>()),x,y)+6);
-        }
+        const double distance=DesignActorDistance(s,actor,x,y,best);
         if(distance<best){best=distance;selected=actor;}
     }
     Json identities=Json::array();
@@ -2564,15 +2741,14 @@ void DesignPick(DesignState& s,double x,double y,bool add)
         {
             group=Json::array();
             for(auto& member:piece.at("members"))
-                for(auto& actor:s.scene)
-                    if(actor.at("path")==member.at("path"))group.push_back(actor);
+                if(const auto* actor=DesignActorAt(s,member.at("path")))group.push_back(*actor);
         }
         // A member of a group brings the whole group, locked and hidden
         // members aside.
         if(const auto name=SceneGroupOf(s,selected.at("path").get<std::string>());!name.empty())
             for(auto& m:SceneGroupMembers(s,name))
-                for(auto& actor:s.scene)
-                    if(actor.at("path")==m.at("path") && !actor.at("locked").get<bool>() && DesignShows(s,actor))
+                if(const auto* listed=DesignActorAt(s,m.at("path")))
+                    if(const auto& actor=*listed;!actor.at("locked").get<bool>() && DesignShows(s,actor))
                     {
                         bool present=false;
                         for(auto& g:group)if(g.at("path")==actor.at("path"))present=true;
@@ -2630,24 +2806,39 @@ void DesignBoxSelect(DesignState& s,const DesignDrag& drag,bool add)
         }
         return t0<=t1;
     };
+    const int across=DesignHorizontal(s),up=DesignVertical(s);
     auto matches=[&](const Json& actor)
     {
-        const auto& edges=actor.at("edges");
-        if(edges.empty())return inside(DesignScreen(s,actor.at("position").get<Vector>()));
+        const auto& wire=DesignWireOf(s,actor);
+        if(!wire.measured)return inside(DesignScreen(s,actor.at("position").get<Vector>()));
+        const auto lo=DesignScreen(s,wire.low),hi=DesignScreen(s,wire.high);
+        // Bounds clear of the rectangle: no edge can touch it.
+        if(std::max(lo.X,hi.X)<left || std::min(lo.X,hi.X)>right || std::max(lo.Y,hi.Y)<top || std::min(lo.Y,hi.Y)>bottom)return false;
         bool all=true,any=false;
-        for(auto& edge:edges)
+        auto test=[&](const Gdiplus::PointF& a,const Gdiplus::PointF& b)
         {
-            if(!DesignOnFloor(s,edge[0].get<Vector>()[2],edge[1].get<Vector>()[2]))continue;
-            const auto a=DesignScreen(s,edge[0].get<Vector>()),b=DesignScreen(s,edge[1].get<Vector>());
             if(inside(a) && inside(b))any=true;
             else{all=false;if(crosses(a,b))any=true;}
+        };
+        if(wire.edges.empty())
+        {
+            // Past the edge budget a brush is its bounds.
+            const Gdiplus::PointF corners[4]={lo,{hi.X,lo.Y},hi,{lo.X,hi.Y}};
+            for(int i=0;i<4;++i)test(corners[i],corners[(i+1)%4]);
+        }
+        for(const auto& edge:wire.edges)
+        {
+            if(s.floorFilter && !DesignOnFloor(s,edge[2],edge[5]))continue;
+            test({static_cast<float>(s.panX+edge[across]*s.zoom),static_cast<float>(s.panY-edge[up]*s.zoom)},
+                 {static_cast<float>(s.panX+edge[3+across]*s.zoom),static_cast<float>(s.panY-edge[3+up]*s.zoom)});
+            if(crossing && any)break;
         }
         return crossing?any:all;
     };
     Json identities=Json::array();
-    auto has=[&](const Json& a){return std::find_if(identities.begin(),identities.end(),[&](const Json& b){return b.at("path")==a.at("path");})!=identities.end();};
-    auto push=[&](const Json& a){if(!has(a))identities.push_back(a);};
-    if(add)for(auto& actor:s.scene)if(actor.at("selected").get<bool>())identities.push_back(actor);
+    std::set<std::string> chosen;
+    auto push=[&](const Json& a){if(chosen.insert(a.at("path").get<std::string>()).second)identities.push_back(a);};
+    if(add)for(auto& actor:s.scene)if(actor.at("selected").get<bool>())push(actor);
     std::set<std::string> hits,members;
     for(auto& actor:s.scene)
         if(DesignShows(s,actor) && !actor.at("locked").get<bool>() && matches(actor))hits.insert(actor.at("path").get<std::string>());
@@ -2659,16 +2850,14 @@ void DesignBoxSelect(DesignState& s,const DesignDrag& drag,bool add)
         {
             const auto path=member.at("path").get<std::string>();
             members.insert(path);
-            for(auto& actor:s.scene)
-                if(actor.at("path")==path && DesignShows(s,actor) && !actor.at("locked").get<bool>()){++live;break;}
+            if(const auto* actor=DesignActorAt(s,path);actor && DesignShows(s,*actor) && !actor->at("locked").get<bool>())++live;
             if(hits.count(path))++hit;
         }
         // Wholly inside means every visible brush of the piece is inside.
         if(hit==0 || (!crossing && hit<live))continue;
         ++pieces;
         for(auto& member:piece.at("members"))
-            for(auto& actor:s.scene)
-                if(actor.at("path")==member.at("path"))push(actor);
+            if(const auto* actor=DesignActorAt(s,member.at("path")))push(*actor);
     }
     size_t brushes=0;
     for(auto& actor:s.scene)
@@ -2730,10 +2919,7 @@ bool DesignHoverWall(DesignState& s,POINT at)
             const auto& piece=*it;
             const auto kind=piece.at("spec").at("kind").get<std::string>();
             if(kind!="Room" && kind!="Corridor" && !Design::Crouching(kind))continue;
-            bool live=false;
-            for(auto& member:piece.at("members"))
-                for(auto& actor:s.scene)
-                    if(actor.at("path")==member.at("path"))live=true;
+            const bool live=DesignAnyLive(s,piece.at("members"));
             if(!live)continue;
             const Pose pose{piece.at("position").get<Vector>(),piece.at("rotation").get<Rotation>()};
             // Pieces the floor filter hides get no badge.
@@ -2787,10 +2973,7 @@ bool DesignHoverWall(DesignState& s,POINT at)
         const auto& piece=*it;
         const auto kind=piece.at("spec").at("kind").get<std::string>();
         if(kind!="Room" && kind!="Corridor" && !Design::Crouching(kind))continue;
-        bool live=false;
-        for(auto& member:piece.at("members"))
-            for(auto& actor:s.scene)
-                if(actor.at("path")==member.at("path"))live=true;
+        const bool live=DesignAnyLive(s,piece.at("members"));
         if(!live)continue;
         const Pose pose{piece.at("position").get<Vector>(),piece.at("rotation").get<Rotation>()};
         // Pieces the floor filter hides get no badge.
@@ -3139,9 +3322,7 @@ void DesignCheck(DesignState& s)
         bool present=!data.at("pieces")[i].at("members").empty();
         for(auto& member:data.at("pieces")[i].at("members"))
         {
-            bool found=false;
-            for(auto& actor:s.scene)if(actor.at("path")==member.at("path"))found=true;
-            present=present && found;
+            present=present && DesignActorAt(s,member.at("path"))!=nullptr;
         }
         if(present){live.push_back(data.at("pieces")[i]);indices.push_back(i);}
     }
@@ -3348,10 +3529,7 @@ void DesignQuickAddMenu(DesignState& s,POINT at)
                 if(other.at("members")==s.hoverPiece.at("members"))continue;
                 const auto kind=other.at("spec").at("kind").get<std::string>();
                 if(kind!="Room" && kind!="Corridor" && !Design::Crouching(kind))continue;
-                bool live=false;
-                for(auto& member:other.at("members"))
-                    for(auto& actor:s.scene)
-                        if(actor.at("path")==member.at("path"))live=true;
+                const bool live=DesignAnyLive(s,other.at("members"));
                 if(!live)continue;
                 const auto bounds=DesignBoundsOf(other.at("spec"),{other.at("position").get<Vector>(),other.at("rotation").get<Rotation>()});
                 const bool overlaps=bounds.lo[0]<host.hi[0] && bounds.hi[0]>host.lo[0] && bounds.lo[1]<host.hi[1] && bounds.hi[1]>host.lo[1];
@@ -3838,12 +4016,7 @@ Json DesignPieceAt(DesignState& s,double x,double y)
     for(auto& actor:s.scene)
     {
         if(!DesignShows(s,actor))continue;
-        double distance=DesignPointDistance(DesignScreen(s,actor.at("position").get<Vector>()),x,y);
-        for(auto& edge:actor.at("edges"))
-        {
-            if(!DesignOnFloor(s,edge[0].get<Vector>()[2],edge[1].get<Vector>()[2]))continue;
-            distance=std::min(distance,DesignSegmentDistance(DesignScreen(s,edge[0].get<Vector>()),DesignScreen(s,edge[1].get<Vector>()),x,y)+6);
-        }
+        const double distance=DesignActorDistance(s,actor,x,y,best);
         if(distance<best){best=distance;nearest=actor;}
     }
     if(nearest.is_null())return Json{};
@@ -4029,8 +4202,7 @@ size_t DesignOrderPiecesLast(DesignState& s)
         const auto kind=piece.at("spec").value("kind",std::string());
         if(!Design::StairKind(kind) && kind!="Ramp" && kind!="Platform")continue;
         for(auto& member:piece.at("members"))
-            for(auto& actor:s.scene)
-                if(actor.at("path")==member.at("path")){members.push_back(member);break;}
+            if(DesignActorAt(s,member.at("path")))members.push_back(member);
     }
     if(members.empty())return 0;
     const auto moved=Editor::DesignSendToLast(members);
@@ -4050,7 +4222,7 @@ size_t DesignRepairPieceFlags(DesignState& s)
         {
             const auto& members=piece.at("members");
             size_t live=0;
-            for(auto& member:members)for(auto& actor:s.scene)if(actor.at("path")==member.at("path")){++live;break;}
+            for(auto& member:members)if(DesignActorAt(s,member.at("path")))++live;
             if(live!=members.size() || live==0)continue;
             const auto solids=Design::Geometry(piece.at("spec"));
             if(solids.size()!=members.size())continue;
@@ -4161,7 +4333,7 @@ void DesignReadout(DesignState& s,POINT at)
     const auto snapped=DesignSnap(s,world);
     std::string text="X "+Design::Round(snapped[0])+"   Y "+Design::Round(snapped[1])+"   Z "+Design::Round(snapped[2]);
     Json piece=s.hoverPiece;
-    if(piece.is_null() && s.scene.size()<=3000)piece=DesignPieceAt(s,at.x,at.y);
+    if(piece.is_null() && s.scene.size()<=50000)piece=DesignPieceAt(s,at.x,at.y);
     std::set<std::string> paths;
     if(!piece.is_null())for(const auto& member:piece.at("members"))paths.insert(member.at("path").get<std::string>());
     if(paths!=s.hoverPaths){s.hoverPaths=paths;InvalidateRect(s.canvas,nullptr,FALSE);}
@@ -5370,8 +5542,13 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
         }
         if(message==WM_TIMER)
         {
+            // Minimised, the panel reads nothing; the first tick after it is
+            // restored catches up with every change at once.
+            if(IsIconic(window))return 0;
             Sync();
-            if(s->epoch!=mapEpoch || s->revision!=Editor::Revision())DesignRefresh(*s);
+            // Not in the middle of a drag: the drag holds on to the scene it
+            // started from, and the end of it refreshes anyway.
+            if(s->epoch!=mapEpoch || (s->drag.kind==DesignDrag::Kind::None && s->revision!=Editor::Revision()))DesignRefresh(*s);
             // A finished geometry build makes the current brushes the built ones.
             const auto builds=Editor::GeometryBuilds();
             if(builds!=s->builds)
@@ -5405,6 +5582,7 @@ LRESULT CALLBACK DesignProc(HWND window,UINT message,WPARAM w,LPARAM l)
         if(message==WM_NCDESTROY)
         {
             KillTimer(window,1);
+            DesignReleaseBack(*s);
             if(s->lightShadow)LightShadowMap::SetPlanLayer(false);
             designWindow=nullptr;
             SetWindowLongPtr(window,GWLP_USERDATA,0);

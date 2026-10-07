@@ -121,18 +121,18 @@ Vector DesignGrid()
     for(auto& spacing:result)if(!std::isfinite(spacing) || spacing<0 || spacing>65536)spacing=0;
     return result;
 }
-Json DesignScene()
+namespace
 {
-    Json result=Json::array();size_t edges=0;auto live=LiveActors();
-    for(size_t i=2;i<live.size();++i)
+    // What the design views know about one actor, apart from its polygons.
+    Json DesignActorItem(Address actor)
     {
-        auto actor=live[i];if(IsA(actor,"Camera"))continue;
         auto item=Identity(actor);item["level"]=LevelIdentity();item["generation"]=MapGeneration();item["position"]=Position(actor);item["selected"]=(Read<unsigned>(actor+0x2f4)&0x40)!=0;
-        item["hidden"]=(Read<unsigned>(actor+0x2f4)&0x10)!=0;item["locked"]=DesignBool(actor,"bLockLocation");item["edges"]=Json::array();
+        item["hidden"]=(Read<unsigned>(actor+0x2f4)&0x10)!=0;item["locked"]=DesignBool(actor,"bLockLocation");
         item["group"]=Property(actor,"Group")?NameField(actor,"Group"):std::string("None");
         // Carved space, solid space and portals read differently in a plan.
-        item["csg"]=IsA(actor,"Brush")?Read<unsigned char>(actor+0x34c):0;
-        item["portal"]=IsA(actor,"Brush") && (Read<unsigned>(actor+0x344)&0x04000000u)!=0;
+        const bool brush=IsA(actor,"Brush");
+        item["csg"]=brush?Read<unsigned char>(actor+0x34c):0;
+        item["portal"]=brush && (Read<unsigned>(actor+0x344)&0x04000000u)!=0;
         item["volume"]=IsA(actor,"Volume") || IsA(actor,"ZoneInfo");
         item["mover"]=IsA(actor,"Mover");
         item["rotation"]=RotationOf(actor);
@@ -154,30 +154,98 @@ Json DesignScene()
             if(!fov)fov=Property(actor,"CamFOV");
             item["camera"]={{"fov",fov && IsA(fov,"FloatProperty")?static_cast<double>(Read<float>(actor+Read<int>(fov+0x3c))):60.0}};
         }
+        return item;
+    }
+    // Each polygon of a brush in world space, handed to visit with its vertex
+    // count. A polygon whose vertices are out of range is passed with sane
+    // false, so the caller decides whether that fails the scene.
+    template<class Visit> void DesignPolygons(Address actor,Json& item,Visit visit)
+    {
+        auto model=Read<Address>(actor+0x238),polys=model?Read<Address>(model+0x50):0;
+        if(!polys)return;
+        std::array<float,12> coords{};Call<void*>(actor,0xac,coords.data());
+        std::array<Vector,16> vertices{};
+        for(auto poly:Array(polys+0x28,0x14c))
+        {
+            auto count=Read<unsigned short>(poly+0x148);if(count<3 || count>16)continue;
+            // Portals can also be flagged on individual polygons.
+            if(Read<unsigned>(poly+0x140)&0x04000000u)item["portal"]=true;
+            bool sane=true;
+            for(int j=0;j<count;++j)
+            {
+                auto local=Read<std::array<float,3>>(poly+0x18+j*12);std::array<float,3> world{};
+                reinterpret_cast<void*(__thiscall*)(void*,void*,const void*)>(0x10eb2ba0)(local.data(),world.data(),coords.data());
+                vertices[j]={world[0],world[1],world[2]};
+                for(auto n:vertices[j])if(!std::isfinite(n) || std::abs(n)>1000000)sane=false;
+            }
+            visit(vertices.data(),static_cast<int>(count),sane);
+        }
+    }
+}
+Json DesignScene()
+{
+    Json result=Json::array();size_t edges=0;auto live=LiveActors();
+    for(size_t i=2;i<live.size();++i)
+    {
+        auto actor=live[i];if(IsA(actor,"Camera"))continue;
+        auto item=DesignActorItem(actor);item["edges"]=Json::array();
+        if(IsA(actor,"Brush"))
+            DesignPolygons(actor,item,[&](const Vector* vertices,int count,bool)
+            {
+                for(int j=0;j<count;++j)Design::CheckVector(vertices[j]);
+                for(int j=0;j<count;++j){if(++edges>150000)throw std::runtime_error("Design view exceeds 150,000 brush edges. Hide detail or use a smaller map.");item["edges"].push_back({vertices[j],vertices[(j+1)%count]});}
+            });
+        result.push_back(std::move(item));
+    }
+    return result;
+}
+Json DesignScene(std::vector<DesignWire>& wires,size_t& dropped)
+{
+    // About 25 MB of edges: far more than any map the stock editor can build,
+    // and still a small part of the editor's address space.
+    constexpr size_t budget=1000000;
+    Json result=Json::array();
+    std::vector<DesignWire> built;
+    size_t edges=0;
+    dropped=0;
+    auto live=LiveActors();
+    built.reserve(live.size());
+    for(size_t i=2;i<live.size();++i)
+    {
+        auto actor=live[i];if(IsA(actor,"Camera"))continue;
+        auto item=DesignActorItem(actor);
+        DesignWire wire;
         if(IsA(actor,"Brush"))
         {
-            auto model=Read<Address>(actor+0x238),polys=model?Read<Address>(model+0x50):0;
-            if(polys)
+            DesignPolygons(actor,item,[&](const Vector* vertices,int count,bool sane)
             {
-                std::array<float,12> coords{};Call<void*>(actor,0xac,coords.data());
-                for(auto poly:Array(polys+0x28,0x14c))
+                if(!sane)return;
+                for(int j=0;j<count;++j)
                 {
-                    auto count=Read<unsigned short>(poly+0x148);if(count<3 || count>16)continue;
-                    // Portals can also be flagged on individual polygons.
-                    if(Read<unsigned>(poly+0x140)&0x04000000u)item["portal"]=true;
-                    std::vector<Vector> vertices;
-                    for(int j=0;j<count;++j)
-                    {
-                        auto local=Read<std::array<float,3>>(poly+0x18+j*12);std::array<float,3> world{};
-                        reinterpret_cast<void*(__thiscall*)(void*,void*,const void*)>(0x10eb2ba0)(local.data(),world.data(),coords.data());
-                        Vector v{world[0],world[1],world[2]};Design::CheckVector(v);vertices.push_back(v);
-                    }
-                    for(int j=0;j<count;++j){if(++edges>150000)throw std::runtime_error("Design view exceeds 150,000 brush edges. Hide detail or use a smaller map.");item["edges"].push_back({vertices[j],vertices[(j+1)%count]});}
+                    const auto& v=vertices[j];
+                    if(!wire.measured){wire.low=wire.high=v;wire.measured=true;}
+                    else for(int axis=0;axis<3;++axis){wire.low[axis]=std::min(wire.low[axis],v[axis]);wire.high[axis]=std::max(wire.high[axis],v[axis]);}
+                    const auto& w=vertices[(j+1)%count];
+                    std::array<float,6> edge{static_cast<float>(v[0]),static_cast<float>(v[1]),static_cast<float>(v[2]),
+                                             static_cast<float>(w[0]),static_cast<float>(w[1]),static_cast<float>(w[2])};
+                    // One direction for both polygons that share an edge, so
+                    // the copy can be found and dropped.
+                    if(std::lexicographical_compare(edge.begin()+3,edge.end(),edge.begin(),edge.begin()+3))
+                        for(int k=0;k<3;++k)std::swap(edge[k],edge[k+3]);
+                    wire.edges.push_back(edge);
                 }
-            }
+            });
+            std::sort(wire.edges.begin(),wire.edges.end());
+            wire.edges.erase(std::unique(wire.edges.begin(),wire.edges.end()),wire.edges.end());
+            if(edges+wire.edges.size()>budget){dropped+=wire.edges.size();wire.edges.clear();wire.edges.shrink_to_fit();}
+            else{edges+=wire.edges.size();wire.edges.shrink_to_fit();}
         }
-        result.push_back(item);
+        item["brush"]=wire.measured;
+        item["index"]=built.size();
+        built.push_back(std::move(wire));
+        result.push_back(std::move(item));
     }
+    wires=std::move(built);
     return result;
 }
 namespace
