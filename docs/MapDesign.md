@@ -594,6 +594,13 @@ no limit. The plan labels it, for example `objective Server Room [6+ players]`,
 and the status line says what the lobby sizes either side of the rule play, for
 example `4 players: 5 objectives, the spies need 3`.
 
+The same choices are on the editor's own right-click menus: right-click an
+objective or a zone's mission in a viewport (or in the Connections list or
+graph) for **Players in Match**, which ticks the current rule and offers Every
+match, 2+, 4+, 6+ and 8+ players, Up to 2, 4 or 6 players, **Custom...** for any
+range, and **Play Level as...**. A choice that leaves some lobby size with
+nothing to play says so straight away.
+
 The first rule compiles a small script actor, `SObjectivePlayers0`, into the map
 package (one Undo step), as Character Skins does; clearing the last rule removes
 it. In game the host decides once, as the map loads and before the missions set

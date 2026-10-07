@@ -67,6 +67,68 @@ namespace
         for(const auto& actor:actors)if(actor.at("path")==path)return actor;
         return {};
     }
+    // Objective player counts (ObjectivePlayersModel.h), shared by the native menus
+    // and Map Design: the missions (from ObjectiveActors) and the map's rules (from
+    // ObjectivePlayerRules) as the model plays them out.
+    ObjectivePlayers::Missions PlayerMissions(const Json& objectiveActors)
+    {
+        ObjectivePlayers::Missions missions;
+        for(const auto& actor:objectiveActors)
+        {
+            if(actor.value("kind",std::string())!="Mission")continue;
+            ObjectivePlayers::Mission mission;
+            for(const auto& reference:actor.value("objectives",Json::array()))
+                if(reference.is_string())mission.objectives.push_back(ObjectivePlayers::ReferencePath(reference.get<std::string>()));
+            mission.minimum=actor.value("minimum",0);
+            missions[ObjectivePlayers::Fold(actor.value("path",std::string()))]=mission;
+        }
+        return missions;
+    }
+    ObjectivePlayers::Rules PlayerRules(const Json& state)
+    {
+        ObjectivePlayers::Rules rules;
+        for(const auto& rule:state.value("rules",Json::array()))
+            rules[ObjectivePlayers::Fold(rule.value("path",std::string()))]={rule.value("min",0),rule.value("max",0)};
+        return rules;
+    }
+    // The top mission is the game mode's own: no rule may leave it out.
+    bool PlayerRuleAllowed(const Json& objectiveActors,const std::string& path)
+    {
+        if(!Editor::Compatible(path,"SBase.SMission"))return true;
+        const auto roots=ObjectivePlayers::Roots(PlayerMissions(objectiveActors));
+        return std::find(roots.begin(),roots.end(),ObjectivePlayers::Fold(path))==roots.end();
+    }
+    // The presets of the Players in Match submenu, by command.
+    const std::pair<UINT,ObjectivePlayers::Rule> kPlayerPresets[]={
+        {kObjectivePlayersFirst,{0,0}},{kObjectivePlayersFirst+1,{2,0}},{kObjectivePlayersFirst+2,{4,0}},{kObjectivePlayersFirst+3,{6,0}},
+        {kObjectivePlayersFirst+4,{8,0}},{kObjectivePlayersFirst+5,{0,2}},{kObjectivePlayersFirst+6,{0,4}},{kObjectivePlayersFirst+7,{0,6}}};
+    void PlayersMenu(HMENU menu,const std::string& path)
+    {
+        const auto actors=Editor::ObjectiveActors();
+        if(!PlayerRuleAllowed(actors,path))return;
+        const auto state=Editor::ObjectivePlayerRules();
+        const auto rules=PlayerRules(state);
+        const auto found=rules.find(ObjectivePlayers::Fold(path));
+        const ObjectivePlayers::Rule current=found==rules.end()?ObjectivePlayers::Rule{}:found->second;
+        auto sub=CreatePopupMenu();if(!sub)return;
+        bool preset=false;
+        for(const auto& [command,rule]:kPlayerPresets)
+        {
+            const bool checked=rule==current;preset|=checked;
+            const auto label=ObjectivePlayers::Empty(rule)?std::string("&Every match"):
+                             rule.minimum?"&"+std::to_string(rule.minimum)+"+ players":"Up to &"+std::to_string(rule.maximum)+" players";
+            AppendMenuA(sub,MF_STRING|(checked?MF_CHECKED:0),command,label.c_str());
+            if(command==kObjectivePlayersFirst || command==kObjectivePlayersFirst+4)AppendMenuA(sub,MF_SEPARATOR,0,nullptr);
+        }
+        const auto custom=preset?std::string("&Custom..."):"&Custom ("+ObjectivePlayers::Short(current)+")...";
+        AppendMenuA(sub,MF_STRING|(preset?0:MF_CHECKED),kObjectivePlayersCustom,custom.c_str());
+        AppendMenuA(sub,MF_SEPARATOR,0,nullptr);
+        const int playLevel=state.value("playLevel",0);
+        const auto test="&Play Level as... ("+(playLevel?std::to_string(playLevel)+" players":std::string("every objective"))+")";
+        AppendMenuA(sub,MF_STRING,kPlayLevelPlayers,test.c_str());
+        const auto title="&Players in Match ("+(ObjectivePlayers::Empty(current)?std::string("every match"):ObjectivePlayers::Short(current))+")";
+        AppendMenuA(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(sub),title.c_str());
+    }
     bool ObjectiveMenu(HMENU menu,const Json& owner)
     {
         if(owner.is_null())return false;
@@ -79,6 +141,7 @@ namespace
             AppendMenuA(menu,MF_STRING,kAddFlagObjective,"Add SFlag && SFlagDropZone");
         }
         else return false;
+        try{PlayersMenu(menu,path);}catch(const std::exception&){ /* The objective items still work. */ }
         return true;
     }
     void AddObjective(UINT command,const Json& snapshot)
@@ -280,6 +343,52 @@ namespace
         std::vector<InputField> fields={{"Name",name,{}}}; if(!Ask(parent,title,fields)) return false;
         name=fields[0].value;
         if(name.empty() || name.size()>120 || name.find_first_of("\r\n")!=std::string::npos) throw std::runtime_error("Enter a name between 1 and 120 characters."); return true;
+    }
+    // A Players in Match choice for one objective or zone mission: a preset, a range
+    // asked for, or the count an editor Play Level plays the map with. Warns when the
+    // map's rules leave some lobby size with nothing to play.
+    void RunObjectivePlayers(UINT command,const Json& identity,HWND owner)
+    {
+        auto state=Editor::ObjectivePlayerRules();
+        if(command==kPlayLevelPlayers)
+        {
+            auto counts=ObjectivePlayers::Choices();counts.front()="Every objective";
+            const int now=state.value("playLevel",0);
+            std::vector<InputField> fields={{"Play Level plays the map as (players)",now?std::to_string(now):counts.front(),counts}};
+            if(!Ask(owner,"Play Level Player Count",fields))return;
+            Editor::SetObjectivePlayLevelPlayers(fields[0].value==counts.front()?0:ObjectivePlayers::ChoiceCount(fields[0].value));
+            return;
+        }
+        const auto path=identity.at("path").get<std::string>();
+        if(!Editor::Compatible(path,"SBase.SObjective"))throw std::runtime_error("Select exactly one objective or zone mission.");
+        if(!PlayerRuleAllowed(Editor::ObjectiveActors(),path))throw std::runtime_error("The top mission is in every match: give its objectives or zones a player count instead.");
+        auto rules=PlayerRules(state);
+        ObjectivePlayers::Rule rule=rules.count(ObjectivePlayers::Fold(path))?rules.at(ObjectivePlayers::Fold(path)):ObjectivePlayers::Rule{};
+        bool chosen=false;
+        for(const auto& [id,preset]:kPlayerPresets)if(id==command){rule=preset;chosen=true;}
+        if(!chosen)
+        {
+            if(command!=kObjectivePlayersCustom)throw std::runtime_error("Invalid player count command.");
+            std::vector<InputField> fields={{"Minimum players (both teams)",ObjectivePlayers::ChoiceText(rule.minimum),ObjectivePlayers::Choices()},
+                                            {"Maximum players (both teams)",ObjectivePlayers::ChoiceText(rule.maximum),ObjectivePlayers::Choices()}};
+            if(!Ask(owner,"Players in Match",fields))return;
+            rule={ObjectivePlayers::ChoiceCount(fields[0].value),ObjectivePlayers::ChoiceCount(fields[1].value)};
+        }
+        Editor::SetObjectivePlayers(identity,rule.minimum,rule.maximum);
+        const auto actors=Editor::ObjectiveActors();
+        std::map<std::string,std::string> names;
+        for(const auto& actor:actors)
+            if(actor.value("kind",std::string())=="Mission")
+            {
+                const auto missionPath=actor.value("path",std::string());
+                names[ObjectivePlayers::Fold(missionPath)]="mission "+missionPath.substr(missionPath.find('.')+1);
+            }
+        const auto problems=ObjectivePlayers::Problems(PlayerMissions(actors),PlayerRules(Editor::ObjectivePlayerRules()),names);
+        if(!problems.empty())
+        {
+            std::string text;for(const auto& problem:problems)text+=problem+"\n";
+            MessageBoxA(owner,(text+"\nGive another objective a wider range, or change this one back.").c_str(),"Players in Match",MB_OK|MB_ICONWARNING);
+        }
     }
     #include "MapDesignPanel.inl"
     struct TagPreviewText { std::string title,summary; Json* preview; bool ready=false; };
@@ -629,7 +738,7 @@ namespace
                 auto menu=CreatePopupMenu();if(!menu)throw std::runtime_error("Cannot open objective menu.");
                 ObjectiveMenu(menu,owner);POINT point{};GetCursorPos(&point);
                 auto choice=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,point.x,point.y,0,s.window,nullptr);DestroyMenu(menu);
-                if(choice){AddObjective(choice,snapshot);Populate(s);}
+                if(choice){RunObjectiveCommand(choice,snapshot);Populate(s);}
             }
             else Activate(s);
             return;
@@ -825,6 +934,10 @@ namespace
             {
                 AddObjective(result,snapshot);return (flags&TPM_RETURNCMD)?0:TRUE;
             }
+            if(result>=kObjectivePlayersFirst && result<=kObjectivePlayersLast)
+            {
+                RunObjectivePlayers(result,owner,window);return (flags&TPM_RETURNCMD)?0:TRUE;
+            }
             if(flags&TPM_RETURNCMD)return result;
             if(result && !(flags&TPM_NONOTIFY))PostMessage(window,WM_COMMAND,MAKEWPARAM(result,0),0);
             return result!=0;
@@ -955,6 +1068,11 @@ Json AskDetails(HWND owner,const Json& entry,const char* title,const Json& choic
 }
 void RunObjectiveCommand(UINT command,const Json& snapshot)
 {
+    if(command>=kObjectivePlayersFirst && command<=kObjectivePlayersLast)
+    {
+        RunObjectivePlayers(command,snapshot.at("actor"),GetActiveWindow());
+        return;
+    }
     if(command<kAddObjective || command>kAddFlagObjective)throw std::runtime_error("Invalid objective command.");
     AddObjective(command,snapshot);
 }
@@ -997,6 +1115,16 @@ bool HandleCommand(UINT command)
             AddObjective(command,Editor::InspectActor(owner));
         }
         catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Add Objective / Trigger",MB_OK|MB_ICONERROR);}
+        return true;
+    }
+    if(command>=kObjectivePlayersFirst && command<=kObjectivePlayersLast)
+    {
+        try
+        {
+            auto owner=ObjectiveOwner();if(owner.is_null())throw std::runtime_error("Select exactly one objective or zone mission.");
+            RunObjectivePlayers(command,owner,GetActiveWindow());
+        }
+        catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Players in Match",MB_OK|MB_ICONERROR);}
         return true;
     }
     if(command==MapUsagesWindow::kFindMaterial || command==MapUsagesWindow::kFindMesh)

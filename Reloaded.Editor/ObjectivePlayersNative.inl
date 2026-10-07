@@ -65,7 +65,11 @@ namespace
         auto actors=ObjectivePlayersActors();
         if(!actors.empty() || !create)return actors.empty()?0:actors[0];
         CompileMapClass(ObjectivePlayers::ClassName,ObjectivePlayers::Script(),"Info",ObjectivePlayersCompiled);
+        // ACTOR ADD selects the new actor; the objective the author right-clicked stays
+        // selected, so its menu still offers what it did.
+        const auto previous=SelectedIdentities();
         if(!Exec(std::string("ACTOR ADD CLASS=")+ObjectivePlayers::ClassName))throw std::runtime_error("The editor refused to place the objective player count actor.");
+        Select(previous);
         actors=ObjectivePlayersActors();
         if(actors.empty())throw std::runtime_error("The editor did not place the objective player count actor.");
         // Named SObjectivePlayers0 rather than from ACTOR ADD's running count, as the

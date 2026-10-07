@@ -45,27 +45,8 @@ ObjectivePlayers::Rule ObjectiveRule(const DesignState& s,const std::string& pat
         if(Fold(rule.value("path",std::string()))==Fold(path))return {rule.value("min",0),rule.value("max",0)};
     return {};
 }
-ObjectivePlayers::Rules ObjectiveRules(const DesignState& s)
-{
-    ObjectivePlayers::Rules rules;
-    for(const auto& rule:s.objectivePlayers.value("rules",Json::array()))
-        rules[ObjectivePlayers::Fold(rule.value("path",std::string()))]={rule.value("min",0),rule.value("max",0)};
-    return rules;
-}
-ObjectivePlayers::Missions ObjectiveMissions(const DesignState& s)
-{
-    ObjectivePlayers::Missions missions;
-    for(const auto& actor:s.objectives)
-    {
-        if(actor.value("kind",std::string())!="Mission")continue;
-        ObjectivePlayers::Mission mission;
-        for(const auto& reference:actor.value("objectives",Json::array()))
-            if(reference.is_string())mission.objectives.push_back(ObjectivePlayers::ReferencePath(reference.get<std::string>()));
-        mission.minimum=actor.value("minimum",0);
-        missions[ObjectivePlayers::Fold(actor.value("path",std::string()))]=mission;
-    }
-    return missions;
-}
+ObjectivePlayers::Rules ObjectiveRules(const DesignState& s){return PlayerRules(s.objectivePlayers);}
+ObjectivePlayers::Missions ObjectiveMissions(const DesignState& s){return PlayerMissions(s.objectives);}
 bool ObjectiveTopMission(const DesignState& s,const Json& actor)
 {
     if(actor.value("kind",std::string())!="Mission")return false;
