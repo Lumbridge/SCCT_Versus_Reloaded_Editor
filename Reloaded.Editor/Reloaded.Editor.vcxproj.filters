@@ -205,6 +205,9 @@
     <ClInclude Include="RecoveredSoftBodySettings.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="SoftBodyStepModel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="RecoveredBspGeometry.h">
       <Filter>Header Files</Filter>
     </ClInclude>

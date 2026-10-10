@@ -2,6 +2,7 @@
 #include "Version.h"
 #include "LightmapFix.h"
 #include "Hooks.h"
+#include "RealtimeFix.h"
 #include "logger.h"
 
 #include <zlib.h>
@@ -309,6 +310,12 @@ static void __cdecl WarnIfMapDamaged(const char* cmd)
         MessageBoxA(nullptr, message, RE_PLUS_NAME, MB_OK | MB_ICONWARNING);
 }
 
+static void __cdecl BeforeEditorExec(const char* cmd)
+{
+    WarnIfMapDamaged(cmd);
+    RealtimeFix::BeforeEditorCommand(cmd);
+}
+
 // Every map load/save, including Play Level's runtime copy, reaches Exec.
 JMP_HOOK(0x110183b0, EditorExecHook)
 {
@@ -317,7 +324,7 @@ JMP_HOOK(0x110183b0, EditorExecHook)
         pushad                          // [esp+0x20] retaddr, +0x24 command
         mov  eax, dword ptr [esp + 0x24]
         push eax
-        call WarnIfMapDamaged
+        call BeforeEditorExec
         add  esp, 4
         popad
 

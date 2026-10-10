@@ -268,6 +268,7 @@
     <ClInclude Include="MapRecoveryUi.h" />
     <ClInclude Include="RecoveredBspLighting.h" />
     <ClInclude Include="RecoveredSoftBodySettings.h" />
+    <ClInclude Include="SoftBodyStepModel.h" />
     <ClInclude Include="RecoveredBspGeometry.h" />
     <ClInclude Include="RecoveredSurfacePartition.h" />
     <ClInclude Include="RecoveredPolygonImport.h" />

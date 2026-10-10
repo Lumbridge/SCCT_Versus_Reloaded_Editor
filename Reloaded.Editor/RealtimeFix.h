@@ -13,4 +13,8 @@ class RealtimeFix
 {
 public:
     static void Initialize();
+
+    // Called with every editor command before it runs. Before a MAP SAVE it gives each strip door
+    // or patch simulation still without render bounds the step its build should have given it.
+    static void BeforeEditorCommand(const char* command);
 };

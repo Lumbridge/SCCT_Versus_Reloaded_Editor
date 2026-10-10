@@ -2941,7 +2941,8 @@ namespace
                 || !std::isfinite(length) || length < 0) return fail("invalid spring");
             structure.springs.insert(structure.springs.end(), spring, spring + 12);
         }
-        structure.settings = RecoveredSoftBodySettings::Capture(body, ReadRaw<uint32_t>(actor, 0x370));
+        structure.settings = RecoveredSoftBodySettings::Capture(body, ReadRaw<uint32_t>(actor, 0x370),
+            ReadRaw<uint32_t>(actor, 0x380), ReadRaw<uint32_t>(actor, 0x384));
         return true;
     }
 

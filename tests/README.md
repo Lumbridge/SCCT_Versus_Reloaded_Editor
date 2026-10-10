@@ -490,6 +490,17 @@ the ramp top and open above, below and outside, that smoothing again replaces
 the ramp, Remove deletes it, the frame's Undo and Redo take each in one step,
 and a plain brush is offered nothing.
 
+`SoftBodyStepModelTests.cpp` covers the soft-body step cap (RealtimeFix): a new
+simulation without render bounds always takes its build's first step, with
+nothing banked or with a banked step, while a simulation with bounds steps only
+on banked time; the banking itself (time adds up to the 1/120 s minimum, a
+stall is capped at 0.05 s); and a body built in a 240 fps realtime viewport,
+which gets its first step and then about 120 steps a second. Only the
+constructor's exact zero radius counts as a new simulation: a cloth gone NaN
+stays under the cap. The save-time step for simulations still without bounds
+(maps saved by RE+ before the first step was restored) is native and was
+checked in the editor and in Play Level, not by this test.
+
 The native workflow suite checks the static-mesh **Position the builder brush
 around this** menu action with signed nonuniform scale, rotation and PrePivot,
 then verifies the six box faces, centered placement, multiple-mesh bounds,
@@ -625,7 +636,13 @@ specific damping fallback as unchanged only when the actor's EnergyFactor is
 zero. Other physical settings still require an exact match.
 
 The portable settings test checks scratch changes, default damping, nonzero
-authored damping and changes to every compared byte. For a native reproduction,
+authored damping and changes to every compared byte. Since 2026-10-09 a
+regenerated body always takes its build step, while a body RE+ saved before
+that fix never stepped and still holds the constructor's 25 and 1 at
+0x154/0x158, where Update copies the actor's +0x380 and bit 2 of its +0x384.
+Those two fields are compared by the actor's values; the test checks a
+never-stepped original against its stepped regeneration, and that a change to
+either actor value is still caught. For a native reproduction,
 add `-TraceSoftBodies -StepCookedSoftBodies` to the ClarD recovery command. This
 steps each supported cooked soft body once before capturing its recovery data.
 ClarD also exceeded the PC engine's signed 16-bit collision-bound index limit.

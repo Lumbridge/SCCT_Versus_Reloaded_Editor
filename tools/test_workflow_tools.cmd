@@ -155,6 +155,10 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\StairSmoothModelTests.cpp Relo
 if errorlevel 1 goto failed
 "%TEMP%\StairSmoothModelTests.exe"
 if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\SoftBodyStepModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\SoftBodyStepModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\SoftBodyStepModelTests.exe"
+if errorlevel 1 goto failed
 popd
 exit /b 0
 :failed
