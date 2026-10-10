@@ -49,6 +49,7 @@ int main()
         Check(placed.find("Name=I1_A")!=std::string::npos,"unique actor names");
         Check(placed.find("Event=I1_CloseDoor")!=std::string::npos,"event remap");
         Check(placed.find("Tag=I1_CloseDoor")!=std::string::npos,"tag remap");
+        Check(placement.at("tags").value("CloseDoor",std::string())=="I1_CloseDoor","placement reports its tag renames");
         Check(placed.find("Other.I1_B")!=std::string::npos,"internal actor reference remap");
         Check(definition.at("actors")[0].at("name")=="A","placement leaves saved definition unchanged");
         auto canonical=CanonicalizeAssembly(definition,{{"MyLevel.A","SavedA"},{"MyLevel.B","SavedB"}});

@@ -101,8 +101,27 @@ namespace
         auto fresh=InspectActor(snapshot.at("actor"));
         if(fresh.at("values")!=snapshot.at("values"))throw std::runtime_error("This actor changed outside the workbench. Refresh before editing.");
     }
+    // The object name inside Class'Name', without the double quotes that let a name hold
+    // spaces or accented letters (Class'"Pkg.Third Floor.Façade"').
+    std::string ReferencedName(const std::string& text)
+    {
+        auto first=text.find('\''),last=text.rfind('\'');
+        if(first==std::string::npos || last!=text.size()-1 || first==last || text.find('\'',first+1)!=last)return {};
+        auto name=text.substr(first+1,last-first-1);
+        if(name.size()>=2 && name.front()=='"' && name.back()=='"')name=name.substr(1,name.size()-2);
+        return name;
+    }
     void MagicImport(Address p,Address at,const Json& value)
     {
+        if(Read<unsigned short>(p+0x30)==1 && IsA(p,"ObjectProperty") && value.is_string())
+        {
+            // A single object reference: point it at the object. The engine's text import
+            // stops at the first character that is not a letter, digit, '_', '-' or '.', so
+            // names with spaces or accented letters (stock meshes have both) never resolve.
+            auto text=value.get<std::string>();
+            if(Fold(text)=="none"){Write<Address>(at,0);return;}
+            if(auto object=Find(ReferencedName(text))){Write<Address>(at,object);return;}
+        }
         if(Read<unsigned short>(p+0x30)>1)
         {
             const int stride=Read<unsigned short>(p+0x32);
@@ -144,9 +163,9 @@ namespace
         if(value.is_array()){for(const auto& v:value)MagicReferences(schema.at("inner"),v);return;}
         if(value.is_object()){for(auto it=value.begin();it!=value.end();++it)MagicReferences(schema.at("fields").at(it.key()),it.value());return;}
         if(kind!="ObjectProperty" && kind!="ClassProperty")return;auto text=value.get<std::string>();if(Fold(text)=="none")return;
-        auto first=text.find('\''),last=text.rfind('\'');
-        if(first==std::string::npos || last!=text.size()-1 || first==last || text.find('\'',first+1)!=last)throw std::runtime_error("Choose a valid object reference from the asset picker.");
-        auto object=Find(text.substr(first+1,last-first-1));if(!object)throw std::runtime_error("Referenced asset or actor is not loaded.");
+        auto name=ReferencedName(text);
+        if(name.empty())throw std::runtime_error("Choose a valid object reference from the asset picker.");
+        auto object=Find(name);if(!object)throw std::runtime_error("Referenced asset or actor is not loaded.");
         auto wanted=schema.at("type").get<std::string>();bool compatible=false;
         if(kind=="ObjectProperty")compatible=IsA(object,wanted);
         else if(IsA(object,"Class")){std::set<Address> seen;for(auto c=object;c && seen.insert(c).second && seen.size()<256;c=Read<Address>(c+0x28))if(Path(c)==wanted)compatible=true;}

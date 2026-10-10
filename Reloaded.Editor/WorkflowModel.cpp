@@ -410,14 +410,18 @@ Json PreparePlacement(const Json& definition,const Pose& frame,const std::string
 {
     if(!std::regex_match(prefix,std::regex("[A-Za-z_][A-Za-z0-9_]*"))) throw std::runtime_error("Invalid assembly instance prefix.");
     Json result=definition; std::map<std::string,std::string> paths,tags;
+    // The placed Tags, keyed by the Tag as saved, so an event outside the
+    // assembly can be pointed at a placed member.
+    Json renamed=Json::object();
     for(const auto& actor:definition.at("actors"))
     {
         auto name=actor.at("name").get<std::string>();
         paths[actor.at("path").get<std::string>()]=levelPath+"."+prefix+name;
         // Native copy exports actor references under the actual map root.
         auto tag=actor.value("tag",std::string{});
-        if(!tag.empty() && Fold(tag)!="none") tags[Fold(tag)]=prefix+tag;
+        if(!tag.empty() && Fold(tag)!="none") {tags[Fold(tag)]=prefix+tag;renamed[tag]=prefix+tag;}
     }
+    result["tags"]=renamed;
     for(const auto& binding:definition.at("bindings"))
     {
         auto id=binding.at("id").get<std::string>(); auto found=bindings.find(id);

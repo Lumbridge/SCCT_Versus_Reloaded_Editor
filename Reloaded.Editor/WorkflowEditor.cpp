@@ -1485,7 +1485,7 @@ Json PlaceAssembly(const Json& definition,const Pose& frame,const std::map<std::
         transaction.Commit();
     }
     catch(...) { Select(before); throw; }
-    Select(members); return {{"id",Id()},{"assembly",definition.at("id")},{"members",members},{"names",names},{"position",frame.position},{"rotation",frame.rotation}};
+    Select(members); return {{"id",Id()},{"assembly",definition.at("id")},{"members",members},{"names",names},{"tags",prepared.value("tags",Json::object())},{"position",frame.position},{"rotation",frame.rotation}};
 }
 #include "MagicEventNative.inl"
 #include "MapAuthoringNative.inl"

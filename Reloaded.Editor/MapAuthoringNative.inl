@@ -18,6 +18,24 @@ namespace
     {return name=="TeamNumber" && op.at("op")=="create" && AuthoringSubclass(type,"PlayerStart");}
     bool AuthoringAppearance(const std::string& name)
     {return name=="StaticMesh" || name=="DrawType" || name=="DrawScale" || name=="DrawScale3D";}
+    // A new gameplay object (any actor but a StaticMeshActor) given a StaticMesh
+    // draws nothing until its DrawType says DT_StaticMesh; the stock maps set
+    // both. A file that names a mesh and no DrawType gets it, and the preview
+    // lists it like any other property.
+    Json AuthoringDefaults(Json document)
+    {
+        if(!document.is_object() || !document.contains("operations") || !document["operations"].is_array())return document;
+        for(auto& op:document["operations"])
+        {
+            if(!op.is_object() || op.value("op",std::string())!="create" || !op.contains("class") || !op["class"].is_string())continue;
+            if(!op.contains("properties") || !op["properties"].is_object())continue;
+            auto& properties=op["properties"];
+            if(!properties.contains("StaticMesh") || properties.contains("DrawType"))continue;
+            const auto type=Find(op["class"].get<std::string>());
+            if(type && AuthoringSubclass(type,"Actor") && !AuthoringSubclass(type,"StaticMeshActor"))properties["DrawType"]="DT_StaticMesh";
+        }
+        return document;
+    }
     Json AuthoringSchema(Address type)
     {
         Json result=Json::object();
@@ -35,7 +53,7 @@ namespace
     {
         Json document,summary=Json::array(),rows=Json::array();
         std::map<std::string,Address> types;
-        std::map<std::string,Json> identities,schemas;
+        std::map<std::string,Json> identities,schemas,before;
     };
     std::filesystem::path AuthoringRoot(){return Directory().parent_path().parent_path();}
     // Where the game keeps a package, by its name: scripts in System, assets in Packages.
@@ -198,6 +216,19 @@ namespace
                 if(snapshot.at("values")!=op.at("before"))throw std::runtime_error("Actor changed since export: "+op.at("actor").at("path").get<std::string>());
                 auto path=op.at("actor").at("path").get<std::string>();
                 plan.identities[path]=snapshot.at("actor");plan.types[path]=Find(snapshot.at("actor").at("class"));plan.schemas[path]=snapshot.at("schema");
+                // An existing actor's mesh and scale can change too (they are not in the
+                // editable set, so not in the exported values either): their schema and
+                // current values come from the actor.
+                plan.before[path]=op.at("before");
+                const auto actor=MagicResolve(snapshot.at("actor"));
+                const auto full=AuthoringSchema(plan.types[path]);
+                for(const char* name:{"StaticMesh","DrawType","DrawScale","DrawScale3D"})
+                    if(!plan.schemas[path].contains(name) && full.contains(name))
+                        if(const auto p=Property(actor,name))
+                        {
+                            plan.schemas[path][name]=full.at(name);
+                            plan.before[path][name]=MagicValue(p,actor+Read<int>(p+0x3c));
+                        }
             }
             else if(kind=="delete")
             {
@@ -313,12 +344,12 @@ namespace
                     }
                 };
                 references(schema,it.value(),value);
-                if(kind=="update")plan.summary.push_back("  "+it.key()+": "+Magic::Text(op.at("before").at(it.key()))+" -> "+Magic::Text(value));
+                if(kind=="update")plan.summary.push_back("  "+it.key()+": "+Magic::Text(plan.before.at(id).at(it.key()))+" -> "+Magic::Text(value));
                 else plan.summary.push_back("  "+it.key()+" = "+Magic::Text(value));
                 resolved[it.key()]=value;
             }
             Json rows;
-            if(kind=="update")rows=Authoring::UpdateRows(id,selectable(id),op.at("before"),resolved);
+            if(kind=="update")rows=Authoring::UpdateRows(id,selectable(id),plan.before.at(id),resolved);
             else
             {
                 rows=Authoring::CreateRows(id,Path(plan.types.at(id)),resolved);
@@ -388,15 +419,17 @@ Json ExportMapAuthoring()
     catch(const std::exception& e){result["geometryUnavailable"]=e.what();}
     return result;
 }
-Json PreviewMapAuthoring(const Json& document)
+Json PreviewMapAuthoring(const Json& given)
 {
+    const Json document=AuthoringDefaults(given);
     auto plan=PlanAuthoring(document,false);
     const bool assets=AuthoringHas(document,"load") || AuthoringHas(document,"texture") || AuthoringHas(document,"save");
     return {{"changes",plan.summary},{"rows",plan.rows},{"tally",Authoring::Tally(plan.rows)},
         {"note",std::string(assets?"Package loads, texture imports and package saves run first and are not undone by Undo. ":"")+"Map changes apply in one Undo step. Save the map to retain changes. Lighting, geometry and navigation are not rebuilt; playtest the result."}};
 }
-Json ApplyMapAuthoring(const Json& document)
+Json ApplyMapAuthoring(const Json& given)
 {
+    const Json document=AuthoringDefaults(given);
     Authoring::Validate(document,AuthoringMapKey());
     if(!pasteHookReady || insertionText)throw std::runtime_error("Native actor insertion is unavailable or busy.");
     PlanAuthoring(document,false); // Reject what can be rejected before any package changes.
