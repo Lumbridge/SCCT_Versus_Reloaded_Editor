@@ -291,6 +291,8 @@
     <ClInclude Include="ProjectorDetachFix.h" />
     <ClInclude Include="EditorConfigBits.h" />
     <ClInclude Include="SizingBoxFix.h" />
+    <ClInclude Include="PackageLoadFix.h" />
+    <ClInclude Include="PackageLoadFixModel.h" />
     <ClInclude Include="EngineLog.h" />
     <ClInclude Include="LightmapPacker.h" />
     <ClInclude Include="PasteFix.h" />
@@ -398,6 +400,7 @@
     <ClCompile Include="ProjectorDetachFix.cpp" />
     <ClCompile Include="EditorConfigBits.cpp" />
     <ClCompile Include="SizingBoxFix.cpp" />
+    <ClCompile Include="PackageLoadFix.cpp" />
     <ClCompile Include="EngineLog.cpp" />
     <ClCompile Include="LightmapPacker.cpp" />
     <ClCompile Include="PasteFix.cpp" />

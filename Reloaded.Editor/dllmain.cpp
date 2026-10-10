@@ -35,6 +35,7 @@
 #include "BspCollisionFix.h"
 #include "ProjectorDetachFix.h"
 #include "SizingBoxFix.h"
+#include "PackageLoadFix.h"
 #include "MapRecovery.h"
 #include "CrashDiagnostics.h"
 #include "CrashRecovery.h"
@@ -74,15 +75,17 @@ static std::wstring GetExecutableDirectory(std::wstring executablePath) {
 
 // The engine's package lookup (ChaosTheory_Editor+0x19F300) reads '[' as the
 // start of a Name[Platform] tag and cuts the path there, so every map opened
-// by absolute path fails with "Can't find file" and the unbalanced BeginLoad
-// then trips check(GObjBeginLoadCount==0) on the next tick.
+// by absolute path finds no file and the open map stays as it was. LoadPackage
+// used to leave that load's BeginLoad unbalanced, and check(GObjBeginLoadCount
+// ==0) then closed the editor on the next tick; PackageLoadFix ends the load
+// now, so the map just does not open.
 static DWORD WINAPI BracketedInstallWarning(LPVOID parameter)
 {
     std::unique_ptr<std::wstring> directory(static_cast<std::wstring*>(parameter));
     const std::wstring message =
         L"The editor is installed in a folder whose path contains '[':\n\n" + *directory +
         L"\n\nThe engine treats '[' in a file path as a platform tag and cuts the path there, "
-        L"so opening a map will fail and the editor will crash.\n\n"
+        L"so maps will not open: the map already open stays open.\n\n"
         L"Close the editor and rename the folder without square brackets.";
     MessageBoxW(nullptr, message.c_str(), L"" RE_PLUS_NAME,
                 MB_OK | MB_ICONWARNING | MB_SETFOREGROUND | MB_TOPMOST);
@@ -199,6 +202,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     MapRecovery::InitializeLightingProtection();
     ProjectorDetachFix::Initialize();
     SizingBoxFix::Initialize();
+    PackageLoadFix::Initialize();
     LightmapPacker::Initialize();
     RebuildAllMaps::Initialize();
     ViewportConfigFix::Initialize();

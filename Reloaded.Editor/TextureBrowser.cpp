@@ -1759,9 +1759,11 @@ JMP_HOOK(HOOK_EXPORT_DISPATCH, TB_ExportDispatchHook)
 
 // The browser's refresh (0x10E81400) reloads each listed package with
 // UObject::LoadPackage, and a map with its own textures lists MyLevel, which
-// has no file. That load throws past its BeginLoad, so check(GObjBeginLoadCount
-// ==0) fires on the next tick: every refresh of such a map, including the one
-// sent while the map loads. MyLevel is always in memory with its map; skip it.
+// has no file. That load returns NULL without the EndLoad for its BeginLoad, so
+// check(GObjBeginLoadCount==0) fired on the next tick: every refresh of such a
+// map, including the one sent while the map loads. PackageLoadFix now ends that
+// load for every caller; MyLevel is always in memory with its map, so the
+// texture browser still skips the futile load.
 #define TB_REFRESH_LOAD_PACKAGE_CALL 0x10E81ABEu
 #define UOBJECT_LOAD_PACKAGE         0x10FB1EB0u
 typedef void* (__cdecl* LoadPackageFn)(void* outer, const char* name, DWORD flags);

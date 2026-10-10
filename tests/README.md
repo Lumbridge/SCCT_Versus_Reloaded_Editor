@@ -437,6 +437,16 @@ Not covered by the native suite: the glosses drawn in the browser lists, the
 Texture Browser label, caption and Filter hooks, the hover tooltip and the
 RE+ Options checkbox were checked by hand in a disposable installation.
 
+## Maps with their own sounds
+
+`tools/test_workflow_tools.cmd` runs `PackageLoadFixModelTests.cpp`: the stock bytes of
+`UObject::LoadPackage` that `PackageLoadFix` replaces (as read from `ChaosTheory_Editor.exe`),
+its call to `GetPackageLinker` and the found path's `EndLoad`, the jump to the stub and
+reading it back, code that is not the stock editor's left alone, and the Sound Browser
+refresh's call to `LoadPackage` and the one package it skips (`MyLevel`). That a map whose
+`MyLevel` holds a sound opens again, collects garbage, renders, autosaves and plays was
+checked in a disposable installation of the editor.
+
 ## Map packaging and selective Tag renaming
 
 Run `tools\test_map_package.cmd` from an x86 Visual Studio developer prompt after installing the manifest dependencies. The packaging suite covers compressed and raw SCCT package tables, older name encodings, transitive/cyclic dependencies, missing and ambiguous packages, texture counterparts, byte-identical base comparisons, exclusions, stale files, archive paths, and no-overwrite publication. `MapPackageTests.exe <game-root> <playable-map> [new-zip]` also supports read-only inspection or packaging of real maps.

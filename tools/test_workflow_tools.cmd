@@ -141,6 +141,10 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\LargeAddressModelTests.cpp /Fo
 if errorlevel 1 goto failed
 "%TEMP%\LargeAddressModelTests.exe"
 if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\PackageLoadFixModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\PackageLoadFixModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\PackageLoadFixModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\CharacterSkinPresetsModelTests.cpp Reloaded.Editor\WorkflowModel.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\CharacterSkinPresetsModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\CharacterSkinPresetsModelTests.exe"

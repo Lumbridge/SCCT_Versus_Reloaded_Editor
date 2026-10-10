@@ -97,7 +97,7 @@ Recovered maps keep their original baked lighting through ordinary builds. Recov
 | **Quick portal** | In Vertex Editing, select four coplanar corners and right-click **Add portal sheet**. Creates a single invisible, non-solid zone portal polygon whose corners are the selected corners, like the stock Add Special zone portal on a sheet brush, with Undo/Redo. |
 | **Self-updater** | Offers newer releases at start-up, showing the release notes and download size with Install, Remind me later and Skip this version, and installs them in place; **Help > Check for RE+ Updates...** checks on demand. The first start of a new version shows its release notes once (**Help > What's New in RE+...** on demand), and **Help > Roll Back to RE+ x.y.z...** swaps back to the version the update replaced, keeping the newer one to roll forward again. |
 | **RE+ Shortcuts** | **Help > RE+ Shortcuts...** lists every key, mouse gesture and menu the patch adds, with the Geometric Event keys as configured. |
-| **Fixes** | Playtests launch at the monitor's resolution, off-screen property windows come back, a missing builder brush is repaired, larger BSP point counts are supported, and crashes are logged. |
+| **Fixes** | Playtests launch at the monitor's resolution, off-screen property windows come back, a missing builder brush is repaired, larger BSP point counts are supported, a map with sounds of its own (imported into MyLevel) opens again, a package load that finds no file no longer closes the editor, and crashes are logged. |
 
 AllyPal's original fixes are included: faster selection, restored Echelon lighting, improved lightmaps and larger WAV imports.
 

@@ -3,6 +3,7 @@
 #include "SoundBrowserFavorites.h"
 #include "Hooks.h"
 #include "MemoryWriter.h"
+#include "PackageLoadFixModel.h"
 #include "dllmain.h"   // g_hReloadedDll
 #include <commctrl.h>
 #include <commdlg.h>
@@ -5374,9 +5375,36 @@ static HMENU WINAPI SB_LoadMenuA_Hook(HINSTANCE hInst, LPCSTR lpMenuName)
     return m;
 }
 
+// The browser's package refresh (after every MAP LOAD) reloads each listed sound
+// package with UObject::LoadPackage, and a map with sounds of its own lists MyLevel,
+// which has no file. That load fails: it listed MyLevel as a missing file in the
+// Load Errors window and, until PackageLoadFix, left GObjBeginLoadCount at 1, so the
+// editor asserted on the next tick. Skip it, as the texture browser does.
+typedef void* (__cdecl* SB_LoadPackageFn)(void* outer, const char* name, DWORD flags);
+
+static void* __cdecl SB_RefreshLoadPackage(void* outer, const char* name, DWORD flags)
+{
+    if (PackageLoadFix::IsMapPackage(name))
+        return nullptr;
+    return reinterpret_cast<SB_LoadPackageFn>(PackageLoadFix::kLoadPackage)(outer, name, flags);
+}
+
+static void SB_InstallRefreshLoadGuard()
+{
+    const uint32_t site = PackageLoadFix::kSoundBrowserRefreshLoad;
+    if (!PackageLoadFix::CallsTo(reinterpret_cast<const uint8_t*>(site), site, PackageLoadFix::kLoadPackage) ||
+        !MemoryWriter::WriteCall(site, reinterpret_cast<void (*)()>(SB_RefreshLoadPackage)))
+    {
+        Logger::log("SoundBrowser: MyLevel refresh guard not installed (fingerprint mismatch)");
+        return;
+    }
+    Logger::log("SoundBrowser: the package refresh skips MyLevel");
+}
+
 void SoundBrowser::Initialize()
 {
     g_ReloadedUnlockPackages = HasCommandLineFlag("-UnlockPackages");
+    SB_InstallRefreshLoadGuard();
 
     // Inject sound browser menu items at load time (menu bar 15103 + context menu 149)
     uintptr_t loadMenuHook = reinterpret_cast<uintptr_t>(SB_LoadMenuA_Hook);
