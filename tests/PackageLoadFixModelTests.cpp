@@ -73,7 +73,7 @@ int main()
         // The Sound Browser's refresh: its call to LoadPackage, and the one package it skips.
         Check(CallsTo(kEditorSoundBrowserLoad, kSoundBrowserRefreshLoad, kLoadPackage), "the browser calls LoadPackage");
         Check(IsMapPackage("MyLevel") && IsMapPackage("mylevel") && IsMapPackage("MYLEVEL"), "MyLevel, any case");
-        Check(!IsMapPackage("MyLevel2") && !IsMapPackage("MyLeve") && !IsMapPackage("MoonDMusic"), "other packages");
+        Check(!IsMapPackage("MyLevel2") && !IsMapPackage("MyLeve") && !IsMapPackage("MyMapMusic"), "other packages");
         Check(!IsMapPackage("") && !IsMapPackage(nullptr), "no name");
 
         std::cout << "PackageLoadFixModelTests: " << checks << " checks passed\n";
