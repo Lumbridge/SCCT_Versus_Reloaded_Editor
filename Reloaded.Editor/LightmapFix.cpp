@@ -9,6 +9,7 @@
 #include <zlib.h>
 #include <cstdio>
 #include <cstring>
+#include <new>
 #include <vector>
 #include <string>
 #include <format>
@@ -65,16 +66,31 @@ static bool ParseSDCChunks(const char* path, std::vector<SDCChunk>& chunks)
     return !chunks.empty();
 }
 
-// Decompress one chunk into a heap buffer.  Returns empty on any failure.
+// Decompress one chunk into a heap buffer.  Returns empty on any failure,
+// running out of memory included: the damage check and the Play Level header
+// check call this from hooks, where nothing above them catches.
 static std::vector<uint8_t> ReadAndDecompress(const char* path, const SDCChunk& chunk)
 {
+    std::vector<uint8_t> compData;
+    std::vector<uint8_t> outData;
+    try
+    {
+        compData.resize(chunk.compSize);
+        outData.resize(chunk.uncompSize);
+    }
+    catch (const std::bad_alloc&)
+    {
+        Logger::log(std::format("LightmapFix: not enough memory to read a block of {} bytes ({} compressed).",
+            chunk.uncompSize, chunk.compSize));
+        return {};
+    }
+
     FILE* f = nullptr;
     if (fopen_s(&f, path, "rb") != 0 || !f)
         return {};
 
     fseek(f, chunk.headerOffset + 8, SEEK_SET);
 
-    std::vector<uint8_t> compData(chunk.compSize);
     if (fread(compData.data(), 1, chunk.compSize, f) != chunk.compSize)
     {
         fclose(f);
@@ -82,7 +98,6 @@ static std::vector<uint8_t> ReadAndDecompress(const char* path, const SDCChunk& 
     }
     fclose(f);
 
-    std::vector<uint8_t> outData(chunk.uncompSize);
     uLongf destLen = chunk.uncompSize;
     if (uncompress(outData.data(), &destLen, compData.data(), chunk.compSize) != Z_OK)
         return {};
