@@ -1,7 +1,7 @@
 # SMagicEvent JSON exchange
 
 Open an event in **View > SMagicEvent Workbench**, then click **Export JSON...**.
-Share the exported file with the assistant and describe the behaviour you want.
+Edit the exported file in a text editor to describe the behaviour you want.
 Open the destination event and click **Import JSON...** to apply the edited file.
 Use **New Event** first when you want a separate event. **Undo** restores all
 imported changes in one step; save the map to retain them.
@@ -9,7 +9,7 @@ imported changes in one step; save the map to retain them.
 Export includes editable settings in the `SMagicEvent` category (including all
 group/action fields and `StopActor`), plus `Event` and `InitialState`. It includes
 the live property schema and map actor names, classes and Tags as reference
-information for the person or assistant editing the file.
+information for whoever edits the file.
 
 Import reads `format`, `version`, `class` and `properties`. It preserves the
 destination actor's name, Tag, position and rotation. It does not create actors,
