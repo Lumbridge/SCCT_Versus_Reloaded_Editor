@@ -18,6 +18,19 @@ The native recovery harness with `-SourceMap <HELI02.sdc>` additionally checks
 the map's duplicate portal outlines (cooked surfaces 1165 and 1168), recovery,
 save, normal reopen and rebuild in a disposable installation.
 
+The same script builds `SdcBlockModelTests.cpp` and
+`RecoveredAssetPackageTests.cpp`, which cover reading a compressed package
+(a saved `.sdc` map): a run of blocks, each two sizes and a zlib stream. The
+game starts a block every 15 MB, but a map saved by the editor is one block as
+large as the map, so a block has no size limit of its own. Its compressed
+bytes must lie inside the file, its uncompressed size must be one those bytes
+can produce (zlib expands at most 1032 times) and the package must stay within
+1 GB; anything else is refused before it is decoded. The package tests decode a
+72 MB block that did not compress, the same package in 15 MB blocks and 96 MB
+of zeros (zlib's best ratio), and refuse truncated, overstated, empty and
+oversized blocks, wrong sizes, trailing data and a package without its magic,
+never touching an existing destination or temporary file.
+
 ## Map Design
 
 `tools/test_workflow_tools.cmd` includes `MapDesignModelTests.cpp`: outward polygon
@@ -144,7 +157,9 @@ that do not fill their export are counted, not misread; truncated or foreign
 data is refused. `MapUsagesFileTests.cpp` (in `tools/test_map_package.cmd`,
 it needs zlib) reads the compressed `tests/maps/OffsE` maps: a mesh placed 71
 times, an editor sprite on 56 lights, a group with a space, a whole package,
-a damaged copy and the folder walk with cancel. `MapUsagesFileTests.exe
+a damaged copy and the folder walk with cancel, then the same map grown to
+80 MB and written back as one block (stored and compressed), and block
+headers that cannot be right. `MapUsagesFileTests.exe
 <folder>... <Package.Group.Name> [autosaves]` also prints what the window
 would list for real folders and how long the scan took.
 
@@ -479,7 +494,8 @@ in the disposable native fixture. See [SMagicEventJson.md](SMagicEventJson.md).
 
 `MapOptimiseModelTests.cpp` (built by `tools\test_map_package.cmd`) reads a
 synthetic version 300 package's export and import tables back with full
-paths, classes and sizes, and covers the per-package report, asset sizes
+paths, classes and sizes (also from a saved map of one 72 MB block, as a
+large release copy is read back), and covers the per-package report, asset sizes
 (an asset and everything inside it), move planning and the stock rename
 command, and finding what a saved copy still imports. The native
 `-OptimiseAssetsOnly` run places a mesh from EST_STM (in a group, with a

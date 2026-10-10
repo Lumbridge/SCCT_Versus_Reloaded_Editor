@@ -1,4 +1,5 @@
 #include "MapUsages.h"
+#include "SdcBlockModel.h"
 #include <algorithm>
 #include <fstream>
 #include <stdexcept>
@@ -8,8 +9,6 @@ namespace MapUsages
 {
 namespace
 {
-    constexpr std::uint32_t kMaxChunk = 64u * 1024u * 1024u;
-    constexpr std::uint64_t kMaxPackage = 512ull * 1024u * 1024u;
     std::uint32_t Le32(const Bytes& b, size_t at)
     {
         return b[at] | (b[at + 1] << 8) | (b[at + 2] << 16) | (static_cast<std::uint32_t>(b[at + 3]) << 24);
@@ -24,19 +23,29 @@ Bytes ReadPackage(const std::filesystem::path& file)
     if (input.bad()) throw std::runtime_error("reading the file failed");
     if (raw.size() < 12) throw std::runtime_error("the file is too short to be a map");
     if (Le32(raw, 0) == Snapshot::kPackageMagic) return raw;
-    Bytes package;
+    // Every block header is checked before anything is allocated: a saved map
+    // is usually one block as large as the map, so the bound on a block is
+    // the file it has to fit in, not a size of its own.
+    std::uint64_t total = 0;
     for (size_t at = 0; at < raw.size();)
     {
         if (raw.size() - at < 8) throw std::runtime_error("truncated block header");
         const auto size = Le32(raw, at), packed = Le32(raw, at + 4);
         at += 8;
-        if (!size || !packed || size > kMaxChunk || packed > raw.size() - at || package.size() + size > kMaxPackage)
+        if (SdcBlock::Check(size, packed, raw.size() - at, total) != SdcBlock::Fault::None)
             throw std::runtime_error("not an Unreal package or a compressed map");
-        const auto start = package.size();
-        package.resize(start + size);
+        total += size;
+        at += packed;
+    }
+    Bytes package(static_cast<size_t>(total));
+    for (size_t at = 0, start = 0; at < raw.size();)
+    {
+        const auto size = Le32(raw, at), packed = Le32(raw, at + 4);
+        at += 8;
         uLongf produced = size;
         if (uncompress(package.data() + start, &produced, raw.data() + at, packed) != Z_OK || produced != size)
             throw std::runtime_error("a compressed block is damaged");
+        start += size;
         at += packed;
     }
     if (package.size() < 64 || Le32(package, 0) != Snapshot::kPackageMagic) throw std::runtime_error("the decoded data is not an Unreal package");

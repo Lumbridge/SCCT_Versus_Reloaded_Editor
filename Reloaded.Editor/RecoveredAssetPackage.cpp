@@ -1,4 +1,5 @@
 #include "RecoveredAssetPackage.h"
+#include "SdcBlockModel.h"
 
 #include <zlib.h>
 
@@ -12,8 +13,7 @@ namespace RecoveredAssetPackage
     namespace
     {
         constexpr std::uint32_t kPackageMagic = 0x9E2A83C1u;
-        constexpr std::uint64_t kMaxPackageBytes = 0x7FFFFFFFull;
-        constexpr std::uint32_t kMaxChunkBytes = 64u*1024u*1024u;
+        constexpr std::uint64_t kMaxPackageBytes = SdcBlock::kMaxPackageBytes;
         constexpr std::size_t kBufferBytes = 65536;
 
         std::uint32_t ReadLittle32(const unsigned char* bytes)
@@ -49,7 +49,7 @@ namespace RecoveredAssetPackage
             {
                 if (count > kMaxPackageBytes || total > kMaxPackageBytes-count)
                 {
-                    error = "The recovered asset package exceeds the supported package-size limit.";
+                    error = SdcBlock::Text(SdcBlock::Fault::TooLarge);
                     return false;
                 }
                 for (std::size_t index=0; index<count && magicCount<magic.size(); ++index)
@@ -77,18 +77,19 @@ namespace RecoveredAssetPackage
             ~Inflater() { if (initialized) inflateEnd(&stream); }
         };
 
+        // A saved map is often one block as large as the map itself, so a
+        // block has no size limit of its own: its compressed bytes must lie
+        // inside the file and its uncompressed size must be one they can
+        // produce, within the package limit. Decoding streams through fixed
+        // buffers whatever the block's size.
         bool DecodeChunk(std::ifstream& input,std::uint32_t uncompressed,
-                         std::uint32_t compressed,PackageWriter& writer)
+                         std::uint32_t compressed,std::uint64_t fileBytesLeft,
+                         PackageWriter& writer)
         {
-            if (uncompressed==0 || compressed==0
-                || uncompressed>kMaxChunkBytes || compressed>kMaxChunkBytes)
+            const auto fault=SdcBlock::Check(uncompressed,compressed,fileBytesLeft,writer.total);
+            if (fault!=SdcBlock::Fault::None)
             {
-                writer.error = "An SDC block declares an invalid or unsupported size.";
-                return false;
-            }
-            if (writer.total > kMaxPackageBytes-uncompressed)
-            {
-                writer.error = "The recovered asset package exceeds the supported package-size limit.";
+                writer.error = SdcBlock::Text(fault);
                 return false;
             }
             Inflater inflater;
@@ -186,12 +187,15 @@ namespace RecoveredAssetPackage
             }
             const bool raw=ReadLittle32(header.data())==kPackageMagic;
             input.clear();
+            input.seekg(0,std::ios::end);
+            const auto end=input.tellg();
             input.seekg(0);
-            if (!input)
+            if (!input || static_cast<std::streamoff>(end)<0)
             {
                 error = "Could not seek the compiled map asset source.";
                 return false;
             }
+            const auto fileBytes=static_cast<std::uint64_t>(end);
 
             TemporaryOutput temporary;
             temporary.directory=destinationUsx;
@@ -230,6 +234,7 @@ namespace RecoveredAssetPackage
             }
             else
             {
+                std::uint64_t offset=0;
                 for (;;)
                 {
                     input.read(reinterpret_cast<char*>(header.data()),header.size());
@@ -239,8 +244,12 @@ namespace RecoveredAssetPackage
                         error = "The SDC asset package has a truncated block header or trailing bytes.";
                         return false;
                     }
-                    if (!DecodeChunk(input,ReadLittle32(header.data()),ReadLittle32(header.data()+4),writer))
+                    offset+=header.size();
+                    const auto compressed=ReadLittle32(header.data()+4);
+                    if (!DecodeChunk(input,ReadLittle32(header.data()),compressed,
+                                     fileBytes>offset ? fileBytes-offset : 0,writer))
                         return false;
+                    offset+=compressed;
                 }
             }
             if (writer.total<64 || writer.magicCount!=4)

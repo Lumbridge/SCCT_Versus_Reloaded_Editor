@@ -223,6 +223,9 @@
     <ClInclude Include="RecoveredAssetPackage.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="SdcBlockModel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="StaticMeshCollisionFix.h">
       <Filter>Header Files</Filter>
     </ClInclude>

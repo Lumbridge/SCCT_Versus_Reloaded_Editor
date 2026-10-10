@@ -3,6 +3,7 @@
 #include "LightmapFix.h"
 #include "Hooks.h"
 #include "RealtimeFix.h"
+#include "SdcBlockModel.h"
 #include "logger.h"
 
 #include <zlib.h>
@@ -32,12 +33,23 @@ static bool ParseSDCChunks(const char* path, std::vector<SDCChunk>& chunks)
     fseek(f, 0, SEEK_SET);
 
     long offset = 0;
+    uint64_t packageBytes = 0;
     while (offset <= fileSize - 8)
     {
         uint32_t uncomp = 0, comp = 0;
         if (fread(&uncomp, 4, 1, f) != 1) break;
         if (fread(&comp,   4, 1, f) != 1) break;
         if (comp == 0 || uncomp == 0)     break;
+
+        // The sizes are allocated as they stand, so a header that cannot be right
+        // (a raw package, a damaged file) makes the whole file unreadable here.
+        if (SdcBlock::Check(uncomp, comp, static_cast<uint64_t>(fileSize - offset - 8), packageBytes)
+            != SdcBlock::Fault::None)
+        {
+            chunks.clear();
+            break;
+        }
+        packageBytes += uncomp;
 
         SDCChunk c;
         c.uncompSize   = uncomp;
