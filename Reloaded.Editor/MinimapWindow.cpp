@@ -630,8 +630,6 @@ void WriteBriefing()
     fs::create_directories(textures, error);
 
     size_t previousExports = 0;
-    fs::path newest;
-    fs::file_time_type newestTime{};
     std::vector<std::pair<fs::path, fs::path>> backups;
     const fs::path backupDirectory = Editor::Directory() / "snapshot-backups";
     const std::string stamp = Stamp();
@@ -644,13 +642,15 @@ void WriteBriefing()
         backups.emplace_back(file, backup);
         try { previousExports = std::max(previousExports, Snapshot::Parse(Unpack(ReadFile(file))).exports.size()); }
         catch (const std::exception& e) { Logger::log("Minimap: could not read " + file.string() + ": " + e.what()); }
-        const auto time = fs::last_write_time(file, error);
-        if (newest.empty() || time > newestTime) { newest = file; newestTime = time; }
     }
-    if (!newest.empty() && !Editor::Exec("OBJ LOAD PACKAGE=\"" + package + "\" FILE=" + Quote(newest)))
-        Logger::log("Minimap: OBJ LOAD did not report success for " + newest.string() + " (it may already be loaded)");
+    // Loaded as the stock map open loads it (LOADMAPPROP): from the file
+    // only when it is not in memory yet. OBJ LOAD would read a loaded
+    // package back from the file, losing settings changed since.
+    Editor::Exec("LOADMAPPROP MAP=\"" + stem + "\"");
     if (!Editor::Exec("TEXTURE IMPORT FILE=" + Quote(tga) + " NAME=\"" + Minimap::kBriefingTexture + "\" PACKAGE=\"" + package + "\" MIPS=0 MASKED=0 ALPHATEXTURE=1"))
         throw std::runtime_error("The editor's texture importer refused the picture.");
+    // DXT5 with its alpha, as the stock Briefings are (and the other pictures Level Snapshot writes).
+    Editor::Exec("TEXTURE COMPRESS NAME=" + package + "." + Minimap::kBriefingTexture + " FORMAT=DXT5");
     const auto started = fs::file_time_type::clock::now();
     Snapshot::Texture written;
     try
@@ -668,6 +668,8 @@ void WriteBriefing()
         if (!saved || !landed()) throw std::runtime_error("The editor did not write " + utc.string());
         const Bytes packageBytes = Unpack(ReadFile(utc));
         written = Minimap::VerifyTexture(packageBytes, Minimap::kBriefingTexture, options.size, previousExports);
+        if (written.format != Snapshot::kFormatDxt5)
+            throw std::runtime_error("The Briefing texture was saved in format " + std::to_string(written.format) + ", not DXT5.");
         if (fs::exists(utx, error)) WriteFile(utx, packageBytes);
     }
     catch (const std::exception&)

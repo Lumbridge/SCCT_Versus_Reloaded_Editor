@@ -142,10 +142,38 @@ namespace
     // release copy shares. The stock save brings the working package up to date
     // (the map save does not write it), then its files are copied beside the
     // release. Returns the files written.
+    //
+    // The stock save asks before writing a package smaller than the file it
+    // replaces, which a re-saved package often is by a byte or two, and the
+    // question would stop the release. So the .utc is set aside first, as Level
+    // Snapshot does, and put back if the save writes nothing (a map with no
+    // settings object).
     std::vector<std::filesystem::path> OptimiseInterface(const std::string& mapName,const std::filesystem::path& root,const std::filesystem::path& folder)
     {
         const auto name=mapName+"-i";
-        if(Find(name))Exec("SAVEMAPPROP MAP=\""+mapName+"\"");
+        if(Find(name))
+        {
+            const auto utc=root/"Packages"/"Textures"/(name+".utc"),aside=Directory()/"optimise-backups"/(name+".utc");
+            std::error_code error;
+            const bool had=std::filesystem::exists(utc,error);
+            if(had)
+            {
+                std::filesystem::create_directories(aside.parent_path(),error);
+                if(!std::filesystem::copy_file(utc,aside,std::filesystem::copy_options::overwrite_existing,error))
+                    throw std::runtime_error("Cannot set "+utc.string()+" aside to "+aside.string()+": "+error.message());
+                std::filesystem::remove(utc,error);
+            }
+            auto restore=[&]
+            {
+                std::error_code ignored;
+                if(had && !std::filesystem::exists(utc,ignored) && !std::filesystem::copy_file(aside,utc,std::filesystem::copy_options::overwrite_existing,ignored))
+                    throw std::runtime_error("The editor wrote no "+utc.string()+", and the copy set aside ("+aside.string()+") could not be put back.");
+            };
+            try{Exec("SAVEMAPPROP MAP=\""+mapName+"\"");}
+            catch(...){restore();throw;}
+            restore();
+            if(had)std::filesystem::remove(aside,error);
+        }
         std::vector<std::filesystem::path> written;
         for(const char* extension:{".utc",".utx"})
         {

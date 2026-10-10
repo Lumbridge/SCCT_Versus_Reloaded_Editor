@@ -504,6 +504,14 @@ bool EditorExtras::OpenMap(const std::string& path, HWND owner, const char* titl
                        title, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
         return false;
     if (!Editor::Exec("MAP LOAD FILE=\"" + path + "\"")) throw std::runtime_error("The editor could not open\n" + path);
+    // The map's settings, as the stock File > Open loads them: without this the
+    // previous map's stay current, and the next save writes them (and that
+    // map's interface package) over this map's <Map>-i. An autosave (Auto0-9)
+    // is left out: it has no settings of its own, and blank ones would be
+    // written over the real map's when it is saved back under that name.
+    const std::string stem = std::filesystem::path(path).stem().string();
+    if (!Sessions::IsAutosaveName(path) && !stem.empty() && stem.find_first_of(" \t\"'") == std::string::npos)
+        Editor::Exec("LOADMAPPROP MAP=\"" + stem + "\"");
     Editor::SetMapFile(path);
     lastMap = path;
     lastCleanRevision = Editor::ContentRevision();

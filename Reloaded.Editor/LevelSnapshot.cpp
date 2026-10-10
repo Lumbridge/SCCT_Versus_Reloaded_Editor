@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "LevelSnapshot.h"
+#include "EditorConfigBits.h"
 #include "LevelSnapshotModel.h"
 #include "EntryThumbnailModel.h"
 #include "WorkflowEditor.h"
@@ -29,12 +30,11 @@ using Snapshot::Bytes;
 
 namespace
 {
-    // The editor's viewport list and its engine object, as the grid-size
-    // shortcut and the view capture read them.
-    constexpr uintptr_t kGEditor = 0x1165dfa0;
+    // The editor's viewport list, as the grid-size shortcut and the view
+    // capture read it.
     constexpr uintptr_t kViewportConfigs = 0x1165e8d4;
     constexpr uintptr_t kViewportCount = 0x1165e8d8;
-    constexpr uintptr_t kMapSettingsOffset = 0x148; // UUnrealEdEngine's current SMapSettings; SAVEMAPPROP does nothing without one.
+    constexpr uintptr_t kUnrealEd = 0x117a59b0;        // GUnrealEd, whose config bits the viewports' overlays read
 
     HWND frameWindow = nullptr;
     HWND previewWindow = nullptr;
@@ -144,8 +144,31 @@ namespace
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
 
+    // The axis indicator the viewports draw in a corner (UseAxisIndicator,
+    // EditorConfigBits.h), turned off while a picture is drawn: it is no part
+    // of the map, and it showed in the map-selection picture.
+    class NoAxisIndicator
+    {
+        unsigned char* flags = nullptr;
+        uint8_t bit = 0x4;
+    public:
+        NoAxisIndicator()
+        {
+            uint32_t at = 0x21C;
+            EditorConfigBits::Locate("UseAxisIndicator", at, bit);
+            const uintptr_t editor = *reinterpret_cast<const uintptr_t*>(kUnrealEd);
+            if (!editor || !bit || !(*reinterpret_cast<unsigned char*>(editor + at) & bit)) return;
+            flags = reinterpret_cast<unsigned char*>(editor + at);
+            *flags = static_cast<unsigned char>(*flags & ~bit);
+        }
+        ~NoAxisIndicator() { if (flags) *flags = static_cast<unsigned char>(*flags | bit); } // back on the next paint
+        NoAxisIndicator(const NoAxisIndicator&) = delete;
+        NoAxisIndicator& operator=(const NoAxisIndicator&) = delete;
+    };
+
     HBITMAP GrabViewport(HWND hwnd, uintptr_t viewport, int& width, int& height)
     {
+        const NoAxisIndicator noAxis;
         Editor::Redraw();
         RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
         if (viewport && !RepaintNow(viewport)) Logger::log("Viewport capture: the synchronous repaint faulted; capturing the last drawn frame.");
@@ -306,8 +329,6 @@ namespace
         // What is there now: backed up beside the editor's other files, and
         // loaded so the loading screens and map settings ride along.
         size_t previousExports = 0;
-        fs::path newest;
-        fs::file_time_type newestTime{};
         std::vector<std::pair<fs::path, fs::path>> backups;
         const fs::path backupDirectory = Editor::Directory() / "snapshot-backups";
         const std::string stamp = Stamp();
@@ -320,11 +341,11 @@ namespace
             backups.emplace_back(file, backup);
             try { previousExports = max(previousExports, Snapshot::Parse(Unpack(ReadFile(file))).exports.size()); }
             catch (const std::exception& e) { Logger::log("Level snapshot: could not read " + file.string() + ": " + e.what()); }
-            const auto time = fs::last_write_time(file, error);
-            if (newest.empty() || time > newestTime) { newest = file; newestTime = time; }
         }
-        if (!newest.empty() && !Editor::Exec("OBJ LOAD PACKAGE=\"" + package + "\" FILE=" + Quote(newest)))
-            Logger::log("Level snapshot: OBJ LOAD did not report success for " + newest.string() + " (it may already be loaded)");
+        // Loaded as the stock map open loads it (LOADMAPPROP): from the file
+        // only when it is not in memory yet. OBJ LOAD would read a loaded
+        // package back from the file, losing settings changed since.
+        Editor::Exec("LOADMAPPROP MAP=\"" + stem + "\"");
 
         if (!Editor::Exec("TEXTURE IMPORT FILE=" + Quote(written.bmp) + " NAME=\"Menu\" PACKAGE=\"" + package + "\" MIPS=0"))
             throw std::runtime_error("The editor's texture importer refused the snapshot.");
@@ -332,14 +353,18 @@ namespace
         const auto started = std::chrono::file_clock::now();
         try
         {
-            // The stock map save's route when a map settings object exists: it
-            // carries that object into the package, then saves the .utc.
-            const auto editor = Read<uintptr_t>(kGEditor);
-            const bool mapSettings = editor && Read<uintptr_t>(editor + kMapSettingsOffset);
-            const bool saved = mapSettings ? Editor::Exec("SAVEMAPPROP MAP=\"" + stem + "\"")
-                                           : Editor::Exec("OBJ SAVEPACKAGE PACKAGE=\"" + package + "\" FILE=" + Quote(utc));
-            if (!saved) throw std::runtime_error("The editor did not save the " + package + " package.");
-            if (!fs::exists(utc, error) || fs::last_write_time(utc, error) < started) throw std::runtime_error("The editor did not write " + utc.string());
+            // The stock map save's route: it carries the map settings object
+            // into the package, then saves the .utc; it writes nothing when
+            // the map has no settings, and then the package is saved as it
+            // is. The stock save asks before writing a package smaller than
+            // the file it replaces, which a recompressed picture often is;
+            // the file is backed up and the result checked below, so it goes
+            // first and the save does not stop for the question.
+            auto landed = [&] { return fs::exists(utc, error) && fs::last_write_time(utc, error) >= started; };
+            if (!backups.empty()) fs::remove(utc, error);
+            bool saved = Editor::Exec("SAVEMAPPROP MAP=\"" + stem + "\"") && landed();
+            if (!saved) saved = Editor::Exec("OBJ SAVEPACKAGE PACKAGE=\"" + package + "\" FILE=" + Quote(utc));
+            if (!saved || !landed()) throw std::runtime_error("The editor did not write " + utc.string());
             const Bytes packageBytes = Unpack(ReadFile(utc));
             written.verified = Snapshot::Verify(packageBytes, previousExports);
             written.utc = utc;
