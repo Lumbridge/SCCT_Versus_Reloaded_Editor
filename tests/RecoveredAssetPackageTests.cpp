@@ -4,6 +4,7 @@
 
 #include <zlib.h>
 
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <cstdint>
@@ -42,17 +43,34 @@ namespace
         output.close();
         assert(output);
     }
-    Bytes Chunk(const Bytes& raw)
+    // One block: the sizes, then a zlib stream. Level 0 stores the bytes, so
+    // the compressed size is a little over the uncompressed one.
+    Bytes Chunk(const Bytes& raw,int level=9)
     {
         uLongf size=compressBound(static_cast<uLong>(raw.size()));
-        Bytes compressed(size);
-        assert(compress2(compressed.data(),&size,raw.data(),static_cast<uLong>(raw.size()),9)==Z_OK);
-        compressed.resize(size);
-        Bytes result;
-        Put32(result,static_cast<std::uint32_t>(raw.size()));
-        Put32(result,static_cast<std::uint32_t>(compressed.size()));
-        result.insert(result.end(),compressed.begin(),compressed.end());
+        Bytes result(8+size);
+        assert(compress2(result.data()+8,&size,raw.data(),static_cast<uLong>(raw.size()),level)==Z_OK);
+        result.resize(8+size);
+        Set32(result,0,static_cast<std::uint32_t>(raw.size()));
+        Set32(result,4,static_cast<std::uint32_t>(size));
         return result;
+    }
+    bool Matches(const std::filesystem::path& path,const Bytes& expected)
+    {
+        std::ifstream input(path,std::ios::binary);
+        assert(input);
+        Bytes buffer(1u<<20);
+        std::size_t offset=0;
+        for (;;)
+        {
+            input.read(reinterpret_cast<char*>(buffer.data()),buffer.size());
+            const auto count=static_cast<std::size_t>(input.gcount());
+            if (count==0) return offset==expected.size();
+            if (count>expected.size()-offset
+                || !std::equal(buffer.begin(),buffer.begin()+count,expected.begin()+offset))
+                return false;
+            offset+=count;
+        }
     }
     void CheckGood(const Bytes& source,const Bytes& expected)
     {
@@ -65,9 +83,11 @@ namespace
             std::fprintf(stderr,"Unexpected package failure: %s\n",error.c_str());
             assert(false);
         }
-        assert(error.empty() && Read(output)==expected);
+        assert(error.empty() && Matches(output,expected));
         auto temporary=output;temporary+=".recovery-tmp";
         assert(!std::filesystem::exists(temporary));
+        // Large cases would otherwise fill the temporary folder until the end.
+        assert(std::filesystem::remove(input) && std::filesystem::remove(output));
     }
     void CheckBad(const Bytes& source,const char* expected)
     {
@@ -116,6 +136,46 @@ int main(int argc,char** argv)
         offset+=size;
     }
     CheckGood(multi,raw);
+
+    // A map saved by the editor is one block as large as the map. Blocks over
+    // the former 64 MB limit decode like any other: one that did not compress
+    // (both sizes over 64 MB), and one of zeros, which is zlib's best ratio
+    // and so the closest a real stream comes to the size a header may declare.
+    {
+        Bytes large(72u*1024u*1024u+4321u);
+        for (unsigned char& value:large)
+        {
+            random^=random<<13;random^=random>>17;random^=random<<5;
+            value=static_cast<unsigned char>(random);
+        }
+        Set32(large,0,0x9e2a83c1u);
+        {
+            const Bytes stored=Chunk(large,0);
+            assert(stored.size()>large.size());
+            CheckGood(stored,large);
+        }
+
+        // The same package as the game writes it: 15 MB blocks and a shorter
+        // last one.
+        Bytes blocks;
+        blocks.reserve(large.size()+4096);
+        for (std::size_t offset=0;offset<large.size();)
+        {
+            const std::size_t size=(std::min)(std::size_t(15u*1024u*1024u),large.size()-offset);
+            const Bytes block=Chunk(Bytes(large.begin()+offset,large.begin()+offset+size),0);
+            blocks.insert(blocks.end(),block.begin(),block.end());
+            offset+=size;
+        }
+        CheckGood(blocks,large);
+    }
+    {
+        Bytes sparse(96u*1024u*1024u);
+        Set32(sparse,0,0x9e2a83c1u);
+        const Bytes packed=Chunk(sparse);
+        assert(sparse.size()/(packed.size()-8)>900);
+        CheckGood(packed,sparse);
+    }
+
     CheckBad({},"truncated");
     CheckBad({1,2,3,4,5},"block header");
     Bytes malformed=compressed;
@@ -134,11 +194,31 @@ int main(int argc,char** argv)
     malformed=compressed;malformed.push_back(0);
     Set32(malformed,4,static_cast<std::uint32_t>(malformed.size()-8));
     CheckBad(malformed,"trailing data");
+    // Headers that cannot be right are refused before anything is decoded:
+    // more data than the compressed bytes can hold, a compressed size past
+    // the end of the file, an empty size, a package over the 1 GB limit.
     malformed=compressed;
     Set32(malformed,0,0xffffffffu);
-    CheckBad(malformed,"unsupported size");
+    CheckBad(malformed,"more data than its compressed bytes");
+    malformed=compressed;
+    Set32(malformed,0,static_cast<std::uint32_t>((compressed.size()-8)*1032+1));
+    CheckBad(malformed,"more data than its compressed bytes");
+    malformed=compressed;
+    Set32(malformed,4,0xffffffffu);
+    CheckBad(malformed,"inside a compressed block");
     malformed=compressed;Set32(malformed,4,0);
     CheckBad(malformed,"invalid");
+    malformed=compressed;Set32(malformed,0,0);
+    CheckBad(malformed,"invalid");
+    malformed.assign(8+1100000,0);
+    Set32(malformed,0,1024u*1024u*1024u+1u);
+    Set32(malformed,4,1100000);
+    CheckBad(malformed,"1 GB");
+    malformed=compressed;
+    malformed.insert(malformed.end(),8+1100000,0);
+    Set32(malformed,compressed.size(),1024u*1024u*1024u-static_cast<std::uint32_t>(raw.size())+1u);
+    Set32(malformed,compressed.size()+4,1100000);
+    CheckBad(malformed,"1 GB");
     malformed=raw;malformed[0]=0;
     CheckBad(Chunk(malformed),"package magic");
     CheckBad({0xc1,0x83,0x2a,0x9e},"too short");

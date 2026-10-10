@@ -34,6 +34,10 @@ cl /nologo /std:c++17 /W4 /WX /EHsc /O2 tests\RecoveredPolygonImportTests.cpp Re
 if not "%errorlevel%"=="0" goto failed
 "%TEMP%\RecoveredPolygonImportTests.exe"
 if not "%errorlevel%"=="0" goto failed
+cl /nologo /std:c++17 /W4 /WX /EHsc /O2 tests\SdcBlockModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\SdcBlockModelTests.exe"
+if not "%errorlevel%"=="0" goto failed
+"%TEMP%\SdcBlockModelTests.exe"
+if not "%errorlevel%"=="0" goto failed
 cl /nologo /std:c++17 /W4 /WX /EHsc /O2 /I vcpkg_installed\x86-windows-static\include tests\RecoveredAssetPackageTests.cpp Reloaded.Editor\RecoveredAssetPackage.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\RecoveredAssetPackageTests.exe" /link /LIBPATH:vcpkg_installed\x86-windows-static\lib zlib.lib
 if not "%errorlevel%"=="0" goto failed
 "%TEMP%\RecoveredAssetPackageTests.exe"

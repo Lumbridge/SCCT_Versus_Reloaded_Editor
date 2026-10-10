@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <zlib.h>
 namespace fs = std::filesystem;
 using namespace MapOptimise;
 using Bytes = std::vector<unsigned char>;
@@ -116,6 +117,18 @@ Bytes Package(const std::vector<std::string> &names, const std::vector<Imp> &imp
     }
     return b;
 }
+// A saved map: the package as one block, the two sizes and then a zlib stream.
+Bytes Saved(const Bytes &package)
+{
+    uLongf size = compressBound(static_cast<uLong>(package.size()));
+    Bytes out(size + 8);
+    Check(compress2(out.data() + 8, &size, package.data(), static_cast<uLong>(package.size()), 6) == Z_OK,
+          "compress fixture");
+    out.resize(size + 8);
+    Put(out, 0, static_cast<unsigned>(package.size()));
+    Put(out, 4, static_cast<unsigned>(size));
+    return out;
+}
 int main()
 {
     try
@@ -159,6 +172,28 @@ int main()
         Check(tables.imports.size() == 6 && tables.imports[1].path == "Engine.StaticMesh" &&
                   tables.imports[1].className == "Class" && tables.imports[0].className == "Package",
               "import paths");
+
+        // A release copy is read back from the saved map, which the editor
+        // writes as one block however large the map is: here with a 72 MB
+        // texture inside, past the 64 MB a block was once limited to.
+        {
+            auto bigExports = exports;
+            bigExports[5].size = 72 * 1024 * 1024;
+            const auto package = Package(names, imports, bigExports);
+            const auto release = root / "Release.sdc";
+            {
+                const auto saved = Saved(package);
+                Check(package.size() > 64u * 1024 * 1024 && saved.size() < package.size(), "a large map in one block");
+                std::ofstream(release, std::ios::binary).write(reinterpret_cast<const char *>(saved.data()), saved.size());
+            }
+            const auto big = MapPackage::ReadTables(release);
+            Check(big.package == "Release" && big.fileSize == fs::file_size(release) && big.exports.size() == 6 &&
+                      big.exports[5].path == "Release.Walls.Metal" && big.exports[5].size == 72u * 1024 * 1024 &&
+                      big.exports[3].path == "Release.Props.Crate.Collision" && big.imports.size() == 6,
+                  "a release copy over 64 MB reads back");
+            Check(MapPackage::Imports(release) == std::vector<std::string>({"Core", "Engine"}),
+                  "and so do the packages it needs");
+        }
 
         Sizes sizes(tables);
         Check(sizes.Of("Pack.Props.Crate") == 350u, "an asset's size includes what is inside it");

@@ -9,6 +9,8 @@ namespace RecoveredAssetPackage
     // an external asset package. Raw Unreal-package input is also accepted.
     // The output must not exist. Chunks are decoded with bounded buffers and
     // checked for exact sizes, complete zlib streams and valid package magic.
+    // A chunk may be as large as the whole package (a map saved by the editor
+    // is one chunk); SdcBlockModel.h says which chunk headers are refused.
     //
     // A sibling temporary directory is exclusively reserved, and the complete
     // file is atomically published with a no-replace hard link. Filesystems

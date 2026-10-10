@@ -274,6 +274,7 @@
     <ClInclude Include="RecoveredPolygonImport.h" />
     <ClInclude Include="RecoveredActorImport.h" />
     <ClInclude Include="RecoveredAssetPackage.h" />
+    <ClInclude Include="SdcBlockModel.h" />
     <ClInclude Include="StaticMeshCollisionFix.h" />
     <ClInclude Include="StoreyFilter.h" />
     <ClInclude Include="UndoHistory.h" />
