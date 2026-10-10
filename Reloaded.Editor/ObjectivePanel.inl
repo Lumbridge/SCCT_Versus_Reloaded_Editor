@@ -226,7 +226,9 @@ void ObjectivePlaceMission(DesignState& s,const Vector& at)
 {
     Vector position=at;
     position[2]=s.depth+64;
-    const auto created=Editor::CreateSecurityActor("SBase.SMission",{position,{}},{{"ObjectiveName","\"Mission\""},{"Description","\"Complete the mission\""}});
+    // A mission placed on its own is the match's mission: the game ignores one
+    // left at GameMode GM_Undefined (Stages turns zone missions back to that).
+    const auto created=Editor::CreateSecurityActor("SBase.SMission",{position,{}},{{"ObjectiveName","\"Mission\""},{"Description","\"Complete the mission\""},{"GameMode","GM_Multi"}});
     DesignRefresh(s);
     DesignStatus(s,"Mission "+SecurityName(created)+" placed. Add objectives to it from the right-click menu; name it in the editor's property window. One Undo step.");
 }

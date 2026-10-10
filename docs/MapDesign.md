@@ -673,7 +673,9 @@ right-click menu, and built by the editor's own `GE ADD` command:
    along X, the side view along Y — with its depth through the line's middle.
    Click the **height of the start**, then the **height of the end**.
 3. For a pipe or ladder the top view returns: click **the side the player
-   climbs from**.
+   climbs from**. The element runs from its lower end, and the side point is
+   set at that end's height, as in the stock maps; the game ignores a pipe or
+   ladder whose side point is anywhere else.
 
 The element is created with a brush that shows it — a bar along a zip line,
 pipe, pole or hand-over-hand run, a slab for a ladder, a wall for a fence, a lip

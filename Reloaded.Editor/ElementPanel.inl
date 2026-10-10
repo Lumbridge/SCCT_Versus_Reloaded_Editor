@@ -118,10 +118,21 @@ ElementVisual ElementVisualFor(const std::string& kind,const std::vector<Vector>
 }
 // Creates an element: the editor's GE, then its visual brush, then the record
 // the plan draws from.
-void ElementCreate(DesignState& s,const std::string& kindName,const std::vector<Vector>& points)
+void ElementCreate(DesignState& s,const std::string& kindName,const std::vector<Vector>& given)
 {
     const auto* kind=ElementFind(kindName);
-    if(!kind || points.size()<static_cast<size_t>(kind->points))throw std::runtime_error("The element needs more points.");
+    if(!kind || given.size()<static_cast<size_t>(kind->points))throw std::runtime_error("The element needs more points.");
+    // A pipe or ladder starts at its lower end, and its side point (where the
+    // player climbs from) sits at that end's height, as in the stock maps: the
+    // game ignores one whose side point is at mid-height (tried in game with a
+    // spy, 2026-10-08: bottom height works at 10 or 48 units out, mid-height
+    // and the wall side do not).
+    std::vector<Vector> points=given;
+    if(kind->points==3)
+    {
+        if(points[0][2]>points[1][2])std::swap(points[0],points[1]);
+        points[2][2]=points[0][2];
+    }
     std::string command=std::string("GE ADD ")+kind->command;
     for(int i=0;i<kind->points;++i)
     {
@@ -499,7 +510,8 @@ void StarterLayoutBuild(DesignState& s,const std::vector<InputField>& f,const Ve
         DesignRefresh(s);
         std::set<std::string> before;
         for(const auto& actor:s.objectives)before.insert(actor.at("path").get<std::string>());
-        const auto mission=Editor::CreateSecurityActor("SBase.SMission",{Vector{px,py,z+64},{}},{{"ObjectiveName","\"Mission\""},{"Description","\"Complete the mission\""}});
+        // GM_Multi: the game ignores a mission left at GM_Undefined.
+        const auto mission=Editor::CreateSecurityActor("SBase.SMission",{Vector{px,py,z+64},{}},{{"ObjectiveName","\"Mission\""},{"Description","\"Complete the mission\""},{"GameMode","GM_Multi"}});
         DesignRefresh(s);
         Json missionEntry;
         for(const auto& actor:s.objectives)if(actor.value("kind",std::string())=="Mission" && actor.at("path")==mission.at("path"))missionEntry=actor;
