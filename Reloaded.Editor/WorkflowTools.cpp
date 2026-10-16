@@ -1251,6 +1251,8 @@ namespace
                 try {if(!Editor::SelectedEmitters().empty())AppendMenuA(sub,MF_STRING,kSaveToEmitterLibrary,"Save to &Emitter Library...");}
                 catch(const std::exception&) { /* Only available with emitters selected in a source map. */ }
                 AppendMenuA(sub,MF_STRING,MagicEventWorkbench::Command,"Edit SMagicEvent...");
+                try {if(!Editor::SelectedConveyorBelt().is_null())AppendMenuA(sub,MF_STRING,kAddNextConveyorBelt,"Add &Next Conveyor Belt");}
+                catch(const std::exception&) { /* Only with one conveyor belt selected. */ }
                 try {ObjectiveMenu(sub,ObjectiveOwner());}catch(const std::exception&){}
                 try
                 {
@@ -1433,6 +1435,17 @@ bool HandleCommand(UINT command)
     {
         try { Editor::RemoveStairSmoothing(stairMenuOnSurface); }
         catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Remove Staircase Smoothing",MB_OK|MB_ICONINFORMATION); }
+        return true;
+    }
+    if(command==kAddNextConveyorBelt)
+    {
+        try
+        {
+            auto belt=Editor::SelectedConveyorBelt();
+            if(belt.is_null())throw std::runtime_error("Select one conveyor belt first.");
+            Editor::AddConveyorBelt({{"after",belt.at("path")}});
+        }
+        catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Conveyor Belt",MB_OK|MB_ICONINFORMATION); }
         return true;
     }
     if(command==kAddConveyorBelt || command==kAddConveyorBeltHere)

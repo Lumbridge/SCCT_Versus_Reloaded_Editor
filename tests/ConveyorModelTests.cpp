@@ -49,14 +49,20 @@ int main()
         Check(Contains(roller, "StaticMesh=StaticMesh'MyMap.Conveyor.ConveyorRoller'"), "the roller from the map package");
         Check(Contains(belt, "Version=" + std::to_string(Version) + "\r\n"), "version default");
         Check(Contains(belt, "var(Conveyor) StaticMesh ItemMeshes[8];") && Contains(belt, "var vector ItemOffsets[8];"), "item slots");
+        Check(Contains(belt, "var ConveyorItem Items[128];"), "item capacity");
         for (const char* name : {"Length", "Width", "Speed", "ItemSpacing", "FadeDistance", "ItemScale", "bCarryPlayers", "bShowItems", "bShowRollers"})
             Check(Contains(belt, std::string(" ") + name + ";"), "editable setting");
         // Runs on every machine: kept on clients and simulated there; spawned parts are local.
         Check(Contains(belt, "bStatic=True") && Contains(belt, "RemoteRole=ROLE_SimulatedProxy"), "belt is lit with the map and runs on clients");
         const auto motor = MotorScript();
-        Check(Contains(motor, "class ConveyorMotor extends Info;") && Contains(motor, "Owner.Tick(DeltaTime)") && Contains(motor, "RemoteRole=ROLE_None"),
+        Check(Contains(motor, "class ConveyorMotor extends Info;") && Contains(motor, "Belt.Tick(DeltaTime)") && Contains(motor, "RemoteRole=ROLE_None"),
               "a local motor ticks the static belt");
-        Check(Contains(belt, "Spawn(class'ConveyorMotor', self);"), "the belt spawns its motor");
+        // An actor ticks after its owner and a static belt never ticks: nothing it spawns is owned.
+        Check(Contains(belt, "Spawn(class'ConveyorMotor');") && Contains(belt, "Spawn(class'ConveyorRoller',,,") &&
+              Contains(belt, "Spawn(class'ConveyorItem',,,") && !Contains(belt, ", self"), "spawned parts have no owner");
+        Check(Contains(belt, "var(Conveyor) ConveyorBelt NextBelt;") && Contains(belt, "var ConveyorBelt Seg[16];"), "belts chain");
+        Check(Contains(belt, "if (!bLoop && FadeDistance > 0)"), "a closed loop never fades");
+        Check(!Contains(belt, "@"), "every placeholder filled");
         Check(!Contains(belt, "\nfunction ") && !Contains(belt, "\tfunction "), "every belt function is simulated");
         Check(Contains(roller, "RemoteRole=ROLE_None") && Contains(item, "RemoteRole=ROLE_None"), "local parts");
         Check(Contains(item, "bBlockActors=True") && Contains(item, "bBlockPlayers=False"), "items push curtains, not players");
@@ -65,7 +71,7 @@ int main()
         const auto frame = Frame(), roll = Roller();
         Check(Outward(roll, {0, 0, 0}), "roller faces outward");
         const auto fb = Bounds(frame);
-        Check(fb[0] == -50 && fb[3] == 50 && fb[1] == -50 && fb[4] == 50, "frame is a unit wide and long");
+        Check(fb[0] == 0 && fb[3] == 100 && fb[1] == -50 && fb[4] == 50, "frame starts at its pivot, a unit wide and long");
         Check(fb[2] == -FrameDepth && fb[5] == 5, "frame reaches FrameDepth under the riding surface");
         Check(frame.hulls.size() == 3, "bed and two channels collide");
         const auto rb = Bounds(roll);

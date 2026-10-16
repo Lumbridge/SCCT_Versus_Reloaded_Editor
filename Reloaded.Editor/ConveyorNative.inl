@@ -18,7 +18,7 @@ namespace
     bool ConveyorCurrent(Address c)
     {
         if(ConveyorClassVersion(c)!=Conveyor::Version)return false;
-        for(const char* name:{"Length","Width","Speed","ItemSpacing","FadeDistance","ItemScale","bCarryPlayers","bShowItems","bShowRollers","ItemMeshes","ItemOffsets"})
+        for(const char* name:{"Length","Width","Speed","NextBelt","ItemSpacing","FadeDistance","ItemScale","bCarryPlayers","bShowItems","bShowRollers","ItemMeshes","ItemOffsets"})
             if(!StructField(c,name))return false;
         return true;
     }
@@ -151,13 +151,39 @@ void PrepareConveyors()
     CompileMapClass(Conveyor::BeltClass,Conveyor::BeltScript(package),"Actor",ConveyorCurrent,!current);
 }
 
-// Places a belt. Without a location it goes where the viewport was last clicked,
-// standing on the floor when that was a floor. properties sets its own (Length,
-// Speed, ItemMeshes, ...) as the property window would.
+// The one selected actor when it is a conveyor belt, else null.
+Json SelectedConveyorBelt()
+{
+    auto c=Find(LevelPath()+"."+Conveyor::BeltClass);
+    if(!c)return nullptr;
+    Address found=0;size_t selected=0;
+    for(auto a:LiveActors())
+        if(Read<unsigned>(a+0x2f4)&0x40)
+        {
+            if(++selected>1)return nullptr;
+            if(Read<Address>(a+0x24)==c)found=a;
+        }
+    return found?Identity(found):Json(nullptr);
+}
+
+// Places a belt. Without a location it starts where the viewport was last clicked,
+// standing on the floor when that was a floor. after (a belt's name or path) puts it
+// at that belt's end, turned as it is, with its width, speed and options, and links
+// it in: the belt carries its items on onto the new one (and the new one onto the
+// belt that came next, if any). properties sets its own (Length, Speed,
+// ItemMeshes, ...) as the property window would.
 Json AddConveyorBelt(const Json& spec)
 {
     PrepareConveyors();
     auto c=ConveyorBeltClass();
+    Address previous=0;
+    if(spec.contains("after"))
+    {
+        auto name=spec.at("after").get<std::string>();
+        if(name.find('.')==std::string::npos)name=LevelPath()+"."+name;
+        previous=Find(name,true);
+        if(!previous || Read<Address>(previous+0x24)!=c)throw std::runtime_error(spec.at("after").get<std::string>()+" is not a conveyor belt in this map.");
+    }
     const auto properties=spec.value("properties",Json::object());
     for(auto it=properties.begin();it!=properties.end();++it)
     {
@@ -172,6 +198,7 @@ Json AddConveyorBelt(const Json& spec)
     if(!actor)throw std::runtime_error("The editor did not place a conveyor belt.");
     Vector at{};
     if(spec.contains("location"))at=spec.at("location").get<Vector>();
+    else if(previous)at=TransformPoint({Read<float>(BeltField(previous,"Length")),0,0},{Position(previous),RotationOf(previous)});
     else
     {
         auto unrealEd=Read<Address>(0x117a59b0);if(!unrealEd)throw std::runtime_error("The editor is unavailable.");
@@ -184,6 +211,18 @@ Json AddConveyorBelt(const Json& spec)
     Modify(actor);
     SetPosition(actor,at);
     if(spec.contains("rotation"))Write(Field(actor,"Rotation"),spec.at("rotation").get<Rotation>());
+    else if(previous)Write(Field(actor,"Rotation"),RotationOf(previous));
+    if(previous)
+    {
+        // Its look and speed. bCarryPlayers shares its word with bShowItems and
+        // bShowRollers, which come along.
+        for(const char* name:{"Width","Speed","ItemScale","bCarryPlayers"})
+            Write(BeltField(actor,name),Read<unsigned>(BeltField(previous,name)));
+        Modify(previous);
+        Write(BeltField(actor,"NextBelt"),Read<Address>(BeltField(previous,"NextBelt")));
+        Write(BeltField(previous,"NextBelt"),actor);
+        Call(previous,0x44);
+    }
     // The stock cases and boxes until the properties say otherwise.
     const auto meshes=BeltArray(actor,"ItemMeshes",4);
     int slot=0;

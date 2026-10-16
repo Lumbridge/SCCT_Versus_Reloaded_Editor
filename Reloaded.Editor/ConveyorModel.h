@@ -6,14 +6,17 @@
 #include <cstdio>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
-// Conveyor belts: RE+ Tools > Add Conveyor Belt compiles three classes into the map
-// package (MyLevel) and places a ConveyorBelt. Its rotation gives the run's direction
-// and slope; Length and Width size it. In game it spawns its rollers (seen only,
-// spinning) and the items riding it, loops the items from end to end, shrinking them
-// away over FadeDistance at each end, and moves walking players standing on it with
-// Pawn.Move: nothing a player stands on turns, so the view is never turned with it.
+// Conveyor belts: RE+ Tools > Add Conveyor Belt compiles four classes into the map
+// package (MyLevel) and places a ConveyorBelt. Its pivot is its start; its rotation
+// gives the run's direction and slope, and Length and Width size it. In game it
+// spawns its rollers (seen only, spinning) and the items riding it, and moves walking
+// players standing on it with Pawn.Move: nothing a player stands on turns, so the
+// view is never turned with it. Belts link with NextBelt into a chain whose first
+// belt runs the items of all of them: items carry on from belt to belt and shrink
+// away over FadeDistance only at the chain's two ends (never in a closed loop).
 // The frame's mesh and the rollers' are made here and imported into the map with
 // one small texture, so a map needs nothing installed beside it.
 //
@@ -38,7 +41,9 @@ constexpr const char* FrameMesh = "ConveyorFrame";
 constexpr const char* RollerMesh = "ConveyorRoller";
 constexpr const char* Texture = "ConveyorParts";
 constexpr int ItemSlots = 8;
-constexpr int MaxItems = 64;
+constexpr int MaxItems = 128;
+// Belts in one chain (NextBelt links) that share its items.
+constexpr int MaxChain = 16;
 // The meshes are 100 units long (X) and wide (Y); a belt's DrawScale3D is
 // (Length / 100, Width / 100, 1), its rollers' Y scale (Width * RollerSpan / 100).
 constexpr double Unit = 100.0;
@@ -93,277 +98,371 @@ inline std::string RollerScript(const std::string& package)
         "}\r\n";
 }
 
+// The script text below is written with \n and placeholders (@NAME@); the stock
+// compiler wants CRLF.
+inline std::string Script(std::string text, const std::vector<std::pair<std::string, std::string>>& values)
+{
+    for (const auto& [key, value] : values)
+        for (auto at = text.find(key); at != std::string::npos; at = text.find(key, at + value.size()))
+            text.replace(at, key.size(), value);
+    std::string out;
+    for (char c : text)
+    {
+        if (c == '\n') out += '\r';
+        out += c;
+    }
+    return out;
+}
+
 inline std::string MotorScript()
 {
-    return
-        "//=============================================================================\r\n"
-        "// ConveyorMotor: ticks the ConveyorBelt that spawned it (its owner), which is\r\n"
-        "// static so that the map's lighting lights its frame.\r\n"
-        "//=============================================================================\r\n"
-        "class ConveyorMotor extends Info;\r\n"
-        "\r\n"
-        "function Tick(float DeltaTime)\r\n"
-        "{\r\n"
-        "\tif (Owner != None)\r\n"
-        "\t\tOwner.Tick(DeltaTime);\r\n"
-        "}\r\n"
-        "\r\n"
-        "defaultproperties\r\n"
-        "{\r\n"
-        "\tRemoteRole=ROLE_None\r\n"
-        "}\r\n";
+    return Script(R"UC(//=============================================================================
+// ConveyorMotor: ticks a ConveyorBelt, which is static so that the map's lighting
+// lights its frame. It has no owner: an actor ticks after its owner, and a static
+// owner never ticks.
+//=============================================================================
+class ConveyorMotor extends Info;
+
+var Actor Belt;
+
+function Tick(float DeltaTime)
+{
+	if (Belt != None)
+		Belt.Tick(DeltaTime);
+}
+
+defaultproperties
+{
+	RemoteRole=ROLE_None
+}
+)UC", {});
 }
 
 inline std::string ItemScript()
 {
-    return
-        "//=============================================================================\r\n"
-        "// ConveyorItem: something riding a ConveyorBelt, moved by the belt. It blocks\r\n"
-        "// other actors but not players, so soft-body strip curtains part round it and\r\n"
-        "// players walk through it.\r\n"
-        "//=============================================================================\r\n"
-        "class ConveyorItem extends Actor;\r\n"
-        "\r\n"
-        "var vector Offset;  // from the centre of its base to its pivot, at full size\r\n"
-        "var float Size;     // its full DrawScale\r\n"
-        "var rotator Turn;\r\n"
-        "\r\n"
-        "defaultproperties\r\n"
-        "{\r\n"
-        "\tDrawType=DT_StaticMesh\r\n"
-        "\tbCollideActors=True\r\n"
-        "\tbCollideWorld=False\r\n"
-        "\tbBlockActors=True\r\n"
-        "\tbBlockPlayers=False\r\n"
-        "\tbBlockZeroExtentTraces=False\r\n"
-        "\tbBlockNonZeroExtentTraces=False\r\n"
-        "\tCollisionRadius=30\r\n"
-        "\tCollisionHeight=14\r\n"
-        "\tSize=1\r\n"
-        "\tRemoteRole=ROLE_None\r\n"
-        "}\r\n";
+    return Script(R"UC(//=============================================================================
+// ConveyorItem: something riding a ConveyorBelt, moved by the belt. It blocks
+// other actors but not players, so soft-body strip curtains part round it and
+// players walk through it.
+//=============================================================================
+class ConveyorItem extends Actor;
+
+var vector Offset;  // from the centre of its base to its pivot, at full size
+var float Size;     // its full DrawScale
+
+defaultproperties
+{
+	DrawType=DT_StaticMesh
+	bCollideActors=True
+	bCollideWorld=False
+	bBlockActors=True
+	bBlockPlayers=False
+	bBlockZeroExtentTraces=False
+	bBlockNonZeroExtentTraces=False
+	CollisionRadius=30
+	CollisionHeight=14
+	Size=1
+	RemoteRole=ROLE_None
+}
+)UC", {});
 }
 
 inline std::string BeltScript(const std::string& package)
 {
-    const auto items = std::to_string(ItemSlots), most = std::to_string(MaxItems);
-    char numbers[160];
-    std::snprintf(numbers, sizeof(numbers), "%g", RollerRadius);
-    const std::string radius = numbers;
-    std::snprintf(numbers, sizeof(numbers), "%g", RollerGap);
-    const std::string gap = numbers;
-    std::snprintf(numbers, sizeof(numbers), "%g", RollerSpan);
-    const std::string span = numbers;
-    return
-        "//=============================================================================\r\n"
-        "// ConveyorBelt: a conveyor, placed by RE+ Tools > Add Conveyor Belt. Its\r\n"
-        "// rotation gives the run's direction (X) and slope; Length and Width size it.\r\n"
-        "// In game it spawns its rollers and items, loops the items along it and moves\r\n"
-        "// walking players standing on it. Each machine runs its own (simulated on\r\n"
-        "// clients); nothing replicates.\r\n"
-        "//=============================================================================\r\n"
-        "class ConveyorBelt extends Actor\r\n"
-        "\tplaceable;\r\n"
-        "\r\n"
-        "var(Conveyor) float Length;        // along the run (X), in units\r\n"
-        "var(Conveyor) float Width;\r\n"
-        "var(Conveyor) float Speed;         // units a second; below 0 runs backwards\r\n"
-        "var(Conveyor) float ItemSpacing;   // between items; 0 for none\r\n"
-        "var(Conveyor) float FadeDistance;  // items shrink away over this at each end\r\n"
-        "var(Conveyor) float ItemScale;\r\n"
-        "var(Conveyor) bool bCarryPlayers;\r\n"
-        "var(Conveyor) bool bShowItems;\r\n"
-        "var(Conveyor) bool bShowRollers;\r\n"
-        "var(Conveyor) StaticMesh ItemMeshes[" + items + "];\r\n"
-        "var vector ItemOffsets[" + items + "];  // kept by the editor from the meshes' bounds\r\n"
-        "var const int Version;\r\n"
-        "var ConveyorItem Items[" + most + "];\r\n"
-        "var float Along[" + most + "];\r\n"
-        "var int ItemCount;\r\n"
-        "\r\n"
-        "// The belt is static, so its frame is lit with the map; a motor ticks it.\r\n"
-        "simulated function PostBeginPlay()\r\n"
-        "{\r\n"
-        "\tSuper.PostBeginPlay();\r\n"
-        "\tSpawn(class'ConveyorMotor', self);\r\n"
-        "\tif (bShowRollers)\r\n"
-        "\t\tSpawnRollers();\r\n"
-        "\tif (bShowItems)\r\n"
-        "\t\tSpawnItems();\r\n"
-        "}\r\n"
-        "\r\n"
-        "simulated function SpawnRollers()\r\n"
-        "{\r\n"
-        "\tlocal int i, n;\r\n"
-        "\tlocal float Gap;\r\n"
-        "\tlocal vector X, Y, Z, S;\r\n"
-        "\tlocal ConveyorRoller R;\r\n"
-        "\r\n"
-        "\tGetAxes(Rotation, X, Y, Z);\r\n"
-        "\tn = Clamp(int(Length / " + gap + "), 1, 400);\r\n"
-        "\tGap = Length / n;\r\n"
-        "\tS.X = 1;\r\n"
-        "\tS.Y = FMax(Width * " + span + ", 1) / 100.0;\r\n"
-        "\tS.Z = 1;\r\n"
-        "\tfor (i = 0; i < n; i++)\r\n"
-        "\t{\r\n"
-        "\t\tR = Spawn(class'ConveyorRoller', self,, Location + X * (Gap * (i + 0.5) - Length / 2) - Z * " + radius + ", Rotation);\r\n"
-        "\t\tif (R == None)\r\n"
-        "\t\t\tcontinue;\r\n"
-        "\t\tR.SetDrawScale3D(S);\r\n"
-        "\t\t// A turn in pitch takes a roller's top back along X: run it the other way.\r\n"
-        "\t\tR.RotationRate.Pitch = int(-Speed / " + radius + " * 10430.378);\r\n"
-        "\t\tR.RotationRate.Yaw = 0;\r\n"
-        "\t\tR.RotationRate.Roll = 0;\r\n"
-        "\t}\r\n"
-        "}\r\n"
-        "\r\n"
-        "simulated function SpawnItems()\r\n"
-        "{\r\n"
-        "\tlocal int i, k, n, Kinds;\r\n"
-        "\tlocal int Pick[" + items + "];\r\n"
-        "\tlocal ConveyorItem Item;\r\n"
-        "\r\n"
-        "\tfor (k = 0; k < " + items + "; k++)\r\n"
-        "\t{\r\n"
-        "\t\tif (ItemMeshes[k] != None)\r\n"
-        "\t\t{\r\n"
-        "\t\t\tPick[Kinds] = k;\r\n"
-        "\t\t\tKinds++;\r\n"
-        "\t\t}\r\n"
-        "\t}\r\n"
-        "\tif (Kinds == 0 || ItemSpacing <= 0 || Length <= 0)\r\n"
-        "\t\treturn;\r\n"
-        "\tn = Min(int(Length / ItemSpacing), " + most + ");\r\n"
-        "\tfor (i = 0; i < n; i++)\r\n"
-        "\t{\r\n"
-        "\t\tItem = Spawn(class'ConveyorItem', self,, Location, Rotation);\r\n"
-        "\t\tif (Item == None)\r\n"
-        "\t\t\tcontinue;\r\n"
-        "\t\tk = Pick[Rand(Kinds)];\r\n"
-        "\t\tItem.SetStaticMesh(ItemMeshes[k]);\r\n"
-        "\t\tItem.Size = ItemScale;\r\n"
-        "\t\tItem.Offset = ItemOffsets[k] * ItemScale;\r\n"
-        "\t\tItem.Turn = Rotation;\r\n"
-        "\t\tItem.Turn.Yaw += Rand(2001) - 1000;\r\n"
-        "\t\tItem.SetRotation(Item.Turn);\r\n"
-        "\t\tItems[ItemCount] = Item;\r\n"
-        "\t\tAlong[ItemCount] = (i + FRand() * 0.6) * Length / n;\r\n"
-        "\t\tItemCount++;\r\n"
-        "\t}\r\n"
-        "\tMoveItems(0);\r\n"
-        "}\r\n"
-        "\r\n"
-        "simulated function MoveItems(float DeltaTime)\r\n"
-        "{\r\n"
-        "\tlocal int i;\r\n"
-        "\tlocal float A, F;\r\n"
-        "\tlocal vector X, Y, Z;\r\n"
-        "\r\n"
-        "\tGetAxes(Rotation, X, Y, Z);\r\n"
-        "\tfor (i = 0; i < ItemCount; i++)\r\n"
-        "\t{\r\n"
-        "\t\tif (Items[i] == None)\r\n"
-        "\t\t\tcontinue;\r\n"
-        "\t\tA = Along[i] + Speed * DeltaTime;\r\n"
-        "\t\tif (A > Length)\r\n"
-        "\t\t\tA -= Length;\r\n"
-        "\t\telse if (A < 0)\r\n"
-        "\t\t\tA += Length;\r\n"
-        "\t\tAlong[i] = A;\r\n"
-        "\t\tF = 1;\r\n"
-        "\t\tif (FadeDistance > 0)\r\n"
-        "\t\t\tF = FClamp(FMin(A, Length - A) / FadeDistance, 0.02, 1.0);\r\n"
-        "\t\tItems[i].SetDrawScale(Items[i].Size * F);\r\n"
-        "\t\tItems[i].SetLocation(Location + X * (A - Length / 2) + ((Items[i].Offset * F) >> Items[i].Turn));\r\n"
-        "\t}\r\n"
-        "}\r\n"
-        "\r\n"
-        "// Whether a walking pawn stands on the belt: over its top, within its length and\r\n"
-        "// width, its middle no higher than it stands.\r\n"
-        "simulated function bool Riding(Pawn P, vector X, vector Y, vector Z)\r\n"
-        "{\r\n"
-        "\tlocal vector L;\r\n"
-        "\tlocal float H;\r\n"
-        "\r\n"
-        "\tif (P == None || P.Physics != PHYS_Walking)\r\n"
-        "\t\treturn false;\r\n"
-        "\tL = P.Location - Location;\r\n"
-        "\tif (Abs(L dot X) > Length / 2 || Abs(L dot Y) > Width / 2)\r\n"
-        "\t\treturn false;\r\n"
-        "\tH = L dot Z;\r\n"
-        "\treturn H > 0 && H < P.CollisionHeight + 24;\r\n"
-        "}\r\n"
-        "\r\n"
-        "// Up a slope a move along it sticks against the surface: lift first, then move\r\n"
-        "// level, and walking settles the pawn back onto the belt. Down a slope it moves\r\n"
-        "// level and walking steps it down.\r\n"
-        "simulated function Carry(Pawn P, vector Delta)\r\n"
-        "{\r\n"
-        "\tlocal vector Up;\r\n"
-        "\r\n"
-        "\tif (Delta.Z > 0)\r\n"
-        "\t{\r\n"
-        "\t\tUp.Z = Delta.Z + 2;\r\n"
-        "\t\tP.Move(Up);\r\n"
-        "\t}\r\n"
-        "\tDelta.Z = 0;\r\n"
-        "\tP.Move(Delta);\r\n"
-        "}\r\n"
-        "\r\n"
-        "simulated function CarryPlayers(float DeltaTime)\r\n"
-        "{\r\n"
-        "\tlocal Controller C;\r\n"
-        "\tlocal PlayerController PC;\r\n"
-        "\tlocal vector X, Y, Z;\r\n"
-        "\r\n"
-        "\tGetAxes(Rotation, X, Y, Z);\r\n"
-        "\tif (Role < ROLE_Authority)\r\n"
-        "\t{\r\n"
-        "\t\tPC = Level.GetLocalPlayerController();\r\n"
-        "\t\tif (PC != None && Riding(PC.Pawn, X, Y, Z))\r\n"
-        "\t\t\tCarry(PC.Pawn, X * Speed * DeltaTime);\r\n"
-        "\t\treturn;\r\n"
-        "\t}\r\n"
-        "\tfor (C = Level.ControllerList; C != None; C = C.NextController)\r\n"
-        "\t\tif (Riding(C.Pawn, X, Y, Z))\r\n"
-        "\t\t\tCarry(C.Pawn, X * Speed * DeltaTime);\r\n"
-        "}\r\n"
-        "\r\n"
-        "// Called by the belt's ConveyorMotor every frame.\r\n"
-        "simulated function Tick(float DeltaTime)\r\n"
-        "{\r\n"
-        "\tif (ItemCount > 0)\r\n"
-        "\t\tMoveItems(DeltaTime);\r\n"
-        "\tif (bCarryPlayers && Speed != 0)\r\n"
-        "\t\tCarryPlayers(DeltaTime);\r\n"
-        "}\r\n"
-        "\r\n"
-        "defaultproperties\r\n"
-        "{\r\n"
-        "\tLength=600\r\n"
-        "\tWidth=120\r\n"
-        "\tSpeed=150\r\n"
-        "\tItemSpacing=140\r\n"
-        "\tFadeDistance=60\r\n"
-        "\tItemScale=1\r\n"
-        "\tbCarryPlayers=True\r\n"
-        "\tbShowItems=True\r\n"
-        "\tbShowRollers=True\r\n"
-        "\tVersion=" + std::to_string(Version) + "\r\n"
-        "\tDrawType=DT_StaticMesh\r\n"
-        "\tStaticMesh=StaticMesh'" + package + "." + Group + "." + FrameMesh + "'\r\n"
-        "\tDrawScale3D=(X=6,Y=1.2,Z=1)\r\n"
-        "\tbStatic=True\r\n"
-        "\tbNoDelete=True\r\n"
-        "\tbCollideActors=True\r\n"
-        "\tbBlockActors=True\r\n"
-        "\tbBlockPlayers=True\r\n"
-        "\tbBlockZeroExtentTraces=True\r\n"
-        "\tbBlockNonZeroExtentTraces=True\r\n"
-        "\tbEdShouldSnap=True\r\n"
-        "\tRemoteRole=ROLE_SimulatedProxy\r\n"
-        "}\r\n";
+    auto number = [](double v) { char text[32]; std::snprintf(text, sizeof(text), "%g", v); return std::string(text); };
+    return Script(R"UC(//=============================================================================
+// ConveyorBelt: a conveyor, placed by RE+ Tools > Add Conveyor Belt. Its pivot is
+// its start; its rotation gives the run's direction (X) and slope, and Length and
+// Width size it. In game it spawns its rollers, moves walking players standing on
+// it, and its items ride it from end to end. Belts link with NextBelt: items carry
+// on from one onto the next, shrinking away only where the chain starts and ends
+// (nowhere when it closes into a loop). Each machine runs its own (simulated on
+// clients); nothing replicates.
+//=============================================================================
+class ConveyorBelt extends Actor
+	placeable;
+
+var(Conveyor) float Length;           // from the start along X, in units
+var(Conveyor) float Width;
+var(Conveyor) float Speed;            // units a second; below 0 runs backwards
+var(Conveyor) ConveyorBelt NextBelt;  // items carry on onto this belt
+var(Conveyor) float ItemSpacing;      // between items; 0 for none
+var(Conveyor) float FadeDistance;     // items shrink away over this at the chain's ends
+var(Conveyor) float ItemScale;
+var(Conveyor) bool bCarryPlayers;
+var(Conveyor) bool bShowItems;
+var(Conveyor) bool bShowRollers;
+var(Conveyor) StaticMesh ItemMeshes[@ITEMS@];
+var vector ItemOffsets[@ITEMS@];  // kept by the editor from the meshes' bounds
+var const int Version;
+// A chain's first belt runs the items of the whole chain.
+var ConveyorBelt Seg[@SEGS@];
+var float SegStart[@SEGS@];  // where each belt starts, along the chain
+var int Segs;
+var float Total;
+var bool bLoop;
+var ConveyorItem Items[@MOST@];
+var float Along[@MOST@];     // along the chain
+var int ItemSeg[@MOST@];
+var int Jitter[@MOST@];
+var int ItemCount;
+
+simulated function PostBeginPlay()
+{
+	local ConveyorMotor M;
+
+	Super.PostBeginPlay();
+	M = Spawn(class'ConveyorMotor');
+	if (M != None)
+		M.Belt = self;
+	if (bShowRollers)
+		SpawnRollers();
+	if (Leads())
+	{
+		BuildChain();
+		if (bShowItems)
+			SpawnItems();
+	}
+}
+
+// Whether this belt runs its chain's items: no belt leads onto it, or it is the
+// belt named first in a closed loop.
+simulated function bool Leads()
+{
+	local ConveyorBelt B, First;
+	local bool bFed;
+	local int n;
+
+	foreach AllActors(class'ConveyorBelt', B)
+		if (B.NextBelt == self)
+			bFed = true;
+	if (!bFed)
+		return true;
+	First = self;
+	for (B = NextBelt; B != None && B != self && n < @SEGS@; B = B.NextBelt)
+	{
+		if (string(B.Name) < string(First.Name))
+			First = B;
+		n++;
+	}
+	return B == self && First == self;
+}
+
+simulated function BuildChain()
+{
+	local ConveyorBelt B;
+
+	for (B = self; B != None && Segs < @SEGS@; B = B.NextBelt)
+	{
+		if (Segs > 0 && B == self)
+		{
+			bLoop = true;
+			break;
+		}
+		Seg[Segs] = B;
+		SegStart[Segs] = Total;
+		Total += FMax(B.Length, 1);
+		Segs++;
+	}
+}
+
+simulated function SpawnRollers()
+{
+	local int i, n;
+	local float Gap;
+	local vector X, Y, Z, S;
+	local ConveyorRoller R;
+
+	GetAxes(Rotation, X, Y, Z);
+	n = Clamp(int(Length / @GAP@), 1, 400);
+	Gap = Length / n;
+	S.X = 1;
+	S.Y = FMax(Width * @SPAN@, 1) / 100.0;
+	S.Z = 1;
+	for (i = 0; i < n; i++)
+	{
+		R = Spawn(class'ConveyorRoller',,, Location + X * (Gap * (i + 0.5)) - Z * @RADIUS@, Rotation);
+		if (R == None)
+			continue;
+		R.SetDrawScale3D(S);
+		// A turn in pitch takes a roller's top back along X: run it the other way.
+		R.RotationRate.Pitch = int(-Speed / @RADIUS@ * 10430.378);
+		R.RotationRate.Yaw = 0;
+		R.RotationRate.Roll = 0;
+	}
+}
+
+simulated function SpawnItems()
+{
+	local int i, k, n, s, Kinds;
+	local int Pick[@ITEMS@];
+	local ConveyorItem Item;
+
+	for (k = 0; k < @ITEMS@; k++)
+	{
+		if (ItemMeshes[k] != None)
+		{
+			Pick[Kinds] = k;
+			Kinds++;
+		}
+	}
+	if (Kinds == 0 || ItemSpacing <= 0 || Total <= 0)
+		return;
+	n = Min(int(Total / ItemSpacing), @MOST@);
+	for (i = 0; i < n; i++)
+	{
+		Item = Spawn(class'ConveyorItem',,, Location, Rotation);
+		if (Item == None)
+			continue;
+		k = Pick[Rand(Kinds)];
+		Item.SetStaticMesh(ItemMeshes[k]);
+		Item.Size = ItemScale;
+		Item.Offset = ItemOffsets[k] * ItemScale;
+		Items[ItemCount] = Item;
+		Along[ItemCount] = (i + FRand() * 0.6) * Total / n;
+		s = 0;
+		while (s + 1 < Segs && SegStart[s + 1] <= Along[ItemCount])
+			s++;
+		ItemSeg[ItemCount] = s;
+		Jitter[ItemCount] = Rand(2001) - 1000;
+		ItemCount++;
+	}
+	MoveItems(0);
+}
+
+simulated function MoveItems(float DeltaTime)
+{
+	local int i, s;
+	local float A, F;
+	local rotator R;
+	local ConveyorBelt B;
+
+	for (i = 0; i < ItemCount; i++)
+	{
+		if (Items[i] == None)
+			continue;
+		s = ItemSeg[i];
+		A = Along[i] + Seg[s].Speed * DeltaTime;
+		// Onto the next belt past this one's end, back to the start past the chain's.
+		while (s + 1 < Segs && A >= SegStart[s + 1])
+			s++;
+		if (A >= Total)
+		{
+			A -= Total;
+			s = 0;
+		}
+		while (A < SegStart[s])
+		{
+			if (s > 0)
+				s--;
+			else
+			{
+				A += Total;
+				s = Segs - 1;
+			}
+		}
+		Along[i] = A;
+		ItemSeg[i] = s;
+		B = Seg[s];
+		F = 1;
+		if (!bLoop && FadeDistance > 0)
+			F = FClamp(FMin(A, Total - A) / FadeDistance, 0.02, 1.0);
+		R = B.Rotation;
+		R.Yaw += Jitter[i];
+		Items[i].SetDrawScale(Items[i].Size * F);
+		Items[i].SetRotation(R);
+		Items[i].SetLocation(B.Location + vector(B.Rotation) * (A - SegStart[s]) + ((Items[i].Offset * F) >> R));
+	}
+}
+
+// Whether a walking pawn stands on the belt: over its top, within its length and
+// width, its middle no higher than it stands.
+simulated function bool Riding(Pawn P, vector X, vector Y, vector Z)
+{
+	local vector L;
+	local float H;
+
+	if (P == None || P.Physics != PHYS_Walking)
+		return false;
+	L = P.Location - Location;
+	if (L dot X < 0 || L dot X > Length || Abs(L dot Y) > Width / 2)
+		return false;
+	H = L dot Z;
+	return H > 0 && H < P.CollisionHeight + 24;
+}
+
+// Up a slope a move along it sticks against the surface: lift first, then move
+// level, and walking settles the pawn back onto the belt. Down a slope it moves
+// level and walking steps it down.
+simulated function Carry(Pawn P, vector Delta)
+{
+	local vector Up;
+
+	if (Delta.Z > 0)
+	{
+		Up.Z = Delta.Z + 4;
+		P.Move(Up);
+	}
+	Delta.Z = 0;
+	P.Move(Delta);
+}
+
+simulated function CarryPlayers(float DeltaTime)
+{
+	local Controller C;
+	local PlayerController PC;
+	local vector X, Y, Z;
+
+	GetAxes(Rotation, X, Y, Z);
+	if (Role < ROLE_Authority)
+	{
+		PC = Level.GetLocalPlayerController();
+		if (PC != None && Riding(PC.Pawn, X, Y, Z))
+			Carry(PC.Pawn, X * Speed * DeltaTime);
+		return;
+	}
+	for (C = Level.ControllerList; C != None; C = C.NextController)
+		if (Riding(C.Pawn, X, Y, Z))
+			Carry(C.Pawn, X * Speed * DeltaTime);
+}
+
+// Called by the belt's ConveyorMotor every frame.
+simulated function Tick(float DeltaTime)
+{
+	if (ItemCount > 0)
+		MoveItems(DeltaTime);
+	if (bCarryPlayers && Speed != 0)
+		CarryPlayers(DeltaTime);
+}
+
+defaultproperties
+{
+	Length=600
+	Width=120
+	Speed=150
+	ItemSpacing=140
+	FadeDistance=60
+	ItemScale=1
+	bCarryPlayers=True
+	bShowItems=True
+	bShowRollers=True
+	Version=@VERSION@
+	DrawType=DT_StaticMesh
+	StaticMesh=StaticMesh'@PKG@.@GROUP@.@FRAME@'
+	DrawScale3D=(X=6,Y=1.2,Z=1)
+	bStatic=True
+	bNoDelete=True
+	bCollideActors=True
+	bBlockActors=True
+	bBlockPlayers=True
+	bBlockZeroExtentTraces=True
+	bBlockNonZeroExtentTraces=True
+	bEdShouldSnap=True
+	RemoteRole=ROLE_SimulatedProxy
+}
+)UC", {{"@ITEMS@", std::to_string(ItemSlots)}, {"@MOST@", std::to_string(MaxItems)}, {"@SEGS@", std::to_string(MaxChain)},
+       {"@GAP@", number(RollerGap)}, {"@SPAN@", number(RollerSpan)}, {"@RADIUS@", number(RollerRadius)},
+       {"@VERSION@", std::to_string(Version)}, {"@PKG@", package}, {"@GROUP@", Group}, {"@FRAME@", FrameMesh}});
 }
 
 // ----------------------------------------------------------------------------
@@ -446,22 +545,22 @@ inline void Hull(Mesh& m, const Point& lo, const Point& hi)
     m.hulls.push_back(corners);
 }
 
-// The frame, pivot on the riding surface's centre: a dark bed under the rollers
+// The frame, pivot on the riding surface at its start (X runs 0 to 100): a dark bed under the rollers
 // between two slate channels capped in yellow. Players stand on a still bed at the
 // rollers' tops (its collision), and the channels' tops stand a little above it.
 inline Mesh Frame()
 {
     Mesh m{FrameMesh, {}, {}};
-    const double h = Unit / 2, inner = 45, outer = 50, depth = FrameDepth;
-    Box(m, {-h, -inner, -28}, {h, inner, -25}, Plate, Plate);
+    const double l = Unit, inner = 45, outer = 50, depth = FrameDepth;
+    Box(m, {0, -inner, -28}, {l, inner, -25}, Plate, Plate);
     for (int s : {-1, 1})
     {
         const double y0 = s < 0 ? -outer : inner, y1 = s < 0 ? -inner : outer;
-        Box(m, {-h, y0, -depth}, {h, y1, 3}, Paint, Paint);
-        Box(m, {-h, y0, 3}, {h, y1, 5}, Hazard, Hazard);
-        Hull(m, {-h, y0, -depth}, {h, y1, 5});
+        Box(m, {0, y0, -depth}, {l, y1, 3}, Paint, Paint);
+        Box(m, {0, y0, 3}, {l, y1, 5}, Hazard, Hazard);
+        Hull(m, {0, y0, -depth}, {l, y1, 5});
     }
-    Hull(m, {-h, -inner, -depth}, {h, inner, 0});
+    Hull(m, {0, -inner, -depth}, {l, inner, 0});
     return m;
 }
 
