@@ -133,7 +133,8 @@ Json ConveyorState()
     return {{"compiled",ConveyorCurrent(c)},{"version",ConveyorClassVersion(c)},{"belts",belts}};
 }
 
-// Imports the texture and meshes and compiles the classes into the open map, unless
+// Imports the texture and meshes and compiles the classes (the rollers', items' and
+// motor's before the belt's, which spawns them) into the open map, unless
 // they are there at this version already. A map's older versions are made again over
 // themselves, so its belts keep their settings.
 void PrepareConveyors()
@@ -146,6 +147,7 @@ void PrepareConveyors()
     auto compiled=[](Address c){return ClassCompiled(c);};
     CompileMapClass(Conveyor::RollerClass,Conveyor::RollerScript(package),"Actor",compiled,!current);
     CompileMapClass(Conveyor::ItemClass,Conveyor::ItemScript(),"Actor",compiled,!current);
+    CompileMapClass(Conveyor::MotorClass,Conveyor::MotorScript(),"Info",compiled,!current);
     CompileMapClass(Conveyor::BeltClass,Conveyor::BeltScript(package),"Actor",ConveyorCurrent,!current);
 }
 

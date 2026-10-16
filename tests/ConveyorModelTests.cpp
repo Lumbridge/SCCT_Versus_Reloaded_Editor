@@ -52,7 +52,11 @@ int main()
         for (const char* name : {"Length", "Width", "Speed", "ItemSpacing", "FadeDistance", "ItemScale", "bCarryPlayers", "bShowItems", "bShowRollers"})
             Check(Contains(belt, std::string(" ") + name + ";"), "editable setting");
         // Runs on every machine: kept on clients and simulated there; spawned parts are local.
-        Check(Contains(belt, "bNoDelete=True") && Contains(belt, "RemoteRole=ROLE_SimulatedProxy"), "belt runs on clients");
+        Check(Contains(belt, "bStatic=True") && Contains(belt, "RemoteRole=ROLE_SimulatedProxy"), "belt is lit with the map and runs on clients");
+        const auto motor = MotorScript();
+        Check(Contains(motor, "class ConveyorMotor extends Info;") && Contains(motor, "Owner.Tick(DeltaTime)") && Contains(motor, "RemoteRole=ROLE_None"),
+              "a local motor ticks the static belt");
+        Check(Contains(belt, "Spawn(class'ConveyorMotor', self);"), "the belt spawns its motor");
         Check(!Contains(belt, "\nfunction ") && !Contains(belt, "\tfunction "), "every belt function is simulated");
         Check(Contains(roller, "RemoteRole=ROLE_None") && Contains(item, "RemoteRole=ROLE_None"), "local parts");
         Check(Contains(item, "bBlockActors=True") && Contains(item, "bBlockPlayers=False"), "items push curtains, not players");

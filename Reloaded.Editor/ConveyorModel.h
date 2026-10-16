@@ -17,17 +17,20 @@
 // The frame's mesh and the rollers' are made here and imported into the map with
 // one small texture, so a map needs nothing installed beside it.
 //
-// Every machine runs its own belt, as Character Skins' actor does: bNoDelete keeps
-// the map's copy on each client, RemoteRole=ROLE_SimulatedProxy with simulated
-// functions lets it run there, and nothing is replicated. Rollers and items are
-// spawned by each machine with RemoteRole=ROLE_None. The host moves every player;
-// a client moves only its own player, so riding is smooth there.
+// The belt is static, so the lighting build lights its frame as any static mesh; at
+// round start it spawns a ConveyorMotor, which ticks it. Every machine runs its own
+// belt: the map's copy stays on each client, RemoteRole=ROLE_SimulatedProxy with
+// simulated functions lets it run there (as Character Skins' actor does), and
+// nothing is replicated. Motor, rollers and items are spawned by each machine with
+// RemoteRole=ROLE_None. The host moves every player; a client moves only its own
+// player, so riding is smooth there.
 namespace Conveyor
 {
 // Raise with every change to a script or mesh: a map's older classes and meshes are
 // made again over their old versions, and its placed belts keep their settings.
 constexpr int Version = 1;
 constexpr const char* BeltClass = "ConveyorBelt";
+constexpr const char* MotorClass = "ConveyorMotor";
 constexpr const char* ItemClass = "ConveyorItem";
 constexpr const char* RollerClass = "ConveyorRoller";
 constexpr const char* Group = "Conveyor";
@@ -86,6 +89,27 @@ inline std::string RollerScript(const std::string& package)
         "\tbCollideWorld=False\r\n"
         "\tbBlockActors=False\r\n"
         "\tbBlockPlayers=False\r\n"
+        "\tRemoteRole=ROLE_None\r\n"
+        "}\r\n";
+}
+
+inline std::string MotorScript()
+{
+    return
+        "//=============================================================================\r\n"
+        "// ConveyorMotor: ticks the ConveyorBelt that spawned it (its owner), which is\r\n"
+        "// static so that the map's lighting lights its frame.\r\n"
+        "//=============================================================================\r\n"
+        "class ConveyorMotor extends Info;\r\n"
+        "\r\n"
+        "function Tick(float DeltaTime)\r\n"
+        "{\r\n"
+        "\tif (Owner != None)\r\n"
+        "\t\tOwner.Tick(DeltaTime);\r\n"
+        "}\r\n"
+        "\r\n"
+        "defaultproperties\r\n"
+        "{\r\n"
         "\tRemoteRole=ROLE_None\r\n"
         "}\r\n";
 }
@@ -157,15 +181,11 @@ inline std::string BeltScript(const std::string& package)
         "var float Along[" + most + "];\r\n"
         "var int ItemCount;\r\n"
         "\r\n"
+        "// The belt is static, so its frame is lit with the map; a motor ticks it.\r\n"
         "simulated function PostBeginPlay()\r\n"
         "{\r\n"
-        "\tlocal vector S;\r\n"
-        "\r\n"
         "\tSuper.PostBeginPlay();\r\n"
-        "\tS.X = FMax(Length, 1) / 100.0;\r\n"
-        "\tS.Y = FMax(Width, 1) / 100.0;\r\n"
-        "\tS.Z = 1;\r\n"
-        "\tSetDrawScale3D(S);\r\n"
+        "\tSpawn(class'ConveyorMotor', self);\r\n"
         "\tif (bShowRollers)\r\n"
         "\t\tSpawnRollers();\r\n"
         "\tif (bShowItems)\r\n"
@@ -294,6 +314,7 @@ inline std::string BeltScript(const std::string& package)
         "\t\t\tC.Pawn.Move(X * Speed * DeltaTime);\r\n"
         "}\r\n"
         "\r\n"
+        "// Called by the belt's ConveyorMotor every frame.\r\n"
         "simulated function Tick(float DeltaTime)\r\n"
         "{\r\n"
         "\tif (ItemCount > 0)\r\n"
@@ -307,7 +328,7 @@ inline std::string BeltScript(const std::string& package)
         "\tLength=600\r\n"
         "\tWidth=120\r\n"
         "\tSpeed=150\r\n"
-        "\tItemSpacing=180\r\n"
+        "\tItemSpacing=140\r\n"
         "\tFadeDistance=60\r\n"
         "\tItemScale=1\r\n"
         "\tbCarryPlayers=True\r\n"
@@ -317,9 +338,8 @@ inline std::string BeltScript(const std::string& package)
         "\tDrawType=DT_StaticMesh\r\n"
         "\tStaticMesh=StaticMesh'" + package + "." + Group + "." + FrameMesh + "'\r\n"
         "\tDrawScale3D=(X=6,Y=1.2,Z=1)\r\n"
-        "\tbStatic=False\r\n"
+        "\tbStatic=True\r\n"
         "\tbNoDelete=True\r\n"
-        "\tbAlwaysTick=True\r\n"
         "\tbCollideActors=True\r\n"
         "\tbBlockActors=True\r\n"
         "\tbBlockPlayers=True\r\n"
