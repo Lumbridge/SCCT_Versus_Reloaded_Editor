@@ -60,7 +60,7 @@ int main()
         Check(!Contains(belt, "\nfunction ") && !Contains(belt, "\tfunction "), "every belt function is simulated");
         Check(Contains(roller, "RemoteRole=ROLE_None") && Contains(item, "RemoteRole=ROLE_None"), "local parts");
         Check(Contains(item, "bBlockActors=True") && Contains(item, "bBlockPlayers=False"), "items push curtains, not players");
-        Check(Contains(belt, ".Move(X * Speed * DeltaTime)") && !Contains(belt, "SetRotation(P"), "players are moved, never turned");
+        Check(Contains(belt, "Carry(C.Pawn, X * Speed * DeltaTime)") && Contains(belt, "P.Move(Delta);") && !Contains(belt, "SetRotation(P"), "players are moved, never turned");
 
         const auto frame = Frame(), roll = Roller();
         Check(Outward(roll, {0, 0, 0}), "roller faces outward");
