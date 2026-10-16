@@ -71,6 +71,20 @@ namespace
         const auto box=Read<std::array<float,6>>(found+0x28);
         for(int i=0;i<6;++i)if(std::abs(box[i]-expected[i])>0.5)throw std::runtime_error("The conveyor mesh "+mesh.name+" imported with unexpected bounds.");
     }
+    // A property value as the editor's text import takes it: numbers and booleans
+    // become text, arrays and structs keep their shape.
+    Json ImportValue(const Json& value)
+    {
+        if(value.is_boolean())return value.get<bool>()?"True":"False";
+        if(value.is_number())return value.dump();
+        if(value.is_array() || value.is_object())
+        {
+            Json out=value;
+            for(auto it=out.begin();it!=out.end();++it)*it=ImportValue(*it);
+            return out;
+        }
+        return value;
+    }
     // Loads a stock static mesh by path from Packages\StaticMeshes if need be.
     Address LoadStockMesh(const std::string& path)
     {
@@ -194,7 +208,7 @@ Json AddConveyorBelt(const Json& spec)
             }
             continue;
         }
-        try{MagicImport(p,actor+Read<int>(p+0x3c),value);}catch(const std::exception& e){throw std::runtime_error(key+": "+e.what());}
+        try{MagicImport(p,actor+Read<int>(p+0x3c),ImportValue(value));}catch(const std::exception& e){throw std::runtime_error(key+": "+e.what());}
     }
     SyncBelt(actor);
     Call(actor,0x44);
