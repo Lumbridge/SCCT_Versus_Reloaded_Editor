@@ -44,6 +44,7 @@ namespace
     unsigned lastCleanRevision = 0;
     constexpr UINT_PTR kTimer = 0x5245;
     constexpr UINT_PTR kOfferTimer = 0x5246; // the crash-recovery offer, until it has been made
+    constexpr UINT_PTR kConveyorTimer = 0x5247; // conveyor belt frames follow Length and Width
     constexpr int kRecentMax = 10;
     constexpr UINT kFileSave = 40007, kFileSaveAs = 40008;
 
@@ -125,6 +126,12 @@ namespace
     LRESULT CALLBACK FrameProc(HWND window, UINT message, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR)
     {
         if (message == WM_TIMER && w == kTimer) { Tick(); return 0; }
+        if (message == WM_TIMER && w == kConveyorTimer)
+        {
+            try { Editor::SyncConveyorBelts(); }
+            catch (const std::exception&) { /* No map open, or the editor is busy. */ }
+            return 0;
+        }
         if (message == WM_TIMER && w == kOfferTimer)
         {
             if (CrashRecovery::OfferWhenIdle(window)) KillTimer(window, kOfferTimer);
@@ -260,6 +267,7 @@ namespace
             installStep = "SetTimer";
             if (!SetTimer(frameWindow, kTimer, 10000, nullptr)) { error = "SetTimer failed"; return false; }
             if (!SetTimer(frameWindow, kOfferTimer, 1000, nullptr)) { error = "SetTimer failed"; return false; }
+            if (!SetTimer(frameWindow, kConveyorTimer, 500, nullptr)) { error = "SetTimer failed"; return false; }
             installStep = "InstallMenus";
             if (!InstallMenus()) { error = "menu bar not ready"; return false; }
             return true;

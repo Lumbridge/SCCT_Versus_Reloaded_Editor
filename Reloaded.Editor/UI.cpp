@@ -161,6 +161,7 @@ static void InjectReloadedMenuItems(HWND frame)
         AppendMenuA(reTools, MF_STRING, WorkflowTools::kSaveToEmitterLibrary, "Save Selected Emitters to Emitter L&ibrary...");
         AppendMenuA(reTools, MF_STRING, CharacterSkinsWindow::Command, "C&haracter Skins...");
         AppendMenuA(reTools, MF_STRING, CharacterSkinPresetsWindow::Command, "Character Skin &Presets...");
+        AppendMenuA(reTools, MF_STRING, WorkflowTools::kAddConveyorBelt, "Add Con&veyor Belt");
         AppendMenuA(reTools, MF_SEPARATOR, 0, nullptr);
         AppendMenuA(reTools, MF_STRING, 40934, "&Export Map to JSON...");
         AppendMenuA(reTools, MF_STRING, 40935, "&Import Map from JSON...");

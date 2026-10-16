@@ -93,10 +93,12 @@ namespace
     };
 
     // Compiles one class of the map package from its source unless it already is.
-    void CompileMapClass(const char* name,const std::string& script,const char* parentName,bool(*compiled)(Address))
+    // force makes it again over a compiled class (an older version's, whose actors
+    // in the map keep their values).
+    void CompileMapClass(const char* name,const std::string& script,const char* parentName,bool(*compiled)(Address),bool force=false)
     {
         auto c=Find(LevelPath()+"."+name);
-        if(c && compiled(c))return;
+        if(c && !force && compiled(c))return;
         // A class left uncompiled by a failed attempt is imported again over itself.
         {
             char folder[MAX_PATH]{};GetTempPathA(MAX_PATH,folder);

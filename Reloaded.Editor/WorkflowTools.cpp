@@ -1286,6 +1286,7 @@ namespace
                 AppendMenuA(builder,MF_STRING,kPlaceBuilderBrush,"&Place Here");
                 AppendMenuA(builder,MF_STRING,kRebuildPlaceBuilderBrush,"&Rebuild and Place Here");
                 AppendMenuA(sub,MF_POPUP,reinterpret_cast<UINT_PTR>(builder),"&Builder Brush");
+                AppendMenuA(sub,MF_STRING,kAddConveyorBeltHere,"Add Con&veyor Belt Here");
                 MeasureTool::AddMenu(sub,id==108);
             }
         }
@@ -1434,6 +1435,14 @@ bool HandleCommand(UINT command)
         catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Remove Staircase Smoothing",MB_OK|MB_ICONINFORMATION); }
         return true;
     }
+    if(command==kAddConveyorBelt || command==kAddConveyorBeltHere)
+    {
+        // From the viewport menu a click on a floor stands the belt on it; a backdrop
+        // or actor click leaves a stale surface plane.
+        try { Editor::AddConveyorBelt({{"surface",command==kAddConveyorBelt || builderMenuOnSurface}}); }
+        catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Conveyor Belt",MB_OK|MB_ICONINFORMATION); }
+        return true;
+    }
     if(command==kPlaceBuilderBrush || command==kRebuildPlaceBuilderBrush)
     {
         try { Editor::PlaceBuilderBrushAtClick(command==kRebuildPlaceBuilderBrush,builderMenuOnSurface); }
@@ -1512,6 +1521,10 @@ static Workflow::Json MoreWorkflowRequests(const std::string& op,const Workflow:
 {
     using namespace Workflow;
     if(op=="objectiveplayers.state") return Editor::ObjectivePlayerRules();
+    if(op=="conveyor.state") return Editor::ConveyorState();
+    if(op=="conveyor.prepare") {Editor::PrepareConveyors();return Editor::ConveyorState();}
+    if(op=="conveyor.add") return Editor::AddConveyorBelt(q);
+    if(op=="conveyor.sync") return Editor::SyncConveyorBelts();
     if(op=="objectiveplayers.set") return Editor::SetObjectivePlayers(q.at("objective"),q.value("min",0),q.value("max",0),q.value("open",false));
     if(op=="objectiveplayers.playlevel") return Editor::SetObjectivePlayLevelPlayers(q.value("players",0));
     if(op=="objectiveplayers.targets") return Editor::SetMissionTargets(q.at("mission"),q.at("sizes"));
