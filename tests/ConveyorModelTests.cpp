@@ -74,6 +74,12 @@ int main()
         Check(fb[0] == 0 && fb[3] == 100 && fb[1] == -50 && fb[4] == 50, "frame starts at its pivot, a unit wide and long");
         Check(fb[2] == -FrameDepth && fb[5] == 5, "frame reaches FrameDepth under the riding surface");
         Check(frame.hulls.size() == 3, "bed and two channels collide");
+        const auto open = Frame(false, true);
+        Check(open.name == "ConveyorFrameNoLeft" && Bounds(open)[1] == -50 && Bounds(open)[4] == 50 && open.hulls.size() == 3,
+              "an open side keeps its width, flush with the riding surface");
+        Check(std::string(FrameMeshName(true, false)) == "ConveyorFrameNoRight" && std::string(FrameMeshName(false, false)) == "ConveyorFrameOpen",
+              "frame names by wall");
+        Check(Contains(belt, "var(Conveyor) bool bLeftWall;") && Contains(belt, "bRightWall=True"), "wall options");
         const auto rb = Bounds(roll);
         Check(rb[1] == -50 && rb[4] == 50 && std::abs(rb[5] - RollerRadius) < 0.5, "roller spans a unit, its top at the radius");
         Check(roll.hulls.empty(), "rollers are only seen");

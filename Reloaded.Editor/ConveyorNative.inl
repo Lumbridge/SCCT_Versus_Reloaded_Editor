@@ -18,7 +18,7 @@ namespace
     bool ConveyorCurrent(Address c)
     {
         if(ConveyorClassVersion(c)!=Conveyor::Version)return false;
-        for(const char* name:{"Length","Width","Speed","NextBelt","ItemSpacing","FadeDistance","ItemScale","bCarryPlayers","bShowItems","bShowRollers","ItemMeshes","ItemOffsets"})
+        for(const char* name:{"Length","Width","Speed","NextBelt","ItemSpacing","FadeDistance","ItemScale","bCarryPlayers","bShowItems","bShowRollers","bLeftWall","bRightWall","ItemMeshes","ItemOffsets"})
             if(!StructField(c,name))return false;
         return true;
     }
@@ -113,6 +113,13 @@ namespace
         const auto at=Field(actor,"DrawScale3D");
         if(Read<std::array<float,3>>(at)!=scale){Write(at,scale);changed=true;}
         if(Read<float>(Field(actor,"DrawScale"))!=1.0f){Write(Field(actor,"DrawScale"),1.0f);changed=true;}
+        // The frame with the channels its wall options keep.
+        auto bit=[&](const char* name){auto p=BeltProperty(actor,name);return p && (Read<unsigned>(actor+Read<int>(p+0x3c))&Read<unsigned>(p+0x64))!=0;};
+        if(auto frame=Find(ConveyorPath(Conveyor::FrameMeshName(bit("bLeftWall"),bit("bRightWall")))))
+        {
+            const auto slot=Field(actor,"StaticMesh");
+            if(Read<Address>(slot)!=frame){Write(slot,frame);changed=true;}
+        }
         const auto meshes=BeltArray(actor,"ItemMeshes",4),offsets=BeltArray(actor,"ItemOffsets",12);
         for(int i=0;i<Conveyor::ItemSlots;++i)
         {
@@ -142,7 +149,7 @@ void PrepareConveyors()
     const auto package=LevelPath();
     const bool current=ConveyorCurrent(ConveyorBeltClass());
     if(!current || !Find(ConveyorPath(Conveyor::Texture)))ImportConveyorTexture(package);
-    for(const auto& mesh:{Conveyor::Frame(),Conveyor::Roller()})
+    for(const auto& mesh:{Conveyor::Frame(),Conveyor::Frame(false,true),Conveyor::Frame(true,false),Conveyor::Frame(false,false),Conveyor::Roller()})
         if(!current || !Find(ConveyorPath(mesh.name.c_str())))ImportConveyorMesh(package,mesh);
     auto compiled=[](Address c){return ClassCompiled(c);};
     CompileMapClass(Conveyor::RollerClass,Conveyor::RollerScript(package),"Actor",compiled,!current);

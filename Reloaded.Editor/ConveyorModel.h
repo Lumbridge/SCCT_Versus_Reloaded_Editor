@@ -38,6 +38,12 @@ constexpr const char* ItemClass = "ConveyorItem";
 constexpr const char* RollerClass = "ConveyorRoller";
 constexpr const char* Group = "Conveyor";
 constexpr const char* FrameMesh = "ConveyorFrame";
+// The frame without its left (-Y) or right (+Y) channel, for a joint a turn comes
+// into from that side: [left wall][right wall].
+inline const char* FrameMeshName(bool left, bool right)
+{
+    return left ? (right ? FrameMesh : "ConveyorFrameNoRight") : (right ? "ConveyorFrameNoLeft" : "ConveyorFrameOpen");
+}
 constexpr const char* RollerMesh = "ConveyorRoller";
 constexpr const char* Texture = "ConveyorParts";
 constexpr int ItemSlots = 8;
@@ -192,6 +198,8 @@ var(Conveyor) float ItemScale;
 var(Conveyor) bool bCarryPlayers;
 var(Conveyor) bool bShowItems;
 var(Conveyor) bool bShowRollers;
+var(Conveyor) bool bLeftWall;     // the channels at its sides; open one where a turn comes in
+var(Conveyor) bool bRightWall;
 var(Conveyor) StaticMesh ItemMeshes[@ITEMS@];
 var vector ItemOffsets[@ITEMS@];  // kept by the editor from the meshes' bounds
 var const int Version;
@@ -446,6 +454,8 @@ defaultproperties
 	bCarryPlayers=True
 	bShowItems=True
 	bShowRollers=True
+	bLeftWall=True
+	bRightWall=True
 	Version=@VERSION@
 	DrawType=DT_StaticMesh
 	StaticMesh=StaticMesh'@PKG@.@GROUP@.@FRAME@'
@@ -548,14 +558,21 @@ inline void Hull(Mesh& m, const Point& lo, const Point& hi)
 // The frame, pivot on the riding surface at its start (X runs 0 to 100): a dark bed under the rollers
 // between two slate channels capped in yellow. Players stand on a still bed at the
 // rollers' tops (its collision), and the channels' tops stand a little above it.
-inline Mesh Frame()
+inline Mesh Frame(bool left = true, bool right = true)
 {
-    Mesh m{FrameMesh, {}, {}};
+    Mesh m{FrameMeshName(left, right), {}, {}};
     const double l = Unit, inner = 45, outer = 50, depth = FrameDepth;
     Box(m, {0, -inner, -28}, {l, inner, -25}, Plate, Plate);
     for (int s : {-1, 1})
     {
         const double y0 = s < 0 ? -outer : inner, y1 = s < 0 ? -inner : outer;
+        if (!(s < 0 ? left : right))
+        {
+            // No channel: the bed's edge, flush with the riding surface.
+            Box(m, {0, y0, -depth}, {l, y1, 0}, Paint, Paint);
+            Hull(m, {0, y0, -depth}, {l, y1, 0});
+            continue;
+        }
         Box(m, {0, y0, -depth}, {l, y1, 3}, Paint, Paint);
         Box(m, {0, y0, 3}, {l, y1, 5}, Hazard, Hazard);
         Hull(m, {0, y0, -depth}, {l, y1, 5});
