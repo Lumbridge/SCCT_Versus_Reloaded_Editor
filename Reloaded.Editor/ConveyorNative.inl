@@ -22,6 +22,22 @@ namespace
             if(!StructField(c,name))return false;
         return true;
     }
+    // A property of a belt's class or its parents. A class compiled in this session
+    // has its floats and bools only in its field list, not the editor's cached
+    // property chain that Property reads, until the map is loaded again.
+    Address BeltProperty(Address actor,const std::string& name)
+    {
+        std::set<Address> seen;
+        for(Address c=Read<Address>(actor+0x24);c && seen.insert(c).second && seen.size()<64;c=Read<Address>(c+0x28))
+            if(auto p=StructField(c,name))return p;
+        return Property(actor,name);
+    }
+    Address BeltField(Address actor,const std::string& name)
+    {
+        auto p=BeltProperty(actor,name);
+        if(!p)throw std::runtime_error("The map's ConveyorBelt class has no "+name+".");
+        return actor+Read<int>(p+0x3c);
+    }
     std::filesystem::path ConveyorTempFile(const std::string& name)
     {
         char folder[MAX_PATH]{};GetTempPathA(MAX_PATH,folder);
@@ -67,7 +83,7 @@ namespace
     }
     Address BeltArray(Address actor,const char* name,int stride)
     {
-        auto p=Property(actor,name);
+        auto p=BeltProperty(actor,name);
         if(!p)throw std::runtime_error(std::string("The map's ConveyorBelt class has no ")+name+".");
         const auto dims=Read<unsigned>(p+0x30);
         if(static_cast<int>(dims&0xffff)!=Conveyor::ItemSlots || static_cast<int>(dims>>16)!=stride)
@@ -79,7 +95,7 @@ namespace
     bool SyncBelt(Address actor)
     {
         bool changed=false;
-        const auto scale=Conveyor::FrameScale(Read<float>(Field(actor,"Length")),Read<float>(Field(actor,"Width")));
+        const auto scale=Conveyor::FrameScale(Read<float>(BeltField(actor,"Length")),Read<float>(BeltField(actor,"Width")));
         const auto at=Field(actor,"DrawScale3D");
         if(Read<std::array<float,3>>(at)!=scale){Write(at,scale);changed=true;}
         if(Read<float>(Field(actor,"DrawScale"))!=1.0f){Write(Field(actor,"DrawScale"),1.0f);changed=true;}
@@ -126,6 +142,13 @@ Json AddConveyorBelt(const Json& spec)
 {
     PrepareConveyors();
     auto c=ConveyorBeltClass();
+    const auto properties=spec.value("properties",Json::object());
+    for(auto it=properties.begin();it!=properties.end();++it)
+    {
+        bool found=false;std::set<Address> seen;
+        for(Address k=c;k && !found && seen.insert(k).second && seen.size()<64;k=Read<Address>(k+0x28))found=StructField(k,it.key())!=0;
+        if(!found)throw std::runtime_error("ConveyorBelt has no property "+it.key()+".");
+    }
     std::set<Address> before;for(auto a:ActorsOf(c))before.insert(a);
     if(!Exec(std::string("ACTOR ADD CLASS=")+Conveyor::BeltClass))throw std::runtime_error("The editor refused to place a conveyor belt.");
     Address actor=0;
@@ -150,9 +173,10 @@ Json AddConveyorBelt(const Json& spec)
     int slot=0;
     for(const auto* path:Conveyor::DefaultItems)
         if(auto mesh=LoadStockMesh(path);mesh && slot<Conveyor::ItemSlots)Write(meshes+4*slot++,mesh);
-    for(const auto& [key,value]:spec.value("properties",Json::object()).items())
+    for(auto it=properties.begin();it!=properties.end();++it)
     {
-        auto p=Property(actor,key);
+        const auto& key=it.key();const auto& value=it.value();
+        auto p=BeltProperty(actor,key);
         if(!p)throw std::runtime_error("ConveyorBelt has no property "+key+".");
         if(key=="ItemMeshes" && value.is_array())
         {
