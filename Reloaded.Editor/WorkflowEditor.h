@@ -266,6 +266,16 @@ namespace Workflow::Editor
     Json PreviewStages(const Json& plan);
     Json ApplyStages(const Json& plan);
     Json InspectActor(const Json& identity);
+    // Copy Properties / Paste Properties (PropertyPasteModel.h). Copy: {actor,
+    // level, generation, properties:[{name, category, schema, value,
+    // lineage}]}, every editable property, and StaticMesh, DrawType and
+    // DrawScale(3D) on actors other than brushes, whose value can be written
+    // back; level and generation say which map it came from. Paste writes
+    // each entry onto every target that has the property with the same
+    // schema, in one Undo step ("Paste properties"); returns {actors,
+    // properties (values written), skipped}.
+    Json CopyActorProperties(const Json& identity);
+    Json PasteActorProperties(const Json& targets, const Json& properties);
     Json ExportEventJson(const Json& identity);
     void ImportEventJson(const Json& snapshot,const Json& document);
     void EditActor(const Json& snapshot, const Json& changes);

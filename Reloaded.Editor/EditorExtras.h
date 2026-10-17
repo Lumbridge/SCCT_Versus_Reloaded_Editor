@@ -30,7 +30,8 @@ namespace EditorExtras
     void Attach(HWND frame);
     // From the frame's command dispatcher. True when the command was ours.
     bool HandleCommand(UINT command);
-    // The Reloaded selection and visibility entries of the actor right-click menu.
+    // The Reloaded selection, visibility and properties (PropertyPaste.h)
+    // entries of the actor right-click menu.
     void AppendActorMenu(HMENU menu);
     // On the frame's thread: opens a map file as Open Recent does, making it
     // the Save target. confirmDiscard asks first when the open map has

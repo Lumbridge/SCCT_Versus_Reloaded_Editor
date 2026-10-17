@@ -284,6 +284,45 @@ namespace
         }
         return result;
     }
+    // The class names of each object reference's declared class, most derived
+    // first, by class path: what Copy Properties checks against the classes an
+    // actor may share (PropertyPasteModel.h).
+    void ReferenceLineage(Address p,Json& lineage,int depth=0)
+    {
+        if(depth>12)throw std::runtime_error("Property nesting is too deep.");
+        auto kind=NameOf(Read<Address>(p+0x24));
+        if(kind=="ArrayProperty")ReferenceLineage(Read<Address>(p+0x64),lineage,depth+1);
+        else if(kind=="StructProperty")for(auto f:MagicFields(Read<Address>(p+0x64)))ReferenceLineage(f,lineage,depth+1);
+        else if(kind=="ObjectProperty")
+        {
+            auto type=Read<Address>(p+0x64);auto& names=lineage[Path(type)];if(!names.is_null())return;names=Json::array();
+            std::set<Address> seen;for(auto c=type;c && seen.insert(c).second && seen.size()<256;c=Read<Address>(c+0x28))names.push_back(NameOf(c));
+        }
+    }
+    // What Copy and Paste Properties read and write: the editable properties,
+    // and an actor's look (StaticMesh, DrawType, DrawScale, DrawScale3D), which
+    // is const in this build but which Map JSON writes the same way
+    // (MapAuthoringNative.inl). Not on a brush, which draws its own shape.
+    bool PasteWritable(Address p,Address actor)
+    {
+        if(MagicEditable(p,actor))return true;
+        const auto flags=Read<unsigned>(p+0x34);const auto name=NameOf(p);
+        return (flags&1) && !(flags&(0x2000|0x20000)) && IsA(actor,"Actor") && !IsA(actor,"Brush")
+               && (name=="StaticMesh" || name=="DrawType" || name=="DrawScale" || name=="DrawScale3D");
+    }
+    // An actor deleted in the editor stays loaded for Undo, so MagicReferences
+    // still finds it: a reference whose declared class is an actor class must
+    // name one still in the level.
+    void LiveActorReferences(const Json& schema,const Json& value,const Json& lineage,const std::set<Address>& live)
+    {
+        if(value.is_array()){for(const auto& v:value)LiveActorReferences(schema.at("inner"),v,lineage,live);return;}
+        if(value.is_object()){for(auto it=value.begin();it!=value.end();++it)LiveActorReferences(schema.at("fields").at(it.key()),it.value(),lineage,live);return;}
+        if(schema.at("kind").get<std::string>()!="ObjectProperty" || !value.is_string() || Fold(value.get<std::string>())=="none")return;
+        const auto names=lineage.value(schema.at("type").get<std::string>(),Json::array());
+        if(std::none_of(names.begin(),names.end(),[](const Json& n){return n.is_string() && Fold(n.get<std::string>())=="actor";}))return;
+        auto object=Find(ReferencedName(value.get<std::string>()));
+        if(!live.count(object) || (Read<unsigned>(object+0x2e8)&0x8000))throw std::runtime_error("Referenced actor was deleted.");
+    }
 }
 Json InspectActor(const Json& identity)
 {
@@ -296,6 +335,96 @@ Json InspectSettingsActor(const Json& identity)
 {
     auto actor=MagicResolve(identity,true);if(!actor)throw std::runtime_error("Actor or owned component is no longer available.");
     return InspectResolved(actor);
+}
+// Copy Properties: the actor's values that PasteWritable allows, as
+// PropertyPasteModel.h lists them, each only when it reads back as a value
+// Paste can write.
+Json CopyActorProperties(const Json& identity)
+{
+    auto actor=MagicResolve(identity);if(!actor)throw std::runtime_error("Actor or owned component is no longer available.");
+    Json properties=Json::array();
+    for(auto p:Properties(Read<Address>(actor+0x24)))
+    {
+        if(!PasteWritable(p,actor))continue;
+        try
+        {
+            auto schema=MagicSchema(p);auto value=MagicValue(p,actor+Read<int>(p+0x3c));Magic::Validate(schema,value);
+            Json lineage=Json::object();ReferenceLineage(p,lineage);
+            properties.push_back({{"name",NameOf(p)},{"category",Name(Read<int>(p+0x38))},{"schema",std::move(schema)},{"value",std::move(value)},{"lineage",std::move(lineage)}});
+        }
+        catch(const std::exception&){}
+    }
+    return {{"actor",Identity(actor)},{"level",LevelIdentity()},{"generation",MapGeneration()},{"properties",std::move(properties)}};
+}
+// Paste Properties: each {name, schema, value} onto every target with a
+// property of that name, the same schema and PasteWritable, in one Undo step.
+// The targets are found in one pass over the level (the LevelInfo, the builder
+// brush and cameras never), and what a class takes is worked out once for
+// all its actors. Returns {actors, properties (values written), skipped
+// (values a target had no such property for)}; nothing to paste leaves no
+// Undo step.
+Json PasteActorProperties(const Json& targets,const Json& properties)
+{
+    if(!properties.is_array() || properties.empty())throw std::runtime_error("Tick at least one property to paste.");
+    // An asset unloaded or an actor deleted since the copy stops the paste
+    // before anything changes. A single reference is found once, not per actor.
+    auto live=LiveActors();const std::set<Address> present(live.begin(),live.end());
+    std::vector<std::pair<bool,Address>> direct;
+    for(const auto& entry:properties)
+    {
+        const auto& schema=entry.at("schema");const auto& value=entry.at("value");
+        try{MagicReferences(schema,value);LiveActorReferences(schema,value,entry.value("lineage",Json::object()),present);}
+        catch(const std::exception& e){throw std::runtime_error(entry.at("name").get<std::string>()+": "+e.what());}
+        const auto kind=schema.at("kind").get<std::string>();
+        if((kind=="ObjectProperty" || kind=="ClassProperty") && value.is_string())
+            direct.emplace_back(true,Fold(value.get<std::string>())=="none"?0:Find(ReferencedName(value.get<std::string>())));
+        else direct.emplace_back(false,0);
+    }
+    std::map<std::string,std::string> wanted;
+    for(const auto& target:targets)wanted[Fold(target.at("path").get<std::string>())]=target.at("class").get<std::string>();
+    std::vector<Address> actors;
+    for(auto a:live)
+    {
+        if(a==live[0] || (live.size()>1 && a==live[1]))continue;
+        auto found=wanted.find(Fold(Path(a)));
+        if(found!=wanted.end() && Path(Read<Address>(a+0x24))==found->second && !IsA(a,"Camera"))actors.push_back(a);
+    }
+    std::map<Address,std::vector<std::pair<Address,size_t>>> takes;size_t changed=0,written=0,skipped=0;
+    for(auto a:actors)
+    {
+        auto type=Read<Address>(a+0x24);auto found=takes.find(type);
+        if(found==takes.end())
+        {
+            std::map<std::string,Address> named;for(auto p:Properties(type))named.emplace(Fold(NameOf(p)),p);
+            std::vector<std::pair<Address,size_t>> list;
+            for(size_t i=0;i<properties.size();++i)
+            {
+                auto p=named.find(Fold(properties[i].at("name").get<std::string>()));
+                if(p==named.end() || !PasteWritable(p->second,a))continue;
+                bool same=false;try{same=PropertyPaste::Applicable(properties[i],MagicSchema(p->second));}catch(const std::exception&){}
+                if(same)list.emplace_back(p->second,i);
+            }
+            found=takes.emplace(type,std::move(list)).first;
+        }
+        skipped+=properties.size()-found->second.size();
+        if(!found->second.empty()){++changed;written+=found->second.size();}
+    }
+    Json result={{"actors",changed},{"properties",written},{"skipped",skipped}};
+    if(!changed)return result;
+    Transaction transaction("Paste properties");
+    for(auto a:actors)
+    {
+        const auto& list=takes.at(Read<Address>(a+0x24));if(list.empty())continue;
+        Modify(a);
+        for(const auto& [p,i]:list)
+        {
+            auto at=a+Read<int>(p+0x3c);
+            try{if(direct[i].first)Write<Address>(at,direct[i].second);else MagicImport(p,at,properties[i].at("value"));}
+            catch(const std::exception& e){throw std::runtime_error(NameOf(a)+": "+properties[i].at("name").get<std::string>()+": "+e.what());}
+        }
+        Call(a,0x44);
+    }
+    transaction.Commit();Redraw();return result;
 }
 Json ExportEventJson(const Json& identity)
 {
