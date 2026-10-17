@@ -117,6 +117,7 @@ Json RenderBudgetScene()
     MaterialTable table;
     Json items=Json::array(),paths=Json::array();
     std::map<Address,int> meshTriangles;
+    std::map<Address,std::string> meshPaths;
     for(size_t i=0;i<actors.size();++i)
     {
         const auto actor=actors[i];
@@ -125,6 +126,7 @@ Json RenderBudgetScene()
         const int drawType=Read<unsigned char>(actor+layout.drawType);
         const bool hidden=(Read<unsigned>(actor+layout.hidden)&layout.hiddenMask)!=0;
         int kind=0,triangles=0;
+        std::string meshPath;
         std::vector<int> materials;
         auto addMaterial=[&](Address m){const int index=table.Index(m);if(index>=0 && std::find(materials.begin(),materials.end(),index)==materials.end())materials.push_back(index);};
         const auto mesh=Read<Address>(actor+layout.staticMesh);
@@ -134,6 +136,9 @@ Json RenderBudgetScene()
             auto known=meshTriangles.find(mesh);
             if(known==meshTriangles.end())known=meshTriangles.emplace(mesh,MeshTriangles(mesh)).first;
             triangles=known->second;
+            auto named=meshPaths.find(mesh);
+            if(named==meshPaths.end())named=meshPaths.emplace(mesh,Path(mesh)).first;
+            meshPath=named->second;
         }
         else if(IsA(actor,"Emitter"))kind=2;
         const bool drawn=!hidden && drawType!=0;
@@ -147,7 +152,7 @@ Json RenderBudgetScene()
             for(size_t slot=0;slot<std::max(skins.size(),own.size());++slot)
                 addMaterial(slot<skins.size() && skins[slot]?skins[slot]:slot<own.size()?own[slot]:0);
         }
-        items.push_back({{"name",NameOf(actor)},{"zone",zone},{"kind",kind},{"drawn",drawn},{"triangles",triangles},{"materials",materials}});
+        items.push_back({{"name",NameOf(actor)},{"zone",zone},{"kind",kind},{"drawn",drawn},{"triangles",triangles},{"mesh",meshPath},{"materials",materials}});
         paths.push_back(Path(actor));
     }
     // BSP: nodes with a polygon by the zone in front of them.
