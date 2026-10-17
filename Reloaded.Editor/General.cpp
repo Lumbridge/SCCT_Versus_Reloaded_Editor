@@ -686,9 +686,9 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         // update checks and About RE+ (up to 40986), then blocks reserved for
         // tools in progress (the stock menus stop at 40668):
         //   40987-40999 crash recovery        41000-41014 what's new / roll back
-        //   41015-41029 texture favourites    41030-41044 sound browser
+        //   41015-41029 mesh browser search   41030-41044 sound browser
         //   41045-41059 animation import      41060-41074 find usages in MapsEd
-        //   41075-41089 property search       41090-41104 measure tool
+        //   41075-41089 copy/paste properties 41090-41104 measure tool
         //   41105-41119 undo history          41120-41134 assembly/view thumbnails
         //   41135-41149 emitter editing       41150-41164 lighting budget
         //   41165-41179 RE+ menu names        41180       character skins
@@ -700,7 +700,8 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         //   41380-41384 spare             41385-41389 smooth staircase
         //   41390-41394 optimise map assets  41395-41399 spare
         //   41400-41419 objective player counts
-        cmp dword ptr [esp+4], 41419
+        //   41420-41439 placement snap and push  41440-41459 camera bookmarks
+        cmp dword ptr [esp+4], 41459
         jbe workflow_dispatch
     workflow_legacy_range:
         cmp dword ptr [esp+4], 40920
