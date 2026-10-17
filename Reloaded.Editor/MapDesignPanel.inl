@@ -2825,8 +2825,10 @@ void DesignPick(DesignState& s,double x,double y,bool add)
     {
         if(!piece.is_null())
         {
+            // A piece missing some of its brushes does not open: the status
+            // already says so.
             DesignActivate(s,piece);
-            DesignWarn(s,"Editing "+piece.at("spec").value("name",std::string("this piece"))+". Drag it, drag a square to resize, use the arrow keys, or edit its fields.");
+            if(!s.previous.is_null())DesignWarn(s,"Editing "+piece.at("spec").value("name",std::string("this piece"))+". Drag it, drag a square to resize, use the arrow keys, or edit its fields.");
         }
         else if(!s.previous.is_null())DesignDeactivate(s);
     }
@@ -2912,12 +2914,15 @@ void DesignBoxSelect(DesignState& s,const DesignDrag& drag,bool add)
         for(auto& member:piece.at("members"))
             if(const auto* actor=DesignActorAt(s,member.at("path")))push(*actor);
     }
-    size_t brushes=0;
+    // Lights, devices and game actors are scene actors too: each counts once,
+    // as what it is, whichever loop takes it.
+    size_t brushes=0,others=0;
     for(auto& actor:s.scene)
-        if(hits.count(actor.at("path").get<std::string>()) && !members.count(actor.at("path").get<std::string>())){push(actor);++brushes;}
-    // Lights, devices and game actors are scene actors as well: one the loops
-    // above already took is not counted again.
-    size_t others=0;
+        if(hits.count(actor.at("path").get<std::string>()) && !members.count(actor.at("path").get<std::string>()))
+        {
+            push(actor);
+            ++(s.listedKind.count(actor.at("path").get<std::string>())?others:brushes);
+        }
     for(const auto* list:{&s.securityActors,&s.lights,&s.objectives})
         for(const auto& actor:*list)
         {
@@ -2940,7 +2945,7 @@ void DesignBoxSelect(DesignState& s,const DesignDrag& drag,bool add)
         if(const auto piece=DesignSelectedPiece(s);!piece.is_null())
         {
             DesignActivate(s,piece);
-            DesignWarn(s,"Editing "+piece.at("spec").value("name",std::string("this piece"))+". Drag it, drag a square to resize, use the arrow keys, or edit its fields.");
+            if(!s.previous.is_null())DesignWarn(s,"Editing "+piece.at("spec").value("name",std::string("this piece"))+". Drag it, drag a square to resize, use the arrow keys, or edit its fields.");
             return;
         }
     }
@@ -3945,6 +3950,15 @@ void DesignUpdateDrag(DesignState& s,POINT p)
     }
     InvalidateRect(s.canvas,nullptr,FALSE);
 }
+// A reference or route point dragged and not yet let go goes back to where it
+// was, and the drag ends: it moved only the panel's copy of the workspace.
+// Any other drag is left alone.
+void DesignDropReferenceDrag(DesignState& s)
+{
+    if(s.drag.kind!=DesignDrag::Kind::Guide && s.drag.kind!=DesignDrag::Kind::RoutePoint)return;
+    if(!s.drag.before.is_null())s.data=s.drag.before;
+    s.drag={};
+}
 void DesignEndDrag(DesignState& s,bool add)
 {
     const auto drag=s.drag;
@@ -4900,7 +4914,7 @@ void DesignContextMenu(DesignState& s,POINT at)
         if(choice==DCtxEditPiece)
         {
             DesignActivate(s,piece);
-            DesignWarn(s,"Editing "+piece.at("spec").value("name",std::string("this piece"))+". Drag it, drag a square to resize, use the arrow keys, or edit its fields.");
+            if(!s.previous.is_null())DesignWarn(s,"Editing "+piece.at("spec").value("name",std::string("this piece"))+". Drag it, drag a square to resize, use the arrow keys, or edit its fields.");
         }
         else DesignStatus(s,"Selected the brushes of "+piece.at("spec").value("name",std::string("the piece"))+" in the editor.");
         return;
@@ -5032,7 +5046,7 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
                 // Right-click ends whatever is being placed or dragged. A
                 // reference or route point goes back to where it was.
                 if(s->mode=="Element")ElementCancel(*s);
-                if((s->drag.kind==DesignDrag::Kind::Guide || s->drag.kind==DesignDrag::Kind::RoutePoint) && !s->drag.before.is_null())s->data=s->drag.before;
+                DesignDropReferenceDrag(*s);
                 s->mode.clear();s->points=Json::array();s->drag={};s->securityFirstSet=false;
                 InvalidateRect(window,nullptr,FALSE);
                 DesignStatus(*s,"Cancelled.");
@@ -5112,6 +5126,9 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             }
             if((w=='Z' || w=='Y') && (GetKeyState(VK_CONTROL)&0x8000))
             {
+                // A reference or route point still held goes back first, so
+                // the step undone is the one before the drag.
+                DesignDropReferenceDrag(*s);
                 DesignCommand(*s,w=='Z'?DUndo:DRedo);
                 return 0;
             }
@@ -5180,6 +5197,7 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             }
             if(w==VK_DELETE)
             {
+                DesignDropReferenceDrag(*s);
                 DesignDeleteSelection(*s);
                 return 0;
             }
@@ -5198,6 +5216,7 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             if(w==VK_ESCAPE)
             {
                 if(s->mode=="Element")ElementCancel(*s);
+                DesignDropReferenceDrag(*s);
                 s->mode.clear();s->points=Json::array();s->securityFirstSet=false;
                 DesignDeactivate(*s);
                 DesignStatus(*s,"Cancelled. The map is unchanged.");
@@ -5372,7 +5391,7 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             return 0;
         }
     }
-    catch(const std::exception& e){s->drag={};DesignStatus(*s,e.what());}
+    catch(const std::exception& e){DesignDropReferenceDrag(*s);s->drag={};DesignStatus(*s,e.what());}
     return DefWindowProcA(window,message,w,l);
 }
 // Enter in an inspector field applies it without waiting for the focus to move.
