@@ -407,26 +407,61 @@ int main()
         const auto single = Analyse(one, Settings{});
         assert(CountCheck(single, "Floating mesh") == 1 && !FindCheck(single, "Floating meshes"));
 
-        // A mesh that does not block under Crate20 (the trace went through it)
-        // means it may rest on it: no row. Soft boxes beside it, or reaching
-        // above its bottom, leave the row.
-        auto rug = scene;
-        rug.floors.soft.push_back({{0, 0, 0}, {40, 40, 19.5}});
-        const auto rugged = Analyse(rug, Settings{});
-        assert(CountCheck(rugged, "Floating mesh") == 1 && FindCheck(rugged, "Floating mesh")->actors[0] == "MyLevel.Barrel2");
-        assert(!FindCheck(rugged, "Floating meshes"));
+        // A mesh that does not block (the trace went through it) whose box tops
+        // out at Crate20's bottom may be what it rests on: no row. Soft boxes
+        // beside it, above it or well below its bottom leave the row.
+        for (const double top : {19.5, 20.0, 20.8})
+        {
+            auto rug = scene;
+            rug.floors.soft.push_back({{0, 0, 0}, {40, 40, top}});
+            const auto rugged = Analyse(rug, Settings{});
+            assert(CountCheck(rugged, "Floating mesh") == 1 && FindCheck(rugged, "Floating mesh")->actors[0] == "MyLevel.Barrel2");
+            assert(!FindCheck(rugged, "Floating meshes") && !FindCheck(rugged, "Over a mesh that does not block"));
+        }
         auto beside = scene;
         beside.floors.soft.push_back({{100, 100, 0}, {120, 120, 19.5}});
-        beside.floors.soft.push_back({{0, 0, 0}, {40, 40, 50}});
+        beside.floors.soft.push_back({{0, 0, 0}, {40, 40, 1}});       // a rug 19 units below it
+        beside.floors.soft.push_back({{0, 0, 30}, {40, 40, 60}});     // a lamp above it
         beside.floors.soft.push_back({{10, 10, 20}, {30, 30, 20}});   // its own box, a flat mesh
         beside.floors.gaps[0].hi[2] = 20;
-        assert(CountCheck(Analyse(beside, Settings{}), "Floating mesh") == 2);
+        const auto besides = Analyse(beside, Settings{});
+        assert(CountCheck(besides, "Floating mesh") == 2 && !FindCheck(besides, "Over a mesh that does not block"));
+
+        // Inside the box of one (a shelf it may stand on): listed apart, without End.
+        auto shelf = scene;
+        shelf.floors.soft.push_back({{0, 0, 0}, {40, 40, 50}});
+        const auto shelved = Analyse(shelf, Settings{});
+        assert(CountCheck(shelved, "Floating mesh") == 1 && FindCheck(shelved, "Floating mesh")->actors[0] == "MyLevel.Barrel2");
+        assert(!FindCheck(shelved, "Floating meshes") && CountCheck(shelved, "Over a mesh that does not block") == 1);
+        auto onShelf = FindCheck(shelved, "Over a mesh that does not block");
+        assert(onShelf->severity == Severity::Note && onShelf->actors == std::vector<std::string>{"MyLevel.Crate20"});
+        assert(onShelf->message.find("Crate20 is 20 units above") == 0 && onShelf->message.find("press End") == std::string::npos);
+
+        // A line check that failed stops the scan: the rows found so far, and a note.
+        auto stopped = scene;
+        stopped.floors.stopped = true;
+        stopped.floors.checked = 6;
+        const auto partial = Analyse(stopped, Settings{});
+        auto note = FindCheck(partial, "Floating check stopped");
+        assert(note && note->severity == Severity::Note && CountCheck(partial, "Floating mesh") == 2);
+        assert(note->message.find("stopped after 6 static meshes because") != std::string::npos);
+        stopped.floors.checked = 1;
+        assert(FindCheck(Analyse(stopped, Settings{}), "Floating check stopped")->message.find("after 1 static mesh because") != std::string::npos);
+        assert(!FindCheck(report, "Floating check stopped"));
+
+        // Gaps under 10 keep a decimal; 1 is singular.
+        auto close = scene;
+        close.floors.gaps = {{"MyLevel.Mat", "Mat", 1.04, {0, 0, 1}, {10, 10, 2}}};
+        assert(FindCheck(Analyse(close, Settings{}), "Floating mesh")->message.find("Mat floats 1 unit above") == 0);
 
         // Wider limits, and FloatingMaxGap 0 turns the check off.
         Settings wide;
         wide.floatMinGap = 0.5;
         wide.floatMaxGap = 64;
-        assert(CountCheck(Analyse(scene, wide), "Floating mesh") == 4);
+        const auto widened = Analyse(scene, wide);
+        assert(CountCheck(widened, "Floating mesh") == 4);
+        assert(FindCheck(widened, "Floating mesh", 2)->message.find("Nudged floats 0.8 units above") == 0);
+        assert(FindCheck(widened, "Floating meshes")->message.find("4 static meshes float 0.5-64 units") == 0);
         Settings off;
         off.floatMaxGap = 0;
         off = ClampSettings(off);

@@ -158,6 +158,8 @@ namespace MapCheck
     struct FloorScan
     {
         bool ran = false;
+        bool stopped = false;   // a line check failed: only the first `checked` meshes were traced
+        size_t checked = 0;
         std::vector<FloorGap> gaps;
         std::vector<std::pair<Vec3, Vec3>> soft;   // lo, hi
     };
@@ -842,31 +844,44 @@ namespace MapCheck
             }
         }
 
+        // A gap in units, with one decimal below 10 when it is not whole (0.7).
+        inline std::string GapUnits(double value)
+        {
+            const long long tenths = std::llround(value * 10);
+            if (value <= 0 || value >= 10 || tenths % 10 == 0) return Units(value);
+            return std::to_string(tenths / 10) + "." + std::to_string(tenths % 10);
+        }
+
         // Static meshes a little above the surface below them: left behind when
-        // the floor or the mesh under them moved. One resting on a mesh that
-        // does not block is not floating, though the trace cannot see what it
-        // rests on (and Drop to Floor would drop it through).
+        // the floor or the mesh under them moved. The trace cannot see a mesh
+        // that does not block, so one whose box tops out at the mesh's bottom
+        // may be what it rests on: not floating. One inside such a box (a
+        // shelf, a cart) may rest on a surface within it, and Drop to Floor
+        // would drop it through, so it is listed apart without the End advice.
         inline void CheckProps(const Scene& scene, const Settings& settings, Report& report)
         {
             const auto& floors = scene.floors;
             if (!floors.ran) return;
-            std::vector<const FloorGap*> floating;
+            std::vector<const FloorGap*> floating, inside;
             for (const auto& gap : floors.gaps)
             {
                 if (gap.gap < settings.floatMinGap || gap.gap > settings.floatMaxGap) continue;
-                const bool resting = std::any_of(floors.soft.begin(), floors.soft.end(), [&](const std::pair<Vec3, Vec3>& soft)
+                const double bottom = gap.lo[2];
+                bool resting = false, within = false;
+                for (const auto& [lo, hi] : floors.soft)
                 {
-                    const auto& [lo, hi] = soft;
-                    if (lo == gap.lo && hi == gap.hi) return false;   // its own box
-                    return lo[0] < gap.hi[0] && hi[0] > gap.lo[0] && lo[1] < gap.hi[1] && hi[1] > gap.lo[1]
-                        && hi[2] >= gap.lo[2] - gap.gap - 1 && hi[2] <= gap.lo[2] + 1;
-                });
-                if (!resting) floating.push_back(&gap);
+                    if (lo == gap.lo && hi == gap.hi) continue;   // its own box
+                    if (!(lo[0] < gap.hi[0] && hi[0] > gap.lo[0] && lo[1] < gap.hi[1] && hi[1] > gap.lo[1])) continue;
+                    resting = resting || (hi[2] >= bottom - 1 && hi[2] <= bottom + 1);
+                    within = within || (lo[2] < bottom && hi[2] > bottom + 1);
+                }
+                if (!resting) (within ? inside : floating).push_back(&gap);
             }
+            auto units = [](double value) { const auto n = GapUnits(value); return n + (n == "1" ? " unit" : " units"); };
             if (floating.size() >= 2)
             {
                 auto p = Make(Severity::Warning, kProps, "Floating meshes",
-                              std::to_string(floating.size()) + " static meshes float " + Units(settings.floatMinGap) + "-" + Units(settings.floatMaxGap)
+                              std::to_string(floating.size()) + " static meshes float " + GapUnits(settings.floatMinGap) + "-" + GapUnits(settings.floatMaxGap)
                               + " units above the surface below them. This row selects them all: review the list (wall-mounted props near a ledge can show up), then press End over a viewport.");
                 for (const auto* gap : floating) p.actors.push_back(gap->path);
                 report.problems.push_back(std::move(p));
@@ -874,10 +889,22 @@ namespace MapCheck
             for (const auto* gap : floating)
             {
                 auto p = Make(Severity::Warning, kProps, "Floating mesh",
-                              gap->name + " floats " + Units(gap->gap) + " units above the surface below it; select it and press End over a viewport (Drop to Floor).");
+                              gap->name + " floats " + units(gap->gap) + " above the surface below it; select it and press End over a viewport (Drop to Floor).");
                 p.actors = {gap->path};
                 report.problems.push_back(std::move(p));
             }
+            for (const auto* gap : inside)
+            {
+                auto p = Make(Severity::Note, kProps, "Over a mesh that does not block",
+                              gap->name + " is " + units(gap->gap) + " above the surface below it, inside the box of a static mesh that does not block (a shelf, or a mesh "
+                              "with its collision off). If it rests on that mesh, leave it: End would drop it through.");
+                p.actors = {gap->path};
+                report.problems.push_back(std::move(p));
+            }
+            if (floors.stopped)
+                report.problems.push_back(Make(Severity::Note, kProps, "Floating check stopped",
+                    "The floating mesh check stopped after " + std::to_string(floors.checked) + (floors.checked == 1 ? " static mesh" : " static meshes")
+                    + " because the editor's line check failed, so the meshes after those were not checked. Refresh to try again."));
         }
 
         inline void CheckStock(const Scene& scene, const Settings&, Report& report)

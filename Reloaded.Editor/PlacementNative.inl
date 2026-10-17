@@ -375,7 +375,8 @@ Json PlacementCopy(const Json& members,const Json& copies,const std::string& lab
 // Map Check's floating meshes (MapCheckModel.h CheckProps): Drop to Floor's
 // rays for every visible static mesh, each reaching only maxGap past the
 // mesh's bottom instead of PlaceTrace's whole world. A line check that
-// faults stops the scan, since it leaves the editor's memory mark behind.
+// faults stops the scan, since it leaves the editor's memory mark behind, and
+// Map Check says so.
 MapCheck::FloorScan MapCheckFloorGaps(double maxGap)
 {
     MapCheck::FloorScan scan;scan.ran=true;
@@ -384,8 +385,8 @@ MapCheck::FloorScan MapCheckFloorGaps(double maxGap)
     auto live=LiveActors();
     std::map<Address,CheckFields> cache;
     const Vector down{0,0,-1};
-    size_t meshes=0,rays=0;bool failed=false,traceFailed=false;
-    for(size_t i=2;i<live.size() && !traceFailed;++i)
+    size_t meshes=0,rays=0;bool failed=false;
+    for(size_t i=2;i<live.size() && !scan.stopped;++i)
     {
         const auto actor=live[i];
         try
@@ -410,7 +411,7 @@ MapCheck::FloorScan MapCheckFloorGaps(double maxGap)
                 const PlaceFVec s{static_cast<float>(start[0]),static_cast<float>(start[1]),static_cast<float>(start[2])};
                 const PlaceFVec e{static_cast<float>(end[0]),static_cast<float>(end[1]),static_cast<float>(end[2])};
                 PlaceHit hit{};++rays;
-                if(!PlaceTraceRaw(level,actor,&s,e,&hit)){traceFailed=true;throw std::runtime_error("The editor's line check failed.");}
+                if(!PlaceTraceRaw(level,actor,&s,e,&hit)){scan.stopped=true;scan.checked=meshes-1;throw std::runtime_error("The editor's line check failed.");}
                 if(!hit.found){hits.push_back(std::nullopt);continue;}
                 hits.push_back(Place::Dot(Place::Sub({hit.location[0],hit.location[1],hit.location[2]},start),down));
             }
@@ -418,7 +419,7 @@ MapCheck::FloorScan MapCheckFloorGaps(double maxGap)
         }
         catch(const std::exception& e)
         {
-            if(!failed || traceFailed)Logger::log(std::string("MapCheck: floating check skipped an actor: ")+e.what()+(traceFailed?" The check stopped there.":""));
+            if(!failed || scan.stopped)Logger::log(std::string("MapCheck: floating check skipped an actor: ")+e.what()+(scan.stopped?" The check stopped there.":""));
             failed=true;
         }
     }
