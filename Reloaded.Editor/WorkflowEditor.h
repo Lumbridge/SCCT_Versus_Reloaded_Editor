@@ -7,6 +7,7 @@ namespace MapCheck { struct Scene; struct Settings; struct FloorScan; }
 
 namespace LightShadow { struct Scene; }
 namespace Minimap { struct Camera; struct Scene; }
+namespace UnsavedChanges { struct Opened; }
 
 namespace Workflow::Editor
 {
@@ -22,6 +23,9 @@ namespace Workflow::Editor
     // Revision without the transactions that only change the selection.
     unsigned ContentRevision();
     unsigned MapGeneration();
+    // The last MAP LOAD, NEW or IMPORT that succeeded, as it left the
+    // generation and ContentRevision (UnsavedChangesModel.h).
+    UnsavedChanges::Opened MapOpened();
     Json Actors(bool selectedOnly = false);
     Json SelectedIdentities();
     // Paths of the selected actors, cheaper than SelectedIdentities.

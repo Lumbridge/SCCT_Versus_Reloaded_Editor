@@ -11,6 +11,8 @@
 #include "PropertyPaste.h"
 #include "SaveBackupModel.h"
 #include "SaveBackups.h"
+#include "UnsavedChangesModel.h"
+#include "LightmapFix.h"
 #include "SelfUpdater.h"
 #include "Version.h"
 #include "logger.h"
@@ -45,11 +47,11 @@ namespace
     HWND shortcutsWindow = nullptr;
     std::vector<std::string> recent;
     std::string lastMap;
-    unsigned lastCleanRevision = 0;
+    // Whether the open map has changes its file does not (UnsavedChangesModel.h).
+    UnsavedChanges::Tracker changes;
     constexpr UINT_PTR kTimer = 0x5245;
     constexpr UINT_PTR kOfferTimer = 0x5246; // the crash-recovery offer, until it has been made
     constexpr int kRecentMax = 10;
-    constexpr UINT kFileSave = 40007, kFileSaveAs = 40008;
 
     std::filesystem::path RecentFile() { return Editor::Directory() / "recent_maps.json"; }
     void LoadRecent()
@@ -100,9 +102,34 @@ namespace
 
     bool InstallMenus();
 
+    // The file a save wrote, in full: the engine opens a relative name from
+    // the current directory (System), the frame's own map name from MapsEd.
+    std::string SavedFile(const char* path)
+    {
+        namespace fs = std::filesystem;
+        fs::path file(path);
+        std::error_code error;
+        if (file.is_relative())
+        {
+            const auto here = fs::absolute(file, error);
+            file = !error && fs::is_regular_file(here, error) ? here : Editor::Directory().parent_path().parent_path() / "Packages" / "MapsEd" / file;
+        }
+        const auto canonical = fs::weakly_canonical(file, error);
+        return (error ? file : canonical).string();
+    }
+    // After every save the engine finished (LightmapFix::SetSavedSink): a save
+    // of the open map's own file makes it clean, whichever route it took.
+    void __cdecl NoteSaved(const char* path)
+    {
+        if (!path || !*path) return;
+        try { UnsavedChanges::Saved(changes, Editor::MapOpened(), Editor::ContentRevision(), SavedFile(path), Editor::MapFile()); }
+        catch (...) { /* Inside the engine's save: nothing may escape, and a save not recorded only means one more warning. */ }
+    }
+
     // Every few seconds on the frame's thread: a newly opened or saved-as
-    // map goes to the top of the recent list, and counts as clean. Menu
-    // entries lost to a rebuilt menu bar are put back.
+    // map goes to the top of the recent list. Whether it is clean was settled
+    // when it was opened or saved, not when this notices it. Menu entries
+    // lost to a rebuilt menu bar are put back.
     void Tick()
     {
         EditorConfigBits::Apply();
@@ -113,12 +140,15 @@ namespace
             reported = true;
             Logger::log("Editor extras: some menu entries could not be put back on the timer");
         }
+        // The first look at the editor starts the count of its edits and the
+        // maps it opens, so a map opened soon after start-up is seen open.
+        try { UnsavedChanges::Follow(changes, Editor::MapOpened()); }
+        catch (const std::exception&) { /* No map yet. */ }
         try
         {
             const auto map = Editor::MapFile();
             if (map == lastMap) return;
             lastMap = map;
-            lastCleanRevision = Editor::ContentRevision();
             CrashRecovery::NoteMap(map);
             // An opened autosave or backup is a moment, not a map to come back to.
             if (!Sessions::IsAutosaveName(map) && !SaveBackups::IsBackupPath(map)) NoteMap(map);
@@ -138,18 +168,6 @@ namespace
         // cleanly, unless the engine is going down with an error.
         if (message == WM_DESTROY) CrashRecovery::EndSession();
         if (message == WM_INITMENUPOPUP && reinterpret_cast<HMENU>(w) == recentMenu) { RebuildRecentMenu(); return 0; }
-        if (message == WM_COMMAND && (LOWORD(w) == kFileSave || LOWORD(w) == kFileSaveAs))
-        {
-            // After the stock save the map is as clean as it will get: opening
-            // a recent map from here needs no warning. A Save As that was
-            // cancelled (Save asks too for an untitled map or an opened
-            // backup) saved nothing, so the warning stays.
-            const unsigned saves = SaveBackups::MapSaves();
-            const LRESULT result = DefSubclassProc(window, message, w, l);
-            if (SaveBackups::MapSaves() != saves)
-                try { lastCleanRevision = Editor::ContentRevision(); } catch (const std::exception&) {}
-            return result;
-        }
         if (message == WM_COMMAND)
         {
             // Rebuilding geometry makes every hidden actor visible again, so
@@ -516,7 +534,7 @@ namespace
 
 bool EditorExtras::OpenMap(const std::string& path, HWND owner, const char* title, bool confirmDiscard)
 {
-    if (confirmDiscard && Editor::ContentRevision() != lastCleanRevision
+    if (confirmDiscard && UnsavedChanges::Unsaved(changes, Editor::MapOpened(), Editor::ContentRevision(), Editor::MapFile())
         && MessageBoxA(owner, ("Open " + std::filesystem::path(path).filename().string() + "?\n\nUnsaved changes in the current map will be lost.").c_str(),
                        title, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
         return false;
@@ -539,7 +557,8 @@ bool EditorExtras::OpenMap(const std::string& path, HWND owner, const char* titl
         Editor::Exec("LOADMAPPROP MAP=\"" + stem + "\"");
     Editor::SetMapFile(path);
     lastMap = path;
-    lastCleanRevision = Editor::ContentRevision();
+    // The settings and the Save target are part of opening it.
+    UnsavedChanges::Settled(changes, Editor::MapOpened(), Editor::ContentRevision());
     CrashRecovery::NoteMap(path);
     if (!Sessions::IsAutosaveName(path) && !backup) NoteMap(path);
     Editor::Redraw();
@@ -555,6 +574,7 @@ void EditorExtras::Attach(HWND frame)
 {
     if (!frame || frameWindow) return;
     frameWindow = frame;
+    LightmapFix::SetSavedSink(NoteSaved);
     CrashRecovery::Start();
     const DWORD thread = GetWindowThreadProcessId(frame, nullptr);
     Logger::log("Editor extras: attaching to the frame's thread " + std::to_string(thread));

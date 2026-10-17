@@ -15,4 +15,12 @@ public:
     // Where the warning for a damaged map goes; without a sink it is a message box.
     typedef void (__cdecl *DamageSink)(const char* message);
     static void SetDamageSink(DamageSink sink);
+
+    // Told of every save that reached RepairSavedMap and wrote its file:
+    // File > Save and Save As by any route (menu, Ctrl+L, the engine's own
+    // request), and the RE+ tools that save. A cancelled Save As never gets
+    // here, and a save the engine could not write (a read-only map) is left
+    // out: the file's write time did not change.
+    typedef void (__cdecl *SavedSink)(const char* path);
+    static void SetSavedSink(SavedSink sink);
 };

@@ -22,9 +22,6 @@ namespace SaveBackups
     // The file a MAP LOAD opens is noted, so a backup the open map came from
     // stays.
     void BeforeMapSave(const char* command) noexcept;
-    // How many MAP SAVE commands (the stock autosave's own aside) have
-    // reached the engine: unchanged across a Save that was cancelled.
-    unsigned MapSaves();
     // File > Open Map Backup..., on the frame's thread.
     void OpenDialog(HWND frame);
     // System\ReloadedEditor\Backups.

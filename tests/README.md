@@ -141,8 +141,8 @@ the workflow suite stops and restarts the editor.
 
 `SaveBackupModelTests.cpp` covers the map backups' pure parts: the file a
 `MAP SAVE` or `MAP LOAD` command names (quoted or not, in any case, among other
-parameters; not a package save, a `SAVEAS` or an empty `FILE=`), the stock
-autosave's own save told from File > Save, Play Level's `Autoplay.sdc` left
+parameters; not a package save, a `SAVEAS` or an empty `FILE=`; the stock
+autosave's own command), Play Level's `Autoplay.sdc` left
 alone, backup names stamped with the time and read back from the end (a map
 name with underscores of its own, invalid dates refused), whether the file on
 disk still needs a copy (size and write time against the newest backup only),
@@ -152,6 +152,17 @@ staying, the `MaxTotalMB` cap going oldest first across maps, a backup saved
 over neither counted nor removed, files that are not backups never deleted),
 and which paths are backups (`ReloadedEditor\Backups` with either slash, not
 MapsEd maps or snapshot backups).
+
+`UnsavedChangesModelTests.cpp` covers when the unsaved-changes warning before
+Open Recent, Find Usages in All Maps and Open Map Backup is due: a map is clean
+at the revision its own load left, however late that is noticed, so edits made
+straight after a stock File > Open still count; each map opened starts over;
+a new map is clean and an imported one unsaved until saved; Open Recent's
+settings and Save target are part of opening; a save is a save only into the
+open map's own file (any case, either slash; Save As under its new name), so
+the stock autosave, Play Level's runtime copy, a release copy and a save while
+the map has no file leave the warning in place, as a cancelled or refused save
+does by never being reported.
 
 `EntryThumbnailModelTests.cpp` covers the Working Views and Actor Assemblies
 thumbnails' pure parts: file names taken from the entry id (lower case, one

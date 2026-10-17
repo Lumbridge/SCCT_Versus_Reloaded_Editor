@@ -4,6 +4,8 @@
 #include "Hooks.h"
 #include "RealtimeFix.h"
 #include "SaveBackups.h"
+#include "SaveBackupModel.h"
+#include "UnsavedChangesModel.h"
 #include "SdcBlockModel.h"
 #include "logger.h"
 
@@ -14,6 +16,9 @@
 #include <vector>
 #include <string>
 #include <format>
+#include <filesystem>
+#include <mutex>
+#include <optional>
 
 INIT_HOOKS;
 
@@ -303,6 +308,71 @@ void LightmapFix::SetDamageSink(DamageSink sink)
     s_damageSink = sink;
 }
 
+static LightmapFix::SavedSink s_savedSink;
+
+void LightmapFix::SetSavedSink(SavedSink sink)
+{
+    s_savedSink = sink;
+}
+
+// The engine reports a save it gave up on (a read-only map, "try again?"
+// answered No) as done, so each file a MAP SAVE is about to write has its
+// write time noted first, and the sink hears only of a file that changed.
+struct PendingWrite
+{
+    std::string path;
+    std::optional<uint64_t> written;
+};
+static std::vector<PendingWrite> s_saveTargets;
+static std::mutex s_saveTargetsLock;
+
+// A relative name as the engine opens it, from the current directory (System).
+static std::string FullPath(const char* path)
+{
+    std::error_code error;
+    const auto full = std::filesystem::absolute(std::filesystem::path(path), error);
+    return error ? std::string(path) : full.lexically_normal().string();
+}
+
+static std::optional<uint64_t> WriteTime(const std::string& path)
+{
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &data))
+        return std::nullopt;
+    return (uint64_t(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime;
+}
+
+static void NoteSaveTarget(const char* cmd)
+{
+    if (!s_savedSink || !cmd)
+        return;
+    const auto target = SaveBackups::SaveTarget(cmd);
+    if (!target)
+        return;
+    const std::string path = FullPath(target->c_str());
+    std::lock_guard<std::mutex> lock(s_saveTargetsLock);
+    std::erase_if(s_saveTargets, [&](const PendingWrite& t) { return UnsavedChanges::SameFile(t.path, path); });
+    if (s_saveTargets.size() >= 8)
+        s_saveTargets.erase(s_saveTargets.begin());
+    s_saveTargets.push_back({ path, WriteTime(path) });
+}
+
+// Whether the save of this file wrote it. A file no MAP SAVE named is taken
+// as written, as before the check.
+static bool SaveWritten(const char* file)
+{
+    const std::string path = FullPath(file);
+    std::lock_guard<std::mutex> lock(s_saveTargetsLock);
+    for (auto t = s_saveTargets.begin(); t != s_saveTargets.end(); ++t)
+        if (UnsavedChanges::SameFile(t->path, path))
+        {
+            const bool written = UnsavedChanges::Written(t->written, WriteTime(path));
+            s_saveTargets.erase(t);
+            return written;
+        }
+    return true;
+}
+
 static void __cdecl WarnIfMapDamaged(const char* cmd)
 {
     static const char kVerb[] = "MAP LOAD FILE=";
@@ -341,6 +411,8 @@ static void __cdecl WarnIfMapDamaged(const char* cmd)
 static void __cdecl BeforeEditorExec(const char* cmd)
 {
     SaveBackups::BeforeMapSave(cmd);
+    try { NoteSaveTarget(cmd); }
+    catch (...) { /* Without the note, the save counts as written. */ }
     WarnIfMapDamaged(cmd);
     RealtimeFix::BeforeEditorCommand(cmd);
 }
@@ -613,6 +685,13 @@ void LightmapFix::RepairSavedMap(const char* mapsEdPath)
 
     // A capture belongs to the save that made it, spilled or not.
     ClearSummaryCaptures();
+
+    try
+    {
+        if (s_savedSink && SaveWritten(mapsEdPath))
+            s_savedSink(mapsEdPath);
+    }
+    catch (...) { Logger::log("LightmapFix: could not report the save"); }
 }
 
 static void __cdecl RunFixIfNeeded()

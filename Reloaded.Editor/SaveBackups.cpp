@@ -7,7 +7,6 @@
 #include "logger.h"
 #include "MemoryWriter.h"
 #include <commdlg.h>
-#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <format>
@@ -89,9 +88,6 @@ namespace
     // The file the last MAP LOAD opened: when the open map is a backup, a
     // save over its map must not remove it before the save has read it.
     std::string loaded;
-    // MAP SAVE commands passed to the engine so far, but for the stock
-    // autosave's own, which may run while a Save As box is open.
-    std::atomic<unsigned> saves = 0;
 
     // The files in one map's backup folder, by path.
     std::vector<SaveBackups::File> Files(const fs::path& folder, const std::string& map)
@@ -257,8 +253,6 @@ void SaveBackups::Initialize()
     Logger::log("Save backups: File > Save is not the supported editor's; Save on an opened backup writes into that backup.");
 }
 
-unsigned SaveBackups::MapSaves() { return saves; }
-
 fs::path SaveBackups::Folder() { return SystemFolder() / "ReloadedEditor" / "Backups"; }
 
 void SaveBackups::BeforeMapSave(const char* command) noexcept
@@ -273,7 +267,6 @@ void SaveBackups::BeforeMapSave(const char* command) noexcept
     {
         if (const auto target = SaveTarget(command))
         {
-            if (!IsStockAutosave(command)) ++saves;
             NoteSavedOver(*target);
             Backup(*target);
         }

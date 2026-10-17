@@ -44,19 +44,8 @@ void Targets()
     Check(!IsPlayLevelName("Autoplay2.sdc") && !IsPlayLevelName("MyAutoplay.sdc") && !IsPlayLevelName("C:\\Autoplay.d\\MoonD.sdc"),
           "only the file name Autoplay.*");
 
-    // The stock autosave's command, as its format at 0x1147AF1C gives it,
-    // and the user's own saves, Save and Save As, into an autosave's name.
-    const std::string autosave = "MAP SAVE AUTOSAVE=1 FILE=\"..\\Packages\\MapsEd\\Auto3.sdc\"";
-    Check(IsStockAutosave(autosave) && SaveTarget(autosave) == "..\\Packages\\MapsEd\\Auto3.sdc", "the stock autosave, and the file it writes");
-    Check(!IsStockAutosave("MAP SAVE FILE=\"..\\Packages\\MapsEd\\Auto3.sdc\"")
-          && !IsStockAutosave("MAP SAVE FILE=\"C:\\G\\Packages\\MapsEd\\Auto0.sdc\""), "a save the user makes into Auto3.sdc counts");
-    Check(!IsStockAutosave("MAP SAVE FILE=\"C:\\G\\Packages\\MapsEd\\MoonD.sdc\""), "File > Save of a map");
-    Check(IsStockAutosave("map save file=Auto0.sdc autosave=1") && IsStockAutosave("MAP SAVE AUTOSAVE= 12 FILE=Auto0.sdc"),
-          "any case, after FILE=, a blank before the number");
-    Check(!IsStockAutosave("MAP SAVE AUTOSAVE=0 FILE=Auto0.sdc") && !IsStockAutosave("MAP SAVE AUTOSAVE=\"1\" FILE=Auto0.sdc")
-          && !IsStockAutosave("MAP SAVE AUTOSAVE= FILE=Auto0.sdc"), "zero, or not a number, is not an autosave");
-    Check(!IsStockAutosave("MAP LOAD AUTOSAVE=1 FILE=Auto0.sdc") && !IsStockAutosave("MAPSAVE AUTOSAVE=1") && !IsStockAutosave(""),
-          "only a MAP SAVE");
+    // The stock autosave's command, as its format at 0x1147AF1C gives it.
+    Check(SaveTarget("MAP SAVE AUTOSAVE=1 FILE=\"..\\Packages\\MapsEd\\Auto3.sdc\"") == "..\\Packages\\MapsEd\\Auto3.sdc", "the stock autosave, and the file it writes");
 }
 
 void Names()
