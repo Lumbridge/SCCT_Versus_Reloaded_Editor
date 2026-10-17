@@ -7,6 +7,7 @@
 #include "GEKeybindSwap.h"
 #include "LevelSnapshot.h"
 #include "PlayLevelPlayers.h"
+#include "SelectionModel.h"
 #include "SelfUpdater.h"
 #include "Version.h"
 #include "logger.h"
@@ -398,25 +399,23 @@ namespace
     }
 
     // Selection helpers built on the editor's own actor list, so they work
-    // for several classes or tags at once. The builder brush and the level
-    // info (not authorable) are never taken along.
-    bool Camera(const Json& actor) { return actor.value("class", std::string()).find("Camera") != std::string::npos; }
-    bool Ordinary(const Json& actor) { return !Camera(actor) && actor.value("authorable", true); }
-    void SelectMatching(const char* field, const char* what)
+    // for several classes or tags at once. The builder brush, the level info
+    // and viewport cameras (not authorable) are never taken along, and
+    // SelectionModel.h keeps hidden actors out.
+    namespace Selection = Workflow::Selection;
+    template<class Rule> Json Chosen(Rule rule)
     {
         const auto actors = Editor::Actors();
-        std::set<std::string> wanted;
-        for (const auto& actor : actors)
-            if (actor.value("selected", false) && Ordinary(actor))
-            {
-                const auto value = actor.value(field, std::string());
-                if (!value.empty() && Workflow::Fold(value) != "none") wanted.insert(Workflow::Fold(value));
-            }
-        if (wanted.empty()) throw std::runtime_error(std::string("Select an actor with a ") + what + " first.");
-        Json matching = Json::array();
-        for (const auto& actor : actors)
-            if (Ordinary(actor) && wanted.count(Workflow::Fold(actor.value(field, std::string())))) matching.push_back(actor);
-        Editor::Select(matching, false);
+        std::vector<Selection::Actor> listed;
+        for (const auto& actor : actors) listed.push_back(Selection::FromJson(actor));
+        Json chosen = Json::array();
+        for (const auto i : rule(listed)) chosen.push_back(actors[i]);
+        return chosen;
+    }
+    void SelectMatching(const char* field, const char* what)
+    {
+        const auto value = std::string(field) == "tag" ? &Selection::Actor::tag : &Selection::Actor::cls;
+        Editor::Select(Chosen([&](const std::vector<Selection::Actor>& actors) { return Selection::Matching(actors, value, what); }), false);
     }
     void Exec(const char* command, const char* failure)
     {
@@ -427,27 +426,20 @@ namespace
     // panel sets, so the plan, the panel and the viewports agree.
     void InvertSelection()
     {
-        Json others = Json::array();
-        for (const auto& actor : Editor::Actors())
-            if (Ordinary(actor) && !actor.value("selected", false)) others.push_back(actor);
-        Editor::Select(others, false);
+        Editor::Select(Chosen(Selection::Inverted), false);
     }
     void Hide(bool selectedOnes)
     {
-        Json members = Json::array();
-        for (const auto& actor : Editor::Actors())
-            if (Ordinary(actor) && actor.value("selected", false) == selectedOnes) members.push_back(actor);
-        if (members.empty()) throw std::runtime_error(selectedOnes ? "Select something to hide first." : "Select what should stay visible first.");
+        const auto members = Chosen(selectedOnes ? Selection::ToHide : Selection::ToIsolate);
+        if (members.empty()) return; // Isolating with the rest already hidden.
         Editor::DesignSetFlags(members, 1, -1);
         Editor::Redraw();
     }
+    // From the actor list, not the Design scene: that reads every brush's
+    // polygons and refuses a large map or a stray vertex.
     void UnhideAll()
     {
-        Json members = Json::array();
-        for (const auto& actor : Editor::DesignScene())
-            if (actor.value("hidden", false)) members.push_back(actor);
-        if (members.empty()) throw std::runtime_error("Nothing is hidden.");
-        Editor::DesignSetFlags(members, 0, -1);
+        Editor::DesignSetFlags(Chosen(Selection::ToUnhide), 0, -1);
         Editor::Redraw();
     }
 

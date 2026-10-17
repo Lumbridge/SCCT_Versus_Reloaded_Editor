@@ -540,7 +540,7 @@ Json Actors(bool selectedOnly)
     {
         bool selected=(Read<unsigned>(a+0x2f4)&0x40)!=0;
         if(selectedOnly && !selected) continue;
-        auto j=Identity(a); j["selected"]=selected; j["name"]=NameOf(a); j["tag"]=NameField(a,"Tag"); j["event"]=NameField(a,"Event");
+        auto j=Identity(a); j["selected"]=selected; j["hidden"]=(Read<unsigned>(a+0x2f4)&0x10)!=0; j["name"]=NameOf(a); j["tag"]=NameField(a,"Tag"); j["event"]=NameField(a,"Event");
         j["magicEvent"]=IsA(a,"SBase.SMagicEvent");j["authorable"]=a!=live[0] && (live.size()<2 || a!=live[1]) && !IsA(a,"Camera");
         result.push_back(std::move(j));
     }

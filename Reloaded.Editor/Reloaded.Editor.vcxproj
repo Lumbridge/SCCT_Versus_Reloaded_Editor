@@ -226,6 +226,7 @@
     <ClInclude Include="SecurityModel.h" />
     <ClInclude Include="SecurityNative.inl" />
     <ClInclude Include="SecurityPanel.inl" />
+    <ClInclude Include="SelectionModel.h" />
     <ClInclude Include="StageModel.h" />
     <ClInclude Include="StageNative.inl" />
     <ClInclude Include="EmitterLibraryModel.h" />
