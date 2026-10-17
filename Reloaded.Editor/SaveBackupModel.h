@@ -98,22 +98,6 @@ namespace SaveBackups
     // The file a MAP LOAD opens.
     inline std::optional<std::string> LoadTarget(const std::string& command) { return CommandFile(command, "LOAD"); }
 
-    // The stock autosave's own save, MAP SAVE AUTOSAVE=1 FILE="...Auto%i.sdc"
-    // (the format at 0x1147AF1C). File > Save and Save As send MAP SAVE
-    // FILE="%s" alone, so a map the user saves as Auto3.sdc is not one.
-    // AUTOSAVE= is read as the engine reads a number: a nonzero integer.
-    inline bool IsStockAutosave(const std::string& command)
-    {
-        const auto at = ParameterAt(command, "SAVE", "AUTOSAVE=");
-        if (!at) return false;
-        size_t i = *at;
-        while (i < command.size() && Blank(command[i])) ++i;
-        if (i < command.size() && (command[i] == '+' || command[i] == '-')) ++i;
-        for (; i < command.size() && command[i] >= '0' && command[i] <= '9'; ++i)
-            if (command[i] != '0') return true;
-        return false;
-    }
-
     // Play Level's copy, Autoplay.sdc. Its MAP SAVE names
     // ..\Packages\MapsEd\Autoplay.sdc, but the engine writes only
     // Packages\Maps\Autoplay.sdc, so no map of the user's is replaced.

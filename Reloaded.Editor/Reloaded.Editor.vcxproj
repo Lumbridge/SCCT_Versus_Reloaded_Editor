@@ -144,6 +144,7 @@
     <ClInclude Include="CrashRecoveryModel.h" />
     <ClInclude Include="SaveBackups.h" />
     <ClInclude Include="SaveBackupModel.h" />
+    <ClInclude Include="UnsavedChangesModel.h" />
     <ClInclude Include="Debug.h" />
     <ClInclude Include="dllmain.h" />
     <ClInclude Include="framework.h" />

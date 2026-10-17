@@ -27,6 +27,7 @@
 #include "MinimapModel.h"
 #include "StairSmoothModel.h"
 #include "MapOptimiseModel.h"
+#include "UnsavedChangesModel.h"
 #include "LightmapFix.h"
 #include "logger.h"
 #include "MapRecovery.h"
@@ -86,16 +87,22 @@ namespace
     // leaves out transactions that only select, so views that rebuild from
     // the map do not do so for every click in a viewport.
     unsigned revision=0,contentRevision=0,mapGeneration=0;
+    // The last map opened, as its opening left the counters: the moment the
+    // open map was as its file has it, for the unsaved-changes warning.
+    UnsavedChanges::Opened opened;
     using ExecFn=int(__thiscall*)(void*,const char*,void*);
     using EndFn=void(__thiscall*)(void*);
     ExecFn previousExec=nullptr;EndFn previousEnd=nullptr;
     int __fastcall ObserveExec(void* self,void*,const char* text,void* output)
     {
         auto command=Fold(text?std::string(text,strnlen(text,80)):std::string{});
-        const bool map=command.rfind("map new",0)==0 || command.rfind("map load",0)==0 || command.rfind("map import",0)==0;
+        const bool imported=command.rfind("map import",0)==0;
+        const bool map=command.rfind("map new",0)==0 || command.rfind("map load",0)==0 || imported;
         int result=previousExec(self,text,output);
         if(map) ++mapGeneration;
         if(map || command.rfind("map rebuild",0)==0 || command.rfind("bsp ",0)==0 || command.rfind("transaction ",0)==0) {++revision;++contentRevision;}
+        // A load that failed leaves the map that was open, edits and all.
+        if(map && result)opened={mapGeneration,contentRevision,imported};
         return result;
     }
     // Titles the stock editor gives transactions that change only which
@@ -506,6 +513,7 @@ uintptr_t LevelIdentity() { return Level(); }
 unsigned Revision() { Engine();return revision; }
 unsigned ContentRevision() { Engine();return contentRevision; }
 unsigned MapGeneration() { Engine();return mapGeneration; }
+UnsavedChanges::Opened MapOpened() { Engine();return opened; }
 std::string LevelPath() { return Path(Read<Address>(Level()+0x18)); }
 std::string MapKey()
 {

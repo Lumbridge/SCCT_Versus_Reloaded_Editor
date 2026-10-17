@@ -64,6 +64,7 @@
     <ClInclude Include="CrashRecoveryModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="SaveBackups.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="SaveBackupModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="UnsavedChangesModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="Version.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="WorkflowEditor.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="WorkflowTools.h"><Filter>Header Files</Filter></ClInclude>

@@ -43,6 +43,10 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\SaveBackupModelTests.cpp /Fo"%
 if errorlevel 1 goto failed
 "%TEMP%\SaveBackupModelTests.exe"
 if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\UnsavedChangesModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\UnsavedChangesModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\UnsavedChangesModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\MeshFavoritesModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MeshFavoritesModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\MeshFavoritesModelTests.exe"
