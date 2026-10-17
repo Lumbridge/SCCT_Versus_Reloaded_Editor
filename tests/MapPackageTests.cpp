@@ -135,6 +135,10 @@ int main(int argc, char **argv)
         Reject([&] { MapPackage::MatchBaseFiles(plan, root); }, "cannot use same installation as its own base");
         auto zip = root / "result.zip";
         MapPackage::Write(plan, zip);
+        bool scratchLeft = false;
+        for (const auto &entry : fs::directory_iterator(root))
+            scratchLeft |= entry.path().filename().string().rfind("map-package-", 0) == 0;
+        Check(!scratchLeft, "a written ZIP leaves no staging folder beside it");
         auto original = Load(zip);
         Check(Get(original, 0) == 0x04034b50, "ZIP local header");
         Check(Get(original, original.size() - 22) == 0x06054b50 && original[original.size() - 12] == 4,
@@ -248,6 +252,24 @@ int main(int argc, char **argv)
             Save(invalid, Package({"Engine"}, version));
             Check(MapPackage::Imports(invalid) == std::vector<std::string>({"Engine"}),
                   "supported package name encodings");
+        }
+        {
+            // The release copy is offered unless the map or its interface package
+            // was saved after it.
+            using MapPackage::PickSource;
+            using MapPackage::Source;
+            const auto saved = fs::file_time_type::clock::now(), later = saved + std::chrono::hours(1),
+                       none = fs::file_time_type::min();
+            Check(PickSource(false, none, saved, none, saved) == Source::Playable, "no release copy: the playable map");
+            Check(PickSource(true, later, saved, later, saved) == Source::Release, "a newer release copy is offered");
+            Check(PickSource(true, saved, saved, saved, saved) == Source::Release,
+                  "a release copy as old as the map (its -i copied with its time) is current");
+            Check(PickSource(true, saved, later, saved, saved) == Source::StaleRelease,
+                  "a release copy older than the map is stale");
+            Check(PickSource(true, later, saved, saved, later) == Source::StaleRelease,
+                  "a release -i older than the game's (Level Snapshot, Minimap) is stale");
+            Check(PickSource(true, later, saved, none, later) == Source::Release,
+                  "a release copy without its own -i ships the game's");
         }
         std::cout << "Map packaging: " << checks << " checks passed.\n";
         return 0;

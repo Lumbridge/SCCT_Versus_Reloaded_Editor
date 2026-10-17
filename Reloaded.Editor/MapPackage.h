@@ -53,4 +53,24 @@ std::vector<bool> MatchBaseFiles(const Plan &plan, const std::filesystem::path &
 bool IdenticalFiles(const std::filesystem::path &a, const std::filesystem::path &b);
 // Writes to a private temporary directory and publishes without replacement.
 void Write(const Plan &plan, const std::filesystem::path &destination);
+// The copy Package Map for Sharing offers: the release copy (Optimise Map
+// Assets) when there is one, unless the game's playable map, written by every
+// save, or its interface package (<Map>-i.utc, rewritten by Level Snapshot and
+// Minimap) was saved after it. A missing file's time is file_time_type::min();
+// a release copy without its own -i ships the game's, so that is never stale.
+enum class Source
+{
+    Playable,
+    Release,
+    StaleRelease
+};
+inline Source PickSource(bool releaseExists, std::filesystem::file_time_type releaseMap,
+                         std::filesystem::file_time_type workingMap, std::filesystem::file_time_type releaseImage,
+                         std::filesystem::file_time_type workingImage)
+{
+    if (!releaseExists)
+        return Source::Playable;
+    const bool oldImage = releaseImage != (std::filesystem::file_time_type::min)() && releaseImage < workingImage;
+    return releaseMap < workingMap || oldImage ? Source::StaleRelease : Source::Release;
+}
 } // namespace MapPackage

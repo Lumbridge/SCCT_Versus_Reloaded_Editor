@@ -12,6 +12,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <zlib.h>
+#define NOMINMAX
+#include <windows.h>
 
 namespace MapPackage
 {
@@ -716,6 +718,13 @@ void Write(const Plan &plan, const std::filesystem::path &destination)
     Require(bool(out), "Finishing ZIP failed.");
     for (const auto &file : plan.files)
         Check(file);
-    fs::create_hard_link(temporary, target);
+    // Moved, not hard linked: USB sticks (FAT32, exFAT) have no hard links.
+    // Without MOVEFILE_REPLACE_EXISTING a file named so meanwhile is kept.
+    if (!MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_WRITE_THROUGH))
+    {
+        const auto error = GetLastError();
+        throw std::runtime_error("Cannot write the ZIP into " + target.parent_path().string() + " (error " +
+                                 std::to_string(error) + ").");
+    }
 }
 } // namespace MapPackage
