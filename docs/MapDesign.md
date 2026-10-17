@@ -411,7 +411,9 @@ half-height). Add as many as you like.
 A reference is drawn as a body of that size with a head, so the posture reads at
 a glance. **Drag it** in any design view to move it, and **double-click it** to
 rename it, change its size or posture, or remove it. Each drag is one Undo step;
-right-click or press **Escape** before letting go to put it back where it was. Collision defaults alone do
+right-click or press **Escape** before letting go to put it back where it was. Other keys put it back
+too, except Shift, Ctrl, Alt and the view keys **G**, **O**, **F**, **Page Up** / **Page Down** and
+**Home**, which leave it held. Collision defaults alone do
 not establish traversal limits: set the sizes from movement tests and verify
 openings in game. References never become gameplay actors.
 
@@ -492,7 +494,8 @@ than at a run, and a route marked **Crouched** (for vents) takes the crouch
 penalty. Tag a route **Spy** or **Merc** to say whose route it is; it still shows
 both times. Use the top view's **Z** field or the storey slider to place points on different floors,
 or the front/side views for vertical planning. **Drag a route point** to adjust
-it (one Undo step; right-click or press **Escape** before letting go to cancel the drag), and **double-click one** to rename the route, change its team or crouch flag,
+it (one Undo step; right-click or press **Escape** before letting go to cancel the drag; other keys
+cancel it too, except the modifiers and view keys named for references), and **double-click one** to rename the route, change its team or crouch flag,
 or remove it. **Remove annotation...** also removes whole annotations.
 
 **Compare routes...** puts two routes side by side and reports which arrives

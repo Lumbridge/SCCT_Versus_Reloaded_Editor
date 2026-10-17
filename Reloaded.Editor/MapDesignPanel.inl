@@ -2076,7 +2076,9 @@ void DesignNewBlockout(DesignState& s)
 void DesignEditSelected(DesignState& s)
 {
     DesignActivate(s,DesignPiece(s));
-    DesignWarn(s,"Editing the selected piece. Drag or edit its fields; each change replaces its brushes in one Undo step.");
+    // A piece whose brushes are gone or no longer match it is not opened;
+    // the status already says why.
+    if(!s.previous.is_null())DesignWarn(s,"Editing the selected piece. Drag or edit its fields; each change replaces its brushes in one Undo step.");
 }
 void DesignDoorwayForm(DesignState& s)
 {
@@ -5104,9 +5106,11 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
         }
         if(message==WM_KEYDOWN)
         {
-            // Any key but a modifier puts back a reference or route point
+            // Any key but a modifier or one that only changes the view (snap,
+            // overlays, framing, storeys) puts back a reference or route point
             // still held, so no key acts on a move that was never saved.
-            const bool dropped=w!=VK_SHIFT && w!=VK_CONTROL && w!=VK_MENU && DesignDropReferenceDrag(*s);
+            const bool viewOnly=w=='G' || w=='O' || w=='F' || w==VK_PRIOR || w==VK_NEXT || w==VK_HOME;
+            const bool dropped=w!=VK_SHIFT && w!=VK_CONTROL && w!=VK_MENU && !viewOnly && DesignDropReferenceDrag(*s);
             const bool fine=(GetKeyState(VK_CONTROL)&0x8000)!=0;
             int axis=-1,direction=0;
             if(w==VK_LEFT || w==VK_RIGHT){axis=DesignHorizontal(*s);direction=w==VK_RIGHT?1:-1;}
