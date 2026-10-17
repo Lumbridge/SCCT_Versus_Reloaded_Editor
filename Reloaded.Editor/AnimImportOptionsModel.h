@@ -2,7 +2,8 @@
 // The pure part of the Animation Browser's import options (Merge sequences,
 // Overwrite existing sequences, Keep Notifies): which checkboxes apply, the
 // skeleton check a merge needs, and what happens to each sequence in the
-// file. No engine and no Windows, so the tests compile it alone.
+// file. Also the checks for deleting and renaming a sequence. No engine and
+// no Windows, so the tests compile it alone.
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -275,5 +276,39 @@ namespace AnimImportOptions
         for (const Step& s : plan.steps)
             if (s.action == Action::Append) out.push_back(incoming.sequences[static_cast<size_t>(s.incoming)]);
         return out;
+    }
+
+    // The set's sequences once sequence `index` is deleted; the native code
+    // checks the live arrays against it. An index outside the list changes
+    // nothing.
+    inline std::vector<std::string> WithoutSequence(const std::vector<std::string>& names, int index)
+    {
+        std::vector<std::string> out = names;
+        if (index >= 0 && static_cast<size_t>(index) < out.size()) out.erase(out.begin() + static_cast<std::ptrdiff_t>(index));
+        return out;
+    }
+
+    // Text for the Yes/No box shown before a sequence is deleted.
+    inline std::string DeleteConfirmText(const std::string& seq, const std::string& package,
+                                         const std::string& setName, int notifies)
+    {
+        return "Delete sequence '" + seq + "' from " + package + "." + setName + "?\n\nIt has " +
+               Plural(notifies, "notify", "notifies") + ". This cannot be undone: save the package to keep the "
+               "change, or reload it to get the sequence back.";
+    }
+
+    // Why `name` can't be a sequence's new name, or an empty string when it
+    // can. `others` holds the set's other sequences, not the one renamed.
+    inline std::string RenameProblem(const std::string& name, const std::vector<std::string>& others)
+    {
+        if (name.empty()) return "Enter a sequence name.";
+        for (char c : name)
+        {
+            const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+            if (!ok) return "Sequence names use letters, digits, _ and - only.";
+        }
+        const int j = IndexOf(others, name);
+        if (j >= 0) return "Another sequence in this set is already called " + others[static_cast<size_t>(j)] + ".";
+        return {};
     }
 }
