@@ -411,20 +411,34 @@ Json PasteActorProperties(const Json& targets,const Json& properties)
     }
     Json result={{"actors",changed},{"properties",written},{"skipped",skipped}};
     if(!changed)return result;
+    // Pasting bHiddenEd or bLockLocation can hide or lock a target. Like Hide
+    // and Lock elsewhere, that takes it out of the selection, so the next
+    // Delete or move never acts on an actor the user cannot see.
+    auto locked=[](Address a)
+    {
+        auto p=Property(a,"bLockLocation");
+        return p && IsA(p,"BoolProperty") && (Read<unsigned>(a+Read<int>(p+0x3c))&Read<unsigned>(p+0x64))!=0;
+    };
+    size_t deselected=0;
     Transaction transaction("Paste properties");
     for(auto a:actors)
     {
         const auto& list=takes.at(Read<Address>(a+0x24));if(list.empty())continue;
         Modify(a);
+        const bool wasHidden=(Read<unsigned>(a+0x2f4)&0x10u)!=0,wasLocked=locked(a);
         for(const auto& [p,i]:list)
         {
             auto at=a+Read<int>(p+0x3c);
             try{if(direct[i].first)Write<Address>(at,direct[i].second);else MagicImport(p,at,properties[i].at("value"));}
             catch(const std::exception& e){throw std::runtime_error(NameOf(a)+": "+properties[i].at("name").get<std::string>()+": "+e.what());}
         }
+        const auto flags=Read<unsigned>(a+0x2f4);
+        if((flags&0x40u) && ((!wasHidden && (flags&0x10u)) || (!wasLocked && locked(a)))){Write(a+0x2f4,flags&~0x40u);++deselected;}
         Call(a,0x44);
     }
-    transaction.Commit();Redraw();return result;
+    transaction.Commit();
+    if(deselected)Call(Engine(),0xe4);
+    Redraw();return result;
 }
 Json ExportEventJson(const Json& identity)
 {
