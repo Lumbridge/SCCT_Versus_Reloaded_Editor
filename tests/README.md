@@ -78,8 +78,9 @@ instead of a dialog, a placed piece loaded back into it, an inspector edit
 replacing that piece's brushes rather than adding more, an arrow key nudging it by
 one grid step, Escape ending the edit, the panel's Undo and Redo reaching the
 editor's history, Copy and Paste placing a copy at the cursor and at a
-right-clicked point, Duplicate placing one beside the original, Delete dropping
-a copy from the library, a size preset resizing a placed piece in place, a
+right-clicked point, Duplicate placing one beside the original, Delete removing
+a copy's brushes while its library entry stays, Undo bringing them back as that
+piece and Redo deleting them again, a size preset resizing a placed piece in place, a
 sightline inside a room reporting clear, the frame's Reloaded selection and
 visibility commands (all of a class, invert, hide, unhide all), and the quick-add badge on a hovered wall placing a corridor
 against it through its menu, the stale-geometry flag clearing when B runs a

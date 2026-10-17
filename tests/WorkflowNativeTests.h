@@ -1316,8 +1316,9 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
             {
                 // Clipboard: Copy takes the selected room, Paste lands a copy at
                 // the cursor or at a right-clicked point, Duplicate one beside
-                // the original; each placement is one Undo step and Delete
-                // takes the copy out of the library again. A size preset in the
+                // the original; each placement is one Undo step. Delete takes
+                // the copy's brushes away and keeps its library entry, so Undo
+                // brings them back as that piece. A size preset in the
                 // inspector resizes a placed piece in place.
                 auto pieces=[&]{std::ifstream in(directory/"ReloadedEditor"/"library.json");J document;in>>document;return document["maps"][call({{"op","map"}})["key"].get<std::string>()]["design"]["pieces"];};
                 auto status=[&]{char text[1024]{};GetWindowTextA(GetDlgItem(design,720),text,sizeof(text));return std::string(text);};
@@ -1338,15 +1339,27 @@ void RunWorkflowTests(HMODULE editorDll, const char* destination, bool restart=f
                 const POINT at{static_cast<LONG>(panX+px*zoom),static_cast<LONG>(panY-py*zoom)};
                 auto removeCopy=[&](const J& copy)
                 {
-                    // Delete drops the copy's brushes and its library entry.
+                    // Delete drops the copy's brushes and keeps its library
+                    // entry; Undo brings the brushes back to that entry.
                     SendMessage(design,WM_COMMAND,702,0);
                     call({{"op","select"},{"actors",copy["members"]}});
                     SendMessage(design,WM_COMMAND,702,0);
                     SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_DELETE,0);
                     require(actorCount()==actors0,"Delete removes the copy's brushes");
-                    bool listed=false;
-                    for(auto& p:pieces())if(p["members"]==copy["members"])listed=true;
-                    require(!listed,"Delete drops the copy from the library");
+                    auto listed=[&]{for(auto& p:pieces())if(p["members"]==copy["members"])return true;return false;};
+                    require(listed(),"Delete keeps the copy in the library, for Undo");
+                    Exec("TRANSACTION UNDO");
+                    bool back=actorCount()==actors0+1;
+                    const auto live=call({{"op","actors"}});
+                    for(auto& member:copy["members"])
+                    {
+                        bool found=false;
+                        for(auto& a:live)if(a["path"]==member["path"])found=true;
+                        back=back && found;
+                    }
+                    require(back && listed(),"Undo brings the deleted copy's brushes back as the same piece");
+                    Exec("TRANSACTION REDO");
+                    require(actorCount()==actors0,"Redo deletes the copy again");
                     SendMessage(GetDlgItem(design,719),WM_KEYDOWN,VK_ESCAPE,0);
                 };
                 SendMessage(GetDlgItem(design,719),WM_MOUSEMOVE,0,MAKELPARAM(at.x,at.y));
