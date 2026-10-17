@@ -723,7 +723,7 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         //   41300-41319 map recovery          41320-41339 map JSON preview
         //   41340-41359 favorites window      41360-41379 updater / checkpoints
         //   41380-41384 spare             41385-41389 smooth staircase
-        //   41390-41394 optimise map assets  41395-41399 spare
+        //   41390-41394 optimise map assets  41395-41399 conveyor belts
         //   41400-41419 objective player counts
         //   41420-41439 placement snap and push  41440-41459 camera bookmarks
         cmp dword ptr [esp+4], 41459

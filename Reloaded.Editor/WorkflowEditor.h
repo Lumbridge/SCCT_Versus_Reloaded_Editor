@@ -167,6 +167,19 @@ namespace Workflow::Editor
     // The SMission actors only, as ObjectiveActors lists them (path, objectives,
     // minimum): it never touches the selection.
     Json ObjectiveMissions();
+    // Conveyor belts (ConveyorModel.h). State: {compiled, version, belts:[identity]}.
+    // Prepare imports the belt's texture and meshes and compiles its classes into the
+    // map package when they are missing or older. Add places a belt (spec: optional
+    // location [x,y,z], rotation [pitch,yaw,roll] and properties {name: value}),
+    // at the viewport's last click when no location is given, with the stock items;
+    // with after (a belt's name) it continues that belt and is linked in after it.
+    // Sync sizes every belt's frame to its Length and Width as they are edited.
+    Json ConveyorState();
+    void PrepareConveyors();
+    Json AddConveyorBelt(const Json& spec);
+    // The one selected actor when it is a conveyor belt (an identity), else null.
+    Json SelectedConveyorBelt();
+    size_t SyncConveyorBelts();
     // Character Skins (CharacterSkinsModel.h): the map's Character Skins actor.
     // Settings: {placed, legacy, extra, compiled, slots:{SpyBody,...: material path or ""},
     // models:{SpyModel,...: skeletal mesh path or ""}, goggles:{SpyGoggleOffset,...: [x,y,z]}}.

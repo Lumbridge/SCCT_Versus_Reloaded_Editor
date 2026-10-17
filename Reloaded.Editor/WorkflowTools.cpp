@@ -1313,6 +1313,16 @@ namespace
                 try {if(!Editor::SelectedEmitters().empty())AppendMenuA(sub,MF_STRING,kSaveToEmitterLibrary,"Save to &Emitter Library...");}
                 catch(const std::exception&) { /* Only available with emitters selected in a source map. */ }
                 AppendMenuA(sub,MF_STRING,MagicEventWorkbench::Command,"Edit SMagicEvent...");
+                try
+                {
+                    if(!Editor::SelectedConveyorBelt().is_null())
+                    {
+                        AppendMenuA(sub,MF_STRING,kAddNextConveyorBelt,"Add &Next Conveyor Belt");
+                        AppendMenuA(sub,MF_STRING,kAddNextConveyorBeltLeft,"Add Next Conveyor Belt, Turning &Left");
+                        AppendMenuA(sub,MF_STRING,kAddNextConveyorBeltRight,"Add Next Conveyor Belt, Turning &Right");
+                    }
+                }
+                catch(const std::exception&) { /* Only with one conveyor belt selected. */ }
                 try {ObjectiveMenu(sub,ObjectiveOwner());}catch(const std::exception&){}
                 try
                 {
@@ -1348,6 +1358,7 @@ namespace
                 AppendMenuA(builder,MF_STRING,kPlaceBuilderBrush,"&Place Here");
                 AppendMenuA(builder,MF_STRING,kRebuildPlaceBuilderBrush,"&Rebuild and Place Here");
                 AppendMenuA(sub,MF_POPUP,reinterpret_cast<UINT_PTR>(builder),"&Builder Brush");
+                AppendMenuA(sub,MF_STRING,kAddConveyorBeltHere,"Add Con&veyor Belt Here");
                 MeasureTool::AddMenu(sub,id==108);
             }
         }
@@ -1537,6 +1548,27 @@ bool HandleCommand(UINT command)
         catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Remove Staircase Smoothing",MB_OK|MB_ICONINFORMATION); }
         return true;
     }
+    if(command==kAddNextConveyorBelt || command==kAddNextConveyorBeltLeft || command==kAddNextConveyorBeltRight)
+    {
+        try
+        {
+            auto belt=Editor::SelectedConveyorBelt();
+            if(belt.is_null())throw std::runtime_error("Select one conveyor belt first.");
+            Json spec={{"after",belt.at("path")}};
+            if(command!=kAddNextConveyorBelt)spec["turn"]=command==kAddNextConveyorBeltLeft?"left":"right";
+            Editor::AddConveyorBelt(spec);
+        }
+        catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Conveyor Belt",MB_OK|MB_ICONINFORMATION); }
+        return true;
+    }
+    if(command==kAddConveyorBelt || command==kAddConveyorBeltHere)
+    {
+        // From the viewport menu a click on a floor stands the belt on it; a backdrop
+        // or actor click leaves a stale surface plane.
+        try { Editor::AddConveyorBelt({{"surface",command==kAddConveyorBelt || builderMenuOnSurface}}); }
+        catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Conveyor Belt",MB_OK|MB_ICONINFORMATION); }
+        return true;
+    }
     if(command==kPlaceBuilderBrush || command==kRebuildPlaceBuilderBrush)
     {
         try { Editor::PlaceBuilderBrushAtClick(command==kRebuildPlaceBuilderBrush,builderMenuOnSurface); }
@@ -1615,6 +1647,10 @@ static Workflow::Json MoreWorkflowRequests(const std::string& op,const Workflow:
 {
     using namespace Workflow;
     if(op=="objectiveplayers.state") return Editor::ObjectivePlayerRules();
+    if(op=="conveyor.state") return Editor::ConveyorState();
+    if(op=="conveyor.prepare") {Editor::PrepareConveyors();return Editor::ConveyorState();}
+    if(op=="conveyor.add") return Editor::AddConveyorBelt(q);
+    if(op=="conveyor.sync") return Editor::SyncConveyorBelts();
     if(op=="objectiveplayers.set") return Editor::SetObjectivePlayers(q.at("objective"),q.value("min",0),q.value("max",0),q.value("open",false));
     if(op=="objectiveplayers.playlevel") return Editor::SetObjectivePlayLevelPlayers(q.value("players",0));
     if(op=="objectiveplayers.targets") return Editor::SetMissionTargets(q.at("mission"),q.at("sizes"));

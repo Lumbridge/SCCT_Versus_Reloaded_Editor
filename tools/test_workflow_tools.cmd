@@ -175,6 +175,10 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\ObjectivePlayersModelTests.cpp
 if errorlevel 1 goto failed
 "%TEMP%\ObjectivePlayersModelTests.exe"
 if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\ConveyorModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\ConveyorModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\ConveyorModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\LargeAddressModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\LargeAddressModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\LargeAddressModelTests.exe"
