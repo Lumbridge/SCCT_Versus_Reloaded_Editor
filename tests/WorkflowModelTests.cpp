@@ -128,6 +128,14 @@ int main()
         auto before=entries; Reject([&]{UpdateEntry(entries,"missing",Json{});},"reject stale entry");Check(entries==before,"stale update does not mutate entries");
         Json assemblyEntries=Json::array({definition});auto changed=definition;changed["actors"].erase(0);UpdateEntry(assemblyEntries,"stable",changed);
         Check(assemblyEntries.size()==1 && assemblyEntries[0]["id"]=="stable" && assemblyEntries[0]["actors"].size()==1,"assembly membership update in place");
+        // Whole-map actor lookups: one index, the same answers as a search in list order.
+        PathIndex<int> paths;paths.Add("MyLevel.light3",1);paths.Add("MyLevel.LIGHT3",2);paths.Add("MyLevel.Brush0",3);
+        Check(paths.Find("MyLevel.light3") && *paths.Find("MyLevel.light3")==1,"path index keeps the first of two paths that differ only in case");
+        Check(paths.Find("MYLEVEL.Light3") && *paths.Find("MYLEVEL.Light3")==1 && paths.Find("mylevel.brush0") && *paths.Find("mylevel.brush0")==3,"path index folds the query");
+        PathIndex<int> guarded;guarded.Add("None",4);guarded.Add("",5);
+        Check(guarded.size()==2 && !guarded.Find("None") && !guarded.Find("NONE") && !guarded.Find(""),"path index finds nothing for an empty or None path, even one it holds");
+        Check(!paths.Find("MyLevel.light") && !paths.Find("MyLevel.light34") && !paths.Find("Other.light3"),"path index finds nothing for a missing path");
+        Check(paths.size()==2,"path index counts distinct folded paths");
         auto dir=std::filesystem::temp_directory_path()/("workflow-test-"+Id());auto path=dir/"library.json";
         Json doc={{"version",1},{"entries",entries}};WriteDocument(path,doc);Check(ReadDocument(path,Json{})==doc,"disk roundtrip");
         doc["entries"]=assemblyEntries;WriteDocument(path,doc);Check(ReadDocument(path,Json{})==doc,"atomic overwrite");

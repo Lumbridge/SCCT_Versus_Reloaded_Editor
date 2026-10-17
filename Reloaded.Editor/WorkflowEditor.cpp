@@ -205,14 +205,16 @@ namespace
     }
     Address Find(const std::string& path,bool actors=false)
     {
-        if(path.empty() || Fold(path)=="none") return 0;
-        if(actors) { for(auto a:LiveActors()) if(Fold(Path(a))==Fold(path)) return a; }
+        const auto folded=Fold(path);
+        if(path.empty() || folded=="none") return 0;
+        if(actors) { for(auto a:LiveActors()) if(Fold(Path(a))==folded) return a; }
         else
         {
+            const auto name=Fold(path.substr(path.find_last_of('.')+1));
             for(auto at:Array(0x11697B70))
             {
                 auto a=Read<Address>(at);
-                if(a && Fold(NameOf(a))==Fold(path.substr(path.find_last_of('.')+1)) && Fold(Path(a))==Fold(path)) return a;
+                if(a && Fold(NameOf(a))==name && Fold(Path(a))==folded) return a;
             }
         }
         return 0;
@@ -304,6 +306,47 @@ namespace
         auto a=Find(identity.at("path").get<std::string>(),true);
         return a && Path(Read<Address>(a+0x24))==identity.at("class").get<std::string>() ? a : 0;
     }
+    // Every live actor by path, from one pass over the map, for the commands
+    // that resolve a long list of actors: ResolveIdentity searches the whole
+    // map for each one. Same first match and class check. Built where it is
+    // used, after that command's own paste or delete, and never kept: the
+    // next edit can free or rename what it holds.
+    class ActorIndex
+    {
+    public:
+        ActorIndex()
+        {
+            Clock clock{spent}; size_t unreadable=0; std::string reason;
+            for(auto a:LiveActors())
+            {
+                ++actors;
+                try { paths.Add(Path(a),a); }
+                catch(const std::exception& e) { if(!unreadable++) reason=e.what(); }
+            }
+            if(unreadable) Logger::log("Actor lookup: left out "+std::to_string(unreadable)+" actor(s) whose path could not be read: "+reason);
+        }
+        Address Find(const std::string& path) const { Clock clock{spent}; auto a=paths.Find(path); return a?*a:0; }
+        Address Resolve(const Json& identity) const
+        {
+            Clock clock{spent}; auto a=paths.Find(identity.at("path").get<std::string>());
+            return a && Path(Read<Address>(*a+0x24))==identity.at("class").get<std::string>() ? *a : 0;
+        }
+        size_t Size() const { return paths.size(); }
+        // A lookup slow enough to notice goes in the log, once per command.
+        // Only the building and the lookups count, not the caller's own work.
+        void Report(size_t identities,const char* function) const
+        {
+            const auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(spent).count();
+            if(ms>20) Logger::log("Actor lookup: "+std::to_string(identities)+" identities against "+std::to_string(actors)+" actors in "+std::to_string(ms)+" ms ("+function+")");
+        }
+    private:
+        struct Clock
+        {
+            std::chrono::steady_clock::duration& spent; std::chrono::steady_clock::time_point start=std::chrono::steady_clock::now();
+            ~Clock() { spent+=std::chrono::steady_clock::now()-start; }
+        };
+        PathIndex<Address> paths; size_t actors=0; mutable std::chrono::steady_clock::duration spent{};
+    };
     struct TagSlot { Address actor,slot;std::string property,value; };
     std::vector<TagSlot> TagSlots()
     {
@@ -610,16 +653,18 @@ Json HiddenActors()
 }
 size_t RestoreHiddenActors(const Json& hidden)
 {
-    size_t restored=0;
+    if(hidden.empty())return 0;
+    size_t restored=0;const ActorIndex index;
     for(const auto& id:hidden)
     {
-        auto actor=ResolveIdentity(id);
+        auto actor=index.Resolve(id);
         if(!actor)continue;
         const auto flags=Read<unsigned>(actor+0x2f4);
         if(flags&0x10u)continue;
         Write(actor+0x2f4,(flags|0x10u)&~0x40u);
         ++restored;
     }
+    index.Report(hidden.size(),"RestoreHiddenActors");
     if(restored){Call(Engine(),0xe4);Redraw();}
     return restored;
 }
@@ -682,7 +727,14 @@ Json SelectedSurfaceBrushes()
 void Select(const Json& identities,bool focus)
 {
     auto e=Engine(), level=Level(); std::set<Address> selected;
-    for(const auto& id:identities) if(auto a=ResolveIdentity(id)) selected.insert(a);
+    // A click's few actors are found sooner one by one than by indexing the map.
+    if(identities.size()>=8)
+    {
+        const ActorIndex index;
+        for(const auto& id:identities) if(auto a=index.Resolve(id)) selected.insert(a);
+        index.Report(identities.size(),"Select");
+    }
+    else for(const auto& id:identities) if(auto a=ResolveIdentity(id)) selected.insert(a);
     // Native SelectActor (0x10eb9a20) calls Modify on the actor whatever its
     // state, so calling it for every actor put the whole map into the open
     // transaction (7 MB per Map Design edit on ShipD, against an 8 MB undo
@@ -723,7 +775,9 @@ std::string RestoreView(const Json& view)
         int mode=c.at("mode"); if(mode<0 || mode>64) throw std::runtime_error("Invalid saved viewport mode.");
         for(const auto& name:{"OrthoZoom","FovAngle"}) if(c.contains(name) && (!std::isfinite(c.at(name).get<float>()) || c.at(name).get<float>()<=0)) throw std::runtime_error("Invalid saved camera zoom.");
     }
-    for(const auto& a:view.at("actors")) { ResolveIdentity(a); a.at("hidden").get<bool>(); }
+    // One index for both passes; a camera preview restores no actors at all.
+    const auto& saved=view.at("actors"); std::optional<ActorIndex> index; if(!saved.empty()) index.emplace();
+    for(const auto& a:saved) { index->Resolve(a); a.at("hidden").get<bool>(); }
     if(view.contains("groups")) view.at("groups").get<std::string>();
     for(const auto& c:view.at("cameras"))
     {
@@ -732,11 +786,12 @@ std::string RestoreView(const Json& view)
         Write(a+0x4fc,c.at("mode").get<int>()); Write(a+0x4f0,c.at("flags").get<unsigned>());
         for(const auto& name:{"OrthoZoom","FovAngle"}) if(c.contains(name)) if(auto p=Property(a,name)) Write(a+Read<int>(p+0x3c),c.at(name).get<float>());
     }
-    for(const auto& j:view.at("actors"))
+    for(const auto& j:saved)
     {
-        auto a=ResolveIdentity(j); if(!a) { ++skipped; continue; }
+        auto a=index->Resolve(j); if(!a) { ++skipped; continue; }
         auto flags=Read<unsigned>(a+0x2f4); Write(a+0x2f4,(flags&~0x10u)|(j.at("hidden").get<bool>()?0x10u:0));
     }
+    if(index) index->Report(saved.size(),"RestoreView");
     auto actors=LiveActors();
     if(!actors.empty() && view.contains("groups"))
     {
@@ -748,13 +803,14 @@ std::string RestoreView(const Json& view)
 CameraState FrameCamera(uintptr_t camera,const Json& identities,double aspect)
 {
     if(!camera) throw std::runtime_error("No perspective camera to frame the selection with.");
-    std::array<double,3> low{},high{}; size_t count=0;
-    for(const auto& identity:identities) if(auto a=ResolveIdentity(identity))
+    std::array<double,3> low{},high{}; size_t count=0; const ActorIndex index;
+    for(const auto& identity:identities) if(auto a=index.Resolve(identity))
     {
         auto p=Position(a);
         for(int axis=0;axis<3;++axis) { low[axis]=count?std::min(low[axis],p[axis]):p[axis]; high[axis]=count?std::max(high[axis],p[axis]):p[axis]; }
         ++count;
     }
+    index.Report(identities.size(),"FrameCamera");
     if(!count) throw std::runtime_error("None of the actors to frame are in the map.");
     auto rotationField=Field(camera,"Rotation");
     float fov=90; if(auto p=Property(camera,"FovAngle")) fov=Read<float>(camera+Read<int>(p+0x3c));
@@ -807,7 +863,7 @@ void ReplaceUsages(const Json& usages,const std::string& source,const std::strin
 {
     auto fresh=FindUsages(source); auto target=Find(replacement); if(!target) throw std::runtime_error("Load a replacement in the browser first.");
     if(Fold(source)==Fold(replacement)) throw std::runtime_error("Choose a different replacement.");
-    std::vector<Ref> refs; std::set<int> surfaces; std::set<Address> changed;
+    std::vector<Ref> refs; std::set<int> surfaces; std::set<Address> changed; const ActorIndex index;
     for(const auto& row:usages)
     {
         auto match=std::find_if(fresh.begin(),fresh.end(),[&](const Json& j){return j.at("actor")==row.at("actor") && j.at("property")==row.at("property") && j.at("surface")==row.at("surface");});
@@ -816,7 +872,7 @@ void ReplaceUsages(const Json& usages,const std::string& source,const std::strin
         if(surface>=0) { if(!IsA(target,"Material")) throw std::runtime_error("BSP surfaces require a material."); surfaces.insert(surface); }
         else
         {
-            auto a=ResolveIdentity(row.at("actor")); if(!a) throw std::runtime_error("A target actor no longer exists.");
+            auto a=index.Resolve(row.at("actor")); if(!a) throw std::runtime_error("A target actor no longer exists.");
             for(auto ref:ReferencesOf(a)) if(ref.key==row.at("property").get<std::string>())
             {
                 auto type=Path(Read<Address>(ref.property+0x64));
@@ -825,6 +881,7 @@ void ReplaceUsages(const Json& usages,const std::string& source,const std::strin
             }
         }
     }
+    index.Report(usages.size(),"ReplaceUsages");
     if(refs.empty() && surfaces.empty()) throw std::runtime_error("No replaceable usages are checked.");
     auto e=Engine(), model=Read<Address>(Level()+0x13c); auto allSurfaces=Array(model+0x94,0x2c);
     std::vector<unsigned> flags; for(auto s:allSurfaces) flags.push_back(Read<unsigned>(s+0x14));
@@ -1338,13 +1395,14 @@ void PlaceBuilderBrushAtClick(bool rebuild,bool onSurface)
 Json CaptureAssembly(const Json& members,const Pose& frame)
 {
     if(members.empty()) throw std::runtime_error("Select at least one actor or brush.");
-    std::map<std::string,Address> included; auto live=LiveActors();
+    std::map<std::string,Address> included; auto live=LiveActors(); const ActorIndex index;
     for(const auto& member:members)
     {
-        auto a=ResolveIdentity(member); if(!a) continue;
+        auto a=index.Resolve(member); if(!a) continue;
         if(a==live[0] || (live.size()>1 && a==live[1]) || IsA(a,"Camera") || IsA(a,"LevelInfo")) throw std::runtime_error("Editor infrastructure cannot be saved in an assembly: "+NameOf(a));
         included[Fold(Path(a))]=a;
     }
+    index.Report(members.size(),"CaptureAssembly");
     if(included.empty()) throw std::runtime_error("All assembly members have been deleted.");
     auto previous=SelectedIdentities();
     struct Restore { Json previous; ~Restore(){try {Select(previous);} catch(...) {}} } restore{previous};
@@ -1473,14 +1531,16 @@ Json PlaceAssembly(const Json& definition,const Pose& frame,const std::map<std::
         // Verified UUnrealEdEngine::edactPasteSelected. The native routine
         // recentres pasted actors; restore the requested world poses before End.
         Call(Engine(),0x26c,reinterpret_cast<void*>(Level()),0);
+        const ActorIndex index;
         for(const auto& actor:prepared.at("actors"))
         {
-            auto a=Find(LevelPath()+"."+actor.at("name").get<std::string>(),true);
+            auto a=index.Find(LevelPath()+"."+actor.at("name").get<std::string>());
             if(!a) throw std::runtime_error("Native paste did not create all assembly actors.");
             Modify(a); SetPosition(a,actor.at("position").get<Vector>()); Write(Field(a,"Rotation"),actor.at("rotation").get<Rotation>()); Call(a,0x44);
             members.push_back(Identity(a));
             names[Path(a)]=actor.at("name").get<std::string>().substr(prefix.size());
         }
+        index.Report(prepared.at("actors").size(),"PlaceAssembly");
         if(SelectedIdentities().size()!=members.size()) throw std::runtime_error("Native paste created an unexpected actor count.");
         transaction.Commit();
     }
