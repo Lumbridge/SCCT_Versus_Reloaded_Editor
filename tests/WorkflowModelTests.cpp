@@ -132,7 +132,8 @@ int main()
         PathIndex<int> paths;paths.Add("MyLevel.light3",1);paths.Add("MyLevel.LIGHT3",2);paths.Add("MyLevel.Brush0",3);
         Check(paths.Find("MyLevel.light3") && *paths.Find("MyLevel.light3")==1,"path index keeps the first of two paths that differ only in case");
         Check(paths.Find("MYLEVEL.Light3") && *paths.Find("MYLEVEL.Light3")==1 && paths.Find("mylevel.brush0") && *paths.Find("mylevel.brush0")==3,"path index folds the query");
-        Check(!paths.Find("") && !paths.Find("None") && !paths.Find("NONE"),"path index finds nothing for an empty or None path");
+        PathIndex<int> guarded;guarded.Add("None",4);guarded.Add("",5);
+        Check(guarded.size()==2 && !guarded.Find("None") && !guarded.Find("NONE") && !guarded.Find(""),"path index finds nothing for an empty or None path, even one it holds");
         Check(!paths.Find("MyLevel.light") && !paths.Find("MyLevel.light34") && !paths.Find("Other.light3"),"path index finds nothing for a missing path");
         Check(paths.size()==2,"path index counts distinct folded paths");
         auto dir=std::filesystem::temp_directory_path()/("workflow-test-"+Id());auto path=dir/"library.json";
