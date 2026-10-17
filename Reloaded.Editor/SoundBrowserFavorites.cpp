@@ -1067,15 +1067,16 @@ static void SBF_ClipboardCopy(const char* text)
 }
 
 // Copy Shortcut builds Sound'Package.Group.Name' from the package and group
-// boxes and the row's text; a Reloaded row names its sound in full.
+// boxes and the row's text; a Reloaded row names its sound in full, and so
+// does a native row through its sound, whichever group the boxes show.
 static int __cdecl SBF_CustomCopyShortcut(void* browser)
 {
-    if (browser != g_Browser || !g_CustomView)
+    if (browser != g_Browser)
         return 0;
-    const int item = SBF_SelectedItem();
-    if (item < 0 || static_cast<size_t>(item) >= g_Rows.size())
-        return 1;
-    SBF_ClipboardCopy(("Sound'" + g_Rows[item].path + "'").c_str());
+    std::string path;
+    if (!SBF_SelectedPath(path))
+        return g_CustomView ? 1 : 0;
+    SBF_ClipboardCopy(("Sound'" + path + "'").c_str());
     return 1;
 }
 
@@ -1546,4 +1547,9 @@ void SoundBrowserFavorites::Initialize()
         return;
     }
     g_FeatureSupported = true;
+}
+
+bool SoundBrowserFavorites::SoundPath(void* sound, std::string& path)
+{
+    return SBF_IsSound(sound) && SBF_BuildObjectPath(sound, path);
 }

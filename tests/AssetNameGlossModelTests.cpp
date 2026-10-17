@@ -38,6 +38,19 @@ int main()
         Same(Words(Tokenize("__")), "", "nothing but separators");
         Same(Fold("\x8C" "uvre \xC6"), "oeuvre ae", "ligatures");
 
+        // Names a Sound'Package.Name' reference can carry.
+        Same(SafeName("Alarm Loop (short)"), "Alarm_Loop_short", "spaces and brackets");
+        Same(SafeName("door-01"), "door-01", "letters, digits and - kept");
+        Same(SafeName("\xC9t\xE9"), "Ete", "accents folded, case kept");
+        Same(SafeName(""), "Sound", "empty name");
+        Same(SafeName("__a__"), "a", "underscores trimmed");
+        Same(SafeName("a  --  b"), "a_--_b", "runs collapse to one _");
+        Same(SafeName("(!)"), "Sound", "nothing usable left");
+        Same(SafeName(" ", ""), "", "own fallback");
+        Same(SafeGroup("Alarms.Short Loops"), "Alarms.Short_Loops", "nested group keeps its dot");
+        Same(SafeGroup(".A..B."), "A.B", "empty group parts dropped");
+        Same(SafeGroup(""), "", "no group");
+
         Dictionary d;
         d.Load(R"(
 # comment

@@ -85,6 +85,44 @@ inline std::string Trim(std::string_view text)
     return std::string(text.substr(begin, end - begin));
 }
 
+// A name a reference can carry: Sound'Package.Name' is cut off at a space or a
+// bracket. Accents are folded, anything but a letter, digit, _ or - becomes _,
+// runs of _ collapse and none lead or trail: "Alarm Loop (short)" ->
+// "Alarm_Loop_short". Nothing left gives the fallback.
+inline std::string SafeName(std::string_view text, std::string_view fallback = "Sound")
+{
+    std::string out;
+    for (const char c : Fold(text, false))
+    {
+        if (IsAlpha(c) || IsDigit(c) || c == '-')
+            out += c;
+        else if (!out.empty() && out.back() != '_')
+            out += '_';
+    }
+    while (!out.empty() && out.back() == '_')
+        out.pop_back();
+    return out.empty() ? std::string(fallback) : out;
+}
+
+// A group keeps the dots that nest it in another: each part is made safe and
+// empty parts are dropped, so "" stays "".
+inline std::string SafeGroup(std::string_view text)
+{
+    std::string out;
+    size_t pos = 0;
+    while (pos <= text.size())
+    {
+        size_t end = text.find('.', pos);
+        if (end == std::string_view::npos)
+            end = text.size();
+        const std::string part = SafeName(text.substr(pos, end - pos), "");
+        if (!part.empty())
+            out += (out.empty() ? "" : ".") + part;
+        pos = end + 1;
+    }
+    return out;
+}
+
 class Dictionary
 {
 public:
