@@ -222,6 +222,17 @@ inline std::vector<Vector> GridSnapDeltas(const std::vector<Box>& boxes, const s
     }
     return deltas;
 }
+// The part of a move that an actor's float position can take: an axis whose
+// target rounds to the float it already has stays at 0, so a box edge that
+// a float cannot put exactly on the grid (far from the origin) is not moved
+// again on every snap.
+inline Vector FloatDelta(const Vector& position, const Vector& delta)
+{
+    Vector out = delta;
+    for (int axis = 0; axis < 3; ++axis)
+        if (static_cast<float>(position[axis] + delta[axis]) == static_cast<float>(position[axis])) out[axis] = 0;
+    return out;
+}
 // The yaw turned to the nearest whole step of degrees, within one turn
 // (0-65535); pitch and roll stay. A step need not be a whole number of units.
 inline Rotation SnapYaw(const Rotation& r, double degrees)

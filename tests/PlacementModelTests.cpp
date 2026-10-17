@@ -90,6 +90,24 @@ int main()
     Reject([&]{GridSnapDeltas(edged,pivots,{16,16,0},7,SnapBy::Edges);});
     Reject([&]{GridSnapDeltas(unused,pivots,{16,std::numeric_limits<double>::infinity(),16},3,SnapBy::Pivot);});
     Reject([&]{GridSnapDeltas(unused,{pivots[0]},{16,16,16},3,SnapBy::Pivot);});
+    // A move a float position cannot take is no move: at 20000 a float steps
+    // by 1/512, near 3 it takes 0.0004.
+    Check(FloatDelta({20000.5,3,-40000},{0.0004,0.0004,-0.003})==Vector{0,0.0004,-0.003},"a move the float cannot take is dropped");
+    // Box edges far from the origin: the float pivot leaves the edge a little
+    // off the grid line, and snapping again moves nothing.
+    int offAgain=0;
+    for(int i=0;i<200;++i)
+    {
+        const Vector pivot{static_cast<float>(16384+i*217.37),static_cast<float>(-60000+i*251.91),64};
+        auto boxAt=[](const Vector& p){return Box{Add(p,{-31.7,-20.3,0}),Add(p,{12.9,7.1,32})};};
+        const auto first=FloatDelta(pivot,GridSnapDeltas({boxAt(pivot)},{pivot},{16,16,16},3,SnapBy::Edges)[0]);
+        Vector moved{};
+        for(int axis=0;axis<3;++axis)moved[axis]=static_cast<float>(pivot[axis]+first[axis]);
+        const auto second=GridSnapDeltas({boxAt(moved)},{moved},{16,16,16},3,SnapBy::Edges)[0];
+        if(Length(second)>=0.001)++offAgain;
+        Check(FloatDelta(moved,second)==Vector{0,0,0},"a second box edge snap far from the origin moves nothing");
+    }
+    Check(offAgain>0,"far from the origin a float pivot leaves box edges just off the grid");
     // Yaw to the nearest step: a turn wraps to 0, pitch and roll stay.
     Check(SnapYaw({0,65000,0},90)==Rotation({0,0,0}),"65000 at 90 degrees is 0");
     Check(SnapYaw({100,9000,-200},45)==Rotation({100,8192,-200}),"9000 at 45 degrees is 8192; pitch and roll stay");

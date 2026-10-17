@@ -204,21 +204,28 @@ namespace
         Report(text, !moved);
     }
 
-    // Snapping to the grid leaves CSG brushes out: their faces, not their
-    // pivots, belong on the grid, and the brush menus snap those.
-    Selection WithoutCsg(size_t& brushes)
+    // Snapping to the grid leaves brushes out. A CSG brush's faces, not its
+    // pivot, belong on the grid, and the brush menus snap those. A volume or
+    // mover collides, so the level's collision hash files it by where it
+    // stood when added (StairSmoothNative.inl); writing its Location or
+    // Rotation here would leave it filed in the wrong place for the stock
+    // Undo and delete.
+    Selection WithoutBrushes(size_t& brushes, size_t& volumes)
     {
         Selection chosen;
-        brushes = 0;
+        brushes = volumes = 0;
         for (const auto& member : Selected().members)
             if (member.kind == "csg") ++brushes;
+            else if (member.kind == "brush") ++volumes;
             else chosen.members.push_back(member);
-        if (chosen.members.empty() && !brushes) throw std::runtime_error("Select the actors to snap first.");
+        if (chosen.members.empty() && !brushes && !volumes) throw std::runtime_error("Select the actors to snap first.");
         return chosen;
     }
-    std::string BrushesLeft(size_t brushes, bool faceSnap)
+    std::string BrushesLeft(size_t brushes, size_t volumes, bool faceSnap)
     {
-        return brushes ? Count(brushes, "CSG brush", "CSG brushes") + " left alone" + (faceSnap ? ": right-click a brush face for Snap brush edge to grid." : ".") : "";
+        std::string text = brushes ? Count(brushes, "CSG brush", "CSG brushes") + " left alone" + (faceSnap ? ": right-click a brush face for Snap brush edge to grid." : ".") : "";
+        if (volumes) text += (text.empty() ? "" : " ") + Count(volumes, "volume or mover", "volumes and movers") + " left alone.";
+        return text;
     }
     std::string StayLocked(size_t locked) { return Count(locked, "locked actor stays", "locked actors stay"); }
     std::string GridName(const Vector& grid, unsigned axes)
@@ -237,8 +244,8 @@ namespace
     // all three (7).
     void Snap(unsigned axes, Place::SnapBy by)
     {
-        size_t brushes = 0;
-        const auto chosen = WithoutCsg(brushes);
+        size_t brushes = 0, volumes = 0;
+        const auto chosen = WithoutBrushes(brushes, volumes);
         std::string text;
         bool problem = chosen.members.empty();
         if (!chosen.members.empty())
@@ -246,7 +253,10 @@ namespace
             const auto grid = Editor::DesignGrid();
             std::vector<Vector> pivots;
             for (const auto& member : chosen.members) pivots.push_back(member.position);
-            const auto deltas = Place::GridSnapDeltas(Boxes(chosen), pivots, grid, axes, by);
+            auto deltas = Place::GridSnapDeltas(Boxes(chosen), pivots, grid, axes, by);
+            // As the brush edge snap does: a move the float position cannot
+            // take is no move, so a second snap finds nothing to do.
+            for (size_t i = 0; i < deltas.size(); ++i) deltas[i] = Place::FloatDelta(pivots[i], deltas[i]);
             const auto wanted = Movable(deltas);
             const auto moved = Move(chosen, deltas, "Snap to grid");
             const auto locked = wanted - moved;
@@ -255,14 +265,14 @@ namespace
             else text = "Snapped " + Count(moved, "actor's", "actors'") + (by == Place::SnapBy::Pivot ? (moved == 1 ? " pivot" : " pivots") : " box edges")
                       + " to the " + GridName(grid, axes) + (axes == 7 ? " (X, Y and Z)" : " (X and Y)") + (locked ? "; " + StayLocked(locked) : "") + ".";
         }
-        if (brushes) text += (text.empty() ? "" : " ") + BrushesLeft(brushes, true);
+        if (brushes || volumes) text += (text.empty() ? "" : " ") + BrushesLeft(brushes, volumes, true);
         Report(text, problem);
     }
     // Yaws to the nearest step of 90, 45 or 15 degrees; pitch and roll stay.
     void SnapYaw(int degrees)
     {
-        size_t brushes = 0;
-        const auto chosen = WithoutCsg(brushes);
+        size_t brushes = 0, volumes = 0;
+        const auto chosen = WithoutBrushes(brushes, volumes);
         std::string text;
         bool problem = chosen.members.empty();
         if (!chosen.members.empty())
@@ -285,7 +295,7 @@ namespace
             else text = "Turned " + Count(turned, "actor", "actors") + " to the nearest " + step + (locked ? "; " + StayLocked(locked) : "") + ".";
         }
         // The face snap only moves a brush, so it is no help with a turn.
-        if (brushes) text += (text.empty() ? "" : " ") + BrushesLeft(brushes, false);
+        if (brushes || volumes) text += (text.empty() ? "" : " ") + BrushesLeft(brushes, volumes, false);
         Report(text, problem);
     }
 
