@@ -429,8 +429,9 @@ simulated function MoveItems(float DeltaTime)
 	}
 }
 
-// Whether a walking pawn stands on the belt: over its top, within its length and
-// width, its middle no higher than it stands.
+// Whether a walking pawn stands on the belt: its feet on the top (measured from
+// them, not its middle, which on a slope reads as further along), within its
+// length, and over its width or half its radius past an edge (onto a corner).
 simulated function bool Riding(Pawn P, vector X, vector Y, vector Z)
 {
 	local vector L;
@@ -439,10 +440,11 @@ simulated function bool Riding(Pawn P, vector X, vector Y, vector Z)
 	if (P == None || P.Physics != PHYS_Walking)
 		return false;
 	L = P.Location - Location;
-	if (L dot X < 0 || L dot X > Length || Abs(L dot Y) > Width / 2)
+	L.Z -= P.CollisionHeight;
+	if (L dot X < 0 || L dot X > Length || Abs(L dot Y) > Width / 2 + P.CollisionRadius / 2)
 		return false;
 	H = L dot Z;
-	return H > 0 && H < P.CollisionHeight + 24;
+	return H > -16 && H < @STEP@ + 16;
 }
 
 // A move along a slope sticks against it, and a move never steps up onto the next
