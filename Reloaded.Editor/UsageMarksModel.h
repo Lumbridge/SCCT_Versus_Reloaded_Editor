@@ -27,18 +27,22 @@ namespace Workflow::UsageMarks
         return {row.at("replaceable").get<bool>() && (!only || selected),selected};
     }
     // The marks for newRows: a usage listed before keeps its marks (rows with the
-    // same key pair up in order); one that was not was outside the selection Refresh
-    // captured, so it is checked only when replaceable and the scope is off.
-    inline std::vector<Mark> Carry(const Json& oldRows,const std::vector<Mark>& oldMarks,const Json& newRows,bool only)
+    // same key pair up in order), unchecked once it is read-only; one that was not
+    // was outside the selection Refresh captured, so it is checked only when
+    // replaceable and the scope is off. renumbered: a geometry build since oldRows
+    // were listed numbers the BSP surfaces afresh, so an old surface number names
+    // another face and every surface row counts as not listed before.
+    inline std::vector<Mark> Carry(const Json& oldRows,const std::vector<Mark>& oldMarks,const Json& newRows,bool only,bool renumbered=false)
     {
         std::map<std::string,std::deque<size_t>> listed;
-        for(size_t i=0;i<oldRows.size() && i<oldMarks.size();++i)listed[Key(oldRows[i])].push_back(i);
+        for(size_t i=0;i<oldRows.size() && i<oldMarks.size();++i)if(!renumbered || oldRows[i].at("surface").get<int>()<0)listed[Key(oldRows[i])].push_back(i);
         std::vector<Mark> marks;marks.reserve(newRows.size());
         for(const auto& row:newRows)
         {
+            const bool can=row.at("replaceable").get<bool>();
             auto found=listed.find(Key(row));
-            if(found!=listed.end() && !found->second.empty()){marks.push_back(oldMarks[found->second.front()]);found->second.pop_front();}
-            else marks.push_back({row.at("replaceable").get<bool>() && !only,false});
+            if(found!=listed.end() && !found->second.empty()){auto mark=oldMarks[found->second.front()];found->second.pop_front();mark.checked=mark.checked && can;marks.push_back(mark);}
+            else marks.push_back({can && !only,false});
         }
         return marks;
     }

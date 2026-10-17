@@ -80,6 +80,37 @@ void Carrying()
     // Fewer marks than rows: the rows without one count as not listed.
     carried = UsageMarks::Carry(before, {{false, false}}, before, false);
     Check(Same(carried[0], false, false) && Same(carried[1], true, false) && Same(carried[2], true, false), "rows without marks are new");
+
+    // A usage that became read-only (its Skins slot now holds a shader using the
+    // asset) loses its check but keeps its scope.
+    after = Json::array({Usage("Map.A", "StaticMesh", false), before[1], before[2]});
+    carried = UsageMarks::Carry(before, marks, after, false);
+    Check(Same(carried[0], false, true), "a carried row that became read-only is unchecked");
+    Check(Same(carried[1], false, false) && Same(carried[2], true, false), "the other rows keep their marks");
+}
+
+void Rebuilding()
+{
+    // Brush A's faces 10 to 12, face 12 unchecked by hand, and an actor row unchecked.
+    const Json brush = {{"path", "Map.Brush4"}, {"class", "Engine.Brush"}};
+    const Json before = Json::array({Usage("Map.A", "StaticMesh"), Surface(10, brush), Surface(11, brush), Surface(12, brush)});
+    const std::vector<Mark> marks = {{false, false}, {true, false}, {true, false}, {false, false}};
+    // A build that adds faces earlier in the BSP moves them to 12 to 14.
+    const Json after = Json::array({Usage("Map.A", "StaticMesh"), Surface(12, brush), Surface(13, brush), Surface(14, brush)});
+
+    // Carried by number, face 12's unchecked mark would land on what was face 10.
+    auto carried = UsageMarks::Carry(before, marks, after, false);
+    Check(Same(carried[1], false, false), "without a build the numbers are trusted");
+
+    carried = UsageMarks::Carry(before, marks, after, false, true);
+    Check(carried.size() == 4, "one mark per row after a build");
+    Check(Same(carried[0], false, false), "after a build an actor row keeps its marks");
+    Check(Same(carried[1], true, false) && Same(carried[2], true, false) && Same(carried[3], true, false), "after a build, scope off: every surface row is checked again");
+    carried = UsageMarks::Carry(before, marks, after, true, true);
+    Check(Same(carried[1], false, false) && Same(carried[2], false, false) && Same(carried[3], false, false), "after a build, scope on: surface rows are unchecked and unscoped");
+    // The same numbers after a build still name new faces.
+    carried = UsageMarks::Carry(before, marks, before, false, true);
+    Check(Same(carried[0], false, false) && Same(carried[3], true, false), "after a build a surface number is not matched");
 }
 
 int main()
@@ -89,6 +120,7 @@ int main()
         Keys();
         Defaults();
         Carrying();
+        Rebuilding();
     }
     catch (const std::exception& error)
     {

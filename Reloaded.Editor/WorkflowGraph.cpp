@@ -269,7 +269,7 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
         if(message==WM_TIMER)
         {
             if(s->level!=Editor::LevelIdentity() || s->generation!=Editor::MapGeneration() || s->revision!=Editor::ContentRevision())Rebuild(*s,true,false);
-            else if(Checked(*s,Follow) && SendMessage(GetDlgItem(w,Mode),CB_GETCURSEL,0,0)==0){auto selected=Editor::Actors(true);auto root=selected.empty()?"":selected[0].at("path").get<std::string>();if(root!=s->root){s->depth=1;Rebuild(*s,false,true);}}
+            else if((Checked(*s,Follow) || s->root.empty()) && SendMessage(GetDlgItem(w,Mode),CB_GETCURSEL,0,0)==0){auto selected=Editor::Actors(true);auto root=selected.empty()?"":selected[0].at("path").get<std::string>();if(root!=s->root){s->depth=1;Rebuild(*s,false,true);}}
             return 0;
         }
         if(message==WM_CLOSE){DestroyWindow(w);return 0;}
