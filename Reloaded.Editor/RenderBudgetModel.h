@@ -58,6 +58,7 @@ namespace RenderBudget
         Kind kind = Kind::Other;
         bool drawn = false;          // drawn in game: not bHidden, DrawType not None
         int triangles = 0;           // static mesh triangles
+        std::string mesh;            // the static mesh asset, Package.Group.Name
         std::vector<int> materials;  // indices into Scene::materials
     };
 
@@ -308,6 +309,54 @@ namespace RenderBudget
         });
         if (report.hotspots.size() > 300) report.hotspots.resize(300);
         return report;
+    }
+
+    // ---- Meshes by cost --------------------------------------------------
+
+    // One static mesh asset among some actors: how many drawn copies, the
+    // triangles of one, and of all of them.
+    struct MeshCost
+    {
+        std::string mesh;
+        int copies = 0;
+        int trianglesEach = 0;
+        long long triangles = 0;
+        std::vector<int> items;      // the copies, to select
+    };
+
+    // The static meshes drawn among these actors (all when items is null),
+    // one row per asset, heaviest in total first; equal totals go by the
+    // heavier single copy, then by name. Hidden copies are not drawn in game
+    // and do not count, as in the zone totals.
+    inline std::vector<MeshCost> MeshCosts(const Scene& scene, const std::vector<int>* items = nullptr)
+    {
+        std::map<std::string, MeshCost> byMesh;
+        auto add = [&](int index)
+        {
+            if (index < 0 || index >= static_cast<int>(scene.items.size())) return;
+            const auto& item = scene.items[index];
+            if (item.kind != Kind::StaticMesh || !item.drawn) return;
+            auto& cost = byMesh[item.mesh];
+            cost.mesh = item.mesh;
+            ++cost.copies;
+            cost.trianglesEach = std::max(cost.trianglesEach, item.triangles);
+            cost.triangles += item.triangles;
+            cost.items.push_back(index);
+        };
+        if (items)
+        {
+            std::set<int> seen;
+            for (int index : *items) if (seen.insert(index).second) add(index);
+        }
+        else for (int i = 0; i < static_cast<int>(scene.items.size()); ++i) add(i);
+        std::vector<MeshCost> costs;
+        for (auto& [mesh, cost] : byMesh) costs.push_back(std::move(cost));
+        std::stable_sort(costs.begin(), costs.end(), [](const MeshCost& a, const MeshCost& b)
+        {
+            if (a.triangles != b.triangles) return a.triangles > b.triangles;
+            return a.trianglesEach > b.trianglesEach;
+        });
+        return costs;
     }
 
     // "Triangles: 154,885 (guideline 120,000)" style numbers.

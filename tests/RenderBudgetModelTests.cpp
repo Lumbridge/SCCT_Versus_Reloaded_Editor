@@ -170,5 +170,57 @@ int main()
     everything.allZones = true;
     view = AnalyseView(scene, everything, {});
     assert((view.zones == std::set<int>{1, 2, 3}) && view.totals.bspTriangles == 10 && view.totals.actors == 0);
+
+    // Meshes by cost: one row per static mesh asset, its drawn copies only,
+    // heaviest in total first.
+    Scene props;
+    auto copy = [](const char* name, const char* mesh, int zone, int triangles)
+    {
+        Item item = Mesh(name, zone, triangles);
+        item.mesh = mesh;
+        return item;
+    };
+    props.items = {
+        copy("Crate1", "Props.Crate", 1, 100), copy("Crate2", "Props.Crate", 1, 100), copy("Crate3", "Props.Crate", 2, 100),
+        copy("Statue1", "Props.Statue", 2, 250), copy("Lamp1", "Props.Lamp", 1, 300), copy("Statue2", "Props.Statue", 1, 250),
+        Other("Sparks", 1, Kind::Emitter, true), copy("Bench1", "Props.Bench", 1, 150), copy("Bench2", "Props.Bench", 2, 150)};
+    props.items[5].drawn = false; // bHidden: not drawn in game
+    auto costs = MeshCosts(props);
+    assert(costs.size() == 4);
+    // Lamp, Bench and Crate all total 300: the heavier single copy first.
+    assert(costs[0].mesh == "Props.Lamp" && costs[0].copies == 1 && costs[0].trianglesEach == 300 && costs[0].triangles == 300);
+    assert(costs[1].mesh == "Props.Bench" && costs[1].copies == 2 && costs[1].trianglesEach == 150 && costs[1].triangles == 300);
+    assert(costs[2].mesh == "Props.Crate" && costs[2].copies == 3 && costs[2].trianglesEach == 100 && costs[2].triangles == 300);
+    assert((costs[2].items == std::vector<int>{0, 1, 2}));
+    // The hidden copy is neither counted nor selected; the emitter is no mesh.
+    assert(costs[3].mesh == "Props.Statue" && costs[3].copies == 1 && costs[3].triangles == 250 && (costs[3].items == std::vector<int>{3}));
+    long long all = 0;
+    for (const auto& cost : costs) all += cost.triangles;
+    const auto propsReport = Analyse(props, Guidelines{});
+    assert(all == propsReport.map.totals.meshTriangles && all == 1150);
+    assert(Percent(costs[0].triangles, propsReport.map.totals.Triangles()) == "26.1%");
+
+    // A zone row: only that zone's copies count.
+    const auto& zoneTwo = propsReport.zones.at(1);
+    assert(zoneTwo.zone == 2);
+    costs = MeshCosts(props, &zoneTwo.items);
+    assert(costs.size() == 3);
+    assert(costs[0].mesh == "Props.Statue" && costs[0].triangles == 250 && (costs[0].items == std::vector<int>{3}));
+    assert(costs[1].mesh == "Props.Bench" && costs[1].copies == 1 && (costs[1].items == std::vector<int>{8}));
+    assert(costs[2].mesh == "Props.Crate" && costs[2].copies == 1 && (costs[2].items == std::vector<int>{2}));
+    assert(Percent(costs[0].triangles, zoneTwo.totals.Triangles()) == "50.0%");
+
+    // A list naming a copy twice, or an actor that is gone, counts it once or not at all.
+    const std::vector<int> repeated{0, 0, 1, 99, -1};
+    costs = MeshCosts(props, &repeated);
+    assert(costs.size() == 1 && costs[0].copies == 2 && costs[0].triangles == 200);
+    // Equal in every way: by name.
+    Scene twins;
+    twins.items = {copy("B1", "Pack.B", 1, 40), copy("A1", "Pack.A", 1, 40)};
+    costs = MeshCosts(twins);
+    assert(costs.size() == 2 && costs[0].mesh == "Pack.A" && costs[1].mesh == "Pack.B");
+    // Nothing drawn, nothing listed.
+    const std::vector<int> none;
+    assert(MeshCosts(props, &none).empty() && MeshCosts(Scene{}).empty());
     return 0;
 }

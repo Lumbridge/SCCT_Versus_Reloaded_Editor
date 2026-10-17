@@ -20,8 +20,11 @@ const char kSection[] = "RenderBudget";
 
 enum : int
 {
-    kZoneList = 100, kHotspotList, kStatus, kRefresh, kSelect, kFrame, kIntro, kView, kHotspotLabel = 110
+    kZoneList = 100, kHotspotList, kStatus, kRefresh, kSelect, kFrame, kIntro, kView, kLowerView = 110, kMeshList, kMeshScope
 };
+
+// The lower list's two views.
+enum LowerView : int { kHotspots = 0, kMeshes = 1 };
 
 // Row data in the zone list: zones by index, then these.
 constexpr LPARAM kMapRow = -1, kViewRow = -2;
@@ -60,6 +63,7 @@ Snapshot Measure(const Guidelines& guidelines)
         item.kind = static_cast<Kind>(row.at("kind").get<int>());
         item.drawn = row.at("drawn").get<bool>();
         item.triangles = row.at("triangles").get<int>();
+        item.mesh = row.value("mesh", std::string());
         item.materials = row.at("materials").get<std::vector<int>>();
         scene.items.push_back(std::move(item));
     }
@@ -103,7 +107,8 @@ std::string Intro(const Guidelines& g)
            + Thousands(g.meshTriangles) + " triangles; change them in Reloaded_Editor.ini [RenderBudget]. What Renders From "
            "Camera repaints the perspective viewport: View marks the camera's zone, the zones Visible through the portals "
            "and those no portal shows where the engine still Drew an actor. Click a row to select its actors; "
-           "double-click to frame them too.";
+           "double-click to frame them too. Below, Meshes by cost lists each static mesh with its copies and triangles, "
+           "for the whole map or the zone clicked last.";
 }
 
 std::string Status(const ZoneReport& zone)
@@ -122,6 +127,10 @@ struct Window
     Snapshot snapshot;
     bool measured = false;
     int lastList = 0, lastRow = -1;
+    int lowerView = kHotspots;
+    // What Meshes by cost counts: the zone list row last clicked (its data).
+    LPARAM meshScope = kMapRow;
+    std::vector<MeshCost> meshes;
 } budget;
 
 void SetStatus(const std::string& text)
@@ -152,6 +161,61 @@ std::string ViewStatus()
         + Percent(view.totals.Triangles(), view.mapTriangles) + " of the map.";
     if (!view.visibility.exact) text += " The portal search stopped early; more zones may be visible.";
     return text;
+}
+
+// Meshes by cost for the zone list row last clicked: the whole map, the
+// camera's view (what the engine drew) or one zone.
+void FillMeshes()
+{
+    auto list = GetDlgItem(budget.window, kMeshList);
+    ListView_DeleteAllItems(list);
+    const auto& snapshot = budget.snapshot;
+    const auto& report = snapshot.report;
+    if (budget.meshScope == kViewRow && !snapshot.hasView) budget.meshScope = kMapRow;
+    if (budget.meshScope >= 0 && budget.meshScope >= static_cast<LPARAM>(report.zones.size())) budget.meshScope = kMapRow;
+    std::string scope;
+    int triangles = 0;
+    if (budget.meshScope == kMapRow)
+    {
+        budget.meshes = MeshCosts(snapshot.scene);
+        triangles = report.map.totals.Triangles();
+        scope = "the whole map";
+    }
+    else if (budget.meshScope == kViewRow)
+    {
+        budget.meshes = MeshCosts(snapshot.scene, &snapshot.view.drawnItems);
+        triangles = snapshot.view.totals.Triangles();
+        scope = "what " + snapshot.cameraName + " draws";
+    }
+    else
+    {
+        const auto& zone = report.zones.at(static_cast<size_t>(budget.meshScope));
+        budget.meshes = MeshCosts(snapshot.scene, &zone.items);
+        triangles = zone.totals.Triangles();
+        scope = zone.name;
+    }
+    for (size_t i = 0; i < budget.meshes.size(); ++i)
+    {
+        const auto& cost = budget.meshes[i];
+        Budget::Row(list, static_cast<int>(i), static_cast<LPARAM>(i), {cost.mesh.empty() ? "(no mesh)" : cost.mesh, Thousands(cost.copies),
+            Thousands(cost.trianglesEach), Thousands(cost.triangles), Percent(cost.triangles, triangles)});
+    }
+    const size_t count = budget.meshes.size();
+    const std::string text = Thousands(static_cast<long long>(count)) + (count == 1 ? " mesh in " : " meshes in ") + scope
+        + "; Share is of its " + Thousands(triangles) + " triangles, meshes and BSP. "
+        + (budget.meshScope == kMapRow ? "Click a zone above to count only that zone." : "Click Whole map above to count every zone.");
+    SetDlgItemTextA(budget.window, kMeshScope, text.c_str());
+}
+
+void ShowLowerView()
+{
+    const bool meshes = budget.lowerView == kMeshes;
+    ShowWindow(GetDlgItem(budget.window, kHotspotList), meshes ? SW_HIDE : SW_SHOW);
+    ShowWindow(GetDlgItem(budget.window, kMeshList), meshes ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(budget.window, kMeshScope), meshes ? SW_SHOW : SW_HIDE);
+    SendDlgItemMessageA(budget.window, kLowerView, CB_SETCURSEL, budget.lowerView, 0);
+    // The buttons act on a row of the list that shows.
+    if (budget.lastList != kZoneList) { budget.lastList = meshes ? kMeshList : kHotspotList; budget.lastRow = -1; }
 }
 
 void Fill()
@@ -187,6 +251,8 @@ void Fill()
         else what = std::to_string(hotspot.items.size()) + " actor(s)";
         Budget::Row(hotspots, static_cast<int>(i), static_cast<LPARAM>(i), {HotspotLabel(hotspot), zone, HotspotText(hotspot), what});
     }
+    FillMeshes();
+    ShowLowerView();
     SetDlgItemTextA(budget.window, kIntro, Intro(report.guidelines).c_str());
     SetStatus(snapshot.hasView ? ViewStatus() : ReportStatus());
 }
@@ -274,7 +340,13 @@ std::vector<std::string> RowPaths(int list, LPARAM data, std::string& what)
             if (item.drawn || item.kind == Kind::Emitter) items.push_back(i);
         }
     };
-    if (list == kZoneList)
+    if (list == kMeshList)
+    {
+        const auto& cost = budget.meshes.at(static_cast<size_t>(data));
+        items = cost.items;
+        what = std::to_string(cost.copies) + " cop" + (cost.copies == 1 ? "y" : "ies") + " of " + (cost.mesh.empty() ? "a mesh" : cost.mesh);
+    }
+    else if (list == kZoneList)
     {
         if (data == kViewRow) { drawnOnly(snapshot.view.drawnItems); what = "the camera's view"; }
         else
@@ -308,6 +380,11 @@ void Choose(int list, int row, bool frame)
     if (!Budget::RowData(GetDlgItem(budget.window, list), row, data)) return;
     budget.lastList = list;
     budget.lastRow = row;
+    if (list == kZoneList && data != budget.meshScope)
+    {
+        budget.meshScope = data;
+        FillMeshes();
+    }
     std::string what;
     const auto paths = RowPaths(list, data, what);
     const auto found = Workflow::Editor::SelectActorPaths(paths, frame);
@@ -322,11 +399,13 @@ void Layout(HWND window)
     GetClientRect(window, &r);
     const int w = r.right - 24, h = r.bottom;
     const int top = 96, listsHeight = h - top - 48 - 34;
-    const int zonesHeight = listsHeight * 3 / 5, hotspotTop = top + zonesHeight + 22;
+    const int zonesHeight = listsHeight * 3 / 5, hotspotTop = top + zonesHeight + 30;
     MoveWindow(GetDlgItem(window, kIntro), 12, 8, w, top - 12, TRUE);
     MoveWindow(GetDlgItem(window, kZoneList), 12, top, w, zonesHeight, TRUE);
-    MoveWindow(GetDlgItem(window, kHotspotLabel), 12, top + zonesHeight + 4, w, 16, TRUE);
+    MoveWindow(GetDlgItem(window, kLowerView), 12, top + zonesHeight + 4, 440, 200, TRUE);
+    MoveWindow(GetDlgItem(window, kMeshScope), 462, top + zonesHeight + 8, std::max(40, w - 450), 18, TRUE);
     MoveWindow(GetDlgItem(window, kHotspotList), 12, hotspotTop, w, h - 82 - hotspotTop, TRUE);
+    MoveWindow(GetDlgItem(window, kMeshList), 12, hotspotTop, w, h - 82 - hotspotTop, TRUE);
     MoveWindow(GetDlgItem(window, kStatus), 12, h - 76, w, 34, TRUE);
     MoveWindow(GetDlgItem(window, kRefresh), 12, h - 36, 90, 26, TRUE);
     MoveWindow(GetDlgItem(window, kView), 110, h - 36, 170, 26, TRUE);
@@ -348,9 +427,14 @@ LRESULT CALLBACK BudgetProc(HWND window, UINT message, WPARAM w, LPARAM l)
                 {{"Zone", 170}, {"Actors", 52}, {"Drawn", 50}, {"Meshes", 54}, {"Mesh tris", 70}, {"BSP nodes", 66}, {"Surfaces", 58},
                  {"BSP tris", 62}, {"Triangles", 70}, {"Materials", 62}, {"Textures", 58}, {"Emitters", 56}, {"Status", 190}, {"View", 56}},
                 {"Status", "View"});
-            Budget::Control(window, "STATIC", "Hotspots over the guidelines (worst first): zones and single heavy meshes", 0, kHotspotLabel, 0, 0, 0, 0);
+            auto views = Budget::Control(window, "COMBOBOX", "", WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST, kLowerView, 0, 0, 0, 0);
+            SendMessageA(views, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("Hotspots over the guidelines (worst first): zones and single heavy meshes"));
+            SendMessageA(views, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("Meshes by cost: each static mesh's copies and triangles, heaviest first"));
+            Budget::Control(window, "STATIC", "", 0, kMeshScope, 0, 0, 0, 0);
             Budget::Columns(Budget::ReportList(window, kHotspotList), {{"Hotspot", 110}, {"Zone", 170}, {"Measure", 300}, {"Actors", 260}},
                 {"Zone", "Measure", "Actors"});
+            Budget::Columns(Budget::ReportList(window, kMeshList),
+                {{"Static mesh", 360}, {"Copies", 60}, {"Triangles each", 96}, {"Total triangles", 100}, {"Share", 70}}, {});
             Budget::Control(window, "STATIC", "", 0, kStatus, 0, 0, 0, 0);
             Budget::Control(window, "BUTTON", "&Refresh", WS_TABSTOP, kRefresh, 0, 0, 0, 0);
             Budget::Control(window, "BUTTON", "What Renders From &Camera", WS_TABSTOP, kView, 0, 0, 0, 0);
@@ -369,12 +453,13 @@ LRESULT CALLBACK BudgetProc(HWND window, UINT message, WPARAM w, LPARAM l)
         case WM_NOTIFY:
         {
             auto header = reinterpret_cast<NMHDR*>(l);
-            if ((header->idFrom == kZoneList || header->idFrom == kHotspotList) && (header->code == NM_CLICK || header->code == NM_DBLCLK))
+            const bool budgetList = header->idFrom == kZoneList || header->idFrom == kHotspotList || header->idFrom == kMeshList;
+            if (budgetList && (header->code == NM_CLICK || header->code == NM_DBLCLK))
             {
                 auto activate = reinterpret_cast<NMITEMACTIVATE*>(l);
                 Choose(static_cast<int>(header->idFrom), activate->iItem, header->code == NM_DBLCLK);
             }
-            else if ((header->idFrom == kZoneList || header->idFrom == kHotspotList) && header->code == LVN_ITEMCHANGED)
+            else if (budgetList && header->code == LVN_ITEMCHANGED)
             {
                 // Keyboard moves pick the row for the buttons without selecting actors.
                 auto change = reinterpret_cast<NMLISTVIEW*>(l);
@@ -382,6 +467,11 @@ LRESULT CALLBACK BudgetProc(HWND window, UINT message, WPARAM w, LPARAM l)
                 {
                     budget.lastList = static_cast<int>(header->idFrom);
                     budget.lastRow = change->iItem;
+                    if (header->idFrom == kZoneList && change->lParam != budget.meshScope)
+                    {
+                        budget.meshScope = change->lParam;
+                        FillMeshes();
+                    }
                 }
             }
             return 0;
@@ -389,10 +479,18 @@ LRESULT CALLBACK BudgetProc(HWND window, UINT message, WPARAM w, LPARAM l)
         case WM_COMMAND:
             switch (LOWORD(w))
             {
+            case kLowerView:
+                if (HIWORD(w) == CBN_SELCHANGE)
+                {
+                    const auto chosen = SendDlgItemMessageA(window, kLowerView, CB_GETCURSEL, 0, 0);
+                    budget.lowerView = chosen == kMeshes ? kMeshes : kHotspots;
+                    ShowLowerView();
+                }
+                return 0;
             case kRefresh: Refresh(); return 0;
             case kView: MeasureView(); return 0;
             case kSelect: case kFrame:
-                if (budget.lastRow < 0) SetStatus("Click a zone or a hotspot first.");
+                if (budget.lastRow < 0) SetStatus(budget.lowerView == kMeshes ? "Click a zone or a mesh first." : "Click a zone or a hotspot first.");
                 else Choose(budget.lastList, budget.lastRow, LOWORD(w) == kFrame);
                 return 0;
             case IDCANCEL: DestroyWindow(window); return 0;

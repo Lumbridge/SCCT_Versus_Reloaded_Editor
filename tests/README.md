@@ -473,7 +473,11 @@ ahead and the one beyond it are seen, one behind or off to the side is not, the
 frustum narrows door by door, a camera standing in a portal sees through it, a
 camera outside every zone culls nothing, a cut-short search says so) and the view
 totals (actors the engine drew add their zones; BSP counts only for zones seen
-through portals).
+through portals), and Meshes by cost (one row per mesh asset with its drawn
+copies, the triangles of one and of all, heaviest in total first, then the
+heavier copy, then by name; hidden copies and emitters left out; the rows add
+up to the zone totals' mesh triangles; a zone's actors only, an actor named
+twice counted once, one that is gone skipped).
 
 ## Map Check
 
