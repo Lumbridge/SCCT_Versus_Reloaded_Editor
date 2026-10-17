@@ -545,13 +545,16 @@ void DesignSetFlags(const Json& members,int hidden,int locked)
     std::vector<Address> actors;auto live=LiveActors();const ActorIndex index;
     // Actors already as asked are left out, so isolating a map that is mostly
     // hidden already puts only what changes into the Undo buffer, and asking
-    // again for what is already so leaves no Undo step at all.
+    // again for what is already so leaves no Undo step at all. The flag bits
+    // go first; the lock walks the class's properties, so it is read once.
     auto settled=[&](Address a)
     {
         const auto flags=Read<unsigned>(a+0x2f4);
+        if((hidden>0 || locked>0) && (flags&0x40u))return false;
         if(hidden>=0 && ((flags&0x10u)!=0)!=(hidden!=0))return false;
-        if(locked>=0 && Property(a,"bLockLocation") && DesignBool(a,"bLockLocation")!=(locked!=0))return false;
-        return !((hidden>0 || locked>0) && (flags&0x40u));
+        if(locked<0)return true;
+        auto p=Property(a,"bLockLocation");
+        return !p || (IsA(p,"BoolProperty") && (Read<unsigned>(a+Read<int>(p+0x3c))&Read<unsigned>(p+0x64)))==(locked!=0);
     };
     for(auto& id:members){auto a=index.Resolve(id);if(!a || a==live[0] || a==live[1] || settled(a) || IsA(a,"Camera"))continue;actors.push_back(a);}
     index.Report(members.size(),"DesignSetFlags");
@@ -677,9 +680,9 @@ size_t DesignSetPolyFlags(const Json& members,const Json& flags)
 // nothing happens when they are already last in this order.
 size_t DesignSendToLast(const Json& members)
 {
-    std::vector<Address> actors;const ActorIndex index;
-    for(auto& id:members)if(auto a=index.Resolve(id))actors.push_back(a);
-    index.Report(members.size(),"DesignSendToLast");
+    std::vector<Address> actors;const ActorIndex lookup;
+    for(auto& id:members)if(auto a=lookup.Resolve(id))actors.push_back(a);
+    lookup.Report(members.size(),"DesignSendToLast");
     if(actors.empty())return 0;
     auto level=Level();
     auto data=Read<Address>(level+0x2c);const int count=Read<int>(level+0x30);
