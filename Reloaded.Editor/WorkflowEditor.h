@@ -264,7 +264,8 @@ namespace Workflow::Editor
     Json InspectActor(const Json& identity);
     // Copy Properties / Paste Properties (PropertyPasteModel.h). Copy: {actor,
     // properties:[{name, category, schema, value, lineage}]}, every editable
-    // property whose value can be written back. Paste writes each entry onto
+    // property, and StaticMesh, DrawType and DrawScale(3D) on actors other than
+    // brushes, whose value can be written back. Paste writes each entry onto
     // every target that has the property with the same schema, in one Undo
     // step ("Paste properties"); returns {actors, properties (values written),
     // skipped}.

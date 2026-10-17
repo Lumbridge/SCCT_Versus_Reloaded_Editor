@@ -27,6 +27,10 @@ namespace
     Json copied;
     std::set<std::string> confirmed;
     bool hasConfirmed = false;
+    // Set while a command runs. The Paste Properties window lists the copy
+    // itself, and a command can still arrive while it is open (posted, or from
+    // a tool window it does not disable): a new copy then would free that list.
+    bool busy = false;
 
     std::wstring Wide(const std::string& text)
     {
@@ -275,7 +279,13 @@ bool HasCopy() { return !copied.is_null(); }
 bool HandleCommand(UINT command)
 {
     if (command != kCopy && command != kPaste && command != kPasteAgain) return false;
-    const HWND owner = GetActiveWindow();
+    if (busy) { MessageBeep(MB_ICONWARNING); return true; }
+    busy = true;
+    struct Done { ~Done() { busy = false; } } done;
+    // The frame, so the window keeps the viewports and their menus disabled
+    // whichever tool window was active.
+    HWND owner = Editor::MainWindow();
+    if (!owner) owner = GetActiveWindow();
     try
     {
         if (command == kCopy) Copy();
