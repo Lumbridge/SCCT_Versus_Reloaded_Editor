@@ -729,7 +729,7 @@ namespace
         const bool another=s.kind==Kind::Assets && (level!=s.usageLevel || nativeMapGeneration!=s.usageGeneration);
         if(s.kind==Kind::Assets)
         {
-            for(int i=0;i<static_cast<int>(s.rows.size());++i) marks.push_back({ListView_GetCheckState(s.list,i)!=0,s.rows[i].at("selected").get<bool>()});
+            for(int i=0;i<static_cast<int>(s.rows.size());++i) marks.push_back({ListView_GetCheckState(s.list,i)!=0,s.rows[i].at("selected").get<bool>(),s.rows[i].value("excluded",false)});
             int row=Selected(s); if(row>=0 && row<static_cast<int>(s.rows.size())) focused=UsageMarks::Key(s.rows[row]);
             // Listed before the old rows go, so a failed listing leaves them with
             // their check boxes (another map's rows go all the same).
@@ -747,8 +747,9 @@ namespace
             else marks=UsageMarks::Carry(previous,marks,s.rows,only,renumbered);
             int i=0; bool surfaces=false; for(auto& j:s.rows)
             {
-                // Replace Checked reads the scope from here.
-                j["selected"]=marks[i].scoped; surfaces=surfaces || j.at("surface").get<int>()>=0;
+                // Replace Checked reads the scope from here, and the next listing
+                // reads back what the user left out while the row is read-only.
+                j["selected"]=marks[i].scoped; j["excluded"]=marks[i].excluded; surfaces=surfaces || j.at("surface").get<int>()>=0;
                 auto actor=j.at("actor").is_object()?j.at("actor").value("path",std::string{}):"BSP";
                 bool can=j.at("replaceable"); Row(s,i,{actor,j.at("property"),can?"Direct / replaceable":j.at("direct").get<bool>()?"Read-only assignment":"Indirect / shared asset"},marks[i].checked);
                 if(!focused.empty() && UsageMarks::Key(j)==focused) { ListView_SetItemState(s.list,i,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED); ListView_EnsureVisible(s.list,i,FALSE); focused.clear(); }
