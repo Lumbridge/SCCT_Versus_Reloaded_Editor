@@ -1,6 +1,7 @@
 #include "pch.h"
 #undef min
 #undef max
+#include "BaseInstall.h"
 #include "MapOptimiseDialog.h"
 #include "MapOptimiseModel.h"
 #include "MapPackageDialog.h"
@@ -40,24 +41,6 @@ struct State
     std::string base; // The base install last scanned against.
     bool baseUsed = false; // It was valid, so the list reflects it.
 };
-// A copy of the game as players get it ([MapOptimise] BaseInstall in
-// Reloaded_Editor.ini): packages identical there are not shipped.
-std::string IniPath()
-{
-    char exe[MAX_PATH]{};
-    GetModuleFileNameA(nullptr, exe, MAX_PATH);
-    return (std::filesystem::path(exe).parent_path() / "Reloaded_Editor.ini").string();
-}
-std::string SavedBase()
-{
-    char value[MAX_PATH]{};
-    GetPrivateProfileStringA("MapOptimise", "BaseInstall", "", value, sizeof(value), IniPath().c_str());
-    return value;
-}
-void SaveBase(const std::string &base)
-{
-    WritePrivateProfileStringA("MapOptimise", "BaseInstall", base.c_str(), IniPath().c_str());
-}
 HWND Control(HWND window, const char *type, const char *text, DWORD style, int id, int x, int y, int width, int height)
 {
     auto control =
@@ -193,7 +176,7 @@ void BrowseBase(HWND window, State &state)
     if (!picked)
         return;
     SetDlgItemTextW(window, kBase, path);
-    SaveBase(Text(window, kBase));
+    BaseInstall::Save(Text(window, kBase));
     SetCursor(LoadCursor(nullptr, IDC_WAIT));
     Fill(window, state);
 }
@@ -301,7 +284,7 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
                 SendMessageA(list, LVM_INSERTCOLUMNA, i, reinterpret_cast<LPARAM>(&col));
             }
             Control(window, "STATIC", "Players already have:", 0, kBaseLabel, 12, r.bottom - 233, 120, 20);
-            Control(window, "EDIT", SavedBase().c_str(), WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, kBase, 135,
+            Control(window, "EDIT", BaseInstall::Saved().c_str(), WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, kBase, 135,
                     r.bottom - 236, width - 223, 22);
             Control(window, "BUTTON", "Base Install...", WS_TABSTOP, kBaseBrowse, r.right - 100, r.bottom - 237, 88, 25);
             int y = r.bottom - 202;
@@ -360,7 +343,7 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
             // A base install typed or pasted in is used once the field is left.
             if (LOWORD(w) == kBase && HIWORD(w) == EN_KILLFOCUS && state->ready && Text(window, kBase) != state->base)
             {
-                SaveBase(Text(window, kBase));
+                BaseInstall::Save(Text(window, kBase));
                 SetCursor(LoadCursor(nullptr, IDC_WAIT));
                 Fill(window, *state);
                 return TRUE;

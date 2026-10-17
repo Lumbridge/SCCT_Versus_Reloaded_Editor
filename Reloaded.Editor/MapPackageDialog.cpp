@@ -1,6 +1,8 @@
 #include "pch.h"
 #undef min
 #undef max
+#include "BaseInstall.h"
+#include "MapOptimiseDialog.h"
 #include "MapPackage.h"
 #include "MapPackageDialog.h"
 #include "WorkflowEditor.h"
@@ -27,7 +29,33 @@ struct State
     std::future<void> write;
     std::future<std::vector<bool>> baseline;
     bool ready = false, busy = false;
+    // The base install last compared, and the files identical there.
+    std::filesystem::path excluded;
+    std::vector<bool> identical;
+    // A game folder picked here that could not be kept as the base install.
+    std::filesystem::path unsaved;
 };
+// A copy of the game players have: a folder holding System and Packages, not
+// the one the editor runs from.
+bool SeparateGame(const std::filesystem::path &root, const std::filesystem::path &base)
+{
+    std::error_code error;
+    return !base.empty() && std::filesystem::is_directory(base / "System", error) &&
+           std::filesystem::is_directory(base / "Packages", error) && !std::filesystem::equivalent(base, root, error);
+}
+// A file's saved time, local with the daylight saving of its own date as
+// Explorer shows it; file_time_type counts FILETIME ticks on Windows.
+std::wstring When(std::filesystem::file_time_type time)
+{
+    const auto ticks = static_cast<std::uint64_t>(time.time_since_epoch().count());
+    const FILETIME utc{static_cast<DWORD>(ticks), static_cast<DWORD>(ticks >> 32)};
+    SYSTEMTIME universal{}, at{};
+    if (!FileTimeToSystemTime(&utc, &universal) || !SystemTimeToTzSpecificLocalTime(nullptr, &universal, &at))
+        return L"time unknown";
+    wchar_t text[64]{};
+    swprintf_s(text, L"%04u-%02u-%02u %02u:%02u:%02u", at.wYear, at.wMonth, at.wDay, at.wHour, at.wMinute, at.wSecond);
+    return text;
+}
 HWND Control(HWND window, const char *type, const char *text, DWORD style, int id, int x, int y, int width, int height)
 {
     auto control =
@@ -46,7 +74,7 @@ void Checks(HWND window, State &state)
         return;
     auto list = GetDlgItem(window, 100);
     std::uintmax_t bytes = 0;
-    size_t files = 0, omitted = 0;
+    size_t files = 0, omitted = 0, identical = 0;
     for (size_t i = 0; i < state.plan.files.size(); ++i)
     {
         auto &file = state.plan.files[i];
@@ -57,17 +85,36 @@ void Checks(HWND window, State &state)
             ++files;
         }
         else
+        {
             ++omitted;
+            if (i < state.identical.size() && state.identical[i])
+                ++identical;
+        }
     }
-    auto message = std::to_string(files) + " files checked (" + std::to_string(bytes / 1024 / 1024) +
-                   " MB before compression). " + std::to_string(omitted) +
-                   " omitted dependencies must already be installed.\r\n";
+    // Wide: a path the ANSI code page cannot spell must not throw here, since the
+    // dialog procedure's catch calls this too.
+    std::wstring message;
+    if (!state.plan.files.empty())
+        message = L"Packaging " + state.plan.files[0].source.wstring() + L", saved " +
+                  When(state.plan.files[0].modified) + L".\r\n";
+    message += std::to_wstring(files) + L" files checked (" + std::to_wstring(bytes / 1024 / 1024) +
+               L" MB before compression). " + std::to_wstring(omitted) +
+               L" omitted dependencies must already be installed.\r\n";
+    if (!state.excluded.empty())
+    {
+        message += std::to_wstring(identical) + L" files identical in " + state.excluded.wstring() +
+                   L" left out: players have them.";
+        if (state.excluded == state.unsaved)
+            message += L" That folder is used for this packaging only: Reloaded_Editor.ini could not keep it as the "
+                       L"base install (it cannot hold letters outside Windows' language for non-Unicode programs).";
+        message += L"\r\n";
+    }
     if (!state.plan.errors.empty())
-        message += std::to_string(state.plan.errors.size()) +
-                   " dependency errors. Open Report for details; resolve them and reopen packaging.";
+        message += std::to_wstring(state.plan.errors.size()) +
+                   L" dependency errors. Open Report for details; resolve them and reopen packaging.";
     else
-        message += "Dependencies found. Files loaded only by script string paths may need to be added separately.";
-    Status(window, message);
+        message += L"Dependencies found. Files loaded only by script string paths may need to be added separately.";
+    SetWindowTextW(GetDlgItem(window, 102), message.c_str());
     EnableWindow(GetDlgItem(window, IDOK),
                  !state.busy && state.plan.errors.empty() && !state.plan.files.empty() && state.plan.files[0].include);
 }
@@ -117,7 +164,7 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
                     "listed in the ZIP report.",
                     0, 101, 12, 12, r.right - 24, 52);
             auto list = Control(window, WC_LISTVIEWA, "", LVS_REPORT | LVS_SHOWSELALWAYS | WS_BORDER, 100, 12, 70,
-                                r.right - 24, r.bottom - 182);
+                                r.right - 24, r.bottom - 208);
             ListView_SetExtendedListViewStyle(list, LVS_EX_FULLROWSELECT | LVS_EX_CHECKBOXES | LVS_EX_DOUBLEBUFFER);
             const char *columns[] = {"File in ZIP", "Size (KB)", "Required by"};
             int widths[] = {r.right / 2, 90, r.right / 2 - 125};
@@ -129,8 +176,8 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
                 col.pszText = const_cast<char *>(columns[i]);
                 SendMessageA(list, LVM_INSERTCOLUMNA, i, reinterpret_cast<LPARAM>(&col));
             }
-            Control(window, "STATIC", "Scanning saved map dependencies...", 0, 102, 12, r.bottom - 105, r.right - 24,
-                    57);
+            Control(window, "STATIC", "Scanning saved map dependencies...", 0, 102, 12, r.bottom - 131, r.right - 24,
+                    83);
             Control(window, "BUTTON", "Report...", 0, 103, 12, r.bottom - 38, 95, 27);
             Control(window, "BUTTON", "Exclude base files...", 0, 104, 115, r.bottom - 38, 155, 27);
             EnableWindow(GetDlgItem(window, 104), FALSE);
@@ -193,6 +240,8 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
                 for (size_t i = 1; i < matches.size(); ++i)
                     if (matches[i])
                         ListView_SetCheckState(list, static_cast<int>(i), FALSE);
+                state->excluded = state->base;
+                state->identical = matches;
                 state->busy = false;
                 EnableWindow(list, TRUE);
                 Checks(window, *state);
@@ -229,11 +278,19 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
             if (LOWORD(w) == 104 && state->ready && !state->busy)
             {
                 auto initialized = OleInitialize(nullptr);
+                // Opens at the saved base install (Optimise Map Assets).
+                const auto saved = std::filesystem::path(BaseInstall::Saved()).wstring();
                 BROWSEINFOW browse{};
                 browse.hwndOwner = window;
                 browse.lpszTitle =
                     L"Select a separate base game installation. Only identical dependency files will be unchecked.";
                 browse.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+                browse.lpfn = [](HWND browser, UINT event, LPARAM, LPARAM data) -> int {
+                    if (event == BFFM_INITIALIZED && *reinterpret_cast<const wchar_t *>(data))
+                        SendMessageW(browser, BFFM_SETSELECTIONW, TRUE, data);
+                    return 0;
+                };
+                browse.lParam = reinterpret_cast<LPARAM>(saved.c_str());
                 auto selected = SHBrowseForFolderW(&browse);
                 wchar_t path[MAX_PATH]{};
                 bool picked = selected && SHGetPathFromIDListW(selected, path);
@@ -242,7 +299,14 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
                     OleUninitialize();
                 if (!picked)
                     return TRUE;
-                ExcludeBase(window, *state, path);
+                // Kept for next time when it can be used; the status line says
+                // when a game folder cannot be.
+                if (SeparateGame(state->root, path) && !BaseInstall::Save(path))
+                    state->unsaved = path;
+                else if (state->unsaved == path)
+                    state->unsaved.clear();
+                state->base = path;
+                ExcludeBase(window, *state, state->base);
                 return TRUE;
             }
             if (LOWORD(w) == IDCANCEL)
@@ -294,8 +358,15 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
         {
             state->busy = false;
             EnableWindow(GetDlgItem(window, 100), TRUE);
-            if (state->ready)
-                Checks(window, *state);
+            // Nothing may leave the dialog procedure, not even from here.
+            try
+            {
+                if (state->ready)
+                    Checks(window, *state);
+            }
+            catch (...)
+            {
+            }
         }
         Status(window, e.what());
         MessageBoxA(window, e.what(), "Map Packaging", MB_OK | MB_ICONERROR);
@@ -310,14 +381,50 @@ void Open(HWND owner)
     auto directory = state.root / "Packages" / "Maps";
     wchar_t path[32768]{};
     // The open map, chosen already: its release copy (Optimise Map Assets) when
-    // it has one, else its playable copy.
+    // it has one that is up to date, else its playable copy.
     const auto file = Workflow::Editor::MapFile();
     if (!file.empty())
     {
         const auto name = std::filesystem::path(file).filename();
-        const auto release = Workflow::Editor::ReleaseFolder(name.stem().string()) / "Packages" / "Maps" / name;
+        const auto folder = Workflow::Editor::ReleaseFolder(name.stem().string());
+        const auto release = folder / "Packages" / "Maps" / name, playable = directory / name;
+        const auto image = std::filesystem::path("Packages") / "Textures" / (name.stem().wstring() + L"-i.utc");
+        // A missing file's time is file_time_type::min().
+        auto saved = [](const std::filesystem::path &at) {
+            std::error_code error;
+            return std::filesystem::last_write_time(at, error);
+        };
+        const auto releaseMap = saved(release), workingMap = saved(playable), releaseImage = saved(folder / image),
+                   workingImage = saved(state.root / image);
         std::error_code error;
-        const auto map = std::filesystem::exists(release, error) ? release : directory / name;
+        const auto pick = MapPackage::PickSource(std::filesystem::exists(release, error), releaseMap, workingMap,
+                                                 releaseImage, workingImage);
+        const auto map = pick == MapPackage::Source::Release ? release : playable;
+        if (pick == MapPackage::Source::StaleRelease)
+        {
+            // Says what is older: the copy itself, its interface package or both.
+            const auto stem = name.stem().wstring();
+            auto text = L"The release copy of " + stem + L" in " + folder.wstring();
+            if (releaseMap < workingMap)
+                text += L" is older than the map, so it does not have your latest changes.\r\n\r\nRelease copy saved " +
+                        When(releaseMap) + L"\r\nMap saved " + When(workingMap) + L"\r\n";
+            else
+                text += L" has an older interface package than the map (" + stem +
+                        L"-i: map-selection picture, loading screens, briefing and map settings), so it does not "
+                        L"have your latest changes to those.\r\n\r\n";
+            if (releaseImage != std::filesystem::file_time_type::min() && releaseImage < workingImage)
+                text += L"Release copy's interface package (" + stem + L"-i) saved " + When(releaseImage) +
+                        L"\r\nMap's interface package saved " + When(workingImage) + L"\r\n";
+            text += L"\r\nYes: make a new release copy first (Optimise Map Assets).\r\nNo: package the map from "
+                    L"Packages\\Maps instead.\r\nCancel: stop.";
+            const auto answer =
+                MessageBoxW(owner, text.c_str(), L"Package Map for Sharing", MB_YESNOCANCEL | MB_ICONWARNING);
+            if (answer == IDYES)
+                // Create Release Copy then offers to package it.
+                MapOptimiseDialog::Open(owner);
+            if (answer != IDNO)
+                return;
+        }
         directory = map.parent_path();
         wcscpy_s(path, map.c_str());
     }
@@ -331,7 +438,10 @@ void Open(HWND owner)
     choose.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
     if (!GetOpenFileNameW(&choose))
         return;
-    Preview(owner, path);
+    // What players already have (the base install Optimise Map Assets keeps)
+    // starts unticked.
+    std::filesystem::path base = BaseInstall::Saved();
+    Preview(owner, path, SeparateGame(state.root, base) ? base : std::filesystem::path());
 }
 void Preview(HWND owner, const std::filesystem::path &map, const std::filesystem::path &base)
 {

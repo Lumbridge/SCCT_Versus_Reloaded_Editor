@@ -161,6 +161,7 @@
     <ClInclude Include="WorkflowGraphModel.h" />
     <ClInclude Include="WorkflowModel.h" />
     <ClInclude Include="BrushGridSnapModel.h" />
+    <ClInclude Include="BaseInstall.h" />
     <ClInclude Include="MapPackage.h" />
     <ClInclude Include="MapPackageDialog.h" />
     <ClInclude Include="MapOptimiseDialog.h" />

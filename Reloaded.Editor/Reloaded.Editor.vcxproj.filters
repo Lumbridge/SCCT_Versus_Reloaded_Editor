@@ -19,6 +19,7 @@
     <ClInclude Include="WorkflowGraphModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="WorkflowModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="BrushGridSnapModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="BaseInstall.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapPackage.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapPackageDialog.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapOptimiseDialog.h"><Filter>Header Files</Filter></ClInclude>
