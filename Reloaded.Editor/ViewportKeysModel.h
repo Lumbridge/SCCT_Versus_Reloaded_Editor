@@ -54,7 +54,8 @@ namespace ViewportKeys
     class KeyUps
     {
     public:
-        // A viewport's WM_KEYDOWN or WM_SYSKEYDOWN; the auto-repeats keep the first press.
+        // A level viewport's WM_KEYDOWN or WM_SYSKEYDOWN; the auto-repeats keep the first press.
+        // A browser preview's presses are not passed in: their key-ups never come here.
         void Pressed(const Chord& press)
         {
             std::optional<Chord>* seen = press.key == 'D' ? &d : press.key == 'J' ? &j : nullptr;

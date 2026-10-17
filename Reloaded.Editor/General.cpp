@@ -207,7 +207,7 @@ static bool __cdecl HandleRecoveredMapSave(UINT commandId)
     return MapRecovery::HandleSaveCommand(commandId);
 }
 
-// The D and J key-ups go by their press when a viewport saw it (GridSizeShortcut's hook).
+// The D and J key-ups go by their press when a level viewport saw it (GridSizeShortcut's hook).
 static ViewportKeys::KeyUps g_viewportKeyUps;
 
 void General::ViewportKeyPressed(const ViewportKeys::Chord& press)

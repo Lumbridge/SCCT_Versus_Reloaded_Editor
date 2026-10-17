@@ -155,11 +155,14 @@ namespace
             const ViewportKeys::Chord chord{ static_cast<unsigned>(wParam),
                 GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_SHIFT) < 0,
                 GetKeyState(VK_MENU) < 0, (lParam & (1 << 30)) != 0 };
-            if (press)
+            // Only a level viewport's key-ups reach WViewportFrame::OnKeyUp, which ends the
+            // record. A browser preview's go to the browser, so its presses are not recorded.
+            const bool level = LevelViewportWindow(viewport) != nullptr;
+            if (press && level)
                 General::ViewportKeyPressed(chord);
             const ViewportKeys::KeyDown action = press
                 ? ViewportKeys::OnKeyDown(chord) : ViewportKeys::OnChar(chord);
-            if (action != ViewportKeys::KeyDown::Pass && LevelViewportWindow(viewport))
+            if (action != ViewportKeys::KeyDown::Pass && level)
             {
                 if (action == ViewportKeys::KeyDown::Duplicate)
                     General::DuplicateSelection();
