@@ -462,6 +462,21 @@ simulated function Carry(Pawn P, vector Delta)
 	P.Move(Down);
 }
 
+// The move for one frame: along the belt, and in from its sides as far as the
+// rider overlaps a channel (so a corner piece hands riders on centred).
+simulated function vector Push(Pawn P, vector X, vector Y, float DeltaTime)
+{
+	local float Across, Over;
+	local vector Delta;
+
+	Delta = X * Speed * DeltaTime;
+	Across = (P.Location - Location) dot Y;
+	Over = Abs(Across) - (Width * 0.45 - P.CollisionRadius);
+	if (Over > 0)
+		Delta -= Y * FMin(Over, Abs(Speed) * DeltaTime) * (Across / Abs(Across));
+	return Delta;
+}
+
 simulated function CarryPlayers(float DeltaTime)
 {
 	local Controller C;
@@ -473,12 +488,12 @@ simulated function CarryPlayers(float DeltaTime)
 	{
 		PC = Level.GetLocalPlayerController();
 		if (PC != None && Riding(PC.Pawn, X, Y, Z))
-			Carry(PC.Pawn, X * Speed * DeltaTime);
+			Carry(PC.Pawn, Push(PC.Pawn, X, Y, DeltaTime));
 		return;
 	}
 	for (C = Level.ControllerList; C != None; C = C.NextController)
 		if (Riding(C.Pawn, X, Y, Z))
-			Carry(C.Pawn, X * Speed * DeltaTime);
+			Carry(C.Pawn, Push(C.Pawn, X, Y, DeltaTime));
 }
 
 // Called by the belt's ConveyorMotor every frame.
