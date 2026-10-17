@@ -672,9 +672,11 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
             }
             if (header->idFrom == Tree && header->code == NM_DBLCLK)
             {
-                // Only a double-click on a preset's name or picture applies it; on a category
-                // row the tree folds or unfolds it. The apply rebuilds the tree, so it waits
-                // until the tree is done with the click.
+                // Only a double-click on the highlighted preset's name or picture applies it; on a
+                // category row the tree folds or unfolds it. A first click on a row cut off at the
+                // bottom scrolls it into view, so the second can land on the row below: that one
+                // is not applied. The apply rebuilds the tree, so it waits until the tree is done
+                // with the click.
                 const auto at = GetMessagePos();
                 TVHITTESTINFO hit{};
                 hit.pt = {static_cast<short>(LOWORD(at)), static_cast<short>(HIWORD(at))};
@@ -682,8 +684,8 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
                 TVITEMA item{};
                 item.mask = TVIF_PARAM;
                 item.hItem = TreeView_HitTest(s->tree, &hit);
-                if (!item.hItem || !(hit.flags & (TVHT_ONITEMLABEL | TVHT_ONITEMICON)) || !TreeView_GetItem(s->tree, &item) ||
-                    item.lParam < 0 || static_cast<size_t>(item.lParam) >= Entries(*s).size())
+                if (!item.hItem || !(hit.flags & (TVHT_ONITEMLABEL | TVHT_ONITEMICON)) || item.hItem != TreeView_GetSelection(s->tree) ||
+                    !TreeView_GetItem(s->tree, &item) || item.lParam < 0 || static_cast<size_t>(item.lParam) >= Entries(*s).size())
                     return FALSE;
                 s->selected = Entries(*s)[item.lParam].at("id").get<std::string>();
                 SetWindowLongPtr(window, DWLP_MSGRESULT, TRUE);

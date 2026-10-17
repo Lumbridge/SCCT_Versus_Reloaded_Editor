@@ -164,6 +164,12 @@ void NewModel(HWND window, size_t model, const std::string& mesh)
     catch (const std::exception&) {}
     suggested[model] = next;
 }
+// Enter applies without leaving a model box: a name typed there counts before the values are read.
+void NewModels(HWND window)
+{
+    for (size_t m = 0; m < CharacterSkins::Models.size(); ++m)
+        NewModel(window, m, Text(window, kModel + static_cast<int>(m)));
+}
 // The window's values as Apply uses them: {slots, models, goggles, any}.
 Json Values(HWND window)
 {
@@ -370,6 +376,7 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
         }
         if (id == kApply)
         {
+            NewModels(window);
             const auto values = Values(window);
             if (!values.at("any").get<bool>())
             {
@@ -386,6 +393,7 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
         {
             // Save Current as Preset keeps what the window shows, applied or not.
             Json values;
+            NewModels(window);
             try { values = Values(window); values.erase("any"); }
             catch (const std::exception&) { values = Json(); }
             if (CharacterSkinPresetsWindow::Open(window, values))
