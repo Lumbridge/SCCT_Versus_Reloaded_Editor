@@ -651,6 +651,19 @@ static std::string PackageComboText() { return ComboReadValue(g_hPackageCombo); 
 static std::string MeshComboText()    { return ComboReadValue(g_hMeshCombo); }
 static std::string AnimComboText()    { return ComboReadValue(g_hAnimCombo); }
 
+// What each dependent list was last built for, recorded where it is
+// built, so a combo notification that leaves the pick as it was (a
+// close-up after Escape, or picking the same entry again) doesn't
+// rebuild the lists below it and reset their selections.
+static std::string g_meshListFor;   // package
+static std::string g_animListFor;   // package
+static std::string g_seqListFor;    // package + '\n' + animation set
+static std::string g_meshTabFor;    // package + '.' + mesh
+static bool BuiltFor(const std::string& current, const std::string& recorded)
+{
+    return _stricmp(current.c_str(), recorded.c_str()) == 0;
+}
+
 // window title reflects the current mesh and animation set
 // selection, "Animation Tool - <Mesh> - <AnimSet>".  Called after each
 // combo selection change and after refreshes that auto-pick top items
@@ -685,6 +698,7 @@ static void RefreshMeshList(bool forceFirst = true)
 {
     if (!g_hMeshCombo) return;
     std::string pkg = PackageComboText();
+    g_meshListFor = pkg;
     if (pkg.empty()) { SendMessageA(g_hMeshCombo, CB_RESETCONTENT, 0, 0); return; }
     std::vector<std::string> meshes;
     GO_WalkByClass("SkeletalMesh", &meshes, nullptr, pkg.c_str());
@@ -699,6 +713,7 @@ static void RefreshAnimList(bool forceFirst = true)
 {
     if (!g_hAnimCombo) return;
     std::string pkg = PackageComboText();
+    g_animListFor = pkg;
     if (pkg.empty()) { SendMessageA(g_hAnimCombo, CB_RESETCONTENT, 0, 0); return; }
     std::vector<std::string> anims;
     GO_WalkByClass("MeshAnimation", &anims, nullptr, pkg.c_str());
@@ -1135,29 +1150,68 @@ static bool GO_ReadMeshAnimSeqRaw(int classOffset, void* seqPtr,
     }
 }
 
+// ---------------------------------------------------------------------
+//  UMeshAnimation layout (sequence delete, rename and import)
+// ---------------------------------------------------------------------
+//  UMeshAnimation (UMeshAnimation::Serialize at 0x111136d0; checked on
+//  live objects - MAL_anm.ventilateur_anm, 5 bones, 2 sequences):
+//    +0x28  INT                    InternalVersion
+//    +0x2C  TArray<FNamedBone>     RefBones   12 bytes: FName, Flags, Parent
+//    +0x38  TArray<MotionChunk>    Moves      0x68 bytes (has a vtable)
+//    +0x44  TArray<FMeshAnimSeq>   AnimSeqs   0x2C bytes, Notifys at +0x1C
+//    +0x50  raw import data (transient; set only on a fresh import)
+//  Moves[i] holds the keys of AnimSeqs[i], one track per reference bone in
+//  bone order, which is why a merge needs identical skeletons and a delete
+//  has to remove both elements.
+#define UMA_OFF_VERSION     0x28
+#define UMA_OFF_REFBONES    0x2C
+#define UMA_OFF_MOVES       0x38
+#define UMA_OFF_ANIMSEQS    0x44
+#define UMA_BONE_STRIDE     12
+#define UMA_MOVE_STRIDE     0x68
+#define UMA_SEQ_STRIDE      0x2C
+#define UMA_SEQ_NOTIFYS     0x1C
+#define UMA_LAYOUT_CLASSOFF 0x24        // the layout above assumes 4-byte FNames
+#define UPACKAGE_OFF_DIRTY  0x30        // Exec_Anim sets this after an import
+
+struct AnimSnapshotRaw
+{
+    enum { MAX_BONES = 512, MAX_SEQS = 2048, MAX_LEN = 64 };
+    int  bones, seqs, moves;
+    char boneNames[MAX_BONES][MAX_LEN];
+    char seqNames [MAX_SEQS][MAX_LEN];
+    int  notifyCounts[MAX_SEQS];
+};
+static AnimSnapshotRaw s_snapExisting;
+static AnimSnapshotRaw s_snapIncoming;
+
+// Defined with the import options further down.
+static void* GO_FindMeshAnimRaw(const char* package, const char* animName,
+                                const char* excludePackage,
+                                char* foundPackage, int foundPackageSize);
+static bool GO_SnapshotAnimRaw(void* anim, AnimSnapshotRaw* out);
+static AnimImportOptions::Set SnapshotToSet(const AnimSnapshotRaw& s);
+static void GO_MarkPackageDirtyRaw(void* obj);
+
 // SEH-protected: deletes the FMeshAnimSeq matching `seqName` from the
-// UMeshAnimation owning it.  Frees the sub-TArrays (Groups, Notifys)
-// via mi_free (the editor's IAT was hooked to mimalloc by General.cpp,
-// so this is the same allocator that grew them), then memmove's
-// subsequent elements down by one stride and decrements Num.
+// UMeshAnimation owning it, together with its MotionChunk, so every later
+// sequence keeps its own keys.  memmove's the later elements of both
+// arrays down by one stride and decrements both Nums; `removedIndex`
+// gets the index that went.  Refuses a set whose Moves and AnimSeqs
+// already differ in length, and any layout other than the verified one.
 //
-// Doesn't shrink the TArray's Max - that's a separate Realloc which
+// Doesn't shrink the TArrays' Max - that's a separate Realloc which
 // the next save will obsolete anyway when the package is re-serialized.
 static bool GO_DeleteMeshAnimSeqRaw(int classOffset,
                                     const char* package,
                                     const char* animName,
-                                    const char* seqName)
+                                    const char* seqName,
+                                    int* removedIndex)
 {
+    if (removedIndex) *removedIndex = -1;
+    if (classOffset != UMA_LAYOUT_CLASSOFF) return false;
     __try
     {
-        const int sizeOfFName     = classOffset - UOBJ_FNAME_OFFSET;
-        const int sizeOfUObject   = classOffset + 4;
-        const int animSeqsDataOff = sizeOfUObject + 4 + 12 + 12;
-        const int animSeqsNumOff  = animSeqsDataOff + 4;
-        const int seqStride       = sizeOfFName + 40;
-        const int groupsDataOff   = sizeOfFName;       // within FMeshAnimSeq
-        const int notifysDataOff  = sizeOfFName + 24;  // within FMeshAnimSeq
-
         void** gObjData = *(void***)GOBJECTS_DATA;
         int    gObjNum  = *(int*)   GOBJECTS_NUM;
         if (!gObjData || gObjNum <= 0) return false;
@@ -1197,38 +1251,48 @@ static bool GO_DeleteMeshAnimSeqRaw(int classOffset,
             const char* pkgName = (char*)gNamesData[pkgIdx] + FNAME_ENTRY_STR_OFFSET;
             if (_stricmp(pkgName, package) != 0) continue;
 
-            char* seqsData = (char*)*(void**)((char*)obj + animSeqsDataOff);
-            int   seqsNum  = *(int*)  ((char*)obj + animSeqsNumOff);
+            char* seqsData  = *(char**)((char*)obj + UMA_OFF_ANIMSEQS);
+            int   seqsNum   = *(int*)  ((char*)obj + UMA_OFF_ANIMSEQS + 4);
+            char* movesData = *(char**)((char*)obj + UMA_OFF_MOVES);
+            int   movesNum  = *(int*)  ((char*)obj + UMA_OFF_MOVES + 4);
             if (!seqsData || seqsNum <= 0) return false;
+            if (!movesData || movesNum != seqsNum) return false;
 
             // Find the seq by name.
             int seqIndex = -1;
             for (int j = 0; j < seqsNum; ++j)
             {
-                int nameIdx = *(int*)(seqsData + j * seqStride);
+                int nameIdx = *(int*)(seqsData + j * UMA_SEQ_STRIDE);
                 if (nameIdx < 0 || nameIdx >= gNamesNum) continue;
                 const char* nm = (char*)gNamesData[nameIdx] + FNAME_ENTRY_STR_OFFSET;
                 if (_stricmp(nm, seqName) == 0) { seqIndex = j; break; }
             }
             if (seqIndex < 0) return false;
 
-            char* target = seqsData + seqIndex * seqStride;
+            char* seqTarget  = seqsData  + seqIndex * UMA_SEQ_STRIDE;
+            char* moveTarget = movesData + seqIndex * UMA_MOVE_STRIDE;
 
             // Note: NOT calling mi_free on the seq's sub-TArrays
-            // (Groups.Data / Notifys.Data).  Serialization-allocated
-            // TArrays in SCCT don't reliably come through the IAT-hooked
-            // mimalloc path - mi_free on those pointers AVs and the SEH
-            // wrapper would convert the AV into "Failed to delete".
-            // The leaked memory is at most a few hundred bytes per delete
-            // and is reclaimed by the next save/reload of the package.
-            (void)groupsDataOff;
-            (void)notifysDataOff;
-
+            // (Groups.Data / Notifys.Data) or the motion chunk's tracks.
+            // Serialization-allocated TArrays in SCCT don't reliably come
+            // through the IAT-hooked mimalloc path - mi_free on those
+            // pointers AVs and the SEH wrapper would convert the AV into
+            // "Failed to delete".  Nothing owns them once the elements
+            // are gone, so they stay allocated until the editor exits.
+            //
+            // Motions first: DeleteCurrentSequence's snapshot has read every
+            // sequence but no motion, so a fault comes before the sequences
+            // move.
             int tailElems = (seqsNum - seqIndex - 1);
             if (tailElems > 0)
-                memmove(target, target + seqStride, tailElems * seqStride);
+            {
+                memmove(moveTarget, moveTarget + UMA_MOVE_STRIDE, tailElems * UMA_MOVE_STRIDE);
+                memmove(seqTarget,  seqTarget  + UMA_SEQ_STRIDE,  tailElems * UMA_SEQ_STRIDE);
+            }
 
-            *(int*)((char*)obj + animSeqsNumOff) = seqsNum - 1;
+            *(int*)((char*)obj + UMA_OFF_ANIMSEQS + 4) = seqsNum - 1;
+            *(int*)((char*)obj + UMA_OFF_MOVES + 4)    = movesNum - 1;
+            if (removedIndex) *removedIndex = seqIndex;
             return true;
         }
         return false;
@@ -1478,8 +1542,29 @@ static bool FormatUObjectRef(void* obj, char* outBuf, int outSize);
 static void Get_SeqName     (char* b, int n, void*) { strncpy_s(b, n, g_curSeqName, _TRUNCATE); }
 static void Set_SeqName(const char* t, void*)
 {
-    if (!g_currentSeqPtr || g_uobjClassOffset == 0 || !t || !*t) return;
+    // The grid commits again when the message box below takes focus from
+    // its editor; one refusal is enough.
+    static bool s_refusing = false;
+    if (s_refusing) return;
+    if (!g_currentSeqPtr || g_uobjClassOffset == 0 || !t) return;
     if (_stricmp(t, g_curSeqName) == 0) return;   // no-op rename
+
+    // The set's other sequences: the one being renamed is the first that
+    // carries its name, as GO_FindMeshAnimSeqRaw resolves it.
+    std::string pkg  = PackageComboText();
+    std::string anim = AnimComboText();
+    std::vector<std::string> names;
+    if (GO_EnumSequencesRaw(g_uobjClassOffset, pkg.c_str(), anim.c_str(), &s_seqBuf))
+        for (int i = 0; i < s_seqBuf.count; ++i) names.emplace_back(s_seqBuf.items[i]);
+    const std::string problem =
+        AnimImportOptions::RenameProblem(t, AnimImportOptions::OtherSequences(names, g_curSeqName));
+    if (!problem.empty())
+    {
+        s_refusing = true;
+        MessageBoxA(g_hWnd, problem.c_str(), "Rename Sequence", MB_OK | MB_ICONWARNING);
+        s_refusing = false;
+        return;
+    }
 
     int nameIdx = FName_Intern(t, FNAME_ADD);
     if (nameIdx == 0) return;
@@ -1491,6 +1576,11 @@ static void Set_SeqName(const char* t, void*)
 
     // Cache the new name for the read-back path.
     strncpy_s(g_curSeqName, t, _TRUNCATE);
+
+    // The package needs saving, as after an import.
+    void* set = (g_uobjClassOffset == UMA_LAYOUT_CLASSOFF)
+        ? GO_FindMeshAnimRaw(pkg.c_str(), anim.c_str(), nullptr, nullptr, 0) : nullptr;
+    if (set) GO_MarkPackageDirtyRaw(set);
 
     // Rebuild the sequence listbox so the renamed entry shows under its
     // new label, and re-select it so the user doesn't lose context.
@@ -1797,6 +1887,7 @@ static void CopyAnsiToClipboard(const char* text)
 
 static void DeleteCurrentSequence()
 {
+    using namespace AnimImportOptions;
     if (!g_currentSeqPtr || g_uobjClassOffset == 0) return;
     std::string pkg  = PackageComboText();
     std::string anim = AnimComboText();
@@ -1804,17 +1895,74 @@ static void DeleteCurrentSequence()
 
     char prevName[64] = "";
     strncpy_s(prevName, g_curSeqName, _TRUNCATE);
+    int row = static_cast<int>(SendMessageA(g_hSeqList, LB_GETCURSEL, 0, 0));
 
-    if (!GO_DeleteMeshAnimSeqRaw(g_uobjClassOffset,
-                                 pkg.c_str(), anim.c_str(), prevName))
+    // What the set holds now, for the question and to check the result.
+    void* set = (g_uobjClassOffset == UMA_LAYOUT_CLASSOFF)
+        ? GO_FindMeshAnimRaw(pkg.c_str(), anim.c_str(), nullptr, nullptr, 0) : nullptr;
+    if (!set || !GO_SnapshotAnimRaw(set, &s_snapExisting))
+    {
+        MessageBoxA(g_hWnd, "Failed to delete sequence.",
+                    "Message", MB_OK);
+        return;
+    }
+    const Set before = SnapshotToSet(s_snapExisting);
+    const int movesBefore = s_snapExisting.moves;
+    const int notifies = NotifyCount(before, IndexOf(before.sequences, prevName));
+
+    if (MessageBoxA(g_hWnd, DeleteConfirmText(prevName, pkg, anim, notifies).c_str(), "Delete Sequence",
+                    MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+        return;
+
+    // The main editor stays usable while the box is up, and a map load
+    // there can free the set or load it again elsewhere: delete only from
+    // the set the question was about, still holding the same sequences.
+    if (GO_FindMeshAnimRaw(pkg.c_str(), anim.c_str(), nullptr, nullptr, 0) != set ||
+        !GO_SnapshotAnimRaw(set, &s_snapExisting) ||
+        SnapshotToSet(s_snapExisting).sequences != before.sequences)
     {
         MessageBoxA(g_hWnd, "Failed to delete sequence.",
                     "Message", MB_OK);
         return;
     }
 
+    int removed = -1;
+    if (!GO_DeleteMeshAnimSeqRaw(g_uobjClassOffset,
+                                 pkg.c_str(), anim.c_str(), prevName, &removed))
+    {
+        MessageBoxA(g_hWnd, "Failed to delete sequence.",
+                    "Message", MB_OK);
+        return;
+    }
+    GO_MarkPackageDirtyRaw(set);
+
+    // Check the set lost that sequence and its motion and nothing else.
+    const std::vector<std::string> expected = WithoutSequence(before.sequences, removed);
+    const bool readBack = GO_SnapshotAnimRaw(set, &s_snapExisting);
+    bool matches = readBack && removed >= 0 && s_snapExisting.seqs == static_cast<int>(expected.size());
+    for (int i = 0; matches && i < s_snapExisting.seqs; ++i)
+        matches = SameName(s_snapExisting.seqNames[i], expected[static_cast<size_t>(i)]);
+
+    std::string log = std::string("AnimationBrowser: deleted ") + prevName + " from " + pkg + "." + anim +
+                      ": sequences " + std::to_string(before.sequences.size()) + " -> " +
+                      (readBack ? std::to_string(s_snapExisting.seqs) : std::string("?")) +
+                      ", motions " + std::to_string(movesBefore) + " -> " +
+                      (readBack ? std::to_string(s_snapExisting.moves) : std::string("?")) +
+                      (matches ? "" : " - RESULT CHECK FAILED");
+    Logger::log(log);
+    if (!matches)
+    {
+        MessageBoxA(g_hWnd, "The animation set could not be checked after the delete. Do not save "
+                    "this package; reload it from disk.", "Delete Sequence", MB_OK | MB_ICONERROR);
+    }
+
+    // Keep the user's place: the row that took the deleted one's slot,
+    // or the new last row.
     g_currentSeqPtr = nullptr;
     RefreshSequenceList();
+    int count = static_cast<int>(SendMessageA(g_hSeqList, LB_GETCOUNT, 0, 0));
+    if (count > 0 && row != LB_ERR)
+        SendMessageA(g_hSeqList, LB_SETCURSEL, (WPARAM)(row < count ? row : count - 1), 0);
     RefreshSequenceTab();
 }
 
@@ -4990,6 +5138,8 @@ static void RefreshMeshTab()
     g_currentMeshPtr = (!pkg.empty() && !mesh.empty() && g_uobjClassOffset != 0)
         ? GO_FindSkeletalMeshRaw(g_uobjClassOffset, pkg.c_str(), mesh.c_str())
         : nullptr;
+    // Not found: a later pick of the same mesh looks again.
+    g_meshTabFor = g_currentMeshPtr ? pkg + "." + mesh : std::string();
 
     PropertyGrid::BeginUpdate(grid);
     PropertyGrid::Clear(grid);
@@ -5098,6 +5248,7 @@ static void RefreshSequenceList()
 {
     if (!g_hSeqList) return;
     SendMessageA(g_hSeqList, LB_RESETCONTENT, 0, 0);
+    g_seqListFor.clear();
 
     if (g_uobjClassOffset == 0) return;
 
@@ -5113,6 +5264,7 @@ static void RefreshSequenceList()
         Logger::log("AnimationBrowser: sequence enum AV'd");
         return;
     }
+    g_seqListFor = pkgStr + '\n' + animStr;
 
     for (int i = 0; i < s_seqBuf.count; ++i)
         SendMessageA(g_hSeqList, LB_ADDSTRING, 0,
@@ -5209,11 +5361,20 @@ static void AutoRefreshIfDirty()
 {
     if (!g_hWnd || !IsWindowVisible(g_hWnd)) return;
 
+    // Only while the browser is the window in use: the walks below scan
+    // every object, which a big map makes slow, and the editor would pay
+    // for them every second.  WM_ACTIVATE catches up on return, or WM_SIZE
+    // when the browser comes back from minimised.
+    if (GetForegroundWindow() != g_hWnd || IsIconic(g_hWnd)) return;
+
     // Don't yank the listbox out from under a user who has a dropdown
     // open or is mid-pick on one of the combos.
     if (g_hPackageCombo && SendMessageA(g_hPackageCombo, CB_GETDROPPEDSTATE, 0, 0)) return;
     if (g_hMeshCombo    && SendMessageA(g_hMeshCombo,    CB_GETDROPPEDSTATE, 0, 0)) return;
     if (g_hAnimCombo    && SendMessageA(g_hAnimCombo,    CB_GETDROPPEDSTATE, 0, 0)) return;
+
+    LARGE_INTEGER pollStart = {}, pollEnd = {}, freq = {};
+    QueryPerformanceCounter(&pollStart);
 
     // Re-walk the package set and bail if it's identical to what's
     // already shown - no flicker, no disruption on idle polls.
@@ -5240,6 +5401,22 @@ static void AutoRefreshIfDirty()
                       return _stricmp(a.c_str(), b.c_str()) < 0; });
         meshesChanged = !ComboMatchesList(g_hMeshCombo, meshes);
         animsChanged  = !ComboMatchesList(g_hAnimCombo, anims);
+    }
+
+    // Report once if the poll itself is slow enough to notice.
+    static bool s_slowPollLogged = false;
+    QueryPerformanceCounter(&pollEnd);
+    QueryPerformanceFrequency(&freq);
+    double pollMs = freq.QuadPart
+        ? static_cast<double>(pollEnd.QuadPart - pollStart.QuadPart) * 1000.0 / static_cast<double>(freq.QuadPart)
+        : 0.0;
+    if (!s_slowPollLogged && pollMs > 10.0)
+    {
+        char msg[96];
+        _snprintf_s(msg, sizeof(msg), _TRUNCATE,
+                    "AnimationBrowser: background refresh poll took %.1f ms", pollMs);
+        Logger::log(msg);
+        s_slowPollLogged = true;
     }
 
     if (!packagesChanged && !meshesChanged && !animsChanged) return;
@@ -5378,45 +5555,15 @@ static void OnFileSave(HWND hParent)
 //  UnrealEd's merge/overwrite/keep-notifies options lived in the browser,
 //  so they are done here the same way: the file is imported under a
 //  throw-away name in TempAnimPackage, then its sequences are moved into
-//  the existing set and the temporary set is deleted.
-//
-//  UMeshAnimation (UMeshAnimation::Serialize at 0x111136d0; checked on
-//  live objects - MAL_anm.ventilateur_anm, 5 bones, 2 sequences):
-//    +0x28  INT                    InternalVersion
-//    +0x2C  TArray<FNamedBone>     RefBones   12 bytes: FName, Flags, Parent
-//    +0x38  TArray<MotionChunk>    Moves      0x68 bytes (has a vtable)
-//    +0x44  TArray<FMeshAnimSeq>   AnimSeqs   0x2C bytes, Notifys at +0x1C
-//    +0x50  raw import data (transient; set only on a fresh import)
-//  Moves[i] holds the keys of AnimSeqs[i], one track per reference bone in
-//  bone order, which is why a merge needs identical skeletons.
+//  the existing set and the temporary set is deleted.  The UMeshAnimation
+//  layout (UMA_*) is described above GO_DeleteMeshAnimSeqRaw.
 //
 //  Elements are moved, never copied: the bytes of a sequence and its motion
 //  chunk change owner, and whatever the existing set loses (an overwritten
 //  sequence, or the whole old contents on a replace) is swapped into the
 //  temporary set so the engine frees it when that set is deleted.  The set
 //  keeps its identity, so meshes that use it stay linked.
-#define UMA_OFF_VERSION     0x28
-#define UMA_OFF_REFBONES    0x2C
-#define UMA_OFF_MOVES       0x38
-#define UMA_OFF_ANIMSEQS    0x44
-#define UMA_BONE_STRIDE     12
-#define UMA_MOVE_STRIDE     0x68
-#define UMA_SEQ_STRIDE      0x2C
-#define UMA_SEQ_NOTIFYS     0x1C
-#define UMA_LAYOUT_CLASSOFF 0x24        // the layout above assumes 4-byte FNames
-#define UPACKAGE_OFF_DIRTY  0x30        // Exec_Anim sets this after an import
 #define TEMP_ANIM_PACKAGE   "TempAnimPackage"
-
-struct AnimSnapshotRaw
-{
-    enum { MAX_BONES = 512, MAX_SEQS = 2048, MAX_LEN = 64 };
-    int  bones, seqs, moves;
-    char boneNames[MAX_BONES][MAX_LEN];
-    char seqNames [MAX_SEQS][MAX_LEN];
-    int  notifyCounts[MAX_SEQS];
-};
-static AnimSnapshotRaw s_snapExisting;
-static AnimSnapshotRaw s_snapIncoming;
 
 static const char* GO_NameOrNull(int idx)
 {
@@ -6244,6 +6391,15 @@ static void OnRenameMesh(HWND hParent)
 
     RefreshAll();
     if (newPkg[0])  ComboAddSelect(g_hPackageCombo, newPkg);
+    // Renamed into another package: list what that one holds, keeping
+    // the picks it also has.
+    if (!BuiltFor(PackageComboText(), g_meshListFor))
+    {
+        RefreshMeshList(false);
+        RefreshAnimList(false);
+        RefreshSequenceList();
+        RefreshSequenceTab();
+    }
     if (newName[0]) ComboAddSelect(g_hMeshCombo,    newName);
     RefreshMeshTab();
     UpdateWindowTitle();
@@ -6302,6 +6458,14 @@ static void OnRenameAnim(HWND hParent)
 
     RefreshAll();
     if (newPkg[0])  ComboAddSelect(g_hPackageCombo, newPkg);
+    // Renamed into another package: list what that one holds, keeping
+    // the picks it also has.
+    if (!BuiltFor(PackageComboText(), g_animListFor))
+    {
+        RefreshMeshList(false);
+        RefreshAnimList(false);
+        RefreshMeshTab();
+    }
     if (newName[0]) ComboAddSelect(g_hAnimCombo,    newName);
     RefreshSequenceList();
     RefreshSequenceTab();
@@ -6514,11 +6678,19 @@ static void OnCommand(HWND hWnd, WORD id)
             // Hook points
             break;
 
-        // Top-level child combo selection changes.
+        // Sequence list context menu > Delete, also when posted.
+        case IDM_CTX_DELETE:              DeleteCurrentSequence();      break;
+
+        // Top-level child combo selection changes.  Each one returns
+        // early when what depends on it was already built for the
+        // current pick (see g_meshListFor).
         case IDC_AB_PACKAGE_COMBO:
+        {
             // Package switch invalidates mesh and anim choices - rebuild
             // both with forceFirst (top of list), then the sequence list,
             // then the dependent property tabs.
+            std::string pkg = PackageComboText();
+            if (BuiltFor(pkg, g_meshListFor) && BuiltFor(pkg, g_animListFor)) break;
             RefreshMeshList();
             RefreshAnimList();
             RefreshSequenceList();
@@ -6526,14 +6698,17 @@ static void OnCommand(HWND hWnd, WORD id)
             RefreshMeshTab();
             UpdateWindowTitle();
             break;
+        }
         case IDC_AB_MESH_COMBO:
             // Mesh choice doesn't drive the anim-set list (we don't track
             // DefaultAnim wiring yet), but the Mesh tab's Material array
             // does depend on which USkeletalMesh is selected.
+            if (BuiltFor(PackageComboText() + "." + MeshComboText(), g_meshTabFor)) break;
             RefreshMeshTab();
             UpdateWindowTitle();
             break;
         case IDC_AB_ANIM_COMBO:
+            if (BuiltFor(PackageComboText() + "\n" + AnimComboText(), g_seqListFor)) break;
             RefreshSequenceList();
             RefreshSequenceTab();
             UpdateWindowTitle();
@@ -6781,6 +6956,16 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
     {
         RECT rc; GetClientRect(hWnd, &rc);
         PositionChildControls(rc.right - rc.left, rc.bottom - rc.top);
+        // Restoring from the taskbar activates the browser while it is
+        // still minimised, so the refresh WM_ACTIVATE asks for is skipped;
+        // run it once the window is back.
+        static bool s_minimised = false;
+        if (wParam == SIZE_MINIMIZED) s_minimised = true;
+        else if (s_minimised && (wParam == SIZE_RESTORED || wParam == SIZE_MAXIMIZED))
+        {
+            s_minimised = false;
+            AutoRefreshIfDirty();
+        }
         return 0;
     }
 
@@ -6812,9 +6997,19 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
         // CBN_CLOSEUP fires after the dropdown is hidden and the edit
         // field has been updated, so GetWindowTextA returns the new
         // selection - that's the right hook for dropdown picks.
-        // CBN_KILLFOCUS handles the "user typed and tabbed away" path.
+        // CBN_SELCHANGE (the same value as LBN_SELCHANGE) also arrives
+        // while the list is open, as the user moves through it; those
+        // wait for the close-up.  Arrow keys on a closed combo still pick
+        // at once.  All three combos are CBS_DROPDOWNLIST, so nothing can
+        // be typed and losing focus changes nothing.
+        if (code == CBN_SELCHANGE &&
+            (id == IDC_AB_PACKAGE_COMBO || id == IDC_AB_MESH_COMBO || id == IDC_AB_ANIM_COMBO) &&
+            SendMessageA(reinterpret_cast<HWND>(lParam), CB_GETDROPPEDSTATE, 0, 0))
+        {
+            return 0;
+        }
         if (code == 0 /* menu */ ||
-            code == CBN_CLOSEUP || code == CBN_KILLFOCUS ||
+            code == CBN_CLOSEUP ||
             code == LBN_SELCHANGE)
         {
             OnCommand(hWnd, id);

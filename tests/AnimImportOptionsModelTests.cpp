@@ -99,6 +99,28 @@ int main()
         // Long lists are shortened.
         Check(NameList({"a", "b", "c"}, 2) == "a, b, ... (1 more)", "name list");
 
+        // Deleting a sequence: the rest keep their order.
+        const std::vector<std::string> three = {"idle", "walk", "run"};
+        Check((WithoutSequence(three, 0) == std::vector<std::string>{"walk", "run"}), "delete first");
+        Check((WithoutSequence(three, 1) == std::vector<std::string>{"idle", "run"}), "delete middle");
+        Check((WithoutSequence(three, 2) == std::vector<std::string>{"idle", "walk"}), "delete last");
+        Check(WithoutSequence(three, 3) == three && WithoutSequence(three, -1) == three, "index out of range changes nothing");
+        text = DeleteConfirmText("walk", "MAL_anm", "ventilateur_anm", 1);
+        Check(Has(text, "'walk'") && Has(text, "MAL_anm.ventilateur_anm") && Has(text, "1 notify.") && Has(text, "cannot be undone"), "delete confirm");
+        Check(Has(DeleteConfirmText("walk", "MAL_anm", "ventilateur_anm", 3), "3 notifies"), "delete confirm plural");
+
+        // Renaming a sequence.
+        const std::vector<std::string> others = {"idle", "Run"};
+        Check(RenameProblem("", others) == "Enter a sequence name.", "empty name");
+        Check(Has(RenameProblem("walk fast", others), "letters, digits, _ and - only"), "space refused");
+        Check(Has(RenameProblem("walk'", others), "letters, digits, _ and - only"), "quote refused");
+        Check(RenameProblem("run", others) == "Another sequence in this set is already called Run.", "clash ignoring case");
+        Check(RenameProblem("Walk_02-b", others).empty(), "valid name");
+        Check((OtherSequences({"idle", "walk", "Run"}, "WALK") == std::vector<std::string>{"idle", "Run"}), "renamed sequence left out");
+        Check((OtherSequences({"walk", "idle", "walk"}, "walk") == std::vector<std::string>{"idle", "walk"}), "only its first copy left out");
+        Check(RenameProblem("walk", OtherSequences({"idle", "walk", "Run"}, "walk")).empty(), "renaming to its own name");
+        Check(Has(RenameProblem("walk", OtherSequences({"walk", "idle", "walk"}, "walk")), "already called walk"), "duplicate name still clashes");
+
         std::cout << "AnimImportOptionsModelTests: " << checks << " checks passed\n";
         return 0;
     }
