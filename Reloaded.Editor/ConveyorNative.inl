@@ -1,7 +1,7 @@
 // Conveyor belts (ConveyorModel.h): imports the belt's texture and meshes into the open
-// map's package, compiles ConveyorRoller, ConveyorItem and ConveyorBelt into it, and
-// places belts. Included by WorkflowEditor.cpp after CharacterSkinsNative.inl, whose
-// map class compiler it uses.
+// map's package, compiles ConveyorRoller, ConveyorItem, ConveyorMotor and ConveyorBelt
+// into it, and places belts. Included by WorkflowEditor.cpp after
+// CharacterSkinsNative.inl, whose map class compiler it uses.
 namespace
 {
     std::string ConveyorPath(const char* name) { return LevelPath()+"."+Conveyor::Group+"."+name; }
@@ -104,9 +104,31 @@ namespace
             throw std::runtime_error(std::string("Unexpected ConveyorBelt.")+name+" layout.");
         return actor+Read<int>(p+0x3c);
     }
+    // The belt class and frame meshes of the open map for the sync timer: finding an
+    // object by name reads every loaded object's name, too slow to do twice a second.
+    // Looked up again when the map changes, when one stops being what it was (an
+    // older version made again), or every few seconds while the map has none.
+    struct ConveyorCache { Address package=0,belt=0; std::array<Address,4> frames{}; DWORD at=0; };
+    ConveyorCache conveyorCache;
+    bool Still(Address object,const std::string& name,Address outer)
+    {
+        try{return object && NameOf(object)==name && Read<Address>(object+0x18)==outer;}catch(const std::exception&){return false;}
+    }
+    const ConveyorCache& ConveyorObjects()
+    {
+        auto& cache=conveyorCache;
+        const auto package=Read<Address>(Level()+0x18);
+        bool valid=cache.package==package && Still(cache.belt,Conveyor::BeltClass,package);
+        for(int i=0;valid && i<4;++i)
+            valid=cache.frames[i]==0 || Still(cache.frames[i],Conveyor::FrameMeshName(i&1,i&2),Read<Address>(cache.frames[i]+0x18));
+        if(valid || (cache.package==package && !cache.belt && GetTickCount()-cache.at<5000))return cache;
+        cache=ConveyorCache{package,ConveyorBeltClass(),{},GetTickCount()};
+        if(cache.belt)for(int i=0;i<4;++i)cache.frames[i]=Find(ConveyorPath(Conveyor::FrameMeshName(i&1,i&2)));
+        return cache;
+    }
     // Brings a belt's frame and item offsets in line with its settings. Returns
     // whether anything changed.
-    bool SyncBelt(Address actor)
+    bool SyncBelt(Address actor,const std::array<Address,4>& frames)
     {
         bool changed=false;
         const auto scale=Conveyor::FrameScale(Read<float>(BeltField(actor,"Length")),Read<float>(BeltField(actor,"Width")));
@@ -115,7 +137,7 @@ namespace
         if(Read<float>(Field(actor,"DrawScale"))!=1.0f){Write(Field(actor,"DrawScale"),1.0f);changed=true;}
         // The frame with the channels its wall options keep.
         auto bit=[&](const char* name){auto p=BeltProperty(actor,name);return p && (Read<unsigned>(actor+Read<int>(p+0x3c))&Read<unsigned>(p+0x64))!=0;};
-        if(auto frame=Find(ConveyorPath(Conveyor::FrameMeshName(bit("bLeftWall"),bit("bRightWall")))))
+        if(auto frame=frames[(bit("bLeftWall")?1:0)|(bit("bRightWall")?2:0)])
         {
             const auto slot=Field(actor,"StaticMesh");
             if(Read<Address>(slot)!=frame){Write(slot,frame);changed=true;}
@@ -282,7 +304,8 @@ Json AddConveyorBelt(const Json& spec)
         }
         try{MagicImport(p,actor+Read<int>(p+0x3c),ImportValue(value));}catch(const std::exception& e){throw std::runtime_error(key+": "+e.what());}
     }
-    SyncBelt(actor);
+    conveyorCache=ConveyorCache{};
+    SyncBelt(actor,ConveyorObjects().frames);
     Call(actor,0x44);
     transaction.Commit();
     Select(Json::array({Identity(actor)}));
@@ -290,14 +313,14 @@ Json AddConveyorBelt(const Json& spec)
     return Identity(actor);
 }
 
-// Keeps every belt's frame sized to its Length and Width and its item offsets to its
-// meshes as they are edited. Cheap when the map has no belts.
+// Keeps every belt's frame sized to its Length and Width, its channels to its wall
+// options and its item offsets to its meshes as they are edited.
 size_t SyncConveyorBelts()
 {
-    auto c=ConveyorBeltClass();
-    if(!ConveyorCurrent(c))return 0;
+    const auto& cache=ConveyorObjects();
+    if(!cache.belt || !ConveyorCurrent(cache.belt))return 0;
     size_t changed=0;
-    for(auto a:ActorsOf(c))if(SyncBelt(a)){Call(a,0x44);++changed;}
+    for(auto a:ActorsOf(cache.belt))if(SyncBelt(a,cache.frames)){Call(a,0x44);++changed;}
     if(changed)Redraw();
     return changed;
 }
