@@ -38,4 +38,16 @@ namespace MeasureTool
     // An empty list clears them; the caller redraws.
     struct ToolLine { std::array<double, 3> from, to; uint32_t colour; };
     void SetToolLines(std::vector<ToolLine> lines);
+
+    // While one is alive the viewports draw none of the overlays drawn here
+    // (the Light and Shadow map and its legend, the measurement, the lines of
+    // SetOverlay and SetToolLines), so a captured picture shows the map
+    // alone. The last one to go redraws the viewports with them back.
+    struct OverlayPause
+    {
+        OverlayPause();
+        ~OverlayPause();
+        OverlayPause(const OverlayPause&) = delete;
+        OverlayPause& operator=(const OverlayPause&) = delete;
+    };
 }

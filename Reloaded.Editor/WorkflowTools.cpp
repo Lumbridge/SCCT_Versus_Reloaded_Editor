@@ -37,6 +37,7 @@
 #include "LightShadowMap.h"
 #include "LightShadowModel.h"
 #include "EntryThumbnailModel.h"
+#include "ViewBookmarkModel.h"
 #include "LevelSnapshot.h"
 #include "logger.h"
 #include <commdlg.h>
@@ -746,6 +747,7 @@ namespace
             for(const auto& j:s.rows)
             {
                 std::string info=s.kind==Kind::Views?std::to_string(j.at("cameras").size())+" viewports":std::to_string(j.at("actors").size())+" actors / "+std::to_string(j.at("bindings").size())+" external bindings";
+                if(s.kind==Kind::Views && Bookmarks::SlotOf(j)) info+=", key "+std::to_string(Bookmarks::SlotOf(j));
                 int image=placeholder;
                 try
                 {
@@ -772,26 +774,32 @@ namespace
     // The entry's picture from the perspective viewport, framed on the
     // given actors when there are any (the camera is put back exactly
     // afterwards). A failure never undoes the save it belongs to.
+    bool CaptureEntryThumbnail(bool view,const std::string& id,const Json& frame,std::string& problem)
+    {
+        try
+        {
+            auto perspective=LevelSnapshot::FindPerspective(); Editor::CameraState moved;
+            if(frame.is_array() && !frame.empty())
+            {
+                RECT r{}; GetClientRect(perspective.window,&r);
+                try { moved=Editor::FrameCamera(perspective.camera,frame,r.bottom>0?static_cast<double>(r.right)/r.bottom:4.0/3); }
+                catch(const std::exception& e) { moved={}; Logger::log(std::string("Thumbnail: captured unframed: ")+e.what()); } // Captured as it is instead.
+            }
+            try { LevelSnapshot::SaveViewportThumbnail(perspective,ThumbnailPath(view,id)); }
+            catch(...) { Editor::RestoreCamera(moved); throw; }
+            Editor::RestoreCamera(moved);
+            return true;
+        }
+        catch(const std::exception& e) { problem=e.what(); return false; }
+    }
+    // The same for a list window's entry, which then shows it, or why not.
     bool CaptureThumbnail(State& s,const std::string& id,const Json& frame=Json{})
     {
         std::string problem;
-        try
-        {
-            auto view=LevelSnapshot::FindPerspective(); Editor::CameraState moved;
-            if(frame.is_array() && !frame.empty())
-            {
-                RECT r{}; GetClientRect(view.window,&r);
-                try { moved=Editor::FrameCamera(view.camera,frame,r.bottom>0?static_cast<double>(r.right)/r.bottom:4.0/3); }
-                catch(const std::exception& e) { moved={}; Logger::log(std::string("Thumbnail: captured unframed: ")+e.what()); } // Captured as it is instead.
-            }
-            try { LevelSnapshot::SaveViewportThumbnail(view,ThumbnailPath(s.kind==Kind::Views,id)); }
-            catch(...) { Editor::RestoreCamera(moved); throw; }
-            Editor::RestoreCamera(moved);
-        }
-        catch(const std::exception& e) { problem=e.what(); }
+        const bool captured=CaptureEntryThumbnail(s.kind==Kind::Views,id,frame,problem);
         Populate(s);
-        if(!problem.empty()) Status(s,"Saved, but the thumbnail was not captured: "+problem);
-        return problem.empty();
+        if(!captured) Status(s,"Saved, but the thumbnail was not captured: "+problem);
+        return captured;
     }
     void SaveAssembly(State& s,bool update,bool session)
     {
@@ -1002,7 +1010,13 @@ namespace
         {
             if(command==Primary) { Activate(s); return; }
             if(command==Secondary) { std::string name="New view"; if(GetName(s.window,"Save New Working View",name)) { auto view=Editor::CaptureView(); view["name"]=name; StoreEntry(s,view,false); CaptureThumbnail(s,s.selectedId); } return; }
-            if(command==Third) { Entry(s); StoreEntry(s,Editor::CaptureView(),true); if(CaptureThumbnail(s,s.selectedId)) Status(s,"Updated the selected view and its thumbnail from the current workspace. Its name and identity are unchanged."); return; }
+            if(command==Third)
+            {
+                // A camera bookmark keeps its key and stays cameras only.
+                const int slot=Bookmarks::SlotOf(Entry(s)); auto view=Editor::CaptureView();
+                if(slot) { view=Bookmarks::CamerasOnly(view); view["slot"]=slot; }
+                StoreEntry(s,view,true); if(CaptureThumbnail(s,s.selectedId)) Status(s,"Updated the selected view and its thumbnail from the current workspace. Its name and identity are unchanged."); return;
+            }
         }
         if(command==UpdateThumbnail && (s.kind==Kind::Views || s.kind==Kind::Assemblies))
         {
@@ -1333,6 +1347,40 @@ void RunObjectiveCommand(UINT command,const Json& snapshot)
     if(command<kAddObjective || command>kAddFlagObjective)throw std::runtime_error("Invalid objective command.");
     AddObjective(command,snapshot);
 }
+void CameraBookmark(int slot,bool store,bool fromMenu)
+{
+    try
+    {
+        Sync();
+        if(store)
+        {
+            Json next=document; auto& views=next["maps"][mapKey]["views"];
+            views=Bookmarks::Assign(views,slot,Editor::CaptureView().at("cameras"),Id(),Timestamp());
+            const auto id=views[static_cast<size_t>(Bookmarks::FindSlot(views,slot))].at("id").get<std::string>();
+            Save(next);
+            // Best effort, as for any view: the bookmark is kept without one.
+            std::string problem;
+            if(!CaptureEntryThumbnail(true,id,Json{},problem)) Logger::log("Camera bookmarks: "+Bookmarks::Label(slot)+" has no thumbnail: "+problem);
+            for(auto s:windows) if(s->kind==Kind::Views)
+            {
+                try { Populate(*s); } catch(const std::exception& e) { Status(*s,e.what()); }
+            }
+            return;
+        }
+        const auto& views=document.at("maps").at(mapKey).at("views");
+        const int at=Bookmarks::FindSlot(views,slot);
+        if(at>=0) { Editor::RestoreView(Bookmarks::CamerasOnly(views[static_cast<size_t>(at)])); return; }
+        if(!fromMenu) { Logger::log("Camera bookmarks: no "+Bookmarks::Label(slot)+" in this map yet."); MessageBeep(MB_ICONWARNING); return; }
+        const auto text="No camera bookmark "+std::to_string(slot)+" in this map yet. Press Ctrl+"+std::to_string(slot)+" over a viewport to set it.";
+        MessageBoxA(GetActiveWindow(),text.c_str(),"Camera Bookmarks",MB_OK|MB_ICONINFORMATION);
+    }
+    catch(const std::exception& e)
+    {
+        Logger::log(std::string("Camera bookmarks: ")+e.what());
+        if(fromMenu) MessageBoxA(GetActiveWindow(),e.what(),"Camera Bookmarks",MB_OK|MB_ICONERROR);
+        else MessageBeep(MB_ICONWARNING);
+    }
+}
 bool HandleCommand(UINT command)
 {
     if(EditorExtras::HandleCommand(command))return true;
@@ -1362,6 +1410,12 @@ bool HandleCommand(UINT command)
     if(command==kBrushVisibility)
     {
         try{OpenBrushVisibility();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Brush Visibility",MB_OK|MB_ICONERROR);}
+        return true;
+    }
+    if(command>=kBookmarkGoFirst && command<=kBookmarkLast)
+    {
+        const bool store=command>=kBookmarkSetFirst;
+        CameraBookmark(Bookmarks::kFirst+static_cast<int>(command-(store?kBookmarkSetFirst:kBookmarkGoFirst)),store,true);
         return true;
     }
     if(command>=kAddObjective && command<=kAddFlagObjective)

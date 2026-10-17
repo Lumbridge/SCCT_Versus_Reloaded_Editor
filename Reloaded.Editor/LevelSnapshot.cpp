@@ -4,6 +4,7 @@
 #include "LevelSnapshotModel.h"
 #include "EntryThumbnailModel.h"
 #include "WorkflowEditor.h"
+#include "MeasureTool.h"
 #include "logger.h"
 #include <windows.h>
 #include <commdlg.h>
@@ -168,6 +169,9 @@ namespace
 
     HBITMAP GrabViewport(HWND hwnd, uintptr_t viewport, int& width, int& height)
     {
+        // RE+'s own overlays are no part of the map either. Made first, so it
+        // goes last: its redraw brings back the axis indicator as well.
+        const MeasureTool::OverlayPause noOverlays;
         const NoAxisIndicator noAxis;
         Editor::Redraw();
         RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);

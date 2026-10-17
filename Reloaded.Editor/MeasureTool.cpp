@@ -54,6 +54,7 @@ namespace
     bool popupSurface = false;
     int popupHidden = -1;
     bool overlayFaulted = false;
+    int overlayPauses = 0; // OverlayPause objects alive
     struct Overlay { Address level = 0; std::vector<OverlayLine> lines; };
     std::map<std::string, Overlay> overlays;
 
@@ -308,6 +309,8 @@ namespace
     void LogFault() { Logger::log("Measure: overlay faulted and was skipped"); }
     void __cdecl DrawOverlay(Address viewport, Address node)
     {
+        // A picture is being captured (OverlayPause): the map alone.
+        if (overlayPauses > 0) return;
         // The Light and Shadow map shares this hook, under the measurement.
         LightShadowMap::DrawViewportOverlay(viewport, node);
         __try { DrawOverlayGuarded(viewport, node); }
@@ -393,6 +396,12 @@ void SetToolLines(std::vector<ToolLine> lines)
         converted.push_back({ { line.from[0], line.from[1], line.from[2] }, { line.to[0], line.to[1], line.to[2] }, line.colour });
     if (converted.empty()) overlays.erase("placement");
     else overlays["placement"] = { CurrentLevel(), std::move(converted) };
+}
+
+OverlayPause::OverlayPause() { ++overlayPauses; }
+OverlayPause::~OverlayPause()
+{
+    if (--overlayPauses == 0) Redraw();
 }
 
 bool ViewportMessage(void* viewport, UINT message, WPARAM wParam, LPARAM lParam)

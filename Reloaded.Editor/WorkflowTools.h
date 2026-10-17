@@ -13,6 +13,9 @@ namespace WorkflowTools
     constexpr UINT kObjectivePlayersFirst = 41400, kObjectivePlayersCustom = 41408, kObjectivePlayersOpen = 41410,
                    kObjectiveTargets = 41411, kObjectivePlayersLast = 41411;
     constexpr UINT kViews = 40921;
+    // RE+ Tools > Camera Bookmarks (ViewBookmarkModel.h): Go to Bookmark 1-9
+    // (41440-41448) and Set Bookmark 1-9 (41449-41457).
+    constexpr UINT kBookmarkGoFirst = 41440, kBookmarkSetFirst = 41449, kBookmarkLast = 41457;
     constexpr UINT kBrushVisibility = 40953;
     constexpr UINT kAssemblies = 40922;
     constexpr UINT kSaveAssembly = 40923;
@@ -28,6 +31,10 @@ namespace WorkflowTools
     constexpr UINT kSurfaceSnapX = 40940, kSurfaceSnapY = 40941, kSurfaceSnapZ = 40942, kSurfaceSnapAll = 40943;
     constexpr UINT kVertexSnapX = 40944, kVertexSnapY = 40945, kVertexSnapZ = 40946, kVertexSnapAll = 40947;
     bool HandleCommand(UINT command);
+    // Camera bookmark slot (1-9) of the open map: store the viewport cameras in
+    // it, with a thumbnail, or go back to them. From a key (fromMenu false) a
+    // failure or an empty slot beeps and logs; from the menu it says so in a box.
+    void CameraBookmark(int slot,bool store,bool fromMenu);
     bool AppendObjectiveMenu(HMENU menu,const Workflow::Json& actor);
     void RunObjectiveCommand(UINT command,const Workflow::Json& snapshot);
     void Initialize();
