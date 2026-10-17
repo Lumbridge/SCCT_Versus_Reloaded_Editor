@@ -21,7 +21,7 @@ In PowerShell, prepare a disposable install once, copy the maps to test into its
 
 ```powershell
 ./tools/run_native_map_recovery_test.ps1 -EditorDll bin\Reloaded.Editor.dll -GameSystem "<game>\System" -GenerateFixture -PrepareOnly
-./tests/smoke/run_smoke.ps1 -TestRoot <TestRoot printed above> -Isolate -Map AeroD.sdc -EditorDll bin\Reloaded.Editor.dll -Extra @{ map2 = "<TestRoot>\Packages\MapsEd\ShipD.sdc" }
+./tests/smoke/run_smoke.ps1 -TestRoot <TestRoot printed above> -Isolate -Map <BigMap>.sdc -EditorDll bin\Reloaded.Editor.dll -Extra @{ map2 = "<TestRoot>\Packages\MapsEd\ShipD.sdc" }
 ```
 
 `-PrepareOnly` links `Packages\Textures`, `Sounds`, `Animations` and `Menus` to
@@ -31,7 +31,7 @@ only the links), and the script refuses to run while any link is left.
 
 ## What it checks
 
-`SmokeSteps.inl` lists the steps. On a big map (AeroD, about 4,800 actors) and a
+`SmokeSteps.inl` lists the steps. On a big map (a few thousand actors) and a
 second one (ShipD):
 
 - Isolate selected with nothing selected refuses; Invert, Isolate and Unhide all

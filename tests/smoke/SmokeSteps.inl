@@ -1,4 +1,4 @@
-// Integrated RE+ 2.7 smoke steps. The map from smoke.ini (AeroD) is loaded first; map2 (ShipD) is used
+// Integrated RE+ 2.7 smoke steps. The map from smoke.ini (a big map) is loaded first; map2 (ShipD) is used
 // for the Map JSON round trip. Everything happens in a disposable install.
 
 bool IsLocked(unsigned char* actor)
@@ -141,7 +141,7 @@ void RunSteps()
     Check(BoxContains("Select what should stay visible first") && Hidden() == hiddenAtStart, "isolate-needs-selection",
           "ms=" + Fixed(ms) + " hidden=" + std::to_string(Hidden()) + " boxes=" + std::to_string(boxes.size()));
 
-    // ---- actor-index: Invert on a big map (2.6.1 took 8.4 s on AeroD).
+    // ---- actor-index: Invert on a big map (2.6.1 took 8.4 s on a 4,800-actor map).
     auto one = FreeMeshes(1);
     SelectOnly(one);
     ms = Command(40956);
