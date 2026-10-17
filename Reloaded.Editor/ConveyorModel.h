@@ -57,6 +57,8 @@ constexpr double RollerRadius = 6.0, RollerGap = 16.0, RollerSpan = 0.88;
 // How far the frame reaches under the riding surface (the pivot): a belt added on
 // a floor stands on it.
 constexpr double FrameDepth = 30.0;
+// How high a carried player steps each frame: onto the next belt's edge at a joint.
+constexpr double CarryStep = 18.0;
 
 // Stock cases and boxes riding a new belt, as many as fit the slots.
 inline constexpr std::array<const char*, 6> DefaultItems = {{
@@ -399,20 +401,19 @@ simulated function bool Riding(Pawn P, vector X, vector Y, vector Z)
 	return H > 0 && H < P.CollisionHeight + 24;
 }
 
-// Up a slope a move along it sticks against the surface: lift first, then move
-// level, and walking settles the pawn back onto the belt. Down a slope it moves
-// level and walking steps it down.
+// A move along a slope sticks against it, and a move never steps up onto the next
+// belt's edge, so step as walking does: up, along level, then down to where the
+// move along the belt ends (the floor stops it sooner).
 simulated function Carry(Pawn P, vector Delta)
 {
-	local vector Up;
+	local vector Up, Down;
 
-	if (Delta.Z > 0)
-	{
-		Up.Z = Delta.Z + 4;
-		P.Move(Up);
-	}
+	Up.Z = FMax(Delta.Z, 0) + @STEP@;
+	P.Move(Up);
+	Down.Z = Delta.Z - Up.Z;
 	Delta.Z = 0;
 	P.Move(Delta);
+	P.Move(Down);
 }
 
 simulated function CarryPlayers(float DeltaTime)
@@ -471,7 +472,7 @@ defaultproperties
 	RemoteRole=ROLE_SimulatedProxy
 }
 )UC", {{"@ITEMS@", std::to_string(ItemSlots)}, {"@MOST@", std::to_string(MaxItems)}, {"@SEGS@", std::to_string(MaxChain)},
-       {"@GAP@", number(RollerGap)}, {"@SPAN@", number(RollerSpan)}, {"@RADIUS@", number(RollerRadius)},
+       {"@GAP@", number(RollerGap)}, {"@SPAN@", number(RollerSpan)}, {"@RADIUS@", number(RollerRadius)}, {"@STEP@", number(CarryStep)},
        {"@VERSION@", std::to_string(Version)}, {"@PKG@", package}, {"@GROUP@", Group}, {"@FRAME@", FrameMesh}});
 }
 
