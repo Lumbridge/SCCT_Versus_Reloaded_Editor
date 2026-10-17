@@ -18,6 +18,7 @@
 #include "GridSizeShortcut.h"
 #include "PlayLevelConfig.h"
 #include "PlayLevelCommand.h"
+#include "ViewportKeysModel.h"
 #include <mimalloc.h>
 #include <cstring>
 #include <wincrypt.h>
@@ -211,6 +212,13 @@ static bool __cdecl IsControlKeyDown()
     return (GetKeyState(VK_CONTROL) & 0x8000) != 0;
 }
 
+static bool __cdecl GameViewKeyUpWanted()
+{
+    const ViewportKeys::Chord chord{ 'J', GetKeyState(VK_CONTROL) < 0,
+                                     GetKeyState(VK_SHIFT) < 0, GetKeyState(VK_MENU) < 0 };
+    return ViewportKeys::GameViewOnKeyUp(chord);
+}
+
 // Build All and the lighting rebuilds go through the Lighting Budget check
 // first; false cancels the command.
 static bool __cdecl LightingBudgetAllowsBuild(UINT command)
@@ -244,7 +252,7 @@ static const char* const kGameViewKeep[] = { "SComputerObjectiveTrigger" };
 // Visible in game (corona, light beam, rain) but the editor also billboards their icon
 static const char* const kGameViewIconOnly[] = { "Light", "ERainVolume" };
 
-static void __cdecl DuplicateSelection()
+void General::DuplicateSelection()
 {
     static constexpr char kCommand[] = "ACTOR DUPLICATE";
 
@@ -1304,25 +1312,31 @@ JMP_HOOK(0x10f00d10, ViewportKeyUpHook)
 
     __asm
     {
-        // Ctrl+D: duplicate the current actor/brush selection. This hook is
-        // viewport-only, so text fields keep their normal Ctrl+D behaviour.
+        // Ctrl+D: the selection was duplicated on the key press (GridSizeShortcut's
+        // viewport hook); its key-up is still kept from the stock handler.
         cmp  dword ptr [esp + 4], 0x44
         jne  check_f12
         push ecx
         call IsControlKeyDown
         pop  ecx
         test al, al
-        jnz  do_duplicate
+        jnz  swallow
 
     check_f12:
         // F12: RE+ Options
         cmp  dword ptr [esp + 4], 0x7B
         je   do_f12
 
-        // J: Game View
+        // J on its own: Game View (Shift+J is the stock Select All Adjacent Surfaces)
         cmp  dword ptr [esp + 4], 0x4A
-        je   do_game_view
+        jne  check_f7
+        push ecx
+        call GameViewKeyUpWanted
+        pop  ecx
+        test al, al
+        jnz  do_game_view
 
+    check_f7:
         // F7: Attempts to compile UnrealScript but fails (scripts are stripped). Disabled to prevent accidentally pressing F7 and crashing.
         cmp  dword ptr [esp + 4], 0x76
         je   swallow
@@ -1334,10 +1348,6 @@ JMP_HOOK(0x10f00d10, ViewportKeyUpHook)
 
     do_game_view:
         call ToggleGameView
-        ret  8
-
-    do_duplicate:
-        call DuplicateSelection
         ret  8
 
     do_f12:

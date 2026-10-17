@@ -51,21 +51,17 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\UndoHistoryModelTests.cpp /Fo"
 if errorlevel 1 goto failed
 "%TEMP%\UndoHistoryModelTests.exe"
 if errorlevel 1 goto failed
-if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\AnimImportOptionsModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\AnimImportOptionsModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\AnimImportOptionsModelTests.exe"
-if errorlevel 1 goto failed
 if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\PropertyFilterModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\PropertyFilterModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\PropertyFilterModelTests.exe"
 if errorlevel 1 goto failed
-if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\AssetNameGlossModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\AssetNameGlossModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\AssetNameGlossModelTests.exe"
-if errorlevel 1 goto failed
 if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\SoundFavoritesModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\SoundFavoritesModelTests.exe"
 if errorlevel 1 goto failed
@@ -74,6 +70,26 @@ if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\BrushGridSnapTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\BrushGridSnapTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\BrushGridSnapTests.exe"
+if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\ViewportKeysModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\ViewportKeysModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\ViewportKeysModelTests.exe"
+if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\GridSizeShortcutTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\GridSizeShortcutTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\GridSizeShortcutTests.exe"
+if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\LocalLightingMatchTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\LocalLightingMatchTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\LocalLightingMatchTests.exe"
+if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\PlayLevelCommandTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\PlayLevelCommandTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\PlayLevelCommandTests.exe"
+if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\PlayLevelConfigTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\PlayLevelConfigTests.exe" /link user32.lib
+if errorlevel 1 goto failed
+"%TEMP%\PlayLevelConfigTests.exe"
 if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\MapAuthoringModelTests.cpp Reloaded.Editor\WorkflowModel.cpp Reloaded.Editor\RecoveredPolygonImport.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MapAuthoringModelTests.exe"
 if errorlevel 1 goto failed
@@ -122,9 +138,11 @@ if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\MapCheckModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MapCheckModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\MapCheckModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\LightShadowModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\LightShadowModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\LightShadowModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\RenderBudgetModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\RenderBudgetModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\RenderBudgetModelTests.exe"
@@ -148,9 +166,11 @@ if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\CharacterSkinPresetsModelTests.cpp Reloaded.Editor\WorkflowModel.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\CharacterSkinPresetsModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\CharacterSkinPresetsModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\MinimapModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MinimapModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\MinimapModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\CharacterPreviewModelTests.cpp Reloaded.Editor\WorkflowModel.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\CharacterPreviewModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\CharacterPreviewModelTests.exe"

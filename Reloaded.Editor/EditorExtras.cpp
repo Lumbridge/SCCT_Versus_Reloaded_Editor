@@ -317,8 +317,8 @@ namespace
         auto key = [](uint8_t k) { return std::string("Shift+") + static_cast<char>(k); };
         return "EVERYWHERE IN THE EDITOR\r\n"
                "Ctrl + mouse wheel over a viewport: change the grid size (the plan's snapping follows).\r\n"
-               "Ctrl+D in a viewport: duplicate the selection (RE+ Options can drop the offset).\r\n"
-               "J in a viewport: Game View, hiding editor icons and sprites the game does not draw.\r\n"
+               "Ctrl+D in a viewport: duplicate the selection in one Undo step (RE+ Options can drop the offset). Brush > Deintersect keeps its own menu entry.\r\n"
+               "J in a viewport (no Ctrl, Shift or Alt): Game View, hiding editor icons and sprites the game does not draw.\r\n"
                "M in a viewport: measure from the last measured point to the mouse (in the 3D view, across the floor at its height).\r\n"
                "End in a viewport: drop the selection to the floor.   Shift+End: and turn meshes flat on the surface.   Ctrl+End: to the ceiling.\r\n"
                "F12: RE+ Options.   F7: disabled (the stock script compiler would crash).\r\n"

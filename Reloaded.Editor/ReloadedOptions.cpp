@@ -3,6 +3,7 @@
 #include "RealtimeFix.h"
 #include "GEKeybindSwap.h"
 #include "AssetNameGloss.h"
+#include "ViewportKeysModel.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cctype>
@@ -358,27 +359,17 @@ static INT_PTR CALLBACK ReloadedOptionsDlgProc(
                 }
 
                 // Validate: no conflicts with known UnrealEd shortcuts
-                struct ReservedKey { char key; const char* action; };
-                static const ReservedKey kReserved[] = {
-                    { 'A', "Select All Actors"  },
-                    { 'S', "Actor Scaling Mode" },
-                    { 'R', "Actor Rotate Mode"  },
-                };
-
                 for (int i = 0; i < 6; ++i)
                 {
-                    for (const auto& r : kReserved)
+                    if (const auto* r = ViewportKeys::ReservedShiftKey(keys[i]))
                     {
-                        if (keys[i] == r.key)
-                        {
-                            char msg[256];
-                            snprintf(msg, sizeof(msg),
-                                     "Shift+%c cannot be used because UnrealEd uses it for \"%s\".\n\n"
-                                     "Please choose a different key for \"%s\".",
-                                     keys[i], r.action, kNames[i]);
-                            MessageBoxA(hDlg, msg, "RE+ Options", MB_OK | MB_ICONWARNING);
-                            return TRUE;
-                        }
+                        char msg[256];
+                        snprintf(msg, sizeof(msg),
+                                 "Shift+%c cannot be used because UnrealEd uses it for \"%s\".\n\n"
+                                 "Please choose a different key for \"%s\".",
+                                 keys[i], r->action, kNames[i]);
+                        MessageBoxA(hDlg, msg, "RE+ Options", MB_OK | MB_ICONWARNING);
+                        return TRUE;
                     }
                 }
 

@@ -302,6 +302,7 @@
     <ClInclude Include="MapCheckLog.h" />
     <ClInclude Include="RebuildAllMaps.h" />
     <ClInclude Include="ViewportConfigFix.h" />
+    <ClInclude Include="ViewportKeysModel.h" />
     <ClInclude Include="GridSizeShortcut.h" />
     <ClInclude Include="EditorExtras.h" />
     <ClInclude Include="PlayLevelConfig.h" />

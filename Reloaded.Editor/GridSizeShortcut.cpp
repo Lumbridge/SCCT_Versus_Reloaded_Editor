@@ -7,6 +7,8 @@
 #include "CharacterPreview.h"
 #include "GridSizeShortcutState.h"
 #include "MemoryWriter.h"
+#include "General.h"
+#include "ViewportKeysModel.h"
 #include <windowsx.h>
 #include <cstdlib>
 #include <cstring>
@@ -143,6 +145,21 @@ namespace
         // at rather than only from the palette itself.
         if (message == WM_KEYDOWN && StoreyFilter::ViewportKey(wParam))
             return true;
+        // Ctrl+D duplicates on the press, which never reaches UUnrealEdEngine::Key
+        // (its Ctrl+D is Brush From Deintersection); holding D adds nothing more.
+        if (message == WM_KEYDOWN)
+        {
+            const ViewportKeys::Chord chord{ static_cast<unsigned>(wParam),
+                GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_SHIFT) < 0,
+                GetKeyState(VK_MENU) < 0, (lParam & (1 << 30)) != 0 };
+            const ViewportKeys::KeyDown action = ViewportKeys::OnKeyDown(chord);
+            if (action != ViewportKeys::KeyDown::Pass && LevelViewportWindow(viewport))
+            {
+                if (action == ViewportKeys::KeyDown::Duplicate)
+                    General::DuplicateSelection();
+                return true;
+            }
+        }
         // Notes right-clicks for Measure > Start Here / To Here, and takes M.
         if (MeasureTool::ViewportMessage(viewport, message, wParam, lParam))
             return true;
