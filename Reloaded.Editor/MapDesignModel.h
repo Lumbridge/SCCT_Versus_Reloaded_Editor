@@ -853,6 +853,52 @@ inline std::vector<Storey> Storeys(std::vector<FloorEvidence> evidence,const Sto
     for(const auto& cluster:clusters)storeys.push_back({cluster.base,cluster.top});
     return storeys;
 }
+// Floors: the room a point stands in, and the step from its floor to the
+// next. Stairwells, floor openings and the shafts of ladders, pipes and lifts
+// reach through to another floor, so none of them is the room a floor belongs
+// to; a floor duplicated above or below keeps their names with " (above)" or
+// " (below)" after them.
+struct RoomHere { bool found=false; double base=0,height=0,thickness=16; };
+inline bool SpansFloors(std::string name)
+{
+    name=Fold(name);
+    auto ends=[&](const std::string& tail){return name.size()>=tail.size() && name.compare(name.size()-tail.size(),tail.size(),tail)==0;};
+    while(ends(" (above)") || ends(" (below)"))name.erase(name.size()-8);
+    return name=="stairwell" || name=="floor opening" || ends(" shaft");
+}
+// The room or corridor whose plan holds the point and whose floor-to-ceiling
+// span holds the depth. Of rooms inside one another the highest floor wins,
+// and of two on the same floor the later one, which is the latest edit.
+inline RoomHere RoomAt(const Json& pieces,const Vector& at,double depth)
+{
+    RoomHere best;
+    for(const auto& piece:pieces)
+    {
+        try
+        {
+            const auto& spec=piece.at("spec");
+            const auto kind=spec.at("kind").get<std::string>();
+            if((kind!="Room" && kind!="Corridor") || SpansFloors(spec.value("name",std::string())))continue;
+            const Pose pose{piece.at("position").get<Vector>(),piece.at("rotation").get<Rotation>()};
+            const auto extent=PieceExtent(spec,pose);
+            if(at[0]<extent.lo[0] || at[0]>extent.hi[0] || at[1]<extent.lo[1] || at[1]>extent.hi[1])continue;
+            const double base=pose.position[2],height=spec.at("height").get<double>();
+            if(depth<base-1 || depth>base+height || (best.found && base<best.base))continue;
+            best={true,base,height,spec.value("thickness",16.0)};
+        }
+        catch(const std::exception&) { /* A piece that cannot be measured holds no floor. */ }
+    }
+    return best;
+}
+// A floor is the height of the room plus its wall; 272 where there is no room.
+inline double FloorSpacing(const RoomHere& room) { return room.found?room.height+room.thickness:272; }
+// The floor a click lands on. The top view shows it as the plan's depth; an
+// elevation's depth runs across the floor instead, so there it is the floor
+// of the room under the click, or the clicked height when there is none.
+inline double PlacementFloor(int plane,double depth,double clickedZ,const RoomHere& underClick)
+{
+    return plane==0?depth:underClick.found?underClick.base:clickedZ;
+}
 
 // Named layers are kept in the map itself through the native actor Group
 // field, so they travel with the .sdc instead of only the workspace file.

@@ -233,22 +233,16 @@ std::vector<std::string> LightIssues(DesignState& s)
     return issues;
 }
 // Places a preset light at a point: at the ceiling of the room it lands in,
-// or 160 units above the floor being shown.
+// or 160 units above the floor clicked on.
 void LightPlace(DesignState& s,const LightPreset& preset,const Vector& at)
 {
+    const double floor=DesignFloorAt(s,at);
     Vector position=at;
-    position[2]=s.depth+160;
+    position[2]=floor+160;
     try
     {
-        for(const auto& piece:DesignData(s).at("pieces"))
-        {
-            const auto kind=piece.at("spec").at("kind").get<std::string>();
-            if(kind!="Room" && kind!="Corridor")continue;
-            const auto bounds=DesignBoundsOf(piece.at("spec"),{piece.at("position").get<Vector>(),piece.at("rotation").get<Rotation>()});
-            if(at[0]<bounds.lo[0] || at[0]>bounds.hi[0] || at[1]<bounds.lo[1] || at[1]>bounds.hi[1])continue;
-            if(s.depth<bounds.lo[2]-1 || s.depth>bounds.hi[2])continue;
-            position[2]=bounds.hi[2]-24;
-        }
+        const auto room=Design::RoomAt(DesignLivePieces(s),at,floor);
+        if(room.found)position[2]=room.base+room.height-24;
     }
     catch(const std::exception&) { /* No pieces to land in. */ }
     Json properties={{"LightRadius",Design::Round(preset.radius/25.0,3)},{"EchelonRange",std::to_string(preset.radius)},{"LightBrightness",std::to_string(preset.brightness)},

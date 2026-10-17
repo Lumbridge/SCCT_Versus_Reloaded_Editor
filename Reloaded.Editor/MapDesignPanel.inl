@@ -294,6 +294,25 @@ bool DesignAnyLive(DesignState& s,const Json& members)
     for(const auto& member:members)if(DesignActorAt(s,member.at("path")))return true;
     return false;
 }
+// The pieces still in the map. A resize or move adds a new entry and keeps
+// the one it replaced, whose brushes are gone until an Undo brings them back.
+Json DesignLivePieces(DesignState& s)
+{
+    Json live=Json::array();
+    for(const auto& piece:DesignData(s).at("pieces"))
+        if(DesignAnyLive(s,piece.value("members",Json::array())))live.push_back(piece);
+    return live;
+}
+// The floor a click lands on: the plan's depth in the top view, and in the
+// front and side views, whose depth runs across the floor, the floor of the
+// room under the click (or the clicked height when there is none).
+double DesignFloorAt(DesignState& s,const Vector& world)
+{
+    if(s.plane==0)return s.depth;
+    Design::RoomHere under;
+    try{under=Design::RoomAt(DesignLivePieces(s),world,world[2]);}catch(const std::exception&){}
+    return Design::PlacementFloor(s.plane,s.depth,world[2],under);
+}
 // Hands add an actor's origin and, for a brush, the corners of its bounds.
 template<class Add> void DesignActorExtent(DesignState& s,const Json& actor,Add add)
 {
@@ -3530,7 +3549,7 @@ void DesignCheck(DesignState& s)
 }
 // The quick-add menu raised from the badge on a hovered wall.
 // From a side-on view: a room stacked on the hovered one, or stairs into it.
-void FloorStairsAt(DesignState& s,const Vector& at,double base,double spacing,const std::string& kind);
+void FloorStairsAt(DesignState& s,const Vector& at,double base,double spacing,const std::string& kind,bool up);
 void FloorLiftAt(DesignState& s,const Vector& at,double base,double spacing);
 const char* const kStairKinds[]={"Stairs","Stairs L","Stairs U","Spiral"};
 const char* const kStairLabels[]={"Straight","L-shaped","U-shaped (switchback)","Spiral"};
@@ -3550,7 +3569,7 @@ void DesignQuickAddVertical(DesignState& s,int choice)
     if(stairsUp || stairsDown)
     {
         const int shape=choice-(stairsUp?DAddStairsUpFirst:DAddStairsDownFirst);
-        FloorStairsAt(s,hostPose.position,up?hostPose.position[2]:hostPose.position[2]-spacing,spacing,kStairKinds[shape]);
+        FloorStairsAt(s,hostPose.position,up?hostPose.position[2]:hostPose.position[2]-spacing,spacing,kStairKinds[shape],stairsUp);
         return;
     }
     Json spec=host;
@@ -4671,11 +4690,14 @@ void DesignContextMenu(DesignState& s,POINT at)
         AppendMenuA(elements,MF_STRING,DCtxElementFirst+static_cast<int>(i),elementKinds[i].name);
     AppendMenuA(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(elements),"Gameplay element from here");
     HMENU floors=CreatePopupMenu();
-    AppendMenuA(floors,MF_STRING,DCtxFloorUp,"Go up one floor");
-    AppendMenuA(floors,MF_STRING,DCtxFloorDown,"Go down one floor");
+    // Stepping and duplicating move the plan's depth, which is a floor height
+    // only in the top view.
+    const UINT stepState=s.plane!=0?MF_GRAYED:0;
+    AppendMenuA(floors,MF_STRING|stepState,DCtxFloorUp,"Go up one floor");
+    AppendMenuA(floors,MF_STRING|stepState,DCtxFloorDown,"Go down one floor");
     AppendMenuA(floors,MF_SEPARATOR,0,nullptr);
-    AppendMenuA(floors,MF_STRING,DCtxFloorDupUp,"Duplicate this floor above");
-    AppendMenuA(floors,MF_STRING,DCtxFloorDupDown,"Duplicate this floor below");
+    AppendMenuA(floors,MF_STRING|stepState,DCtxFloorDupUp,"Duplicate this floor above");
+    AppendMenuA(floors,MF_STRING|stepState,DCtxFloorDupDown,"Duplicate this floor below");
     AppendMenuA(floors,MF_SEPARATOR,0,nullptr);
     HMENU stairsUp=CreatePopupMenu(),stairsDown=CreatePopupMenu();
     for(int i=0;i<4;++i)

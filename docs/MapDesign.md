@@ -686,10 +686,13 @@ restores the view. Undo twice removes the brush and the element.
 ## 13. Floors
 
 **Floors** in the right-click menu works in floor steps: the height of the room
-at that point plus its wall thickness (272 units when there is no room there).
+at that point, as it is now after any resize, plus its wall thickness (272 units
+when there is no room there). Stairwells, floor openings and shafts reach
+through to the next floor, so they never set the step.
 **Go up / down one floor** moves the plan's depth by one step. **Duplicate this
 floor above / below** copies every piece whose base sits on the current floor to
-the next one and moves the plan there — the quick way to stack storeys. **Stairs
+the next one and moves the plan there — the quick way to stack storeys. Both
+work from the top view; the front and side views grey them out. **Stairs
 up / down from here** offers straight, L-shaped, U-shaped or spiral stairs and
 places them with a stairwell carved to exactly their footprint (32-unit treads,
 rise from the floor spacing). The **+** badge on a room's top or bottom in the
@@ -701,6 +704,15 @@ changed in the Magic Event workbench. **Ladder up** and
 **Pipe up from here** cut a 96 x 96 shaft and place the gameplay element with its
 visual brush. **Opening through the floor above** cuts a 128 x 128 hole. Each is
 one Undo step (the climbs two).
+
+In the front and side views the **Depth** field is a Y or X position, not a
+height. What the right-click menu places there — player starts, the mission,
+objectives and their devices, lights, security devices, and the stairs, ladders,
+pipes, lifts and openings above — lands on the floor of the room under the
+click (a light at that room's ceiling), or at the clicked height where there is
+no room. Lasers, cameras and
+motion sensors are aimed across the floor with two clicks, so they are placed
+in the top view.
 
 ## Level, environment and map settings
 
