@@ -269,6 +269,7 @@ std::string Fixed(double v, int decimals = 1)
 
 // ---- steps --------------------------------------------------------------------------------------
 #include "SmokeSteps.inl"
+#include "SmokeSuites.inl"
 
 void RunAll()
 {
@@ -282,7 +283,7 @@ void RunAll()
         Pump(1500);
         Check(loaded && Actors().size() > 2, "map-load", std::string(recent ? "recent " : "") + map + " actors=" + std::to_string(Actors().size()) + " boxes=" + std::to_string(boxes.size()));
     }
-    try { RunSteps(); }
+    try { const auto suite = Ini("suite"); if (suite.empty()) RunSteps(); else RunSuites(suite); }
     catch (const std::exception& e) { Fail("exception", e.what()); }
     catch (...) { Fail("exception", "unknown"); }
     Line("DONE", "failures", std::to_string(failures));
