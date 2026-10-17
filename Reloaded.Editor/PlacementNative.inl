@@ -206,16 +206,17 @@ size_t PlacementMove(const Json& moves,const std::string& label)
 }
 size_t PlacementTurn(const Json& changes,const std::string& label)
 {
-    std::vector<std::pair<Address,Rotation>> turns;
+    std::vector<std::pair<Address,Rotation>> turns;const ActorIndex index;
     for(const auto& change:changes)
     {
-        auto actor=ResolveIdentity(change);
+        auto actor=index.Resolve(change);
         if(!actor)throw std::runtime_error("The selection changed. Try again.");
         if(Property(actor,"bLockLocation") && DesignBool(actor,"bLockLocation"))continue;
         const auto rotation=change.at("rotation").get<Rotation>();
         if(rotation==RotationOf(actor))continue;
         turns.push_back({actor,rotation});
     }
+    index.Report(changes.size(),"PlacementTurn");
     if(turns.empty())return 0;
     Transaction transaction(label.c_str());
     for(auto& [actor,rotation]:turns){Modify(actor);Write(Field(actor,"Rotation"),rotation);Call(actor,0x44);}
