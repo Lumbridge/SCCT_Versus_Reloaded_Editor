@@ -33,7 +33,8 @@ constexpr UINT_PTR kDrawTimer = 1, kRefreshTimer = 2;
 constexpr int kDialogUnits = 640, kLeftUnits = 420;
 const char* const kHostClass = "ReloadedCharacterSkinsPreview";
 std::wstring lastFolder;
-// The goggle light offset each model row's model suggests, which a new model replaces.
+// The goggle light offset each model row's model suggests, or the one the map has with
+// that model, which a new model replaces.
 CharacterSkins::Offset suggested[CharacterSkins::Models.size()];
 
 std::filesystem::path PickFolder(HWND owner)
@@ -203,8 +204,9 @@ void Show(HWND window, const Json& settings)
         const auto mesh = settings.at("models").value(model.property, std::string{});
         SetDlgItemTextA(window, kModel + static_cast<int>(m), mesh.c_str());
         const auto& g = settings.at("goggles").at(model.goggles);
-        SetGoggles(window, m, {g[0].get<double>(), g[1].get<double>(), g[2].get<double>()});
-        suggested[m] = CharacterSkins::SuggestedGoggles(model.property, mesh);
+        const CharacterSkins::Offset offset{g[0].get<double>(), g[1].get<double>(), g[2].get<double>()};
+        SetGoggles(window, m, offset);
+        suggested[m] = CharacterSkins::MapGoggleSuggestion(model.property, mesh, offset);
     }
     EnableWindow(GetDlgItem(window, kRemove), settings.at("placed").get<bool>());
     std::string status = settings.at("placed").get<bool>()

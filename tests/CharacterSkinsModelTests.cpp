@@ -152,6 +152,22 @@ int main()
         Check(goggles.x == 4 && goggles.y == 0 && goggles.z == 0.5, "a suggestion changed by hand is kept");
         goggles = GogglesForNewModel({1, 0, 0}, none, mercOnSpy);
         Check(goggles.x == 1 && goggles.y == 0 && goggles.z == 0, "typed offset kept over a suggestion");
+        // The map's own offset: one it has with a model (a model preset's) gives way to the next model's.
+        const Offset preset{1, 2, 3};
+        auto shown = MapGoggleSuggestion("SpyModel", "MyLevel.Custom_1a2b", preset);
+        Check(shown.x == 1 && shown.y == 2 && shown.z == 3, "the map's offset with a model is that model's");
+        goggles = GogglesForNewModel(preset, shown, mercOnSpy);
+        Check(goggles.x == 4 && goggles.y == 0 && goggles.z == 0, "a model preset's offset gives way to the new model's");
+        goggles = GogglesForNewModel(preset, shown, none);
+        Check(goggles.x == 0 && goggles.y == 0 && goggles.z == 0, "a model preset's offset gives way to zero");
+        // The boxes show six digits of the map's float: read back, it is still the map's offset.
+        shown = MapGoggleSuggestion("MercModel", "MyLevel.Custom_1a2b", {static_cast<float>(-12.34567), static_cast<float>(63.98765), 0});
+        goggles = GogglesForNewModel({std::stod(Number(shown.x)), std::stod(Number(shown.y)), 0}, shown, none);
+        Check(goggles.x == 0 && goggles.y == 0 && goggles.z == 0, "the map's offset read back from the boxes");
+        shown = MapGoggleSuggestion("SpyModel", "", preset);
+        Check(shown.x == 0 && shown.y == 0 && shown.z == 0, "no model: the map's offset counts as typed");
+        goggles = GogglesForNewModel(preset, shown, mercOnSpy);
+        Check(goggles.x == 1 && goggles.y == 2 && goggles.z == 3, "an offset kept without a model stays");
     }
     catch (const std::exception& e)
     {

@@ -103,6 +103,13 @@ inline Offset GogglesForNewModel(const Offset& current, const Offset& previousSu
                ? newSuggestion
                : current;
 }
+// The suggestion a team's offset is weighed against when the map's values are shown. An
+// offset the map has with a model came in with that model (a model preset or an earlier
+// Apply), so it gives way when the model changes; one without a model counts as typed.
+inline Offset MapGoggleSuggestion(const std::string& modelProperty, const std::string& mesh, const Offset& mapOffset)
+{
+    return mesh.empty() ? SuggestedGoggles(modelProperty, mesh) : mapOffset;
+}
 inline std::string Number(double v)
 {
     std::ostringstream out;
