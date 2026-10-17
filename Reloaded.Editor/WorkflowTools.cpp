@@ -40,6 +40,8 @@
 #include "EntryThumbnailModel.h"
 #include "ViewBookmarkModel.h"
 #include "UsageMarksModel.h"
+#include "SaveBackupModel.h"
+#include "CrashRecoveryModel.h"
 #include "LevelSnapshot.h"
 #include "logger.h"
 #include <commdlg.h>
@@ -251,8 +253,16 @@ namespace
         Json next=document;
         if(level && current==level && generation==nativeMapGeneration && key!=mapKey && !key.empty())
         {
-            next["maps"][key]=next["maps"].value(mapKey,EmptyMap());
-            if(next["maps"][key].contains("design"))for(auto& piece:next["maps"][key]["design"]["pieces"])piece["map"]=key;
+            // Save As carries the entry to the new name. A kept backup or an
+            // autosave saved over a map puts back an older version of that
+            // map: the map keeps its own entry (Map Design, Working Views,
+            // camera bookmarks, assemblies), which the copy never had.
+            const bool restored=(SaveBackups::IsBackupPath(mapKey) || Sessions::IsAutosaveName(mapKey)) && next["maps"].contains(key);
+            if(!restored)
+            {
+                next["maps"][key]=next["maps"].value(mapKey,EmptyMap());
+                if(next["maps"][key].contains("design"))for(auto& piece:next["maps"][key]["design"]["pieces"])piece["map"]=key;
+            }
         }
         else if(key.empty()) next["maps"][""]=EmptyMap();
         if(!next["maps"].contains(key)) next["maps"][key]=EmptyMap();
