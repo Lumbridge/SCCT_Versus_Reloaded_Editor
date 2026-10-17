@@ -257,10 +257,17 @@ namespace
         // Paste Again with no choice made from this copy yet asks for one.
         if (!again || !hasConfirmed)
         {
+            // The window does not disable the tool windows, so a map can be
+            // opened while it is up; the targets are found by name, which in
+            // that map would be other actors.
+            const auto level = Editor::LevelIdentity();
+            const auto generation = Editor::MapGeneration();
             std::set<std::string> names;
             if (!Choose(owner, targets.size(), names)) return;
             confirmed = std::move(names);
             hasConfirmed = true;
+            if (Editor::LevelIdentity() != level || Editor::MapGeneration() != generation)
+                throw std::runtime_error("The map changed while Paste Properties was open, so nothing was pasted. Select the actors to paste onto and paste again.");
         }
         Json chosen = Json::array();
         for (const auto& entry : copied.at("properties"))
