@@ -714,6 +714,9 @@ void DesignRefresh(DesignState& s)
     {
         s.pending=Json{};s.previous=Json{};s.points=Json::array();s.mode.clear();
         s.images.clear();s.drag={};s.epoch=mapEpoch;
+        // Workspace Undo belongs to the map it was recorded on: undoing after a
+        // map change (or a Save As) would write that map's workspace into this one.
+        s.workspaceUndo.clear();s.workspaceRedo.clear();s.workspaceRevision=~0u;
         // Another map holds other kinds of actor: it starts with all of them.
         s.hiddenTypes.clear();
     }
