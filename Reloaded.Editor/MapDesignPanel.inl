@@ -303,15 +303,20 @@ Json DesignLivePieces(DesignState& s)
         if(DesignAnyLive(s,piece.value("members",Json::array())))live.push_back(piece);
     return live;
 }
+// The room a click is in: in the top view the one the plan's depth stands in,
+// and in the front and side views the one whose span holds the clicked height.
+Design::RoomHere DesignRoomAt(DesignState& s,const Vector& world)
+{
+    try{return Design::RoomAt(DesignLivePieces(s),world,s.plane==0?s.depth:world[2]);}
+    catch(const std::exception&){return {};}
+}
 // The floor a click lands on: the plan's depth in the top view, and in the
 // front and side views, whose depth runs across the floor, the floor of the
 // room under the click (or the clicked height when there is none).
 double DesignFloorAt(DesignState& s,const Vector& world)
 {
     if(s.plane==0)return s.depth;
-    Design::RoomHere under;
-    try{under=Design::RoomAt(DesignLivePieces(s),world,world[2]);}catch(const std::exception&){}
-    return Design::PlacementFloor(s.plane,s.depth,world[2],under);
+    return Design::PlacementFloor(s.plane,s.depth,world[2],DesignRoomAt(s,world));
 }
 // Hands add an actor's origin and, for a brush, the corners of its bounds.
 template<class Add> void DesignActorExtent(DesignState& s,const Json& actor,Add add)
@@ -1498,7 +1503,7 @@ void DesignPaintInto(DesignState& s,Gdiplus::Graphics& g,const RECT& rect)
         Pen edge(Color(200,60,80,100),1);
         for(int i=0;i<3;++i)
         {
-            const float w=i==1?48:40;
+            const float w=i==1?48.f:40.f;
             const RectF box(x,28,w,18);
             SolidBrush fill(s.plane==i?Color(230,0,120,200):Color(170,255,255,255));
             SolidBrush text(s.plane==i?Color(255,255,255,255):Color(255,20,30,40));

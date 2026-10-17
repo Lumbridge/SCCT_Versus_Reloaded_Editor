@@ -236,15 +236,9 @@ std::vector<std::string> LightIssues(DesignState& s)
 // or 160 units above the floor clicked on.
 void LightPlace(DesignState& s,const LightPreset& preset,const Vector& at)
 {
-    const double floor=DesignFloorAt(s,at);
+    const auto room=DesignRoomAt(s,at);
     Vector position=at;
-    position[2]=floor+160;
-    try
-    {
-        const auto room=Design::RoomAt(DesignLivePieces(s),at,floor);
-        if(room.found)position[2]=room.base+room.height-24;
-    }
-    catch(const std::exception&) { /* No pieces to land in. */ }
+    position[2]=room.found?room.base+room.height-24:DesignFloorAt(s,at)+160;
     Json properties={{"LightRadius",Design::Round(preset.radius/25.0,3)},{"EchelonRange",std::to_string(preset.radius)},{"LightBrightness",std::to_string(preset.brightness)},
                      {"LightHue",std::to_string(preset.hue)},{"LightSaturation",std::to_string(preset.saturation)},
                      {"LightType",preset.lightType},{"LightEffect",preset.effect}};

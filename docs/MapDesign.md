@@ -708,11 +708,12 @@ one Undo step (the climbs two).
 In the front and side views the **Depth** field is a Y or X position, not a
 height. What the right-click menu places there — player starts, the mission,
 objectives and their devices, lights, security devices, and the stairs, ladders,
-pipes, lifts and openings above — lands on the floor of the room under the
-click (a light at that room's ceiling), or at the clicked height where there is
-no room. Lasers, cameras and
-motion sensors are aimed across the floor with two clicks, so they are placed
-in the top view.
+pipes, lifts and openings above — goes at that Depth, on the floor of the room
+the click is in (a light at that room's ceiling). Every room is drawn in these
+views, but only one that the Depth position passes through counts. Where the
+click is in no room, the clicked height stands in for the floor, so a light goes
+160 units above it and a player start 48. Lasers, cameras and motion sensors are
+aimed across the floor with two clicks, so they are placed in the top view.
 
 ## Level, environment and map settings
 

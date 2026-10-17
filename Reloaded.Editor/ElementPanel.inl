@@ -253,12 +253,7 @@ void ElementPaintStored(DesignState& s,Gdiplus::Graphics& g,const std::function<
 }
 // Floors: the spacing at a point, and the pieces that join one floor to the
 // next. A floor is the height of the room at the point plus its wall.
-double FloorSpacingAt(DesignState& s,const Vector& at)
-{
-    try{return Design::FloorSpacing(Design::RoomAt(DesignLivePieces(s),at,DesignFloorAt(s,at)));}
-    catch(const std::exception&) { /* Fall back to the default spacing. */ }
-    return 272;
-}
+double FloorSpacingAt(DesignState& s,const Vector& at) { return Design::FloorSpacing(DesignRoomAt(s,at)); }
 void FloorGo(DesignState& s,const Vector& at,bool up)
 {
     if(s.plane!=0)throw std::runtime_error("Go up or down a floor, or duplicate one, from the top view.");

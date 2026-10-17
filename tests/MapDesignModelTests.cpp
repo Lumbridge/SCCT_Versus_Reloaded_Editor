@@ -456,8 +456,10 @@ int main()
         Check(Design::FloorSpacing(Design::RoomAt(Json::array({placedAt(floorRoom,0),placedAt(taller,0)}),{0,0,0},0))==528,"a room resized after it was placed is spaced by its new height");
         const auto above=Design::RoomAt(Json::array({placedAt(floorRoom,0),placedAt(named("Stairwell",344),0),placedAt(floorRoom,336)}),{0,0,336},336);
         Check(above.found && above.base==336 && Design::FloorSpacing(above)==336,"a stairwell listed before the room above does not set that floor's spacing");
-        Json shell=floorRoom;shell.erase("construction");shell["height"]=256;
-        Check(Design::FloorSpacing(Design::RoomAt(Json::array({placedAt(shell,0)}),{0,0,0},0))==272,"a shell room's spacing is its height and wall, not its outside bounds");
+        Json shell=floorRoom;shell.erase("construction");shell["height"]=300;
+        Check(Design::FloorSpacing(Design::RoomAt(Json::array({placedAt(shell,0)}),{0,0,0},0))==316,"a shell room's spacing is its height and wall, not its outside bounds");
+        const Json hallAndKiosk=Json::array({placedAt(taller,0),placedAt(named("Kiosk",128),0)});
+        Check(Design::FloorSpacing(Design::RoomAt(hallAndKiosk,{0,0,0},300))==528 && Design::FloorSpacing(Design::RoomAt(hallAndKiosk,{0,0,0},64))==144,"a height above a smaller room on the same floor is in the room around it");
         Check(Design::FloorSpacing(Design::RoomAt(Json::array(),{0,0,0},0))==272 && !Design::RoomAt(Json::array({placedAt(floorRoom,0)}),{900,0,0},0).found,"no room under the point keeps the default spacing");
         const Json lowRoom=Json::array({placedAt(floorRoom,64)});
         Check(Design::PlacementFloor(0,-2048,200,Design::RoomAt(lowRoom,{0,-50,200},200))==-2048,"the top view places at its depth");
