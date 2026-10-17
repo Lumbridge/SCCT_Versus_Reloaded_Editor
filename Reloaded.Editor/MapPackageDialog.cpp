@@ -41,16 +41,17 @@ bool SeparateGame(const std::filesystem::path &root, const std::filesystem::path
     return !base.empty() && std::filesystem::is_directory(base / "System", error) &&
            std::filesystem::is_directory(base / "Packages", error) && !std::filesystem::equivalent(base, root, error);
 }
-// A file's saved time, local; file_time_type counts FILETIME ticks on Windows.
-std::string When(std::filesystem::file_time_type time)
+// A file's saved time, local with the daylight saving of its own date as
+// Explorer shows it; file_time_type counts FILETIME ticks on Windows.
+std::wstring When(std::filesystem::file_time_type time)
 {
     const auto ticks = static_cast<std::uint64_t>(time.time_since_epoch().count());
-    FILETIME utc{static_cast<DWORD>(ticks), static_cast<DWORD>(ticks >> 32)}, local{};
-    SYSTEMTIME at{};
-    if (!FileTimeToLocalFileTime(&utc, &local) || !FileTimeToSystemTime(&local, &at))
-        return "time unknown";
-    char text[64]{};
-    sprintf_s(text, "%04u-%02u-%02u %02u:%02u:%02u", at.wYear, at.wMonth, at.wDay, at.wHour, at.wMinute, at.wSecond);
+    const FILETIME utc{static_cast<DWORD>(ticks), static_cast<DWORD>(ticks >> 32)};
+    SYSTEMTIME universal{}, at{};
+    if (!FileTimeToSystemTime(&utc, &universal) || !SystemTimeToTzSpecificLocalTime(nullptr, &universal, &at))
+        return L"time unknown";
+    wchar_t text[64]{};
+    swprintf_s(text, L"%04u-%02u-%02u %02u:%02u:%02u", at.wYear, at.wMonth, at.wDay, at.wHour, at.wMinute, at.wSecond);
     return text;
 }
 HWND Control(HWND window, const char *type, const char *text, DWORD style, int id, int x, int y, int width, int height)
@@ -88,22 +89,24 @@ void Checks(HWND window, State &state)
                 ++identical;
         }
     }
-    std::string message;
+    // Wide: a path the ANSI code page cannot spell must not throw here, since the
+    // dialog procedure's catch calls this too.
+    std::wstring message;
     if (!state.plan.files.empty())
-        message = "Packaging " + state.plan.files[0].source.string() + ", saved " +
-                  When(state.plan.files[0].modified) + ".\r\n";
-    message += std::to_string(files) + " files checked (" + std::to_string(bytes / 1024 / 1024) +
-               " MB before compression). " + std::to_string(omitted) +
-               " omitted dependencies must already be installed.\r\n";
+        message = L"Packaging " + state.plan.files[0].source.wstring() + L", saved " +
+                  When(state.plan.files[0].modified) + L".\r\n";
+    message += std::to_wstring(files) + L" files checked (" + std::to_wstring(bytes / 1024 / 1024) +
+               L" MB before compression). " + std::to_wstring(omitted) +
+               L" omitted dependencies must already be installed.\r\n";
     if (!state.excluded.empty())
-        message += std::to_string(identical) + " files identical in " + state.excluded.string() +
-                   " left out: players have them.\r\n";
+        message += std::to_wstring(identical) + L" files identical in " + state.excluded.wstring() +
+                   L" left out: players have them.\r\n";
     if (!state.plan.errors.empty())
-        message += std::to_string(state.plan.errors.size()) +
-                   " dependency errors. Open Report for details; resolve them and reopen packaging.";
+        message += std::to_wstring(state.plan.errors.size()) +
+                   L" dependency errors. Open Report for details; resolve them and reopen packaging.";
     else
-        message += "Dependencies found. Files loaded only by script string paths may need to be added separately.";
-    Status(window, message);
+        message += L"Dependencies found. Files loaded only by script string paths may need to be added separately.";
+    SetWindowTextW(GetDlgItem(window, 102), message.c_str());
     EnableWindow(GetDlgItem(window, IDOK),
                  !state.busy && state.plan.errors.empty() && !state.plan.files.empty() && state.plan.files[0].include);
 }
@@ -344,8 +347,15 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
         {
             state->busy = false;
             EnableWindow(GetDlgItem(window, 100), TRUE);
-            if (state->ready)
-                Checks(window, *state);
+            // Nothing may leave the dialog procedure, not even from here.
+            try
+            {
+                if (state->ready)
+                    Checks(window, *state);
+            }
+            catch (...)
+            {
+            }
         }
         Status(window, e.what());
         MessageBoxA(window, e.what(), "Map Packaging", MB_OK | MB_ICONERROR);
@@ -367,7 +377,7 @@ void Open(HWND owner)
         const auto name = std::filesystem::path(file).filename();
         const auto folder = Workflow::Editor::ReleaseFolder(name.stem().string());
         const auto release = folder / "Packages" / "Maps" / name, playable = directory / name;
-        const auto image = std::filesystem::path("Packages") / "Textures" / (name.stem().string() + "-i.utc");
+        const auto image = std::filesystem::path("Packages") / "Textures" / (name.stem().wstring() + L"-i.utc");
         // A missing file's time is file_time_type::min().
         auto saved = [](const std::filesystem::path &at) {
             std::error_code error;
@@ -381,16 +391,23 @@ void Open(HWND owner)
         const auto map = pick == MapPackage::Source::Release ? release : playable;
         if (pick == MapPackage::Source::StaleRelease)
         {
-            auto text = "The release copy of " + name.stem().string() + " in " + folder.string() +
-                        " is older than the map, so it does not have your latest changes.\r\n\r\nRelease copy saved " +
-                        When(releaseMap) + "\r\nMap saved " + When(workingMap) + "\r\n";
+            // Says what is older: the copy itself, its interface package or both.
+            const auto stem = name.stem().wstring();
+            auto text = L"The release copy of " + stem + L" in " + folder.wstring();
+            if (releaseMap < workingMap)
+                text += L" is older than the map, so it does not have your latest changes.\r\n\r\nRelease copy saved " +
+                        When(releaseMap) + L"\r\nMap saved " + When(workingMap) + L"\r\n";
+            else
+                text += L" has an older interface package than the map (" + stem +
+                        L"-i: map-selection picture, loading screens, briefing and map settings), so it does not "
+                        L"have your latest changes to those.\r\n\r\n";
             if (releaseImage != std::filesystem::file_time_type::min() && releaseImage < workingImage)
-                text += "Release copy's interface package (" + name.stem().string() + "-i) saved " +
-                        When(releaseImage) + "\r\nMap's interface package saved " + When(workingImage) + "\r\n";
-            text += "\r\nYes: make a new release copy first (Optimise Map Assets).\r\nNo: package the map from "
-                    "Packages\\Maps instead.\r\nCancel: stop.";
+                text += L"Release copy's interface package (" + stem + L"-i) saved " + When(releaseImage) +
+                        L"\r\nMap's interface package saved " + When(workingImage) + L"\r\n";
+            text += L"\r\nYes: make a new release copy first (Optimise Map Assets).\r\nNo: package the map from "
+                    L"Packages\\Maps instead.\r\nCancel: stop.";
             const auto answer =
-                MessageBoxA(owner, text.c_str(), "Package Map for Sharing", MB_YESNOCANCEL | MB_ICONWARNING);
+                MessageBoxW(owner, text.c_str(), L"Package Map for Sharing", MB_YESNOCANCEL | MB_ICONWARNING);
             if (answer == IDYES)
                 // Create Release Copy then offers to package it.
                 MapOptimiseDialog::Open(owner);

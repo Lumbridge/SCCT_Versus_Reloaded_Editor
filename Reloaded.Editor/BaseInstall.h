@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <filesystem>
 #include <string>
+#include <system_error>
 
 // A copy of the game as players get it ([MapOptimise] BaseInstall in
 // Reloaded_Editor.ini): Optimise Map Assets does not ship the packages
@@ -20,8 +21,19 @@ inline std::string Saved()
     GetPrivateProfileStringA("MapOptimise", "BaseInstall", "", value, sizeof(value), IniPath().c_str());
     return value;
 }
+// Saved() reads it back in the ANSI code page, so a folder that code page
+// cannot spell is not kept and the one saved before stays.
 inline void Save(const std::filesystem::path &base)
 {
-    WritePrivateProfileStringW(L"MapOptimise", L"BaseInstall", base.c_str(), std::filesystem::path(IniPath()).c_str());
+    std::string text;
+    try
+    {
+        text = base.string();
+    }
+    catch (const std::system_error &)
+    {
+        return;
+    }
+    WritePrivateProfileStringA("MapOptimise", "BaseInstall", text.c_str(), IniPath().c_str());
 }
 } // namespace BaseInstall

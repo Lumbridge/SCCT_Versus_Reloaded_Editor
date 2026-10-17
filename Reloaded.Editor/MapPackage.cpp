@@ -723,7 +723,13 @@ void Write(const Plan &plan, const std::filesystem::path &destination)
     if (!MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_WRITE_THROUGH))
     {
         const auto error = GetLastError();
-        throw std::runtime_error("Cannot write the ZIP into " + target.parent_path().string() + " (error " +
+        // In the ANSI code page the message is shown in, a character it lacks as
+        // a '?': path::string() would throw instead.
+        const auto folder = target.parent_path().wstring();
+        std::string shown(WideCharToMultiByte(CP_ACP, 0, folder.c_str(), -1, nullptr, 0, nullptr, nullptr), '\0');
+        WideCharToMultiByte(CP_ACP, 0, folder.c_str(), -1, shown.data(), static_cast<int>(shown.size()), nullptr,
+                            nullptr);
+        throw std::runtime_error("Cannot write the ZIP into " + std::string(shown.c_str()) + " (error " +
                                  std::to_string(error) + ").");
     }
 }
