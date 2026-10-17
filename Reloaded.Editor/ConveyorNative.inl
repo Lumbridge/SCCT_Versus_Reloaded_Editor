@@ -240,10 +240,15 @@ Json AddConveyorBelt(const Json& spec)
     else if(previous)Write(Field(actor,"Rotation"),RotationOf(previous));
     if(previous)
     {
-        // Its look and speed. bCarryPlayers shares its word with bShowItems and
-        // bShowRollers, which come along.
-        for(const char* name:{"Width","Speed","ItemScale","bCarryPlayers"})
-            Write(BeltField(actor,name),Read<unsigned>(BeltField(previous,name)));
+        // Its look, speed and options; the walls are the new belt's own.
+        for(const char* name:{"Width","Speed","ItemScale"})
+            Write(BeltField(actor,name),Read<float>(BeltField(previous,name)));
+        for(const char* name:{"bCarryPlayers","bShowRollers"})
+        {
+            auto p=BeltProperty(actor,name);const auto mask=Read<unsigned>(p+0x64);const auto at=actor+Read<int>(p+0x3c);
+            const bool on=(Read<unsigned>(previous+Read<int>(p+0x3c))&mask)!=0;
+            Write(at,on?(Read<unsigned>(at)|mask):(Read<unsigned>(at)&~mask));
+        }
         Modify(previous);
         Write(BeltField(actor,"NextBelt"),Read<Address>(BeltField(previous,"NextBelt")));
         Write(BeltField(previous,"NextBelt"),actor);
