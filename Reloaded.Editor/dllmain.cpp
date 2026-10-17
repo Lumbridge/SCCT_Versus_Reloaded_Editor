@@ -15,6 +15,7 @@
 #include "GEKeybindSwap.h"
 #include "LightmapFix.h"
 #include "RealtimeFix.h"
+#include "SaveBackups.h"
 #include "ReloadedOptions.h"
 #include "DialogFix.h"
 #include "BrowserWindowClose.h"
@@ -183,6 +184,7 @@ BOOL CALLBACK InitFunction(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context)
     BspTextureClipboard::Initialize();
     GEWireframeFix::Initialize();
     LightmapFix::Initialize();
+    SaveBackups::Initialize();
     ReloadedOptions::Initialize();
     GEKeybindSwap::Initialize();
     RealtimeFix::Initialize();

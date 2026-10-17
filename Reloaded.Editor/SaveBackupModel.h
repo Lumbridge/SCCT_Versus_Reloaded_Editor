@@ -22,11 +22,13 @@ namespace SaveBackups
 
     // One backup on disk. map: the folder it is in, named after its map.
     // name: its file name or path, handed back by Prune as given. written:
-    // its write time, which the copy keeps from the map it was taken from.
+    // its write time, which the copy keeps from the map it was taken from;
+    // writtenLocal: the same time as local time, to set against its name.
     struct File
     {
         std::string map, name;
         std::uint64_t size = 0, written = 0;
+        Stamp writtenLocal;
     };
 
     inline std::string FileName(const std::string& path)
@@ -85,6 +87,14 @@ namespace SaveBackups
     inline std::optional<std::string> SaveTarget(const std::string& command) { return CommandFile(command, "SAVE"); }
     // The file a MAP LOAD opens.
     inline std::optional<std::string> LoadTarget(const std::string& command) { return CommandFile(command, "LOAD"); }
+
+    // Play Level's copy, Autoplay.sdc. Its MAP SAVE names
+    // ..\Packages\MapsEd\Autoplay.sdc, but the engine writes only
+    // Packages\Maps\Autoplay.sdc, so no map of the user's is replaced.
+    inline bool IsPlayLevelName(const std::string& path)
+    {
+        return Lower(FileName(path)).compare(0, 9, "autoplay.") == 0;
+    }
 
     inline std::string Digits(int value, size_t width)
     {
@@ -145,6 +155,18 @@ namespace SaveBackups
              + stamp.second;
     }
 
+    // A backup that was opened and saved over: written later than the time
+    // in its name. RE+'s own copy keeps the write time of the map it was
+    // taken from, which is never later than the moment that map was replaced.
+    // It holds the user's work now, not a kept version, so Prune leaves it
+    // alone. (In the hour the clocks go back, a real copy can look like this;
+    // it is then only kept longer.)
+    inline bool SavedOver(const File& file)
+    {
+        const auto backup = ParseBackup(file.name);
+        return backup && Order(file.writtenLocal) > Order(backup->second);
+    }
+
     // A copy is needed unless the map's newest backup already is the file on
     // disk, the same size and write time: a save that failed and is tried
     // again replaces nothing new.
@@ -163,10 +185,10 @@ namespace SaveBackups
 
     // The backups to delete: of each map all but the newest keep, then, while
     // the rest together take more than maxBytes, the oldest of any map. A
-    // map's newest always stays, and a file not named as a backup is never
-    // deleted or counted. inUse, the file the open map was loaded from, stays
-    // too, as the save about to run may still read from it; it is matched by
-    // file name, which carries its map's name.
+    // map's newest always stays, and a file not named as a backup, or one
+    // saved over, is never deleted or counted. inUse, the file the open map
+    // was loaded from, stays too, as the save about to run may still read
+    // from it; it is matched by file name, which carries its map's name.
     inline std::vector<std::string> Prune(std::vector<File> files, size_t keep, std::uint64_t maxBytes, const std::string& inUse = {})
     {
         struct Entry
@@ -178,7 +200,7 @@ namespace SaveBackups
         const auto used = Lower(FileName(inUse));
         std::vector<Entry> entries;
         for (auto& file : files)
-            if (const auto backup = ParseBackup(file.name))
+            if (const auto backup = ParseBackup(file.name); backup && !SavedOver(file))
             {
                 const bool open = !used.empty() && Lower(FileName(file.name)) == used;
                 entries.push_back({ Lower(file.map), std::move(file.name), file.size, Order(backup->second), open });

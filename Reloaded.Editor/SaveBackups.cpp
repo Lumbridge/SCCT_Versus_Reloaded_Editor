@@ -5,7 +5,9 @@
 #include "EditorExtras.h"
 #include "WorkflowEditor.h"
 #include "logger.h"
+#include "MemoryWriter.h"
 #include <commdlg.h>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <format>
@@ -59,10 +61,20 @@ namespace
     }
 
     std::uint64_t Ticks(const FILETIME& time) { return (std::uint64_t(time.dwHighDateTime) << 32) | time.dwLowDateTime; }
+    // A write time as local time, as GetLocalTime gave the backup's name.
+    SaveBackups::Stamp Local(const FILETIME& time)
+    {
+        SYSTEMTIME utc{}, local{};
+        if (!FileTimeToSystemTime(&time, &utc) || !SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local)) return {};
+        return { local.wYear, local.wMonth, local.wDay, local.wHour, local.wMinute, local.wSecond };
+    }
 
     // The file the last MAP LOAD opened: when the open map is a backup, a
     // save over its map must not remove it before the save has read it.
     std::string loaded;
+    // MAP SAVE commands passed to the engine so far, but for the stock
+    // autosave's, which may run while a Save As box is open.
+    std::atomic<unsigned> saves = 0;
 
     // The files in one map's backup folder, by path.
     std::vector<SaveBackups::File> Files(const fs::path& folder, const std::string& map)
@@ -74,7 +86,8 @@ namespace
         do
             if (!(found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
                 files.push_back({ map, Utf8((folder / found.cFileName).wstring()),
-                                  (std::uint64_t(found.nFileSizeHigh) << 32) | found.nFileSizeLow, Ticks(found.ftLastWriteTime) });
+                                  (std::uint64_t(found.nFileSizeHigh) << 32) | found.nFileSizeLow, Ticks(found.ftLastWriteTime),
+                                  Local(found.ftLastWriteTime) });
         while (FindNextFileW(find, &found));
         FindClose(find);
         return files;
@@ -96,6 +109,10 @@ namespace
 
     void Backup(const std::string& value)
     {
+        // Play Level's command names MapsEd\Autoplay.sdc, but the engine
+        // writes only Packages\Maps\Autoplay.sdc: nothing in MapsEd is
+        // replaced, even when a file of that name is there.
+        if (SaveBackups::IsPlayLevelName(value)) return;
         const auto mapsEd = MapsEd();
         std::error_code error;
         // The engine opens a relative name from the current directory
@@ -107,8 +124,7 @@ namespace
             target = !error && fs::is_regular_file(here, error) ? here : mapsEd / target;
         }
         if (!fs::is_regular_file(target, error)) return; // A new map: nothing to keep.
-        // Only the game's own MapsEd: not Play Level's Packages\Maps copy, nor
-        // a release folder's.
+        // Only the game's own MapsEd, not a release folder's.
         if (!fs::equivalent(target.parent_path(), mapsEd, error)) return;
         const auto name = Utf8(target.filename().wstring());
         if (Sessions::IsAutosaveName(name) || SaveBackups::IsBackupPath(Utf8(target.wstring()))) return;
@@ -159,7 +175,43 @@ namespace
         try { Logger::log(std::string("Save backups: ") + what + "; the save goes ahead without a backup"); }
         catch (...) {}
     }
+
+    // The stock FileSave and FileSaveAs, int __cdecl (HWND), nonzero once
+    // the map is saved. Every Save reaches FileSave through its thunk: File >
+    // Save and Ctrl+L, the engine's own request to save the map, and the
+    // build-and-save question when the map is closed.
+    using SaveFunction = int(__cdecl*)(HWND);
+    constexpr uintptr_t kFileSaveThunk = 0x10E03EFA, kFileSave = 0x10E3D300, kFileSaveAs = 0x10E047AB;
+
+    bool BackupOpen() noexcept
+    {
+        try { return SaveBackups::IsBackupPath(Workflow::Editor::MapFile()); }
+        catch (...) { return false; }
+    }
+
+    // In place of FileSave: an opened backup is saved where the user says,
+    // as FileSave does for an untitled map. A plain Save then never puts the
+    // user's work into the Backups folder, where pruning would remove it.
+    int __cdecl SaveOrAsk(HWND window)
+    {
+        if (!BackupOpen()) return reinterpret_cast<SaveFunction>(kFileSave)(window);
+        try { Logger::log("Save backups: the open map is a kept backup, so Save asks where to save it"); }
+        catch (...) {}
+        return reinterpret_cast<SaveFunction>(kFileSaveAs)(window);
+    }
 }
+
+void SaveBackups::Initialize()
+{
+    // Only when the thunk is still the stock jump to FileSave.
+    if (*reinterpret_cast<const unsigned char*>(kFileSaveThunk) == 0xE9
+        && kFileSaveThunk + 5 + *reinterpret_cast<const int*>(kFileSaveThunk + 1) == kFileSave
+        && MemoryWriter::WriteJump(kFileSaveThunk, reinterpret_cast<void (*)()>(&SaveOrAsk)))
+        return;
+    Logger::log("Save backups: File > Save is not the supported editor's; Save on an opened backup writes into that backup.");
+}
+
+unsigned SaveBackups::MapSaves() { return saves; }
 
 fs::path SaveBackups::Folder() { return SystemFolder() / "ReloadedEditor" / "Backups"; }
 
@@ -173,7 +225,11 @@ void SaveBackups::BeforeMapSave(const char* command) noexcept
     if (_strnicmp(word, "MAP", 3) != 0) return;
     try
     {
-        if (const auto target = SaveTarget(command)) Backup(*target);
+        if (const auto target = SaveTarget(command))
+        {
+            if (!Sessions::IsAutosaveName(*target)) ++saves;
+            Backup(*target);
+        }
         else if (const auto file = LoadTarget(command)) loaded = Utf8(fs::path(*file).wstring());
     }
     catch (const std::exception& e) { Report(e.what()); }

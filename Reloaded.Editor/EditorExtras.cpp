@@ -139,9 +139,13 @@ namespace
         if (message == WM_COMMAND && (LOWORD(w) == kFileSave || LOWORD(w) == kFileSaveAs))
         {
             // After the stock save the map is as clean as it will get: opening
-            // a recent map from here needs no warning.
+            // a recent map from here needs no warning. A Save As that was
+            // cancelled (Save asks too for an untitled map or an opened
+            // backup) saved nothing, so the warning stays.
+            const unsigned saves = SaveBackups::MapSaves();
             const LRESULT result = DefSubclassProc(window, message, w, l);
-            try { lastCleanRevision = Editor::ContentRevision(); } catch (const std::exception&) {}
+            if (SaveBackups::MapSaves() != saves)
+                try { lastCleanRevision = Editor::ContentRevision(); } catch (const std::exception&) {}
             return result;
         }
         if (message == WM_COMMAND)

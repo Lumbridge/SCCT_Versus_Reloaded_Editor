@@ -36,6 +36,13 @@ void Targets()
           == "C:\\G\\System\\ReloadedEditor\\Backups\\MoonD\\MoonD_20261017_143205.sdc", "the file a load opens");
     Check(LoadTarget("map load file=MoonD.sdc") == "MoonD.sdc", "a load, lower case and unquoted");
     Check(!LoadTarget("MAP SAVE FILE=\"MoonD.sdc\"") && !LoadTarget("MAP LOAD"), "a save is not a load, nor a load without FILE=");
+
+    // Play Level's own command, and the copy the engine writes instead.
+    Check(IsPlayLevelName(*SaveTarget("MAP SAVE FILE=..\\Packages\\MapsEd\\Autoplay.sdc")), "Play Level's save names MapsEd's Autoplay.sdc");
+    Check(IsPlayLevelName("C:/G/Packages/Maps/AUTOPLAY.SDC") && IsPlayLevelName("Autoplay.sds"), "any case, slash and extension");
+    Check(!IsPlayLevelName("..\\Packages\\MapsEd\\MoonD.sdc") && !IsPlayLevelName("Auto0.sdc"), "a map, an autosave");
+    Check(!IsPlayLevelName("Autoplay2.sdc") && !IsPlayLevelName("MyAutoplay.sdc") && !IsPlayLevelName("C:\\Autoplay.d\\MoonD.sdc"),
+          "only the file name Autoplay.*");
 }
 
 void Names()
@@ -79,6 +86,17 @@ void Copies()
     Check(Needed(existing, 50 * kMB, 1000), "the same as an older backup only");
     Check(Needed(existing, 52 * kMB, 3000), "a file that is not a backup is not compared");
     Check(Needed({}, 52 * kMB, 2000), "no backups yet");
+
+    // Written before or in the second of its name: RE+'s own copy. Written
+    // later: saved over since.
+    const File copy{ "MoonD", "MoonD_20261017_143205.sdc", kMB, 0, { 2026, 10, 17, 14, 2, 40 } };
+    Check(!SavedOver(copy), "a copy keeps the earlier write time of its map");
+    Check(!SavedOver({ "MoonD", "MoonD_20261017_143205.sdc", kMB, 0, { 2026, 10, 17, 14, 32, 5 } }), "written in the second of its name");
+    Check(SavedOver({ "MoonD", "MoonD_20261017_143205.sdc", kMB, 0, { 2026, 10, 17, 14, 32, 6 } })
+          && SavedOver({ "MoonD", "C:\\G\\System\\ReloadedEditor\\Backups\\MoonD\\MoonD_20261017_143205.sdc", kMB, 0, { 2026, 10, 20, 9, 0, 0 } }),
+          "written later: saved over");
+    Check(!SavedOver({ "MoonD", "notes.txt", kMB, 0, { 2027, 1, 1, 0, 0, 0 } }) && !SavedOver({ "MoonD", "MoonD_20261017_143205.sdc", kMB, 0 }),
+          "not a backup, or no write time given");
 }
 
 void Pruning()
@@ -121,6 +139,20 @@ void Pruning()
           "under the total cap it stays and counts, and the next oldest go instead");
     Check(Prune(files, 5, 2048 * kMB, "C:\\G\\Packages\\MapsEd\\MoonD.sdc") == std::vector<std::string>{ "MoonD_20261017_100000.sdc" },
           "an open map from MapsEd protects nothing");
+
+    // MoonD's oldest was opened and saved over the next day: it holds the
+    // user's work, so it is neither removed nor counted.
+    auto edited = files;
+    edited[0].writtenLocal = { 2026, 10, 18, 9, 0, 0 };
+    Check(Prune(edited, 5, 2048 * kMB).empty(), "a backup saved over stays past keep, and the five others are all kept");
+    Check(Set(Prune(edited, 2, 2048 * kMB)) == std::set<std::string>{ "MoonD_20261017_110000.sdc", "MoonD_20261017_120000.sdc", "MoonD_20261017_130000.sdc" },
+          "keep two of the rest");
+    Check(Set(Prune(edited, 5, 65 * kMB)) == std::set<std::string>{ "ShipD_20261016_090000.sdc", "MoonD_20261017_110000.sdc" },
+          "the total cap neither counts nor removes it");
+    auto newest = files;
+    newest[5].writtenLocal = { 2026, 10, 17, 16, 30, 0 };
+    Check(Set(Prune(newest, 2, 2048 * kMB)) == std::set<std::string>{ "MoonD_20261017_100000.sdc", "MoonD_20261017_110000.sdc", "MoonD_20261017_120000.sdc" },
+          "the newest saved over: the two newest of the rest stay");
 
     const std::vector<File> folded = {
         { "MoonD", "MoonD_20261017_100000.sdc", kMB, 0 },
