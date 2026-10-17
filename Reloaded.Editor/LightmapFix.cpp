@@ -3,6 +3,7 @@
 #include "LightmapFix.h"
 #include "Hooks.h"
 #include "RealtimeFix.h"
+#include "SaveBackups.h"
 #include "SdcBlockModel.h"
 #include "logger.h"
 
@@ -339,6 +340,7 @@ static void __cdecl WarnIfMapDamaged(const char* cmd)
 
 static void __cdecl BeforeEditorExec(const char* cmd)
 {
+    SaveBackups::BeforeMapSave(cmd);
     WarnIfMapDamaged(cmd);
     RealtimeFix::BeforeEditorCommand(cmd);
 }

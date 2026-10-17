@@ -22,6 +22,7 @@ namespace EditorExtras
     constexpr UINT kLevelSnapshotFile = 40965;
     constexpr UINT kRecentFirst = 40970, kRecentLast = 40979;
     constexpr UINT kOpenLatestAutosave = 40987; // first of the crash-recovery block, 40987-40999
+    constexpr UINT kOpenMapBackup = 40988;
 
     // From the menu-injection thread, once the editor frame exists: brings up
     // the timer, the frame subclass and the menu entries on the frame's thread.
@@ -38,6 +39,7 @@ namespace EditorExtras
     // unsaved changes. Throws when the editor cannot open it.
     void OpenMap(const std::string& path, bool confirmDiscard);
     // The same, asking in a box owned by owner and titled title. False when
-    // the user keeps the open map. Autosaves are not listed in Open Recent.
+    // the user keeps the open map. Autosaves and kept backups are not listed
+    // in Open Recent.
     bool OpenMap(const std::string& path, HWND owner, const char* title, bool confirmDiscard = true);
 }
