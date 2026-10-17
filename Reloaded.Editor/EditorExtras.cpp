@@ -7,6 +7,8 @@
 #include "GEKeybindSwap.h"
 #include "LevelSnapshot.h"
 #include "PlayLevelPlayers.h"
+#include "SaveBackupModel.h"
+#include "SaveBackups.h"
 #include "SelfUpdater.h"
 #include "Version.h"
 #include "logger.h"
@@ -116,8 +118,8 @@ namespace
             lastMap = map;
             lastCleanRevision = Editor::ContentRevision();
             CrashRecovery::NoteMap(map);
-            // An opened autosave is a moment, not a map to come back to.
-            if (!Sessions::IsAutosaveName(map)) NoteMap(map);
+            // An opened autosave or backup is a moment, not a map to come back to.
+            if (!Sessions::IsAutosaveName(map) && !SaveBackups::IsBackupPath(map)) NoteMap(map);
         }
         catch (const std::exception&) { /* The engine may not be ready yet. */ }
     }
@@ -208,6 +210,15 @@ namespace
             while (position < GetMenuItemCount(file) && GetSubMenu(file, position) != recentMenu) ++position;
             InsertMenuA(file, position + 1, MF_BYPOSITION | MF_STRING, EditorExtras::kOpenLatestAutosave, "Open Latest A&utosave...");
         }
+        if (file && GetMenuState(file, EditorExtras::kOpenLatestAutosave, MF_BYCOMMAND) != UINT(-1)
+            && GetMenuState(file, EditorExtras::kOpenMapBackup, MF_BYCOMMAND) == UINT(-1))
+        {
+            changed = true;
+            // Right after Open Latest Autosave.
+            int position = 0;
+            while (position < GetMenuItemCount(file) && GetMenuItemID(file, position) != EditorExtras::kOpenLatestAutosave) ++position;
+            InsertMenuA(file, position + 1, MF_BYPOSITION | MF_STRING, EditorExtras::kOpenMapBackup, "Open Map &Backup...");
+        }
         if (HMENU build = MenuWithCommand(bar, 40038); build && GetMenuState(build, EditorExtras::kPlayFromCameraSpy, MF_BYCOMMAND) == UINT(-1))
         {
             changed = true;
@@ -235,6 +246,7 @@ namespace
         HMENU build = MenuWithCommand(bar, 40038), help = MenuWithCommand(bar, 40480);
         return file && recentMenu && HasSubMenu(file, recentMenu)
             && GetMenuState(file, EditorExtras::kOpenLatestAutosave, MF_BYCOMMAND) != UINT(-1)
+            && GetMenuState(file, EditorExtras::kOpenMapBackup, MF_BYCOMMAND) != UINT(-1)
             && build && GetMenuState(build, EditorExtras::kPlayFromCameraSpy, MF_BYCOMMAND) != UINT(-1)
             && help && GetMenuState(help, EditorExtras::kShortcuts, MF_BYCOMMAND) != UINT(-1)
             && GetMenuState(help, SelfUpdater::kCheckNow, MF_BYCOMMAND) != UINT(-1);
@@ -353,6 +365,7 @@ namespace
                "File: Open Recent lists the last ten maps. The editor's own autosave (View > Advanced Options,\r\n"
                "Editor.EditorEngine: AutoSave, AutoSaveTimeMinutes) writes Auto0 to Auto9.sdc into MapsEd;\r\n"
                "File: Open Latest Autosave opens the newest of them. After a crash, the next start offers that session's autosave.\r\n"
+               "File: Open Map Backup opens one of the last saved versions RE+ keeps of each map (System\\ReloadedEditor\\Backups); Save As over the map to restore it.\r\n"
                "Build: Play From Camera as Spy / Merc starts a playtest at the perspective viewport's camera.\r\n"
                "Build: Set Level Snapshot from Viewport / Image File puts the picture the game shows in map selection\r\n"
                "into the map's <Map>-i package (Packages\\Textures), backing up the old one under ReloadedEditor.\r\n"
@@ -508,15 +521,23 @@ bool EditorExtras::OpenMap(const std::string& path, HWND owner, const char* titl
     // previous map's stay current, and the next save writes them (and that
     // map's interface package) over this map's <Map>-i. An autosave (Auto0-9)
     // is left out: it has no settings of its own, and blank ones would be
-    // written over the real map's when it is saved back under that name.
-    const std::string stem = std::filesystem::path(path).stem().string();
+    // written over the real map's when it is saved back under that name. A
+    // kept backup loads the settings of the map it was taken from, so they
+    // are current when it is saved over that map to restore it.
+    std::string stem = std::filesystem::path(path).stem().string();
+    const bool backup = SaveBackups::IsBackupPath(path);
+    if (backup)
+    {
+        const auto source = SaveBackups::ParseBackup(path);
+        stem = source ? source->first : std::string();
+    }
     if (!Sessions::IsAutosaveName(path) && !stem.empty() && stem.find_first_of(" \t\"'") == std::string::npos)
         Editor::Exec("LOADMAPPROP MAP=\"" + stem + "\"");
     Editor::SetMapFile(path);
     lastMap = path;
     lastCleanRevision = Editor::ContentRevision();
     CrashRecovery::NoteMap(path);
-    if (!Sessions::IsAutosaveName(path)) NoteMap(path);
+    if (!Sessions::IsAutosaveName(path) && !backup) NoteMap(path);
     Editor::Redraw();
     return true;
 }
@@ -574,12 +595,13 @@ bool EditorExtras::HandleCommand(UINT command)
 {
     if (SelfUpdater::HandleCommand(command)) return true;
     const bool ours = (command >= kSelectSameClass && command <= kLevelSnapshotFile) || (command >= kRecentFirst && command <= kRecentLast)
-        || command == kOpenLatestAutosave;
+        || command == kOpenLatestAutosave || command == kOpenMapBackup;
     if (!ours) return false;
     try
     {
         if (command >= kRecentFirst && command <= kRecentLast) OpenRecent(command - kRecentFirst);
         else if (command == kOpenLatestAutosave) CrashRecovery::OpenLatestAutosave(frameWindow);
+        else if (command == kOpenMapBackup) SaveBackups::OpenDialog(frameWindow);
         else if (command == kSelectSameClass) SelectMatching("class", "class");
         else if (command == kSelectSameTag) SelectMatching("tag", "Tag");
         else if (command == kSelectSameMesh) Exec("ACTOR SELECT MATCHINGSTATICMESH", "Select a static mesh actor first.");
