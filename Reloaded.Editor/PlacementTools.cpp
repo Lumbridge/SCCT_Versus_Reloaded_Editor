@@ -216,9 +216,9 @@ namespace
         if (chosen.members.empty() && !brushes) throw std::runtime_error("Select the actors to snap first.");
         return chosen;
     }
-    std::string BrushesLeft(size_t brushes)
+    std::string BrushesLeft(size_t brushes, bool faceSnap)
     {
-        return brushes ? Count(brushes, "CSG brush", "CSG brushes") + " left alone: right-click a brush face for Snap brush edge to grid." : "";
+        return brushes ? Count(brushes, "CSG brush", "CSG brushes") + " left alone" + (faceSnap ? ": right-click a brush face for Snap brush edge to grid." : ".") : "";
     }
     std::string StayLocked(size_t locked) { return Count(locked, "locked actor stays", "locked actors stay"); }
     std::string GridName(const Vector& grid, unsigned axes)
@@ -255,7 +255,7 @@ namespace
             else text = "Snapped " + Count(moved, "actor's", "actors'") + (by == Place::SnapBy::Pivot ? (moved == 1 ? " pivot" : " pivots") : " box edges")
                       + " to the " + GridName(grid, axes) + (axes == 7 ? " (X, Y and Z)" : " (X and Y)") + (locked ? "; " + StayLocked(locked) : "") + ".";
         }
-        if (brushes) text += (text.empty() ? "" : " ") + BrushesLeft(brushes);
+        if (brushes) text += (text.empty() ? "" : " ") + BrushesLeft(brushes, true);
         Report(text, problem);
     }
     // Yaws to the nearest step of 90, 45 or 15 degrees; pitch and roll stay.
@@ -284,7 +284,8 @@ namespace
             else if (!turned) { text = "Nothing turned: " + StayLocked(locked) + " put."; problem = true; }
             else text = "Turned " + Count(turned, "actor", "actors") + " to the nearest " + step + (locked ? "; " + StayLocked(locked) : "") + ".";
         }
-        if (brushes) text += (text.empty() ? "" : " ") + BrushesLeft(brushes);
+        // The face snap only moves a brush, so it is no help with a turn.
+        if (brushes) text += (text.empty() ? "" : " ") + BrushesLeft(brushes, false);
         Report(text, problem);
     }
 
