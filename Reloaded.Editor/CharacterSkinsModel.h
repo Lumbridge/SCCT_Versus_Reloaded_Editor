@@ -94,6 +94,15 @@ inline Offset SuggestedGoggles(const std::string& modelProperty, const std::stri
     if (modelProperty == "MercModel" && name.rfind("HazmatMerc", 0) == 0) return {-0.1, -2.8, -0.8};
     return {};
 }
+// The goggle light offset once a team's model changes: while it is still the old
+// model's suggestion, the new model's (zero without one); an offset typed by hand stays.
+inline Offset GogglesForNewModel(const Offset& current, const Offset& previousSuggestion, const Offset& newSuggestion)
+{
+    const auto same = [](double a, double b) { return std::fabs(a - b) <= 1e-4; };
+    return same(current.x, previousSuggestion.x) && same(current.y, previousSuggestion.y) && same(current.z, previousSuggestion.z)
+               ? newSuggestion
+               : current;
+}
 inline std::string Number(double v)
 {
     std::ostringstream out;

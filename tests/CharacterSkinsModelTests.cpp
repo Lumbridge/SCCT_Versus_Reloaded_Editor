@@ -135,6 +135,23 @@ int main()
         Check(suggested.x == 0 && suggested.y == 0 && suggested.z == 0, "no suggestion for a merc's own model");
         suggested = SuggestedGoggles("MercModel", "MyLevel.HazmatMerc");
         Check(suggested.x == -0.1 && suggested.y == -2.8 && suggested.z == -0.8, "hazmat suit visor");
+        // A new model: the old model's suggestion gives way to the new one's, typed offsets stay.
+        const Offset mercOnSpy = SuggestedGoggles("SpyModel", "SPerso.DEF_01"),
+                     hazmat = SuggestedGoggles("MercModel", "MyLevel.HazmatMerc_1a2b"), none{};
+        auto goggles = GogglesForNewModel({0, 0, 0}, none, mercOnSpy);
+        Check(goggles.x == 4 && goggles.y == 0 && goggles.z == 0, "follows the new model's suggestion");
+        goggles = GogglesForNewModel({4, 0, 0}, mercOnSpy, SuggestedGoggles("SpyModel", "SPerso.ATT_01"));
+        Check(goggles.x == 0 && goggles.y == 0 && goggles.z == 0, "back to zero for the stock spy model");
+        // The map keeps offsets as floats: -0.1 read back is still the suggestion.
+        goggles = GogglesForNewModel({static_cast<float>(-0.1), static_cast<float>(-2.8), static_cast<float>(-0.8)}, hazmat,
+                                     SuggestedGoggles("MercModel", "SPerso.DEF_01"));
+        Check(goggles.x == 0 && goggles.y == 0 && goggles.z == 0, "zero for a model without a suggestion");
+        goggles = GogglesForNewModel({2, 0, 1}, mercOnSpy, none);
+        Check(goggles.x == 2 && goggles.y == 0 && goggles.z == 1, "typed offset kept");
+        goggles = GogglesForNewModel({4, 0, 0.5}, mercOnSpy, none);
+        Check(goggles.x == 4 && goggles.y == 0 && goggles.z == 0.5, "a suggestion changed by hand is kept");
+        goggles = GogglesForNewModel({1, 0, 0}, none, mercOnSpy);
+        Check(goggles.x == 1 && goggles.y == 0 && goggles.z == 0, "typed offset kept over a suggestion");
     }
     catch (const std::exception& e)
     {
