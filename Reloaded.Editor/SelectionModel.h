@@ -48,11 +48,21 @@ inline std::vector<size_t> Inverted(const std::vector<Actor>& actors)
     for(size_t i=0;i<actors.size();++i)if(actors[i].authorable && !actors[i].hidden && !actors[i].selected)result.push_back(i);
     return result;
 }
+// Something on show must be selected. The hidden part of the selection (a
+// Scene panel row, a restored Working View) is taken along: hiding it again
+// changes nothing on screen but takes it out of the selection, so nothing
+// hidden is left for the next Delete or move.
 inline std::vector<size_t> ToHide(const std::vector<Actor>& actors)
 {
     std::vector<size_t> result;
-    for(size_t i=0;i<actors.size();++i)if(actors[i].authorable && !actors[i].hidden && actors[i].selected)result.push_back(i);
-    if(result.empty())throw std::runtime_error("Select something to hide first.");
+    bool shown=false;
+    for(size_t i=0;i<actors.size();++i)
+        if(actors[i].authorable && actors[i].selected)
+        {
+            result.push_back(i);
+            if(!actors[i].hidden)shown=true;
+        }
+    if(!shown)throw std::runtime_error("Select something to hide first.");
     return result;
 }
 // Without a visible selection, isolating would hide the whole map in one step.

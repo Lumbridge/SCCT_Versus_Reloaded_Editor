@@ -401,7 +401,8 @@ namespace
     // Selection helpers built on the editor's own actor list, so they work
     // for several classes or tags at once. The builder brush, the level info
     // and viewport cameras (not authorable) are never taken along, and
-    // SelectionModel.h keeps hidden actors out of what is selected or hidden.
+    // SelectionModel.h keeps hidden actors out of what is selected, and Hide
+    // selected takes any hidden ones still selected out of the selection.
     namespace Selection = Workflow::Selection;
     template<class Rule> Json Chosen(Rule rule)
     {

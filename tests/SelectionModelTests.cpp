@@ -78,13 +78,18 @@ int main()
     Reject([&]{Selection::ToIsolate(builder);},"Select what should stay visible first.");
     Reject([&]{Selection::ToHide(builder);},"Select something to hide first.");
 
-    // Already-hidden actors are left out of what is hidden.
+    // Isolate leaves already-hidden actors alone. Hide selected takes a hidden
+    // part of the selection along, so it leaves the selection too, but it
+    // still needs something on show to hide.
     auto movers=Map({"MyLevel.Mover0","MyLevel.Mover1"});
     Check(Picked(movers,Selection::ToIsolate(movers))==Names{"MyLevel.SCamera0","MyLevel.SCamera1","MyLevel.Light0"},"isolate hides the visible rest only");
     auto hiddenToo=Map({"MyLevel.SCamera0","MyLevel.SCamera2"});
-    Check(Picked(hiddenToo,Selection::ToHide(hiddenToo))==Names{"MyLevel.SCamera0"},"a hidden actor is not hidden again");
+    Check(Picked(hiddenToo,Selection::ToHide(hiddenToo))==Names{"MyLevel.SCamera0","MyLevel.SCamera2"},"a hidden actor in the selection is deselected with the rest");
+    auto hiddenLight=Map({"MyLevel.Mover0","MyLevel.Light1","MyLevel.Camera0"});
+    Check(Picked(hiddenLight,Selection::ToHide(hiddenLight))==Names{"MyLevel.Mover0","MyLevel.Light1"},"a viewport camera is not taken along");
     auto hiddenOnly=Map({"MyLevel.Light1"});
     Reject([&]{Selection::ToHide(hiddenOnly);},"Select something to hide first.");
+    Reject([&]{Selection::ToHide(Map({"MyLevel.SCamera2","MyLevel.Light1","MyLevel.Brush0"}));},"Select something to hide first.");
     // A hidden selection (a Scene panel row, a restored Working View) keeps
     // nothing on show, so isolating it would hide the whole map too.
     Reject([&]{Selection::ToIsolate(Map({"MyLevel.SCamera2"}));},"Select what should stay visible first.");
