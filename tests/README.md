@@ -53,7 +53,12 @@ group name handling, portable workspace export/import, image calibration, 3D
 measurement, stable distribution, and repeated brush/object/event reference
 remapping, mirrored poses checked vertex by vertex against the reflected
 geometry, the piece clipboard's anchor and offsets, sightlines through a turned
-doorway and through a wall, size presets, and numbered names. `SecurityModelTests.cpp` covers the security device catalogue, Unreal
+doorway and through a wall, size presets, numbered names, and the floors: the
+room under a point setting the floor spacing (its height as resized, a shell
+room's wall included, shafts, openings and stairwells never counting, the room
+whose floor the depth is on among stacked ones) and where a click places (the
+Depth in the top view, the floor of the room under the click in the front and
+side views, the clicked height over no room). `SecurityModelTests.cpp` covers the security device catalogue, Unreal
 yaw from two points, laser length and direction from two clicks, beam ends,
 sensor boxes, tag allocation, and the wiring report with its unwired detectors,
 unfed alarms, dangling events and empty sensors.
@@ -133,6 +138,20 @@ Latest Autosave...** were checked by hand in a disposable installation; the
 native runner turns the offer off (`[CrashRecovery] OfferAtStartup=0`) because
 the workflow suite stops and restarts the editor.
 
+`SaveBackupModelTests.cpp` covers the map backups' pure parts: the file a
+`MAP SAVE` or `MAP LOAD` command names (quoted or not, in any case, among other
+parameters; not a package save, a `SAVEAS` or an empty `FILE=`), the stock
+autosave's own save told from File > Save, Play Level's `Autoplay.sdc` left
+alone, backup names stamped with the time and read back from the end (a map
+name with underscores of its own, invalid dates refused), whether the file on
+disk still needs a copy (size and write time against the newest backup only),
+the times a copy keeps, `SavedOver.txt` read by file name in any case and with
+LF endings, pruning (the newest five of each map, `Keep`, a map's newest always
+staying, the `MaxTotalMB` cap going oldest first across maps, a backup saved
+over neither counted nor removed, files that are not backups never deleted),
+and which paths are backups (`ReloadedEditor\Backups` with either slash, not
+MapsEd maps or snapshot backups).
+
 `EntryThumbnailModelTests.cpp` covers the Working Views and Actor Assemblies
 thumbnails' pure parts: file names taken from the entry id (lower case, one
 per kind, ids that could leave the folder refused), parsing them back, the
@@ -142,6 +161,26 @@ tall viewport fitted by height), letterboxing into the list's cells, and the
 camera pose that frames an assembly's actor locations (yaw kept, a fixed
 three-quarter pitch, far enough for the narrower field of view, a minimum
 distance for one actor, bad FOV or bounds handled).
+
+`ViewBookmarkModelTests.cpp` covers camera bookmarks, which are Working Views
+with a key: slots 1 to 9 only (0, 10, negative, text and fractional slots are
+not keys), finding a slot's entry among ordinary views, a new bookmark holding
+the cameras with no actor visibility to restore and the hidden groups left as
+they are, Ctrl+N again updating that entry in place (id and name kept, cameras
+and time refreshed, nothing appended), ordinary views never touched, two
+entries holding one slot (the first keeps it, the other loses only its slot),
+and a missing view list starting a new one.
+
+`UsageMarksModelTests.cpp` covers Find Usages' check boxes as the list is read
+again: rows keyed by actor path (any case), property and BSP surface; the
+checks a Refresh gives with **Limit to selection** on and off; marks following
+reordered rows and duplicate keys pairing up in order; new rows checked when
+replaceable or unchecked under the limit; a row that becomes read-only
+unchecked and one that becomes replaceable checked again unless it was unchecked
+by hand; a row unchecked by hand remembered while read-only and when it leaves
+the list, so it comes back unchecked; and after a geometry build, surface
+numbers no longer trusted, so surface rows come back unchecked when any face
+had been left out, while actor rows keep their marks.
 
 `MapUsagesModelTests.cpp` covers Find Usages in All Maps on generated SCCT
 packages: object names (class-quoted, groups with spaces, malformed names
@@ -306,12 +345,44 @@ ignored, a sunk box rises, a pawn rests on its collision height), turning to sit
 on a floor, ceiling or wall, copies in a line, round a centre (on the
 selection's own circle or at a radius, partial arcs, turning or not) and along
 a path by count or spacing, the copy limits, preview box edges and the
-selection order. There is no native suite check yet; a scratch probe drove
-every command and the copies window in a disposable install on ShipD: drops to
+selection order. For Snap to Grid it checks pivots rounded on X and Y or on
+all axes (ties away from zero), box edges by the nearer edge with the minimum
+on ties, an unused axis's grid ignored, a zero or missing grid refused, moves a
+float cannot hold dropped far from the origin, and yaw rounded to 90, 45 or 15
+degrees within one turn; for Push to Wall Along, the four axis directions, the
+rays across the face and the distance to the wall ahead. There is no native
+suite check yet; before Snap to Grid and Push to Wall Along existed, a scratch
+probe drove every command and the copies window in a disposable install on ShipD: drops to
 floor, ceiling and wall with Undo, End over a level viewport, alignment and
 distribution with Undo, line / radial / path copies of a mesh and of a CSG
 brush (Undo and Redo), Tags kept on copies, the RE+ Tools and actor menus, and
 the viewport preview.
+
+## Select and hide
+
+`tools/test_workflow_tools.cmd` runs `SelectionModelTests.cpp`: the actor rows
+read from the editor's list (the level info, builder brush and viewport cameras
+never taken), all of this class and all with this Tag (case folded, several
+classes or Tags at once, a None Tag adding nothing) and Invert taking visible
+actors only, security cameras included; Hide selected taking hidden actors still
+in the selection along so they leave it too; Isolate needing a visible selection
+and hiding only the visible rest; Unhide all; and the messages when there is
+nothing to act on.
+
+## Copy and paste properties
+
+`tools/test_workflow_tools.cmd` runs `PropertyPasteModelTests.cpp`: which copied
+properties start unticked (Location, Rotation, the brush transform, what an
+actor is drawn as, the names that wire and group it, an SMagicEvent's Groups,
+the editor flags and every reference to an actor, nested ones included) and
+which start ticked (DrawScale, Skins, a light's brightness, a class); which are
+never offered (a brush's Model, an emitter's emitters, Karma parameters, a
+reference of unknown or owned class, even inside a struct); the list's order by
+category and name; which values name something in the map they were copied
+from (an actor, or a mesh, material or class stored in MyLevel); a target taking
+a value only through the same schema in any class (kind, enum choices, struct
+fields, reference class; not the category); and the value, dialog and result
+texts.
 
 ## Animation import options
 
@@ -320,7 +391,11 @@ Merge / Overwrite / Keep Notifies apply together, case-insensitive sequence and
 bone names, the skeleton check (bone count, names and order), what happens to each
 sequence of the file (added, replaced keeping or discarding notifies, skipped as
 already present or repeated in the file), a whole-set replace carrying notifies by
-name, and the confirmation, nothing-to-merge and log texts.
+name, and the confirmation, nothing-to-merge and log texts. For the Animation
+Browser it checks deleting a sequence (the others keep their order; an index out
+of range changes nothing) with its confirmation text, and the rename check:
+letters, digits, _ and - only, no clash with another sequence of the set
+(ignoring case), and renaming a sequence to its own name allowed.
 
 There is no native suite test yet. It was checked by hand in a disposable
 installation by importing generated `.psa` files (SCCT's extended format and a
@@ -391,7 +466,15 @@ rooms are one zone; the leak path goes round the sheet through the gap, never
 through it) and one that fills its opening (the path is marked as through the
 sheet), unused and unconnected portals, both faces of a sheet as one row, the
 64-zone caveat, ZoneInfos in solid space, zones without a ZoneInfo, a level open
-to the outside, the stock entries' severities, and an unbuilt map.
+to the outside, the stock entries' severities, and an unbuilt map. Floating
+meshes: a static mesh above the surface below it gets a row, and two or more a
+row that selects them all; one over a mesh that does not block, inside that
+mesh's box (a shelf), is listed apart without the End advice, while soft boxes
+beside, above or well below it change nothing; a flat mesh lifted 2 units or
+less is left out; the gap text, the gap limits and `FloatingMaxGap=0` turning
+the check off; a failed line check stopping the scan with a note; and nothing
+without a run or a built BSP. BSP point indices are read unsigned, as the
+patched engine reads them.
 
 Not covered by the native suite. It was checked in a disposable install with an
 injected probe on ShipD: the clean map, then a player start moved into the void,
@@ -455,7 +538,11 @@ au/eu/ou + x without turning `vertex` into *green* or `bass` into *low*; glued
 words (`boisplanche`, `BetonWall`) split only into known parts with at least one
 French one; and the search rule (the whole query against the name as the stock
 filter does, or every word against the name or its English). It also loads the
-built-in dictionary and checks names from the stock packages.
+built-in dictionary and checks names from the stock packages, and covers the
+names the Sound Browser gives an imported or renamed sound: only letters,
+digits, _ and - (accents folded, runs of other characters made one _), a nested
+group keeping its dots, a group already loaded kept as typed, and `FitsLookup`,
+the engine's limit of 255 characters in all and 63 between dots.
 
 `tools/asset_names/scan_names.py` lists every name in an install's packages and
 counts their words; it is how `fr-en.txt` was built and measured (96% of the
