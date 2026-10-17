@@ -189,7 +189,7 @@ std::vector<double> InitialFloors(const Read& map)
 
 const Read& Map(bool reread)
 {
-    const unsigned generation = Editor::MapGeneration(), revision = Editor::Revision();
+    const unsigned generation = Editor::MapGeneration(), revision = Editor::ContentRevision();
     if (reread || generation != cache.generation || revision != cache.revision)
     {
         Read fresh;

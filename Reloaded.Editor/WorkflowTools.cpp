@@ -37,6 +37,7 @@
 #include "LightShadowMap.h"
 #include "LightShadowModel.h"
 #include "EntryThumbnailModel.h"
+#include "UsageMarksModel.h"
 #include "LevelSnapshot.h"
 #include "logger.h"
 #include <commdlg.h>
@@ -709,18 +710,35 @@ namespace
         for(size_t i=1;i<values.size();++i) { item.iSubItem=static_cast<int>(i); item.pszText=const_cast<char*>(values[i].c_str()); SendMessageA(s.list,LVM_SETITEMTEXTA,index,reinterpret_cast<LPARAM>(&item)); }
         if(s.kind==Kind::Assets) ListView_SetCheckState(s.list,index,checked);
     }
-    void Populate(State& s)
+    // Refresh and the scope box pass fresh, and another map counts as fresh:
+    // Find Usages marks its rows from the selection as it is now. Otherwise each
+    // usage keeps its check box and the selection captured with it, so a click
+    // in a viewport or an edit elsewhere re-checks nothing (UsageMarksModel.h).
+    void Populate(State& s,bool fresh=false)
     {
-        Sync(); bool changed=s.epoch!=mapEpoch; s.epoch=mapEpoch;s.revision=Editor::Revision();
+        Sync(); bool changed=s.epoch!=mapEpoch; s.epoch=mapEpoch;s.revision=Editor::ContentRevision();
         if(changed || (s.editLevel && s.editLevel!=level)) { s.editing=Json{}; s.members=Json::array(); s.editLevel=0; }
+        std::vector<UsageMarks::Mark> marks; std::string focused;
+        if(s.kind==Kind::Assets)
+        {
+            for(int i=0;i<static_cast<int>(s.rows.size());++i) marks.push_back({ListView_GetCheckState(s.list,i)!=0,s.rows[i].at("selected").get<bool>()});
+            int row=Selected(s); if(row>=0 && row<static_cast<int>(s.rows.size())) focused=UsageMarks::Key(s.rows[row]);
+        }
         ListView_DeleteAllItems(s.list);
         if(s.kind==Kind::Assets)
         {
+            auto previous=std::move(s.rows);
             s.rows=Editor::FindUsages(s.source); bool only=SendMessage(GetDlgItem(s.window,kScope),BM_GETCHECK,0,0)==BST_CHECKED;
-            int i=0; for(const auto& j:s.rows)
+            if(fresh || changed) { marks.clear(); for(const auto& j:s.rows) marks.push_back(UsageMarks::Default(j,only)); }
+            else marks=UsageMarks::Carry(previous,marks,s.rows,only);
+            int i=0; for(auto& j:s.rows)
             {
+                // Replace Checked reads the scope from here.
+                j["selected"]=marks[i].scoped;
                 auto actor=j.at("actor").is_object()?j.at("actor").value("path",std::string{}):"BSP";
-                bool can=j.at("replaceable"); Row(s,i++,{actor,j.at("property"),can?"Direct / replaceable":j.at("direct").get<bool>()?"Read-only assignment":"Indirect / shared asset"},can && (!only || j.at("selected").get<bool>()));
+                bool can=j.at("replaceable"); Row(s,i,{actor,j.at("property"),can?"Direct / replaceable":j.at("direct").get<bool>()?"Read-only assignment":"Indirect / shared asset"},marks[i].checked);
+                if(!focused.empty() && UsageMarks::Key(j)==focused) { ListView_SetItemState(s.list,i,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED); ListView_EnsureVisible(s.list,i,FALSE); focused.clear(); }
+                ++i;
             }
             Status(s,s.source+" — "+std::to_string(s.rows.size())+" usages. Uncheck results to exclude them; shared asset contents are read-only.");
         }
@@ -937,7 +955,7 @@ namespace
     void Activate(State& s)
     {
         Sync();
-        if(s.epoch!=mapEpoch || (s.kind==Kind::Assets && s.revision!=Editor::Revision()))
+        if(s.epoch!=mapEpoch || (s.kind==Kind::Assets && s.revision!=Editor::ContentRevision()))
         {
             Populate(s); throw std::runtime_error("The map changed. Select an entry in the refreshed list.");
         }
@@ -958,14 +976,14 @@ namespace
     void Command(State& s,int command)
     {
         Sync(); if(s.epoch!=mapEpoch) { s.editing=Json{}; s.members=Json::array(); Populate(s); if(command!=Refresh) throw std::runtime_error("The map changed. Select an entry in the refreshed list."); }
-        if(command==Refresh) { Populate(s); return; }
+        if(command==Refresh) { Populate(s,true); return; }
         if(s.kind==Kind::Assets)
         {
             if(command==Primary) { Activate(s); return; }
             if(command==Third) { MapUsagesWindow::Open(s.window,s.source); return; }
             if(command==Secondary)
             {
-                if(s.revision!=Editor::Revision()) { Populate(s); throw std::runtime_error("The map changed. Review the refreshed usages before replacing."); }
+                if(s.revision!=Editor::ContentRevision()) { Populate(s); throw std::runtime_error("The map changed. Review the refreshed usages before replacing."); }
                 auto target=Editor::CurrentAsset(s.mesh); if(target.empty()) throw std::runtime_error("Select a replacement in the asset browser first.");
                 Json changes=Json::array(); bool only=SendMessage(GetDlgItem(s.window,kScope),BM_GETCHECK,0,0)==BST_CHECKED;
                 for(int i=0;i<static_cast<int>(s.rows.size());++i) if(ListView_GetCheckState(s.list,i))
@@ -1082,7 +1100,7 @@ namespace
                 ListView_SetExtendedListViewStyle(s->list,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|(s->kind==Kind::Assets?LVS_EX_CHECKBOXES:0));
                 const char* columns=s->kind==Kind::Connections?"Direction|Actor|Relationship":s->kind==Kind::Assets?"Actor|Property / surface|Usage":"Name|Contents|Updated (UTC epoch ms)";
                 std::istringstream names(columns); std::string name; int i=0; while(std::getline(names,name,'|')) {LVCOLUMNA col{};col.mask=LVCF_TEXT|LVCF_WIDTH;col.cx=250;col.pszText=name.data();SendMessageA(s->list,LVM_INSERTCOLUMNA,i++,reinterpret_cast<LPARAM>(&col));}
-                s->status=Control(window,"STATIC","",0,kStatus,0,0,600,50); Layout(*s); Populate(*s); SetTimer(window,1,1000,nullptr); return 0;
+                s->status=Control(window,"STATIC","",0,kStatus,0,0,600,50); Layout(*s); Populate(*s,true); SetTimer(window,1,1000,nullptr); return 0;
             }
             if(message==WM_SIZE) { if(s->list) Layout(*s); return 0; }
             if(message==WM_CONTEXTMENU && s->kind==Kind::Connections) {Command(*s,Secondary);return 0;}
@@ -1104,7 +1122,7 @@ namespace
             if(message==WM_COMMAND)
             {
                 if(LOWORD(w)>=Refresh && LOWORD(w)<=Twelfth) {Command(*s,LOWORD(w));return 0;}
-                if(LOWORD(w)==kScope || LOWORD(w)==kFollow) {Populate(*s);return 0;}
+                if(LOWORD(w)==kScope || LOWORD(w)==kFollow) {Populate(*s,true);return 0;}
             }
             if(message==WM_NOTIFY)
             {
@@ -1118,7 +1136,7 @@ namespace
             if(message==WM_TIMER)
             {
                 Sync(); if(s->epoch!=mapEpoch) { s->editing=Json{}; s->members=Json::array(); Populate(*s); }
-                else if(s->revision!=Editor::Revision() && (s->kind==Kind::Assets || s->kind==Kind::Connections)) Populate(*s);
+                else if(s->revision!=Editor::ContentRevision() && (s->kind==Kind::Assets || s->kind==Kind::Connections)) Populate(*s);
                 else if(s->kind==Kind::Connections && SendMessage(GetDlgItem(window,kFollow),BM_GETCHECK,0,0)==BST_CHECKED)
                 { auto actors=Editor::Actors(true); auto actor=actors.empty()?"":actors[0].at("path").get<std::string>(); if(actor!=s->connectionActor) Populate(*s); }
                 return 0;

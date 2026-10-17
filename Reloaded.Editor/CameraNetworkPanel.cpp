@@ -83,7 +83,7 @@ void RefreshAll(State& s)
     s.loading=true;struct Done{bool& b;~Done(){b=false;}} done{s.loading};
     auto level=Editor::LevelIdentity();auto generation=Editor::MapGeneration();
     if(level!=s.level || generation!=s.generation){s.savedView=Json{};s.path.clear();}
-    s.level=level;s.generation=generation;s.snapshot=Editor::CameraNetworks();s.networks=Cameras::Networks(s.snapshot);s.revision=Editor::Revision();
+    s.level=level;s.generation=generation;s.snapshot=Editor::CameraNetworks();s.networks=Cameras::Networks(s.snapshot);s.revision=Editor::ContentRevision();
     SendMessage(Item(s,Networks),CB_RESETCONTENT,0,0);int selected=-1;
     for(size_t i=0;i<s.networks.size();++i)
     {
@@ -234,7 +234,7 @@ LRESULT CALLBACK Proc(HWND w,UINT message,WPARAM wp,LPARAM lp)
         if(message==WM_TIMER)
         {
             if(s->level!=Editor::LevelIdentity() || s->generation!=Editor::MapGeneration())RefreshAll(*s);
-            else if(s->revision!=Editor::Revision())Set(*s,Status,"The map has changed. Refresh to show current camera settings.");return 0;
+            else if(s->revision!=Editor::ContentRevision())Set(*s,Status,"The map has changed. Refresh to show current camera settings.");return 0;
         }
         if(message==WM_CLOSE){try{Restore(*s);}catch(...){}DestroyWindow(w);return 0;}
         if(message==WM_NCDESTROY){KillTimer(w,1);panel=nullptr;DeleteObject(s->font);SetWindowLongPtr(w,GWLP_USERDATA,0);delete s;return DefWindowProcA(w,message,wp,lp);}

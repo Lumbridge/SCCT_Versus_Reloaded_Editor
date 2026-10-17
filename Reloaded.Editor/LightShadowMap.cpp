@@ -137,7 +137,7 @@ void Sample()
     state.sampled = state.attempted = true;
     state.stale = false;
     state.generation = Workflow::Editor::MapGeneration();
-    state.revision = Workflow::Editor::Revision();
+    state.revision = Workflow::Editor::ContentRevision();
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
     const auto summary = LightShadow::Summarise(state.cells);
     Logger::log("LightShadowMap: " + std::to_string(scene.floors.size()) + " floor triangles, " + std::to_string(scene.atlases.size())
@@ -157,7 +157,7 @@ bool TrySample()
         state.sampled = false;
         state.stale = false;
         // Not again until the map changes.
-        try { state.generation = Workflow::Editor::MapGeneration(); state.revision = Workflow::Editor::Revision(); state.attempted = true; }
+        try { state.generation = Workflow::Editor::MapGeneration(); state.revision = Workflow::Editor::ContentRevision(); state.attempted = true; }
         catch (const std::exception&) { state.attempted = false; }
         SetStatus(e.what());
         Logger::log(std::string("LightShadowMap: not sampled: ") + e.what());
@@ -172,7 +172,7 @@ void CALLBACK Tick(HWND, UINT, UINT_PTR, DWORD)
     if (!state.shown && !state.planLayer) return;
     try
     {
-        const auto generation = Workflow::Editor::MapGeneration(), revision = Workflow::Editor::Revision();
+        const auto generation = Workflow::Editor::MapGeneration(), revision = Workflow::Editor::ContentRevision();
         const auto now = std::chrono::steady_clock::now();
         if (!state.attempted || generation != state.generation)
         {
