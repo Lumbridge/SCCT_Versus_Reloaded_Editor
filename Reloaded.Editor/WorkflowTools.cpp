@@ -693,6 +693,9 @@ namespace
     {
         Kind kind; HWND window{},list{},status{}; Json rows=Json::array(); std::string selectedId,source,connectionActor; bool mesh=false;
         Json editing; Json members=Json::array(), instance; Pose frame{}; uintptr_t editLevel=0; unsigned epoch=0,revision=0; unsigned long builds=0;
+        // Find Usages: the level and map generation its rows were listed from,
+        // and whether a build has renumbered the BSP surfaces since Refresh.
+        uintptr_t usageLevel=0; unsigned usageGeneration=0; bool renumberedSurfaces=false;
         std::vector<HWND> buttons;
     };
     std::vector<State*> windows;
@@ -720,22 +723,27 @@ namespace
         Sync(); bool changed=s.epoch!=mapEpoch; s.epoch=mapEpoch;s.revision=Editor::ContentRevision();
         if(changed || (s.editLevel && s.editLevel!=level)) { s.editing=Json{}; s.members=Json::array(); s.editLevel=0; }
         std::vector<UsageMarks::Mark> marks; std::string focused; Json usages;
+        // Find Usages' rows belong to the level they were listed from. Save As, or
+        // the first save of an untitled map, starts a new epoch under another key
+        // but keeps the level and its generation, so the marks carry across it.
+        const bool another=s.kind==Kind::Assets && (level!=s.usageLevel || nativeMapGeneration!=s.usageGeneration);
         if(s.kind==Kind::Assets)
         {
             for(int i=0;i<static_cast<int>(s.rows.size());++i) marks.push_back({ListView_GetCheckState(s.list,i)!=0,s.rows[i].at("selected").get<bool>()});
             int row=Selected(s); if(row>=0 && row<static_cast<int>(s.rows.size())) focused=UsageMarks::Key(s.rows[row]);
             // Listed before the old rows go, so a failed listing leaves them with
             // their check boxes (another map's rows go all the same).
-            if(changed) { ListView_DeleteAllItems(s.list); s.rows=Json::array(); }
+            if(another) { ListView_DeleteAllItems(s.list); s.rows=Json::array(); }
             usages=Editor::FindUsages(s.source);
         }
         ListView_DeleteAllItems(s.list);
         if(s.kind==Kind::Assets)
         {
+            s.usageLevel=level; s.usageGeneration=nativeMapGeneration;
             // A geometry build numbers the BSP surfaces afresh: their old marks name other faces.
-            const auto builds=Editor::GeometryBuilds(); const bool renumbered=!fresh && !changed && builds!=s.builds; s.builds=builds;
+            const auto builds=Editor::GeometryBuilds(); const bool renumbered=!fresh && !another && builds!=s.builds; s.builds=builds;
             auto previous=std::move(s.rows); s.rows=std::move(usages); bool only=SendMessage(GetDlgItem(s.window,kScope),BM_GETCHECK,0,0)==BST_CHECKED;
-            if(fresh || changed) { marks.clear(); for(const auto& j:s.rows) marks.push_back(UsageMarks::Default(j,only)); }
+            if(fresh || another) { marks.clear(); for(const auto& j:s.rows) marks.push_back(UsageMarks::Default(j,only)); }
             else marks=UsageMarks::Carry(previous,marks,s.rows,only,renumbered);
             int i=0; bool surfaces=false; for(auto& j:s.rows)
             {
@@ -746,7 +754,10 @@ namespace
                 if(!focused.empty() && UsageMarks::Key(j)==focused) { ListView_SetItemState(s.list,i,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED); ListView_EnsureVisible(s.list,i,FALSE); focused.clear(); }
                 ++i;
             }
-            Status(s,s.source+" — "+std::to_string(s.rows.size())+" usages. Uncheck results to exclude them; shared asset contents are read-only."+(renumbered && surfaces?" A geometry build renumbered the BSP surfaces: their check boxes were reset.":""));
+            // The note stays until Refresh or the scope box marks the rows again,
+            // so a later edit does not take it away before the user has seen it.
+            if(fresh || another) s.renumberedSurfaces=false; else if(renumbered && surfaces) s.renumberedSurfaces=true;
+            Status(s,s.source+" — "+std::to_string(s.rows.size())+" usages. Uncheck results to exclude them; shared asset contents are read-only."+(s.renumberedSurfaces?" A geometry build or brush CSG operation renumbered the BSP surfaces: review their check boxes before replacing.":""));
         }
         else if(s.kind==Kind::Connections)
         {
