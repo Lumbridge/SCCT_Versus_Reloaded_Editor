@@ -22,8 +22,9 @@ inline std::string Saved()
     return value;
 }
 // Saved() reads it back in the ANSI code page, so a folder that code page
-// cannot spell is not kept and the one saved before stays.
-inline void Save(const std::filesystem::path &base)
+// cannot spell is not kept and the one saved before stays. Returns whether
+// the folder was kept.
+inline bool Save(const std::filesystem::path &base)
 {
     std::string text;
     try
@@ -32,8 +33,8 @@ inline void Save(const std::filesystem::path &base)
     }
     catch (const std::system_error &)
     {
-        return;
+        return false;
     }
-    WritePrivateProfileStringA("MapOptimise", "BaseInstall", text.c_str(), IniPath().c_str());
+    return WritePrivateProfileStringA("MapOptimise", "BaseInstall", text.c_str(), IniPath().c_str()) != FALSE;
 }
 } // namespace BaseInstall

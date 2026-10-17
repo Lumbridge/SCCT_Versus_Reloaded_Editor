@@ -32,6 +32,8 @@ struct State
     // The base install last compared, and the files identical there.
     std::filesystem::path excluded;
     std::vector<bool> identical;
+    // A game folder picked here that could not be kept as the base install.
+    std::filesystem::path unsaved;
 };
 // A copy of the game players have: a folder holding System and Packages, not
 // the one the editor runs from.
@@ -99,8 +101,14 @@ void Checks(HWND window, State &state)
                L" MB before compression). " + std::to_wstring(omitted) +
                L" omitted dependencies must already be installed.\r\n";
     if (!state.excluded.empty())
+    {
         message += std::to_wstring(identical) + L" files identical in " + state.excluded.wstring() +
-                   L" left out: players have them.\r\n";
+                   L" left out: players have them.";
+        if (state.excluded == state.unsaved)
+            message += L" That folder is used for this packaging only: Reloaded_Editor.ini could not keep it as the "
+                       L"base install (it cannot hold letters outside Windows' language for non-Unicode programs).";
+        message += L"\r\n";
+    }
     if (!state.plan.errors.empty())
         message += std::to_wstring(state.plan.errors.size()) +
                    L" dependency errors. Open Report for details; resolve them and reopen packaging.";
@@ -291,9 +299,12 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
                     OleUninitialize();
                 if (!picked)
                     return TRUE;
-                // Kept for next time when it can be used.
-                if (SeparateGame(state->root, path))
-                    BaseInstall::Save(path);
+                // Kept for next time when it can be used; the status line says
+                // when a game folder cannot be.
+                if (SeparateGame(state->root, path) && !BaseInstall::Save(path))
+                    state->unsaved = path;
+                else if (state->unsaved == path)
+                    state->unsaved.clear();
                 state->base = path;
                 ExcludeBase(window, *state, state->base);
                 return TRUE;
