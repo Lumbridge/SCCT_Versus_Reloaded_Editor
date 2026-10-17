@@ -447,6 +447,31 @@ int main()
         Json named=Json::array({{{"spec",{{"name","Room 3"}}}},{{"spec",{{"name","Room"}}}},{{"spec",{{"name","Room 12 (above)"}}}},{{"spec",{{"name","Corridor 4"}}}}});
         Check(Design::NextName(named,"Room")=="Room 13" && Design::NextName(named,"Vent")=="Vent 1","names count up from the highest of their kind");
     }
+    {
+        // Floors: the room under a point sets the spacing and the floor clicks land on.
+        Json floorRoom={{"kind","Room"},{"construction","Carve"},{"width",1024},{"length",1024},{"height",320},{"thickness",16},{"name","Room 1"}};
+        auto placedAt=[](const Json& shape,double z){return Json{{"spec",shape},{"position",Vector{0,0,z}},{"rotation",Rotation{}}};};
+        auto named=[&](const std::string& name,double height){Json shape=floorRoom;shape["name"]=name;shape["width"]=160;shape["length"]=160;shape["height"]=height;return shape;};
+        Json taller=floorRoom;taller["height"]=512;
+        Check(Design::FloorSpacing(Design::RoomAt(Json::array({placedAt(floorRoom,0),placedAt(taller,0)}),{0,0,0},0))==528,"a room resized after it was placed is spaced by its new height");
+        const auto above=Design::RoomAt(Json::array({placedAt(floorRoom,0),placedAt(named("Stairwell",344),0),placedAt(floorRoom,336)}),{0,0,336},336);
+        Check(above.found && above.base==336 && Design::FloorSpacing(above)==336,"a stairwell listed before the room above does not set that floor's spacing");
+        Json shell=floorRoom;shell.erase("construction");shell["height"]=300;
+        Check(Design::FloorSpacing(Design::RoomAt(Json::array({placedAt(shell,0)}),{0,0,0},0))==316,"a shell room's spacing is its height and wall, not its outside bounds");
+        const Json hallAndKiosk=Json::array({placedAt(taller,0),placedAt(named("Kiosk",128),0)});
+        Check(Design::FloorSpacing(Design::RoomAt(hallAndKiosk,{0,0,0},300))==528 && Design::FloorSpacing(Design::RoomAt(hallAndKiosk,{0,0,0},64))==144,"a height above a smaller room on the same floor is in the room around it");
+        Check(Design::FloorSpacing(Design::RoomAt(Json::array(),{0,0,0},0))==272 && !Design::RoomAt(Json::array({placedAt(floorRoom,0)}),{900,0,0},0).found,"no room under the point keeps the default spacing");
+        const Json lowRoom=Json::array({placedAt(floorRoom,64)});
+        Check(Design::PlacementFloor(0,-2048,200,Design::RoomAt(lowRoom,{0,-50,200},200))==-2048,"the top view places at its depth");
+        Check(Design::PlacementFloor(1,-50,200,Design::RoomAt(lowRoom,{0,-50,200},200))==64,"an elevation places on the floor of the room under the click");
+        Check(Design::PlacementFloor(2,-2048,150,Design::RoomAt(lowRoom,{-2048,0,150},150))==150,"an elevation over no room places at the clicked height");
+        Json throughFloors=Json::array({placedAt(named("Lift shaft",360),-16),placedAt(named("Ladder shaft",344),0),placedAt(named("Floor opening",344),0),placedAt(named("Stairwell (above)",344),0)});
+        Check(!Design::RoomAt(throughFloors,{0,0,0},0).found,"shafts, openings and stairwells are never the room a floor belongs to");
+        throughFloors.insert(throughFloors.begin(),placedAt(floorRoom,0));
+        Check(Design::FloorSpacing(Design::RoomAt(throughFloors,{0,0,0},0))==336,"a shaft on a room's floor leaves the room's spacing");
+        const Json stacked=Json::array({placedAt(floorRoom,0),placedAt(floorRoom,336)}),touching=Json::array({placedAt(floorRoom,0),placedAt(floorRoom,320)});
+        Check(Design::RoomAt(stacked,{0,0,336},336).base==336 && Design::RoomAt(stacked,{0,0,100},100).base==0 && Design::RoomAt(touching,{0,0,320},320).base==320,"of stacked rooms the one whose floor the depth is on wins");
+    }
     std::cout<<"Map Design model tests passed\n";
   }
   catch(const std::exception& e)

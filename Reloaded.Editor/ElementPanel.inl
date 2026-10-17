@@ -253,25 +253,10 @@ void ElementPaintStored(DesignState& s,Gdiplus::Graphics& g,const std::function<
 }
 // Floors: the spacing at a point, and the pieces that join one floor to the
 // next. A floor is the height of the room at the point plus its wall.
-double FloorSpacingAt(DesignState& s,const Vector& at)
-{
-    try
-    {
-        for(const auto& piece:DesignData(s).at("pieces"))
-        {
-            const auto kind=piece.at("spec").at("kind").get<std::string>();
-            if(kind!="Room" && kind!="Corridor")continue;
-            const auto bounds=DesignBoundsOf(piece.at("spec"),{piece.at("position").get<Vector>(),piece.at("rotation").get<Rotation>()});
-            if(at[0]<bounds.lo[0] || at[0]>bounds.hi[0] || at[1]<bounds.lo[1] || at[1]>bounds.hi[1])continue;
-            if(s.depth<bounds.lo[2]-1 || s.depth>bounds.hi[2])continue;
-            return (bounds.hi[2]-bounds.lo[2])+piece.at("spec").value("thickness",16.0);
-        }
-    }
-    catch(const std::exception&) { /* Fall back to the default spacing. */ }
-    return 272;
-}
+double FloorSpacingAt(DesignState& s,const Vector& at) { return Design::FloorSpacing(DesignRoomAt(s,at)); }
 void FloorGo(DesignState& s,const Vector& at,bool up)
 {
+    if(s.plane!=0)throw std::runtime_error("Go up or down a floor, or duplicate one, from the top view.");
     const double spacing=FloorSpacingAt(s,at);
     s.depth+=up?spacing:-spacing;
     InvalidateRect(s.canvas,nullptr,FALSE);
@@ -295,6 +280,7 @@ Json FloorPlace(DesignState& s,const Json& items)
 }
 void FloorDuplicate(DesignState& s,const Vector& at,bool up)
 {
+    if(s.plane!=0)throw std::runtime_error("Go up or down a floor, or duplicate one, from the top view.");
     const double spacing=FloorSpacingAt(s,at);
     const double offset=up?spacing:-spacing;
     Json items=Json::array();
@@ -317,11 +303,10 @@ void FloorDuplicate(DesignState& s,const Vector& at,bool up)
 }
 // Stairs of a chosen shape from a floor up (or down) to the next, inside a
 // stairwell carved to exactly their footprint, so nothing is left beside them.
-void FloorStairsAt(DesignState& s,const Vector& at,double base,double spacing,const std::string& kind)
+void FloorStairsAt(DesignState& s,const Vector& at,double base,double spacing,const std::string& kind,bool up)
 {
     const int steps=std::max(2,static_cast<int>(std::ceil(spacing/16)));
     const double width=128;
-    const bool up=base>=s.depth-1; // Rising from this floor, or down into the one below.
     Json stairs={{"kind",kind},{"construction","Carve"},{"width",width},{"height",spacing},{"thickness",16},{"steps",steps},{"ceiling",false},{"portal",false},{"name",std::string(up?"Stairs up":"Stairs down")}};
     double shaftWidth=width,shaftLength=steps*32.0,shaftX=0;
     if(kind=="Stairs")stairs["length"]=steps*32.0;
@@ -354,21 +339,21 @@ void FloorStairsAt(DesignState& s,const Vector& at,double base,double spacing,co
 }
 void FloorStairs(DesignState& s,const Vector& at,bool up,const std::string& kind)
 {
-    const double spacing=FloorSpacingAt(s,at);
-    FloorStairsAt(s,at,up?s.depth:s.depth-spacing,spacing,kind);
+    const double floor=DesignFloorAt(s,at),spacing=FloorSpacingAt(s,at);
+    FloorStairsAt(s,at,up?floor:floor-spacing,spacing,kind,up);
 }
 void FloorClimb(DesignState& s,const Vector& at,const std::string& kind)
 {
-    const double spacing=FloorSpacingAt(s,at);
+    const double floor=DesignFloorAt(s,at),spacing=FloorSpacingAt(s,at);
     Json hole={{"kind","Room"},{"construction","Carve"},{"width",96},{"length",96},{"height",spacing+8},{"thickness",16},{"steps",8},{"ceiling",true},{"portal",false},{"name",kind+" shaft"}};
     Vector position=at;
-    position[2]=s.depth;
+    position[2]=floor;
     FloorPlace(s,Json::array({{{"spec",hole},{"position",position},{"rotation",Rotation{}},{"previous",Json{}}}}));
     Vector bottom=at,top=at,side=at;
-    bottom[2]=s.depth;
-    top[2]=s.depth+spacing;
+    bottom[2]=floor;
+    top[2]=floor+spacing;
     side[1]-=48;
-    side[2]=s.depth+spacing/2;
+    side[2]=floor+spacing/2;
     ElementCreate(s,kind,{bottom,top,side});
 }
 // A lift between a floor and the next: a shaft cut through the slab and an
@@ -395,15 +380,15 @@ void FloorLiftAt(DesignState& s,const Vector& at,double base,double spacing)
 }
 void FloorLift(DesignState& s,const Vector& at,bool up)
 {
-    const double spacing=FloorSpacingAt(s,at);
-    FloorLiftAt(s,at,up?s.depth:s.depth-spacing,spacing);
+    const double floor=DesignFloorAt(s,at),spacing=FloorSpacingAt(s,at);
+    FloorLiftAt(s,at,up?floor:floor-spacing,spacing);
 }
 void FloorOpening(DesignState& s,const Vector& at)
 {
-    const double spacing=FloorSpacingAt(s,at);
+    const double floor=DesignFloorAt(s,at),spacing=FloorSpacingAt(s,at);
     Json hole={{"kind","Room"},{"construction","Carve"},{"width",128},{"length",128},{"height",spacing+8},{"thickness",16},{"steps",8},{"ceiling",true},{"portal",false},{"name","Floor opening"}};
     Vector position=at;
-    position[2]=s.depth;
+    position[2]=floor;
     FloorPlace(s,Json::array({{{"spec",hole},{"position",position},{"rotation",Rotation{}},{"previous",Json{}}}}));
     DesignStatus(s,"A 128 x 128 opening now cuts through to the floor above. Click it to resize or move it. One Undo step.");
 }

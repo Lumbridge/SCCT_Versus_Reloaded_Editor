@@ -109,8 +109,14 @@ void SecurityClick(DesignState& s,const Vector& at)
     const auto* device=Security::Find(s.securityMode);
     if(!device){s.mode.clear();return;}
     const auto kind=s.securityMode;
+    // Two clicks aim a device across the floor, which only the top view shows.
+    if(device->clicks==2 && s.plane!=0)
+    {
+        SecurityStatus(s,"Place lasers, cameras and sensor areas in the top view: they are aimed across the floor.");
+        return;
+    }
     Vector point=at;
-    const double floor=s.depth;
+    const double floor=DesignFloorAt(s,at);
     if(device->clicks==2 && !s.securityFirstSet)
     {
         s.securityFirst=point;

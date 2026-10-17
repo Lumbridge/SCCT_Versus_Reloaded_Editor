@@ -217,7 +217,7 @@ void ObjectivePlaceStart(DesignState& s,const std::string& team,const Vector& at
     std::string type="Engine.PlayerStart";
     for(const auto& start:s.objectives)if(start.value("kind",std::string())=="Player start"){type=start.value("class",type);break;}
     Vector position=at;
-    position[2]=s.depth+48; // Stands clear of the floor.
+    position[2]=DesignFloorAt(s,at)+48; // Stands clear of the floor.
     const auto created=Editor::CreatePlayerStart(type,team,{position,{}});
     DesignRefresh(s);
     DesignStatus(s,std::string(team==kSpyTeam?"Spy":"Merc")+" start "+SecurityName(created)+" placed. Drag it to move it; its facing follows the editor's rotation. One Undo step.");
@@ -225,7 +225,7 @@ void ObjectivePlaceStart(DesignState& s,const std::string& team,const Vector& at
 void ObjectivePlaceMission(DesignState& s,const Vector& at)
 {
     Vector position=at;
-    position[2]=s.depth+64;
+    position[2]=DesignFloorAt(s,at)+64;
     // A mission placed on its own is the match's mission: the game ignores one
     // left at GameMode GM_Undefined (Stages turns zone missions back to that).
     const auto created=Editor::CreateSecurityActor("SBase.SMission",{position,{}},{{"ObjectiveName","\"Mission\""},{"Description","\"Complete the mission\""},{"GameMode","GM_Multi"}});
@@ -247,7 +247,7 @@ void ObjectivePlaceUnder(DesignState& s,const Json& owner,const std::string& typ
         created=list.back();
     }
     Vector position=at;
-    position[2]=s.depth+64;
+    position[2]=DesignFloorAt(s,at)+64;
     try{Editor::MoveSecurityActor(created,{position,{}},Json::object());}
     catch(const std::exception&){ /* It stays beside its parent. */ }
     DesignRefresh(s);
