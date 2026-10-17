@@ -2,6 +2,10 @@
 setlocal
 rem Run from an x86 Native Tools Command Prompt for Visual Studio.
 pushd "%~dp0.."
+rem An older checkout's vcpkg install is vcpkg_installed\<triplet>; a fresh
+rem one nests the triplet twice.
+set ZLIB=vcpkg_installed\x86-windows-static
+if not exist %ZLIB%\include\zlib.h set ZLIB=vcpkg_installed\x86-windows-static\x86-windows-static
 cl /nologo /std:c++17 /W4 /WX /EHsc /O2 tests\CollisionBoxTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\CollisionBoxTests.exe"
 if not "%errorlevel%"=="0" goto failed
 "%TEMP%\CollisionBoxTests.exe"
@@ -38,7 +42,7 @@ cl /nologo /std:c++17 /W4 /WX /EHsc /O2 tests\SdcBlockModelTests.cpp /Fo"%TEMP%\
 if not "%errorlevel%"=="0" goto failed
 "%TEMP%\SdcBlockModelTests.exe"
 if not "%errorlevel%"=="0" goto failed
-cl /nologo /std:c++17 /W4 /WX /EHsc /O2 /I vcpkg_installed\x86-windows-static\include tests\RecoveredAssetPackageTests.cpp Reloaded.Editor\RecoveredAssetPackage.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\RecoveredAssetPackageTests.exe" /link /LIBPATH:vcpkg_installed\x86-windows-static\lib zlib.lib
+cl /nologo /std:c++17 /W4 /WX /EHsc /O2 /I %ZLIB%\include tests\RecoveredAssetPackageTests.cpp Reloaded.Editor\RecoveredAssetPackage.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\RecoveredAssetPackageTests.exe" /link /LIBPATH:%ZLIB%\lib zlib.lib
 if not "%errorlevel%"=="0" goto failed
 "%TEMP%\RecoveredAssetPackageTests.exe"
 if not "%errorlevel%"=="0" goto failed

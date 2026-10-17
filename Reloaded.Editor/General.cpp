@@ -18,6 +18,7 @@
 #include "GridSizeShortcut.h"
 #include "PlayLevelConfig.h"
 #include "PlayLevelCommand.h"
+#include "ViewportKeysModel.h"
 #include <mimalloc.h>
 #include <cstring>
 #include <wincrypt.h>
@@ -206,9 +207,33 @@ static bool __cdecl HandleRecoveredMapSave(UINT commandId)
     return MapRecovery::HandleSaveCommand(commandId);
 }
 
-static bool __cdecl IsControlKeyDown()
+// The D and J key-ups go by their press when a level viewport saw it (GridSizeShortcut's hook).
+static ViewportKeys::KeyUps g_viewportKeyUps;
+
+void General::ViewportKeyPressed(const ViewportKeys::Chord& press)
 {
-    return (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    g_viewportKeyUps.Pressed(press);
+}
+
+static ViewportKeys::Chord HeldChord(unsigned key)
+{
+    return { key, GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_SHIFT) < 0,
+             GetKeyState(VK_MENU) < 0 };
+}
+
+// D's key-up: kept from the stock handler while Ctrl is down, and a Ctrl+D the frame got
+// itself (the viewport duplicated the ones it saw on the press) duplicates now.
+static bool __cdecl CtrlDKeyUpTaken()
+{
+    const ViewportKeys::Chord keyUp = HeldChord('D');
+    if (g_viewportKeyUps.DuplicateOnKeyUp(keyUp))
+        General::DuplicateSelection();
+    return keyUp.ctrl;
+}
+
+static bool __cdecl GameViewKeyUpWanted()
+{
+    return g_viewportKeyUps.GameViewOnKeyUp(HeldChord('J'));
 }
 
 // Build All and the lighting rebuilds go through the Lighting Budget check
@@ -244,7 +269,7 @@ static const char* const kGameViewKeep[] = { "SComputerObjectiveTrigger" };
 // Visible in game (corona, light beam, rain) but the editor also billboards their icon
 static const char* const kGameViewIconOnly[] = { "Light", "ERainVolume" };
 
-static void __cdecl DuplicateSelection()
+void General::DuplicateSelection()
 {
     static constexpr char kCommand[] = "ACTOR DUPLICATE";
 
@@ -686,9 +711,9 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         // update checks and About RE+ (up to 40986), then blocks reserved for
         // tools in progress (the stock menus stop at 40668):
         //   40987-40999 crash recovery        41000-41014 what's new / roll back
-        //   41015-41029 texture favourites    41030-41044 sound browser
+        //   41015-41029 mesh browser search   41030-41044 sound browser
         //   41045-41059 animation import      41060-41074 find usages in MapsEd
-        //   41075-41089 property search       41090-41104 measure tool
+        //   41075-41089 copy/paste properties 41090-41104 measure tool
         //   41105-41119 undo history          41120-41134 assembly/view thumbnails
         //   41135-41149 emitter editing       41150-41164 lighting budget
         //   41165-41179 RE+ menu names        41180       character skins
@@ -700,7 +725,8 @@ JMP_HOOK(0x10e57b30, MenuBarDispatch)
         //   41380-41384 spare             41385-41389 smooth staircase
         //   41390-41394 optimise map assets  41395-41399 spare
         //   41400-41419 objective player counts
-        cmp dword ptr [esp+4], 41419
+        //   41420-41439 placement snap and push  41440-41459 camera bookmarks
+        cmp dword ptr [esp+4], 41459
         jbe workflow_dispatch
     workflow_legacy_range:
         cmp dword ptr [esp+4], 40920
@@ -1303,25 +1329,31 @@ JMP_HOOK(0x10f00d10, ViewportKeyUpHook)
 
     __asm
     {
-        // Ctrl+D: duplicate the current actor/brush selection. This hook is
-        // viewport-only, so text fields keep their normal Ctrl+D behaviour.
+        // Ctrl+D: duplicated on the key press when the viewport saw it (GridSizeShortcut's
+        // viewport hook), otherwise here; its key-up is still kept from the stock handler.
         cmp  dword ptr [esp + 4], 0x44
         jne  check_f12
         push ecx
-        call IsControlKeyDown
+        call CtrlDKeyUpTaken
         pop  ecx
         test al, al
-        jnz  do_duplicate
+        jnz  swallow
 
     check_f12:
         // F12: RE+ Options
         cmp  dword ptr [esp + 4], 0x7B
         je   do_f12
 
-        // J: Game View
+        // J on its own: Game View (Shift+J is the stock Select All Adjacent Surfaces)
         cmp  dword ptr [esp + 4], 0x4A
-        je   do_game_view
+        jne  check_f7
+        push ecx
+        call GameViewKeyUpWanted
+        pop  ecx
+        test al, al
+        jnz  do_game_view
 
+    check_f7:
         // F7: Attempts to compile UnrealScript but fails (scripts are stripped). Disabled to prevent accidentally pressing F7 and crashing.
         cmp  dword ptr [esp + 4], 0x76
         je   swallow
@@ -1333,10 +1365,6 @@ JMP_HOOK(0x10f00d10, ViewportKeyUpHook)
 
     do_game_view:
         call ToggleGameView
-        ret  8
-
-    do_duplicate:
-        call DuplicateSelection
         ret  8
 
     do_f12:

@@ -280,6 +280,21 @@ perspective matrices (projection, the mouse in a 2D plane and the mouse ray
 onto a floor), and the Start / To / M chain. There is no native suite check:
 the right-click path was verified by hand in a disposable install.
 
+## Viewport keys
+
+`tools/test_workflow_tools.cmd` runs `ViewportKeysModelTests.cpp`: Ctrl+D
+duplicates on its first press and swallows the auto-repeats while D is held, and
+its character is kept from the stock key handler too; Ctrl+Shift+D, Ctrl+Alt+D,
+plain D and Ctrl+W go on to that handler; J toggles Game View only without Ctrl,
+Shift or Alt, judged by the press when the viewport saw it (so letting go of
+Shift first is still Shift+J) and by the keys held at the key-up when it did
+not; a Ctrl+D key-up duplicates only when the viewport did not see the press;
+and the Shift+letter keys a Geometric Event cannot use (A, S, R, D, N and J, in
+either case) are named with their UnrealEd command while the shipped E, H, P,
+L, Z and F stay free. It also runs `GridSizeShortcutTests.cpp`: which viewports
+are level viewports, the next grid preset up or down (including between presets
+and at either end), and the Ctrl + mouse wheel gesture's notches per viewport.
+
 ## Placement tools
 
 `tools/test_workflow_tools.cmd` runs `PlacementModelTests.cpp`: rotator to axes
@@ -410,7 +425,7 @@ resampling, and Map Design's layer.
 
 ## Local BSP lighting matching
 
-Compile and run `tests/LocalLightingMatchTests.cpp` with C++17 or later. It tests
+`tools/test_workflow_tools.cmd` runs `LocalLightingMatchTests.cpp`. It tests
 closest-triangle sampling, degenerate triangles, signed RGB residuals, clipping,
 alpha preservation, and retained local variation. The native
 `-ReopenOnly -VerifyPreservedLighting -VerifySelectedLighting` suite also invokes
@@ -767,6 +782,10 @@ From an **x86 Native Tools Command Prompt for Visual Studio**, run:
 tools\test_map_recovery.cmd
 ```
 
+The asset-package suite links zlib from `vcpkg_installed`: like
+`tools\test_map_package.cmd`, the script looks in `vcpkg_installed\x86-windows-static`
+and falls back to the doubly nested triplet folder a fresh install makes.
+
 The portable suites verify structural BSP classification, closed brush geometry,
 texture-region partitioning, native polygon vertex limits, actor and LevelInfo
 transfer, GE gameplay data, and lossless asset-package decompression. They include
@@ -915,10 +934,10 @@ adjoining faces too.
 Reloaded's `labs_borderless_fullscreen` setting in `SCCT_Versus.config` controls
 borderless presentation for both play commands and ordinary game launches.
 
-Compile `PlayLevelConfigTests.cpp` and `PlayLevelCommandTests.cpp` with MSVC
-`/std:c++17 /W4 /WX /EHsc` (link `user32.lib` for the configuration test).
-They cover resolution selection, preserving source INI bytes and unrelated
-settings, configuration failure paths, and recognizing explicit INI overrides.
+`tools/test_workflow_tools.cmd` runs `PlayLevelConfigTests.cpp` and
+`PlayLevelCommandTests.cpp`. They cover resolution selection, preserving source
+INI bytes and unrelated settings, configuration failure paths, and recognizing
+explicit INI overrides.
 Play Level clones `Default.ini` to `Reloaded_PlayLevel.ini` and sets viewport
 and menu dimensions before launching. It defaults to the editor monitor's
 current display mode; `[PlayLevel] ResolutionX/ResolutionY` in

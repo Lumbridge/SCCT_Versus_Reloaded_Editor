@@ -277,6 +277,9 @@
     <ClInclude Include="ViewportConfigFix.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="ViewportKeysModel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="RealtimeFix.h">
       <Filter>Header Files</Filter>
     </ClInclude>
