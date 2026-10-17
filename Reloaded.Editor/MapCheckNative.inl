@@ -135,10 +135,12 @@ MapCheck::Scene MapCheckScene(const MapCheck::Settings& settings)
             std::vector<MapCheck::Vec3> polygon;
             for(int k=0;k<count;++k)
             {
-                // FVert.pVertex is 16 bits here (movsx word at 0x110D173E in
-                // BuildRenderData); a rebuild leaves the next two bytes undefined.
-                const int point=Read<short>(verts[static_cast<size_t>(pool+k)]);
-                if(point<0 || static_cast<size_t>(point)>=points.size()){polygon.clear();break;}
+                // FVert.pVertex is 16 bits, read unsigned as RE+ patches the
+                // engine to (movzx word at 0x110D173E in BuildRenderData), so
+                // large maps keep points past 0x7FFF; a rebuild leaves the next
+                // two bytes undefined.
+                const int point=BspPointIndex(verts[static_cast<size_t>(pool+k)],points.size());
+                if(point<0){polygon.clear();break;}
                 const auto p=Read<std::array<float,3>>(points[static_cast<size_t>(point)]);
                 polygon.push_back({p[0],p[1],p[2]});
             }

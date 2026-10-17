@@ -50,9 +50,8 @@ Minimap::Scene MinimapScene()
             bool sane=true;
             for(int i=0;i<count && sane;++i)
             {
-                int index=Read<int>(verts[pool+i]);
-                if(index<0 || index>=static_cast<int>(points.size()))index=Read<unsigned short>(verts[pool+i]);
-                if(index<0 || index>=static_cast<int>(points.size())){sane=false;break;}
+                const int index=BspPointIndex(verts[pool+i],points.size());
+                if(index<0){sane=false;break;}
                 const auto& p=points[index];
                 for(double v:p)if(!std::isfinite(v) || std::abs(v)>1000000)sane=false;
                 face.points.push_back(p);

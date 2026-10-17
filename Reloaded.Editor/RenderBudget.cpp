@@ -40,6 +40,7 @@ struct Snapshot
     Report report;
     std::vector<std::string> paths;
     unsigned generation = 0;
+    unsigned revision = 0;   // the map's content revision when measured
     bool hasView = false;
     ViewReport view;
     std::string cameraName;
@@ -73,6 +74,7 @@ Snapshot Measure(const Guidelines& guidelines)
         scene.zoneNames[std::stoi(number)] = name.get<std::string>();
     snapshot.report = Analyse(scene, guidelines);
     snapshot.generation = json.at("generation").get<unsigned>();
+    snapshot.revision = Workflow::Editor::ContentRevision();
 
     // The worst zone of each kind and the heaviest mesh: how the guideline
     // defaults were read off the shipped maps.
@@ -198,7 +200,10 @@ void Refresh()
 
 void MeasureView()
 {
-    if (!budget.measured || budget.snapshot.generation != Workflow::Editor::MapGeneration()) Refresh();
+    // Meshes moved or added since the last measure change the totals; camera
+    // moves do not, so they reuse them.
+    if (!budget.measured || budget.snapshot.generation != Workflow::Editor::MapGeneration()
+        || budget.snapshot.revision != Workflow::Editor::ContentRevision()) Refresh();
     const auto json = Workflow::Editor::RenderBudgetView();
     std::vector<BspNode> nodes;
     for (const auto& row : json.at("bsp"))

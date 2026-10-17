@@ -372,3 +372,57 @@ Json PlacementCopy(const Json& members,const Json& copies,const std::string& lab
     Select(all);Redraw();
     return created;
 }
+// Map Check's floating meshes (MapCheckModel.h CheckProps): Drop to Floor's
+// rays for every visible static mesh, each reaching only maxGap past the
+// mesh's bottom instead of PlaceTrace's whole world. A line check that
+// faults stops the scan, since it leaves the editor's memory mark behind.
+MapCheck::FloorScan MapCheckFloorGaps(double maxGap)
+{
+    MapCheck::FloorScan scan;scan.ran=true;
+    const auto started=std::chrono::steady_clock::now();
+    const auto level=Level();
+    auto live=LiveActors();
+    std::map<Address,CheckFields> cache;
+    const Vector down{0,0,-1};
+    size_t meshes=0,rays=0;bool failed=false,traceFailed=false;
+    for(size_t i=2;i<live.size() && !traceFailed;++i)
+    {
+        const auto actor=live[i];
+        try
+        {
+            if((Read<unsigned>(actor+0x2E8)&0x1000) || !IsA(actor,"StaticMeshActor"))continue;
+            const auto& fields=FieldsOf(Read<Address>(actor+0x24),cache);
+            const bool soft=!(fields.collide>=0 && (Read<unsigned>(actor+fields.collide)&fields.collideMask))
+                || !(fields.block>=0 && (Read<unsigned>(actor+fields.block)&fields.blockMask));
+            // A mesh hidden only in the editor is still there to rest on.
+            const bool hiddenEd=(Read<unsigned>(actor+0x2f4)&0x10)!=0;
+            if(hiddenEd && !soft)continue;
+            const auto placed=PlaceInspect(actor);
+            if(placed.kind!=PlaceKind::Mesh)continue;
+            if(soft)scan.soft.push_back({placed.box.lo,placed.box.hi});
+            if(hiddenEd)continue;
+            ++meshes;
+            const double reach=Place::Support(placed.box,down)+maxGap+2;
+            std::vector<std::optional<double>> hits;
+            for(const auto& start:Place::DropStarts(placed.box,down))
+            {
+                const auto end=Place::Add(start,Place::Scale(down,reach));
+                const PlaceFVec s{static_cast<float>(start[0]),static_cast<float>(start[1]),static_cast<float>(start[2])};
+                const PlaceFVec e{static_cast<float>(end[0]),static_cast<float>(end[1]),static_cast<float>(end[2])};
+                PlaceHit hit{};++rays;
+                if(!PlaceTraceRaw(level,actor,&s,e,&hit)){traceFailed=true;throw std::runtime_error("The editor's line check failed.");}
+                if(!hit.found){hits.push_back(std::nullopt);continue;}
+                hits.push_back(Place::Dot(Place::Sub({hit.location[0],hit.location[1],hit.location[2]},start),down));
+            }
+            if(const auto gap=Place::DropDistance(placed.box,down,hits))scan.gaps.push_back({Path(actor),NameOf(actor),*gap,placed.box.lo,placed.box.hi});
+        }
+        catch(const std::exception& e)
+        {
+            if(!failed || traceFailed)Logger::log(std::string("MapCheck: floating check skipped an actor: ")+e.what()+(traceFailed?" The check stopped there.":""));
+            failed=true;
+        }
+    }
+    const auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
+    Logger::log("MapCheck: floating check: "+std::to_string(meshes)+" meshes, "+std::to_string(rays)+" rays, "+std::to_string(ms)+" ms");
+    return scan;
+}

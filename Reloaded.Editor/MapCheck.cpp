@@ -44,7 +44,9 @@ Settings LoadSettings()
         {"FarOutsideDistance", std::to_string(static_cast<int>(defaults.farOutside))},
         {"LeakGridCells", std::to_string(defaults.leakGridCells)},
         {"ShowZonesWithoutZoneInfo", defaults.zonesWithoutZoneInfo ? "1" : "0"},
-        {"StockChecks", defaults.stockChecks ? "1" : "0"}};
+        {"StockChecks", defaults.stockChecks ? "1" : "0"},
+        {"FloatingMinGap", Units(defaults.floatMinGap)},
+        {"FloatingMaxGap", Units(defaults.floatMaxGap)}};
     for (const auto& key : keys)
     {
         char value[32] = {};
@@ -66,6 +68,9 @@ Settings LoadSettings()
     s.leakGridCells = static_cast<int>(number("LeakGridCells", defaults.leakGridCells));
     s.zonesWithoutZoneInfo = GetPrivateProfileIntA(kSection, "ShowZonesWithoutZoneInfo", 1, ini.c_str()) != 0;
     s.stockChecks = GetPrivateProfileIntA(kSection, "StockChecks", 1, ini.c_str()) != 0;
+    // FloatingMaxGap 0 turns the floating mesh check off.
+    s.floatMinGap = number("FloatingMinGap", defaults.floatMinGap);
+    s.floatMaxGap = number("FloatingMaxGap", defaults.floatMaxGap);
     return ClampSettings(s);
 }
 
@@ -81,7 +86,8 @@ Snapshot Measure()
     const auto settings = LoadSettings();
     const auto started = std::chrono::steady_clock::now();
     Snapshot snapshot;
-    const auto scene = Workflow::Editor::MapCheckScene(settings);
+    auto scene = Workflow::Editor::MapCheckScene(settings);
+    if (settings.floatMaxGap > 0 && scene.bsp.Built()) scene.floors = Workflow::Editor::MapCheckFloorGaps(settings.floatMaxGap);
     snapshot.report = Analyse(scene, settings);
     snapshot.generation = Workflow::Editor::MapGeneration();
     snapshot.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
@@ -123,8 +129,9 @@ void Row(HWND list, int row, LPARAM data, const std::vector<std::string>& cells)
 const char kIntroText[] =
     "Checks the map as last built: actors in the void (solid space, outside every zone), far outside the geometry or with their "
     "collision cut into BSP or a static mesh; zones that leak into each other or to the outside; zone portals that seal nothing; "
-    "and the editor's own Check Map for Errors. Build geometry first. Click a row to select what it is about, double-click to frame it; "
-    "a leak path is drawn in the viewports. Settings: Reloaded_Editor.ini [MapCheck].";
+    "static meshes floating a little above the floor; and the editor's own Check Map for Errors. Build geometry first. "
+    "Click a row to select what it is about, double-click to frame it; a leak path is drawn in the viewports. "
+    "Settings: Reloaded_Editor.ini [MapCheck].";
 
 struct Window
 {

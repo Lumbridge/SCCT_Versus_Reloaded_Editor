@@ -221,8 +221,8 @@ Json RenderBudgetView()
             Json polygon=Json::array();
             for(int v=0;v<count;++v)
             {
-                const int point=Read<int>(verts[pool+v]);
-                if(point<0 || point>=static_cast<int>(points.size()))break;
+                const int point=BspPointIndex(verts[pool+v],points.size());
+                if(point<0)break;
                 const auto p=Read<std::array<float,3>>(points[point]);
                 polygon.push_back(Json::array({p[0],p[1],p[2]}));
             }
