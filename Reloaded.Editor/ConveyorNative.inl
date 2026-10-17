@@ -195,6 +195,118 @@ Json SelectedConveyorBelt()
     return found?Identity(found):Json(nullptr);
 }
 
+namespace
+{
+    // Places a belt as AddConveyorBelt describes. It begins the transaction before
+    // ACTOR ADD, whose own "Add Actor" then nests in it, so the belt and everything
+    // set on it are one Undo step; a turn's corner piece and the belt after it share it.
+    Address PlaceConveyorBelt(const Json& spec,std::optional<Transaction>& transaction)
+    {
+        auto c=ConveyorBeltClass();
+        Address previous=0;
+        if(spec.contains("after"))
+        {
+            auto name=spec.at("after").get<std::string>();
+            if(name.find('.')==std::string::npos)name=LevelPath()+"."+name;
+            previous=Find(name,true);
+            if(!previous || Read<Address>(previous+0x24)!=c)throw std::runtime_error(spec.at("after").get<std::string>()+" is not a conveyor belt in this map.");
+        }
+        if(spec.contains("turn"))
+        {
+            const auto turn=spec.at("turn").get<std::string>();
+            if(!previous || (turn!="left" && turn!="right"))throw std::runtime_error("A turn is left or right, after a belt.");
+            const bool right=turn=="right";
+            const double width=Read<float>(BeltField(previous,"Width")),length=Read<float>(BeltField(previous,"Length"));
+            const auto rotation=RotationOf(previous);
+            // Unreal's Y is to the right of X: a right turn heads along the belt's Y.
+            const Rotation level{0,rotation[1],0},corner{0,(rotation[1]+(right?16384:-16384))&0xffff,0};
+            const auto end=TransformPoint({length,0,0},{Position(previous),rotation});
+            const auto start=TransformPoint({width/2,right?-width/2:width/2,0},{end,level});
+            Json cornerSpec={{"after",Path(previous)},{"location",start},{"rotation",corner},
+                             {"properties",{{"Length",width},{right?"bRightWall":"bLeftWall",false}}}};
+            const auto piece=PlaceConveyorBelt(cornerSpec,transaction);
+            Json next=spec;next.erase("turn");next.erase("location");next.erase("rotation");next["after"]=Path(piece);
+            return PlaceConveyorBelt(next,transaction);
+        }
+        const auto properties=spec.value("properties",Json::object());
+        for(auto it=properties.begin();it!=properties.end();++it)
+        {
+            bool found=false;std::set<Address> seen;
+            for(Address k=c;k && !found && seen.insert(k).second && seen.size()<64;k=Read<Address>(k+0x28))found=StructField(k,it.key())!=0;
+            if(!found)throw std::runtime_error("ConveyorBelt has no property "+it.key()+".");
+        }
+        if(!transaction)transaction.emplace("Add conveyor belt");
+        std::set<Address> before;for(auto a:ActorsOf(c))before.insert(a);
+        if(!Exec(std::string("ACTOR ADD CLASS=")+Conveyor::BeltClass))throw std::runtime_error("The editor refused to place a conveyor belt.");
+        Address actor=0;
+        for(auto a:ActorsOf(c))if(!before.count(a))actor=a;
+        if(!actor)throw std::runtime_error("The editor did not place a conveyor belt.");
+        Vector at{};
+        if(spec.contains("location"))at=spec.at("location").get<Vector>();
+        else if(previous)at=TransformPoint({Read<float>(BeltField(previous,"Length")),0,0},{Position(previous),RotationOf(previous)});
+        else
+        {
+            auto unrealEd=Read<Address>(0x117a59b0);if(!unrealEd)throw std::runtime_error("The editor is unavailable.");
+            const auto click=Read<std::array<float,3>>(unrealEd+0x1bc);
+            const auto plane=Read<std::array<float,3>>(unrealEd+0x1d4);
+            for(int axis=0;axis<3;++axis)at[axis]=click[axis];
+            if(spec.value("surface",true) && std::isfinite(plane[2]) && plane[2]>0.7f)at[2]+=Conveyor::FrameDepth;
+        }
+        Modify(actor);
+        SetPosition(actor,at);
+        if(spec.contains("rotation"))Write(Field(actor,"Rotation"),spec.at("rotation").get<Rotation>());
+        else if(previous)Write(Field(actor,"Rotation"),RotationOf(previous));
+        if(previous)
+        {
+            // Its look, speed and options; the walls are the new belt's own.
+            for(const char* name:{"Width","Speed","ItemScale"})
+                Write(BeltField(actor,name),Read<float>(BeltField(previous,name)));
+            for(const char* name:{"bCarryPlayers","bShowRollers"})
+            {
+                auto p=BeltProperty(actor,name);const auto mask=Read<unsigned>(p+0x64);const auto at=actor+Read<int>(p+0x3c);
+                const bool on=(Read<unsigned>(previous+Read<int>(p+0x3c))&mask)!=0;
+                Write(at,on?(Read<unsigned>(at)|mask):(Read<unsigned>(at)&~mask));
+            }
+            Modify(previous);
+            Write(BeltField(actor,"NextBelt"),Read<Address>(BeltField(previous,"NextBelt")));
+            Write(BeltField(previous,"NextBelt"),actor);
+            Call(previous,0x44);
+        }
+        // The stock cases and boxes until the properties say otherwise.
+        const auto meshes=BeltArray(actor,"ItemMeshes",4);
+        int slot=0;
+        for(const auto* path:Conveyor::DefaultItems)
+            if(auto mesh=LoadStockMesh(path);mesh && slot<Conveyor::ItemSlots)Write(meshes+4*slot++,mesh);
+        for(auto it=properties.begin();it!=properties.end();++it)
+        {
+            const auto& key=it.key();const auto& value=it.value();
+            auto p=BeltProperty(actor,key);
+            if(!p)throw std::runtime_error("ConveyorBelt has no property "+key+".");
+            if(key=="ItemMeshes" && value.is_array())
+            {
+                for(int i=0;i<Conveyor::ItemSlots;++i)
+                {
+                    Address mesh=0;
+                    if(i<static_cast<int>(value.size()) && value[i].is_string() && !value[i].get<std::string>().empty() && Fold(value[i].get<std::string>())!="none")
+                    {
+                        auto path=value[i].get<std::string>();
+                        if(auto name=ReferencedName(path);!name.empty())path=name;
+                        mesh=LoadStockMesh(path);
+                        if(!mesh)throw std::runtime_error("ItemMeshes: "+path+" is not a static mesh the editor can load.");
+                    }
+                    Write(meshes+4*i,mesh);
+                }
+                continue;
+            }
+            try{MagicImport(p,actor+Read<int>(p+0x3c),ImportValue(value));}catch(const std::exception& e){throw std::runtime_error(key+": "+e.what());}
+        }
+        conveyorCache=ConveyorCache{};
+        SyncBelt(actor,ConveyorObjects().frames);
+        Call(actor,0x44);
+        return actor;
+    }
+}
+
 // Places a belt. Without a location it starts where the viewport was last clicked,
 // standing on the floor when that was a floor. after (a belt's name or path) puts it
 // at that belt's end, turned as it is, with its width, speed and options, and links
@@ -206,108 +318,9 @@ Json SelectedConveyorBelt()
 Json AddConveyorBelt(const Json& spec)
 {
     PrepareConveyors();
-    auto c=ConveyorBeltClass();
-    Address previous=0;
-    if(spec.contains("after"))
-    {
-        auto name=spec.at("after").get<std::string>();
-        if(name.find('.')==std::string::npos)name=LevelPath()+"."+name;
-        previous=Find(name,true);
-        if(!previous || Read<Address>(previous+0x24)!=c)throw std::runtime_error(spec.at("after").get<std::string>()+" is not a conveyor belt in this map.");
-    }
-    if(spec.contains("turn"))
-    {
-        const auto turn=spec.at("turn").get<std::string>();
-        if(!previous || (turn!="left" && turn!="right"))throw std::runtime_error("A turn is left or right, after a belt.");
-        const bool right=turn=="right";
-        const double width=Read<float>(BeltField(previous,"Width")),length=Read<float>(BeltField(previous,"Length"));
-        const auto rotation=RotationOf(previous);
-        // Unreal's Y is to the right of X: a right turn heads along the belt's Y.
-        const Rotation level{0,rotation[1],0},corner{0,(rotation[1]+(right?16384:-16384))&0xffff,0};
-        const auto end=TransformPoint({length,0,0},{Position(previous),rotation});
-        const auto start=TransformPoint({width/2,right?-width/2:width/2,0},{end,level});
-        Json cornerSpec={{"after",Path(previous)},{"location",start},{"rotation",corner},
-                         {"properties",{{"Length",width},{right?"bRightWall":"bLeftWall",false}}}};
-        const auto piece=AddConveyorBelt(cornerSpec);
-        Json next=spec;next.erase("turn");next.erase("location");next.erase("rotation");next["after"]=piece.at("path");
-        return AddConveyorBelt(next);
-    }
-    const auto properties=spec.value("properties",Json::object());
-    for(auto it=properties.begin();it!=properties.end();++it)
-    {
-        bool found=false;std::set<Address> seen;
-        for(Address k=c;k && !found && seen.insert(k).second && seen.size()<64;k=Read<Address>(k+0x28))found=StructField(k,it.key())!=0;
-        if(!found)throw std::runtime_error("ConveyorBelt has no property "+it.key()+".");
-    }
-    std::set<Address> before;for(auto a:ActorsOf(c))before.insert(a);
-    if(!Exec(std::string("ACTOR ADD CLASS=")+Conveyor::BeltClass))throw std::runtime_error("The editor refused to place a conveyor belt.");
-    Address actor=0;
-    for(auto a:ActorsOf(c))if(!before.count(a))actor=a;
-    if(!actor)throw std::runtime_error("The editor did not place a conveyor belt.");
-    Vector at{};
-    if(spec.contains("location"))at=spec.at("location").get<Vector>();
-    else if(previous)at=TransformPoint({Read<float>(BeltField(previous,"Length")),0,0},{Position(previous),RotationOf(previous)});
-    else
-    {
-        auto unrealEd=Read<Address>(0x117a59b0);if(!unrealEd)throw std::runtime_error("The editor is unavailable.");
-        const auto click=Read<std::array<float,3>>(unrealEd+0x1bc);
-        const auto plane=Read<std::array<float,3>>(unrealEd+0x1d4);
-        for(int axis=0;axis<3;++axis)at[axis]=click[axis];
-        if(spec.value("surface",true) && std::isfinite(plane[2]) && plane[2]>0.7f)at[2]+=Conveyor::FrameDepth;
-    }
-    Transaction transaction("Add conveyor belt");
-    Modify(actor);
-    SetPosition(actor,at);
-    if(spec.contains("rotation"))Write(Field(actor,"Rotation"),spec.at("rotation").get<Rotation>());
-    else if(previous)Write(Field(actor,"Rotation"),RotationOf(previous));
-    if(previous)
-    {
-        // Its look, speed and options; the walls are the new belt's own.
-        for(const char* name:{"Width","Speed","ItemScale"})
-            Write(BeltField(actor,name),Read<float>(BeltField(previous,name)));
-        for(const char* name:{"bCarryPlayers","bShowRollers"})
-        {
-            auto p=BeltProperty(actor,name);const auto mask=Read<unsigned>(p+0x64);const auto at=actor+Read<int>(p+0x3c);
-            const bool on=(Read<unsigned>(previous+Read<int>(p+0x3c))&mask)!=0;
-            Write(at,on?(Read<unsigned>(at)|mask):(Read<unsigned>(at)&~mask));
-        }
-        Modify(previous);
-        Write(BeltField(actor,"NextBelt"),Read<Address>(BeltField(previous,"NextBelt")));
-        Write(BeltField(previous,"NextBelt"),actor);
-        Call(previous,0x44);
-    }
-    // The stock cases and boxes until the properties say otherwise.
-    const auto meshes=BeltArray(actor,"ItemMeshes",4);
-    int slot=0;
-    for(const auto* path:Conveyor::DefaultItems)
-        if(auto mesh=LoadStockMesh(path);mesh && slot<Conveyor::ItemSlots)Write(meshes+4*slot++,mesh);
-    for(auto it=properties.begin();it!=properties.end();++it)
-    {
-        const auto& key=it.key();const auto& value=it.value();
-        auto p=BeltProperty(actor,key);
-        if(!p)throw std::runtime_error("ConveyorBelt has no property "+key+".");
-        if(key=="ItemMeshes" && value.is_array())
-        {
-            for(int i=0;i<Conveyor::ItemSlots;++i)
-            {
-                Address mesh=0;
-                if(i<static_cast<int>(value.size()) && value[i].is_string() && !value[i].get<std::string>().empty() && Fold(value[i].get<std::string>())!="none")
-                {
-                    auto path=value[i].get<std::string>();
-                    if(auto name=ReferencedName(path);!name.empty())path=name;
-                    mesh=LoadStockMesh(path);
-                    if(!mesh)throw std::runtime_error("ItemMeshes: "+path+" is not a static mesh the editor can load.");
-                }
-                Write(meshes+4*i,mesh);
-            }
-            continue;
-        }
-        try{MagicImport(p,actor+Read<int>(p+0x3c),ImportValue(value));}catch(const std::exception& e){throw std::runtime_error(key+": "+e.what());}
-    }
-    conveyorCache=ConveyorCache{};
-    SyncBelt(actor,ConveyorObjects().frames);
-    Call(actor,0x44);
-    transaction.Commit();
+    std::optional<Transaction> transaction;
+    const auto actor=PlaceConveyorBelt(spec,transaction);
+    transaction->Commit();
     Select(Json::array({Identity(actor)}));
     Redraw();
     return Identity(actor);
