@@ -523,7 +523,11 @@ builds the `SVolumetricSensor` together with its detection volume, sized to the
 standing clearance from **Movement limits...** unless **Height above floor** says
 otherwise. **Add presence detector** and **Add mine** take one click. Lasers and
 presence detectors sit at the **Height above floor** field (48 units by default),
-cameras at 200 units, all above the current **Depth** floor.
+cameras at 200 units, all above the floor clicked on: the current **Depth** in
+the top view; in the front and side views, the floor of the room under the click
+(see **Floors**). Lasers, cameras and motion sensors are aimed across the floor
+with two clicks, so they are placed in the top view; a click in the front or side
+view only says so in the status line.
 
 Placement uses the same snapping as blockouts, so a beam drawn along a wall lands
 on the grid. The plan draws each device with its coverage: the red beam of a
@@ -752,7 +756,7 @@ opaque), labelled with its reach and brightness.
 light, small lamp, bright floodlight, dim blue night light, red pulsing alarm
 light, flickering light, or a **switchable light** (`STriggerLight`). The light
 lands at the ceiling of the room it is placed in, or 160 units above the floor
-being shown. **Drag a light** to move it and **drag the white handle on its
+clicked on (see **Floors** for the front and side views). **Drag a light** to move it and **drag the white handle on its
 rim** to set its reach. Reach sets both the bake's `LightRadius` and the game's
 own `EchelonRange`, so the change shows in play as well as in the lightmaps.
 **Click a light** to edit its brightness, reach, hue, saturation, type
