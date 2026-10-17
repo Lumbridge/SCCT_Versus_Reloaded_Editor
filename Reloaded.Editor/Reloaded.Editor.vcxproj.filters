@@ -80,6 +80,7 @@
     <ClInclude Include="SecurityModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="SecurityNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="SecurityPanel.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="SelectionModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="StageModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="StageNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="EmitterLibraryModel.h"><Filter>Header Files</Filter></ClInclude>
