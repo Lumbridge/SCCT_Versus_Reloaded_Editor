@@ -21,9 +21,10 @@ namespace
     namespace Model = Workflow::PropertyPaste;
     enum : int { kFilterLabel = 100, kFilter, kList, kSummary, kTickShown, kUntickShown };
 
-    // The copy, {actor, properties (the offered ones, in list order)}, null
-    // until the first Copy Properties. confirmed holds the names last pasted
-    // from it, which Paste Again pastes; a new copy starts without them.
+    // The copy, {actor, level, generation, properties (the offered ones, in
+    // list order)}, null until the first Copy Properties. confirmed holds the
+    // names last pasted from it, which Paste Again pastes; a new copy starts
+    // without them.
     Json copied;
     std::set<std::string> confirmed;
     bool hasConfirmed = false;
@@ -264,6 +265,13 @@ namespace
         Json chosen = Json::array();
         for (const auto& entry : copied.at("properties"))
             if (confirmed.count(entry.at("name").get<std::string>())) chosen.push_back(entry);
+        // In another map, a copied actor or MyLevel reference would name
+        // whatever has the same name there.
+        if (copied.at("level").get<uintptr_t>() != Editor::LevelIdentity() || copied.at("generation").get<unsigned>() != Editor::MapGeneration())
+            for (const auto& entry : chosen)
+                if (Model::NamesMapObject(entry))
+                    throw std::runtime_error(entry.at("name").get<std::string>()
+                                             + ": it names an actor or asset in the map the properties were copied from. Untick it in Paste Properties... to paste the rest here.");
         const auto result = Editor::PasteActorProperties(targets, chosen);
         const auto actors = result.at("actors").get<size_t>(), skipped = result.at("skipped").get<size_t>();
         // A paste that took everything shows in the viewports; one that left

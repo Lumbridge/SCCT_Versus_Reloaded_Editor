@@ -36,6 +36,14 @@ int main()
         for (const auto* name : {"PrePivot", "MainScale", "PostScale"})
             Check(!Paste::CheckedByDefault(Entry(name, "Brush", Vector3(), kVector)), "the brush transform starts unticked");
         Check(!Paste::CheckedByDefault(Entry("bhiddened", "Advanced", Leaf("BoolProperty"), "True")), "the names are matched without case");
+        Check(!Paste::CheckedByDefault(Entry("DrawType", "Display", {{"kind", "ByteProperty"}, {"choices", {"DT_None", "DT_Sprite", "DT_StaticMesh"}}}, "DT_Sprite")),
+              "what an actor is drawn as starts unticked");
+        const Json action = {{"kind", "StructProperty"}, {"fields", {{"Event", Leaf("NameProperty")}, {"Delay", Leaf("FloatProperty")}}}};
+        const Json group = {{"kind", "StructProperty"}, {"fields", {{"EventGroup", {{"kind", "ArrayProperty"}, {"inner", action}}}}}};
+        const auto groups = Entry("Groups", "MagicEvent", {{"kind", "ArrayProperty"}, {"inner", group}},
+                                  Json::array({Json{{"EventGroup", Json::array({Json{{"Event", "Door_1"}, {"Delay", "0.000000"}}})}}}));
+        Check(Paste::Offered(groups) && !Paste::CheckedByDefault(groups), "an SMagicEvent's actions are offered unticked");
+        Check(Paste::CheckedByDefault(Entry("DrawScale", "Display", Leaf("FloatProperty"), "1.000000")), "DrawScale starts ticked");
         Check(Paste::CheckedByDefault(Entry("DrawScale3D", "Display", Vector3(), kVector)), "DrawScale3D starts ticked");
         Check(Paste::CheckedByDefault(Entry("LightBrightness", "LightColor", Leaf("FloatProperty"), "64.000000")), "a light's brightness starts ticked");
 
@@ -53,7 +61,7 @@ int main()
                                  {{"Engine.Material", {"Material", "Object"}}});
         Check(Paste::Offered(skins) && Paste::CheckedByDefault(skins), "Skins (materials) are offered ticked");
         const auto mesh = Entry("StaticMesh", "Display", ObjectRef("Engine.StaticMesh"), "StaticMesh'Pkg.Crate'", {{"Engine.StaticMesh", {"StaticMesh", "Primitive", "Object"}}});
-        Check(Paste::Offered(mesh) && Paste::CheckedByDefault(mesh), "a static mesh reference is offered ticked");
+        Check(Paste::Offered(mesh) && !Paste::CheckedByDefault(mesh), "a prop's static mesh is offered unticked");
         const auto texture = Entry("Texture", "Display", ObjectRef("Engine.Texture"), "None",
                                    {{"Engine.Texture", {"Texture", "BitmapMaterial", "RenderedMaterial", "Material", "Object"}}});
         Check(Paste::Offered(texture), "a material subclass is a material");
@@ -90,6 +98,21 @@ int main()
         Check(order == "drawScale,Skins,Event,Tag", "offered in category and name order, the owned Model left out");
         Check(Paste::Offer(Json::array()).is_array() && Paste::Offer(Json::array()).empty(), "nothing offered is an empty list");
 
+        // What would name something else once another map is open.
+        Check(Paste::NamesMapObject(target), "a reference to an actor names something in the map");
+        Check(!Paste::NamesMapObject(pawn), "a reference to no actor does not");
+        Check(Paste::NamesMapObject(Entry("Links", "Events", nested.at("schema"), Json::array({Json{{"Who", "PathNode'MyLevel.PathNode3'"}, {"Delay", "0.000000"}}}),
+                                          {{"Engine.Actor", {"Actor", "Object"}}})), "an actor inside an array of structs does");
+        Check(!Paste::NamesMapObject(nested), "an empty list does not");
+        Check(!Paste::NamesMapObject(skins) && !Paste::NamesMapObject(mesh), "assets in a package do not");
+        Check(Paste::NamesMapObject(Entry("StaticMesh", "Display", ObjectRef("Engine.StaticMesh"), "StaticMesh'mylevel.Crate'", mesh.at("lineage"))),
+              "a mesh stored in the map does");
+        Check(Paste::NamesMapObject(Entry("Skins", "Display", skins.at("schema"), Json::array({"Texture'Pkg.Wall'", "Texture'MyLevel.Poster'"}), skins.at("lineage"))),
+              "one material stored in the map is enough");
+        Check(Paste::NamesMapObject(Entry("PawnClass", "Spawn", {{"kind", "ClassProperty"}, {"type", "Engine.Pawn"}}, "Class'MyLevel.MyGuard'")), "a class compiled in the map does");
+        Check(!Paste::NamesMapObject(spawn), "a class in a package does not");
+        Check(!Paste::NamesMapObject(groups) && !Paste::NamesMapObject(Entry("DrawScale", "Display", Leaf("FloatProperty"), "1.000000")), "names and plain values do not");
+
         // Applicable: the same schema, in any class.
         const auto brightness = Entry("LightBrightness", "LightColor", Leaf("FloatProperty"), "64.000000");
         Check(Paste::Applicable(brightness, Leaf("FloatProperty")), "a spotlight takes a light's brightness: the same schema in another class");
@@ -113,9 +136,10 @@ int main()
               "the dialog's line");
         Check(Paste::ChoiceSummary(1, 1, 1).rfind("1 of 1 property ticked, for 1 selected actor.", 0) == 0, "the dialog's line in the singular");
         Check(Paste::Summary(3, 12, 0) == "Pasted 12 values onto 3 actors.", "a paste that took everything");
-        Check(Paste::Summary(2, 7, 1) == "Pasted 7 values onto 2 actors. 1 value was left out where an actor has no property of the same name and type.", "skipped values are counted");
-        Check(Paste::Summary(1, 1, 4) == "Pasted 1 value onto 1 actor. 4 values were left out where an actor has no property of the same name and type.", "singular and plural");
-        Check(Paste::Summary(0, 0, 5) == "None of the selected actors has these properties with the same type, so nothing was pasted.", "nothing pasted");
+        Check(Paste::Summary(2, 7, 1) == "Pasted 7 values onto 2 actors. 1 value was left out where an actor has no property of the same name and type, "
+                                         "or is a brush or mover, which keeps its own mesh, draw type and scale.", "skipped values are counted");
+        Check(Paste::Summary(1, 1, 4).rfind("Pasted 1 value onto 1 actor. 4 values were left out where", 0) == 0, "singular and plural");
+        Check(Paste::Summary(0, 0, 5) == "None of the selected actors can take these properties, so nothing was pasted.", "nothing pasted");
     }
     catch (const std::exception& e)
     {

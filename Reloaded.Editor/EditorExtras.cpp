@@ -573,7 +573,7 @@ void EditorExtras::AppendActorMenu(HMENU menu)
     AppendMenuA(properties, MF_STRING | pasteable, PropertyPaste::kPasteAgain, "Paste &Again");
     AppendMenuA(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(select), "RE+: &Select");
     AppendMenuA(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(visibility), "RE+: &Visibility");
-    AppendMenuA(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(properties), "RE+: &Properties");
+    AppendMenuA(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(properties), "RE+: P&roperties");
 }
 
 bool EditorExtras::HandleCommand(UINT command)

@@ -46,6 +46,34 @@ namespace Workflow::PropertyPaste
             for(const auto& name:lineage.at(type))if(name.is_string() && Fold(name.get<std::string>())==base)return true;
             return false;
         }
+        // The path in Class'Package.Name', or the text itself.
+        inline std::string ReferencePath(const std::string& text)
+        {
+            const auto first=text.find('\''),last=text.rfind('\'');
+            auto path=first!=std::string::npos && last>first?text.substr(first+1,last-first-1):text;
+            if(path.size()>=2 && path.front()=='"' && path.back()=='"')path=path.substr(1,path.size()-2);
+            return path;
+        }
+        inline bool InMap(const Json& entry,const Json& schema,const Json& value)
+        {
+            if(!schema.is_object())return false;
+            if(value.is_array())
+            {
+                if(schema.contains("inner"))for(const auto& v:value)if(InMap(entry,schema.at("inner"),v))return true;
+                return false;
+            }
+            if(value.is_object())
+            {
+                if(schema.contains("fields"))for(auto it=value.begin();it!=value.end();++it)
+                    if(schema.at("fields").contains(it.key()) && InMap(entry,schema.at("fields").at(it.key()),it.value()))return true;
+                return false;
+            }
+            const auto kind=schema.value("kind",std::string());
+            if((kind!="ObjectProperty" && kind!="ClassProperty") || !value.is_string())return false;
+            const auto path=Fold(ReferencePath(value.get<std::string>()));
+            if(path.empty() || path=="none")return false;
+            return path.rfind("mylevel.",0)==0 || (kind=="ObjectProperty" && Derives(entry,schema.value("type",std::string()),"actor"));
+        }
     }
     // Offered unless a reference in it may point at an owned object, or its
     // declared class is unknown.
@@ -62,14 +90,19 @@ namespace Workflow::PropertyPaste
         for(const auto& type:types)if(Detail::Derives(entry,type,"actor"))return true;
         return false;
     }
+    // Whether the value names an actor, or anything stored in the map
+    // (MyLevel): both are found by path, so once another map is open it would
+    // name whatever there has the same name.
+    inline bool NamesMapObject(const Json& entry){return Detail::InMap(entry,entry.at("schema"),entry.at("value"));}
     // Unticked to start with: where the actor is (Location, Rotation and the
-    // brush transform PrePivot, MainScale, PostScale), the names that wire and
-    // group it (Tag, Event, Group, AttachTag), its editor flags, and every
-    // reference to another actor.
+    // brush transform PrePivot, MainScale, PostScale), what it is drawn as
+    // (StaticMesh, DrawType), the names that wire and group it (Tag, Event,
+    // Group, AttachTag, and an SMagicEvent's actions, Groups), its editor
+    // flags, and every reference to another actor.
     inline bool CheckedByDefault(const Json& entry)
     {
-        static const std::set<std::string> own{"location","rotation","tag","event","group","attachtag","blocklocation","bhiddened","bhiddenedgroup",
-                                               "prepivot","mainscale","postscale"};
+        static const std::set<std::string> own{"location","rotation","staticmesh","drawtype","tag","event","group","attachtag","groups",
+                                               "blocklocation","bhiddened","bhiddenedgroup","prepivot","mainscale","postscale"};
         if(own.count(Fold(entry.at("name").get<std::string>())))return false;
         return !ActorReference(entry);
     }
@@ -107,12 +140,14 @@ namespace Workflow::PropertyPaste
               +". Each actor takes the ones it has with the same name and type, all in one Undo step.";
     }
     // What a paste did: actors changed, values written, and the values left out
-    // where an actor has no property of that name and type.
+    // where an actor has no property of that name and type, or is a brush or
+    // mover, which never takes StaticMesh, DrawType or DrawScale(3D).
     inline std::string Summary(size_t actors,size_t values,size_t skipped)
     {
-        if(!actors)return "None of the selected actors has these properties with the same type, so nothing was pasted.";
+        if(!actors)return "None of the selected actors can take these properties, so nothing was pasted.";
         auto text="Pasted "+Count(values,"value","values")+" onto "+Count(actors,"actor","actors")+".";
-        if(skipped)text+=" "+Count(skipped,"value was","values were")+" left out where an actor has no property of the same name and type.";
+        if(skipped)text+=" "+Count(skipped,"value was","values were")
+                         +" left out where an actor has no property of the same name and type, or is a brush or mover, which keeps its own mesh, draw type and scale.";
         return text;
     }
 }

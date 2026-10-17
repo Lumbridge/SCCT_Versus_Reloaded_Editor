@@ -354,7 +354,7 @@ Json CopyActorProperties(const Json& identity)
         }
         catch(const std::exception&){}
     }
-    return {{"actor",Identity(actor)},{"properties",std::move(properties)}};
+    return {{"actor",Identity(actor)},{"level",LevelIdentity()},{"generation",MapGeneration()},{"properties",std::move(properties)}};
 }
 // Paste Properties: each {name, schema, value} onto every target with a
 // property of that name, the same schema and PasteWritable, in one Undo step.
