@@ -68,7 +68,7 @@ Json ObjectiveAt(DesignState& s,double x,double y)
     for(const auto& actor:s.objectives)
     {
         const Vector position=actor.at("position");
-        if(!DesignOnFloor(s,position[2],position[2]))continue;
+        if(!DesignPointShown(s,actor) || !DesignOnFloor(s,position[2],position[2]))continue;
         const double distance=DesignPointDistance(DesignScreen(s,position),x,y);
         if(distance<best){best=distance;found=actor;}
     }
@@ -113,7 +113,7 @@ bool ObjectiveAimHandleAt(DesignState& s,double x,double y,Json& start)
         Gdiplus::PointF handle;
         if(!ObjectiveAimHandle(s,actor,handle))continue;
         const Vector position=actor.at("position");
-        if(!DesignOnFloor(s,position[2],position[2]))continue;
+        if(!DesignPointShown(s,actor) || !DesignOnFloor(s,position[2],position[2]))continue;
         const double distance=DesignPointDistance(handle,x,y);
         if(distance<best){best=distance;start=actor;}
     }
@@ -127,7 +127,7 @@ void ObjectivePaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void
     const float pi=3.14159265f;
     for(const auto& actor:s.objectives)
     {
-        if(!DesignTypeShown(s,actor.at("path").get<std::string>()))continue;
+        if(!DesignPointShown(s,actor))continue;
         const auto kind=actor.value("kind",std::string());
         const Vector position=actor.at("position");
         if(!DesignOnFloor(s,position[2],position[2]))continue;

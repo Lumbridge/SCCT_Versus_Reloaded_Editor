@@ -32,7 +32,7 @@ bool LightHandleAt(DesignState& s,double x,double y,Json& light,bool& radiusHand
     for(const auto& candidate:s.lights)
     {
         const Vector position=candidate.at("position");
-        if(!DesignOnFloor(s,position[2],position[2]))continue;
+        if(!DesignPointShown(s,candidate) || !DesignOnFloor(s,position[2],position[2]))continue;
         const auto at=DesignScreen(s,position);
         const auto rim=Gdiplus::PointF(static_cast<float>(at.X+candidate.value("radius",0.0)*s.zoom),at.Y);
         const double rimDistance=DesignPointDistance(rim,x,y);
@@ -164,7 +164,7 @@ void LightPaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void(con
     for(const auto& stored:s.lights)
     {
         Json light=stored;
-        if(!DesignTypeShown(s,light.at("path").get<std::string>()))continue;
+        if(!DesignPointShown(s,light))continue;
         const bool live=dragging && light.at("path")==s.drag.device.at("path");
         if(live)
         {

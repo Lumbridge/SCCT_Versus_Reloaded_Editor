@@ -414,7 +414,7 @@ void SceneAction(DesignState& s,int choice,const std::vector<int>& rows)
         DesignCatchUp(s);
         DesignActivate(s,single.data);
         SceneFrame(s,members);
-        DesignWarn(s,"Editing "+single.name+". Drag it, drag a square to resize, use the arrow keys, or edit its fields.");
+        if(!s.previous.is_null())DesignWarn(s,"Editing "+single.name+". Drag it, drag a square to resize, use the arrow keys, or edit its fields.");
     }
     else if(choice==DScnCtxHide)SceneSetFlags(s,members,1,-1);
     else if(choice==DScnCtxShow)SceneSetFlags(s,members,0,-1);
