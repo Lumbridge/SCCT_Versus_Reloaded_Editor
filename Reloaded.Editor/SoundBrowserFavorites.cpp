@@ -1067,15 +1067,26 @@ static void SBF_ClipboardCopy(const char* text)
 }
 
 // Copy Shortcut builds Sound'Package.Group.Name' from the package and group
-// boxes and the row's text; a Reloaded row names its sound in full.
+// boxes and the row's text; a Reloaded row names its sound in full, and so
+// does a native row through its sound, whichever group the boxes show.
 static int __cdecl SBF_CustomCopyShortcut(void* browser)
 {
-    if (browser != g_Browser || !g_CustomView)
+    if (browser != g_Browser)
         return 0;
-    const int item = SBF_SelectedItem();
-    if (item < 0 || static_cast<size_t>(item) >= g_Rows.size())
-        return 1;
-    SBF_ClipboardCopy(("Sound'" + g_Rows[item].path + "'").c_str());
+    std::string path;
+    if (!SBF_SelectedPath(path))
+        return g_CustomView ? 1 : 0;
+    // A map change can free a native row's sound and reuse its memory before
+    // the next refresh: one that no longer has the row's name is left to the
+    // copy from the boxes.
+    char text[256] = {};
+    LVITEMA lvi    = {};
+    lvi.pszText    = text;
+    lvi.cchTextMax = static_cast<int>(std::size(text));
+    if (!g_CustomView && (!SendMessageA(g_List, LVM_GETITEMTEXTA, SBF_SelectedItem(), reinterpret_cast<LPARAM>(&lvi)) ||
+                          !SF::SameName(SF::Split(path).name, text)))
+        return 0;
+    SBF_ClipboardCopy(("Sound'" + path + "'").c_str());
     return 1;
 }
 
@@ -1547,4 +1558,9 @@ void SoundBrowserFavorites::Initialize()
         return;
     }
     g_FeatureSupported = true;
+}
+
+bool SoundBrowserFavorites::SoundPath(void* sound, std::string& path)
+{
+    return SBF_IsSound(sound) && SBF_BuildObjectPath(sound, path);
 }

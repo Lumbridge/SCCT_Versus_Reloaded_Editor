@@ -27,4 +27,7 @@ namespace SoundBrowserFavorites
     bool ShowFavorite(const std::string& path);
     // Plays a loaded sound as the browser's Play does (streamed waves included).
     bool Play(void* sound, const std::string& path);
+    // A loaded sound's full path, Package[.Group...].Name, read from the
+    // object itself; false when `sound` is not a live sound.
+    bool SoundPath(void* sound, std::string& path);
 }
