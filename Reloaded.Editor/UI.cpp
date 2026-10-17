@@ -155,6 +155,23 @@ static void InjectReloadedMenuItems(HWND frame)
         AppendMenuA(reTools, MF_STRING, 40932, "SCamNetwork Ma&nager...");
         AppendMenuA(reTools, MF_SEPARATOR, 0, nullptr);
         AppendMenuA(reTools, MF_STRING, WorkflowTools::kViews, "Working &Views...");
+        // The keys work over a viewport (GridSizeShortcut.cpp); the labels only show them.
+        if (HMENU bookmarks = CreatePopupMenu())
+        {
+            const UINT count = WorkflowTools::kBookmarkSetFirst - WorkflowTools::kBookmarkGoFirst;
+            for (UINT slot = 1; slot <= count; ++slot)
+            {
+                const std::string n = std::to_string(slot);
+                AppendMenuA(bookmarks, MF_STRING, WorkflowTools::kBookmarkGoFirst + slot - 1, ("Go to Bookmark &" + n + "\t" + n).c_str());
+            }
+            AppendMenuA(bookmarks, MF_SEPARATOR, 0, nullptr);
+            for (UINT slot = 1; slot <= count; ++slot)
+            {
+                const std::string n = std::to_string(slot);
+                AppendMenuA(bookmarks, MF_STRING, WorkflowTools::kBookmarkSetFirst + slot - 1, ("Set Bookmark " + n + "\tCtrl+" + n).c_str());
+            }
+            AppendMenuA(reTools, MF_POPUP, reinterpret_cast<UINT_PTR>(bookmarks), "Camera Boo&kmarks");
+        }
         AppendMenuA(reTools, MF_STRING, WorkflowTools::kAssemblies, "Actor &Assemblies...");
         AppendMenuA(reTools, MF_STRING, WorkflowTools::kSaveAssembly, "&Save Selection as Assembly...");
         AppendMenuA(reTools, MF_STRING, EmitterLibraryWindow::Command, "Emitter &Library...");

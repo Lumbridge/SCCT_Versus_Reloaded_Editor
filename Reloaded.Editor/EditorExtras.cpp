@@ -323,6 +323,7 @@ namespace
                "M in a viewport: measure from the last measured point to the mouse (in the 3D view, across the floor at its height).\r\n"
                "End in a viewport: drop the selection to the floor.   Shift+End: and turn meshes flat on the surface.   Ctrl+End: to the ceiling.\r\n"
                "F12: RE+ Options.   F7: disabled (the stock script compiler would crash).\r\n"
+               "1 to 9 in a viewport: jump to camera bookmark N.   Ctrl+1 to Ctrl+9: store the viewport cameras as bookmark N (RE+ Tools > Camera Bookmarks).\r\n"
                "\r\n"
                "PROPERTIES WINDOWS (F4 Actor Properties, F6 Level Properties)\r\n"
                "Filter box: lists only properties whose name or category contains the typed words.   Esc in the box: clear it.\r\n"

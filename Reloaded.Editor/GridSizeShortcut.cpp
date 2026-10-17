@@ -3,6 +3,7 @@
 #include "StoreyFilter.h"
 #include "MeasureTool.h"
 #include "PlacementTools.h"
+#include "WorkflowTools.h"
 #include "EmitterPreview.h"
 #include "CharacterPreview.h"
 #include "GridSizeShortcutState.h"
@@ -175,6 +176,18 @@ namespace
         // Follows the order actors are selected in, and takes End (drop to floor).
         if (PlacementTools::ViewportMessage(viewport, message, wParam, lParam))
             return true;
+        // Camera bookmarks: Ctrl+1 to Ctrl+9 store the viewport cameras, 1 to 9
+        // go back to them. The stock keys use a digit only with Alt (render
+        // modes), and Shift+digit is left to the editor.
+        if (message == WM_KEYDOWN && wParam >= '1' && wParam <= '9'
+            && GetKeyState(VK_MENU) >= 0 && GetKeyState(VK_SHIFT) >= 0
+            && LevelViewportWindow(viewport))
+        {
+            if (!(lParam & (1 << 30))) // not an auto-repeat
+                WorkflowTools::CameraBookmark(static_cast<int>(wParam - '0'),
+                                              GetKeyState(VK_CONTROL) < 0, false);
+            return true;
+        }
         if (message != WM_MOUSEWHEEL)
             return false;
 
