@@ -23,12 +23,13 @@ namespace SaveBackups
     // One backup on disk. map: the folder it is in, named after its map.
     // name: its file name or path, handed back by Prune as given. written:
     // its write time, which the copy keeps from the map it was taken from;
-    // writtenLocal: the same time as local time, to set against its name.
+    // created: when the copy was made. savedOver: listed in SavedOver.txt in
+    // its folder, as a save in the editor wrote it.
     struct File
     {
         std::string map, name;
-        std::uint64_t size = 0, written = 0;
-        Stamp writtenLocal;
+        std::uint64_t size = 0, written = 0, created = 0;
+        bool savedOver = false;
     };
 
     inline std::string FileName(const std::string& path)
@@ -57,18 +58,27 @@ namespace SaveBackups
         return true;
     }
 
-    // The file a MAP <verb> command names. FILE= is found as the engine's
-    // Parse finds it: anywhere after the verb, in any case, its value quoted
-    // or running to the next blank or comma.
-    inline std::optional<std::string> CommandFile(const std::string& command, const char* verb)
+    // Where the value of a MAP <verb> command's parameter starts. The key
+    // (upper case, with its =) is found as the engine's Parse finds it:
+    // anywhere after the verb, in any case.
+    inline std::optional<size_t> ParameterAt(const std::string& command, const char* verb, const std::string& key)
     {
         size_t at = 0;
         if (!Word(command, at, "MAP") || !Word(command, at, verb)) return std::nullopt;
         std::string rest = command.substr(at);
         for (auto& c : rest) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-        const auto key = rest.find("FILE=");
-        if (key == std::string::npos) return std::nullopt;
-        const size_t start = at + key + 5;
+        const auto found = rest.find(key);
+        if (found == std::string::npos) return std::nullopt;
+        return at + found + key.size();
+    }
+
+    // The file a MAP <verb> command names: FILE=, its value quoted or
+    // running to the next blank or comma.
+    inline std::optional<std::string> CommandFile(const std::string& command, const char* verb)
+    {
+        const auto at = ParameterAt(command, verb, "FILE=");
+        if (!at) return std::nullopt;
+        const size_t start = *at;
         std::string value;
         if (start < command.size() && command[start] == '"')
         {
@@ -87,6 +97,22 @@ namespace SaveBackups
     inline std::optional<std::string> SaveTarget(const std::string& command) { return CommandFile(command, "SAVE"); }
     // The file a MAP LOAD opens.
     inline std::optional<std::string> LoadTarget(const std::string& command) { return CommandFile(command, "LOAD"); }
+
+    // The stock autosave's own save, MAP SAVE AUTOSAVE=1 FILE="...Auto%i.sdc"
+    // (the format at 0x1147AF1C). File > Save and Save As send MAP SAVE
+    // FILE="%s" alone, so a map the user saves as Auto3.sdc is not one.
+    // AUTOSAVE= is read as the engine reads a number: a nonzero integer.
+    inline bool IsStockAutosave(const std::string& command)
+    {
+        const auto at = ParameterAt(command, "SAVE", "AUTOSAVE=");
+        if (!at) return false;
+        size_t i = *at;
+        while (i < command.size() && Blank(command[i])) ++i;
+        if (i < command.size() && (command[i] == '+' || command[i] == '-')) ++i;
+        for (; i < command.size() && command[i] >= '0' && command[i] <= '9'; ++i)
+            if (command[i] != '0') return true;
+        return false;
+    }
 
     // Play Level's copy, Autoplay.sdc. Its MAP SAVE names
     // ..\Packages\MapsEd\Autoplay.sdc, but the engine writes only
@@ -155,16 +181,37 @@ namespace SaveBackups
              + stamp.second;
     }
 
-    // A backup that was opened and saved over: written later than the time
-    // in its name. RE+'s own copy keeps the write time of the map it was
-    // taken from, which is never later than the moment that map was replaced.
-    // It holds the user's work now, not a kept version, so Prune leaves it
-    // alone. (In the hour the clocks go back, a real copy can look like this;
-    // it is then only kept longer.)
+    // Whether fileName is a line of a SavedOver.txt, whatever its case.
+    inline bool Listed(const std::string& list, const std::string& fileName)
+    {
+        const auto wanted = Lower(FileName(fileName));
+        if (wanted.empty()) return false;
+        size_t start = 0;
+        while (start < list.size())
+        {
+            auto end = list.find('\n', start);
+            if (end == std::string::npos) end = list.size();
+            auto line = list.substr(start, end - start);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (Lower(line) == wanted) return true;
+            start = end + 1;
+        }
+        return false;
+    }
+
+    // A backup that was opened and saved over holds the user's work, not a
+    // kept version, so Prune neither removes nor counts it. A save in the
+    // editor lists it in SavedOver.txt beside it. One written some other way
+    // is told by its own two times, both UTC, so neither a clock change nor a
+    // new time zone moves them: RE+'s copy keeps the write time of its map and
+    // is created after it (when the map's is later, from a clock that ran
+    // ahead, RE+ moves the creation time up to it), and writing the file
+    // again moves its write time past its creation. Not seen that way: a file
+    // copied over it by hand, which brings an older write time of its own.
     inline bool SavedOver(const File& file)
     {
-        const auto backup = ParseBackup(file.name);
-        return backup && Order(file.writtenLocal) > Order(backup->second);
+        if (!ParseBackup(file.name)) return false;
+        return file.savedOver || (file.created && file.written > file.created);
     }
 
     // A copy is needed unless the map's newest backup already is the file on

@@ -43,6 +43,20 @@ void Targets()
     Check(!IsPlayLevelName("..\\Packages\\MapsEd\\MoonD.sdc") && !IsPlayLevelName("Auto0.sdc"), "a map, an autosave");
     Check(!IsPlayLevelName("Autoplay2.sdc") && !IsPlayLevelName("MyAutoplay.sdc") && !IsPlayLevelName("C:\\Autoplay.d\\MoonD.sdc"),
           "only the file name Autoplay.*");
+
+    // The stock autosave's command, as its format at 0x1147AF1C gives it,
+    // and the user's own saves, Save and Save As, into an autosave's name.
+    const std::string autosave = "MAP SAVE AUTOSAVE=1 FILE=\"..\\Packages\\MapsEd\\Auto3.sdc\"";
+    Check(IsStockAutosave(autosave) && SaveTarget(autosave) == "..\\Packages\\MapsEd\\Auto3.sdc", "the stock autosave, and the file it writes");
+    Check(!IsStockAutosave("MAP SAVE FILE=\"..\\Packages\\MapsEd\\Auto3.sdc\"")
+          && !IsStockAutosave("MAP SAVE FILE=\"C:\\G\\Packages\\MapsEd\\Auto0.sdc\""), "a save the user makes into Auto3.sdc counts");
+    Check(!IsStockAutosave("MAP SAVE FILE=\"C:\\G\\Packages\\MapsEd\\MoonD.sdc\""), "File > Save of a map");
+    Check(IsStockAutosave("map save file=Auto0.sdc autosave=1") && IsStockAutosave("MAP SAVE AUTOSAVE= 12 FILE=Auto0.sdc"),
+          "any case, after FILE=, a blank before the number");
+    Check(!IsStockAutosave("MAP SAVE AUTOSAVE=0 FILE=Auto0.sdc") && !IsStockAutosave("MAP SAVE AUTOSAVE=\"1\" FILE=Auto0.sdc")
+          && !IsStockAutosave("MAP SAVE AUTOSAVE= FILE=Auto0.sdc"), "zero, or not a number, is not an autosave");
+    Check(!IsStockAutosave("MAP LOAD AUTOSAVE=1 FILE=Auto0.sdc") && !IsStockAutosave("MAPSAVE AUTOSAVE=1") && !IsStockAutosave(""),
+          "only a MAP SAVE");
 }
 
 void Names()
@@ -87,16 +101,27 @@ void Copies()
     Check(Needed(existing, 52 * kMB, 3000), "a file that is not a backup is not compared");
     Check(Needed({}, 52 * kMB, 2000), "no backups yet");
 
-    // Written before or in the second of its name: RE+'s own copy. Written
-    // later: saved over since.
-    const File copy{ "MoonD", "MoonD_20261017_143205.sdc", kMB, 0, { 2026, 10, 17, 14, 2, 40 } };
-    Check(!SavedOver(copy), "a copy keeps the earlier write time of its map");
-    Check(!SavedOver({ "MoonD", "MoonD_20261017_143205.sdc", kMB, 0, { 2026, 10, 17, 14, 32, 5 } }), "written in the second of its name");
-    Check(SavedOver({ "MoonD", "MoonD_20261017_143205.sdc", kMB, 0, { 2026, 10, 17, 14, 32, 6 } })
-          && SavedOver({ "MoonD", "C:\\G\\System\\ReloadedEditor\\Backups\\MoonD\\MoonD_20261017_143205.sdc", kMB, 0, { 2026, 10, 20, 9, 0, 0 } }),
-          "written later: saved over");
-    Check(!SavedOver({ "MoonD", "notes.txt", kMB, 0, { 2027, 1, 1, 0, 0, 0 } }) && !SavedOver({ "MoonD", "MoonD_20261017_143205.sdc", kMB, 0 }),
-          "not a backup, or no write time given");
+    // Listed in SavedOver.txt: saved over in the editor, whatever its times.
+    // Otherwise written no later than it was created: RE+'s own copy;
+    // written later: saved over since.
+    const std::string name = "MoonD_20261017_143205.sdc";
+    Check(!SavedOver({ "MoonD", name, kMB, 1000, 2000 }), "a copy keeps the earlier write time of its map");
+    Check(!SavedOver({ "MoonD", name, kMB, 2000, 2000 }), "a creation time moved up to a write time ahead of the clock");
+    Check(SavedOver({ "MoonD", name, kMB, 2001, 2000 })
+          && SavedOver({ "MoonD", "C:\\G\\System\\ReloadedEditor\\Backups\\MoonD\\" + name, kMB, 9000, 2000 }),
+          "written after it was created: saved over");
+    Check(SavedOver({ "MoonD", name, kMB, 1000, 2000, true }) && SavedOver({ "MoonD", name, kMB, 0, 0, true }),
+          "listed as saved over, whatever its times");
+    Check(!SavedOver({ "MoonD", "notes.txt", kMB, 9000, 2000, true }) && !SavedOver({ "MoonD", name, kMB, 9000 }),
+          "not a backup, or no creation time given");
+
+    const std::string list = "MoonD_20261017_100000.sdc\r\nMoonD_20261017_143205.sdc\r\n";
+    Check(Listed(list, name) && Listed(list, "MoonD_20261017_100000.sdc"), "each line of SavedOver.txt");
+    Check(Listed(list, "C:\\G\\System\\ReloadedEditor\\Backups\\MoonD\\moond_20261017_143205.SDC"), "by file name, whatever its case");
+    Check(Listed("MoonD_20261017_100000.sdc\nMoonD_20261017_143205.sdc", name), "lines ending in LF alone, no last line end");
+    Check(!Listed(list, "MoonD_20261017_1432.sdc") && !Listed(list, "MoonD_20261017_143205.sdc.bak") && !Listed(list, "MoonD.sdc"),
+          "whole names only");
+    Check(!Listed("", name) && !Listed(list, "") && !Listed("\r\n\r\n", ""), "an empty list, an empty name");
 }
 
 void Pruning()
@@ -140,17 +165,21 @@ void Pruning()
     Check(Prune(files, 5, 2048 * kMB, "C:\\G\\Packages\\MapsEd\\MoonD.sdc") == std::vector<std::string>{ "MoonD_20261017_100000.sdc" },
           "an open map from MapsEd protects nothing");
 
-    // MoonD's oldest was opened and saved over the next day: it holds the
-    // user's work, so it is neither removed nor counted.
+    // MoonD's oldest was opened and saved over: it holds the user's work, so
+    // it is neither removed nor counted.
     auto edited = files;
-    edited[0].writtenLocal = { 2026, 10, 18, 9, 0, 0 };
+    edited[0].savedOver = true;
     Check(Prune(edited, 5, 2048 * kMB).empty(), "a backup saved over stays past keep, and the five others are all kept");
     Check(Set(Prune(edited, 2, 2048 * kMB)) == std::set<std::string>{ "MoonD_20261017_110000.sdc", "MoonD_20261017_120000.sdc", "MoonD_20261017_130000.sdc" },
           "keep two of the rest");
     Check(Set(Prune(edited, 5, 65 * kMB)) == std::set<std::string>{ "ShipD_20261016_090000.sdc", "MoonD_20261017_110000.sdc" },
           "the total cap neither counts nor removes it");
+    auto rewritten = files;
+    rewritten[0].created = 1000;
+    rewritten[0].written = 5000;
+    Check(Set(Prune(rewritten, 5, 65 * kMB)) == Set(Prune(edited, 5, 65 * kMB)), "one written again some other way, told by its times, the same");
     auto newest = files;
-    newest[5].writtenLocal = { 2026, 10, 17, 16, 30, 0 };
+    newest[5].savedOver = true;
     Check(Set(Prune(newest, 2, 2048 * kMB)) == std::set<std::string>{ "MoonD_20261017_100000.sdc", "MoonD_20261017_110000.sdc", "MoonD_20261017_120000.sdc" },
           "the newest saved over: the two newest of the rest stay");
 

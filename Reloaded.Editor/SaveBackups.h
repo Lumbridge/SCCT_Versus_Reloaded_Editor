@@ -16,12 +16,14 @@ namespace SaveBackups
     // Once, at startup: points the stock File > Save at Save As while the
     // open map is a backup.
     void Initialize();
-    // With every editor command, before it runs. Only a save over a map in
-    // MapsEd is acted on; a failure is logged and never stops the save. The
-    // file a MAP LOAD opens is noted, so a backup the open map came from stays.
+    // With every editor command, before it runs. A save over a map in MapsEd
+    // is backed up first, and a save into a backup lists it in SavedOver.txt
+    // beside it, so it is kept; a failure is logged and never stops the save.
+    // The file a MAP LOAD opens is noted, so a backup the open map came from
+    // stays.
     void BeforeMapSave(const char* command) noexcept;
-    // How many MAP SAVE commands (the stock autosave's aside) have reached
-    // the engine: unchanged across a Save that was cancelled.
+    // How many MAP SAVE commands (the stock autosave's own aside) have
+    // reached the engine: unchanged across a Save that was cancelled.
     unsigned MapSaves();
     // File > Open Map Backup..., on the frame's thread.
     void OpenDialog(HWND frame);

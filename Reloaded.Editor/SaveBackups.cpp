@@ -11,6 +11,8 @@
 #include <chrono>
 #include <cstring>
 #include <format>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -61,25 +63,41 @@ namespace
     }
 
     std::uint64_t Ticks(const FILETIME& time) { return (std::uint64_t(time.dwHighDateTime) << 32) | time.dwLowDateTime; }
-    // A write time as local time, as GetLocalTime gave the backup's name.
-    SaveBackups::Stamp Local(const FILETIME& time)
+
+    // In each map's backup folder: the backups a save in the editor wrote
+    // into, one file name a line.
+    constexpr wchar_t kSavedOverList[] = L"SavedOver.txt";
+
+    // A small file's bytes; empty when there is none.
+    std::string ReadText(const fs::path& path)
     {
-        SYSTEMTIME utc{}, local{};
-        if (!FileTimeToSystemTime(&time, &utc) || !SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local)) return {};
-        return { local.wYear, local.wMonth, local.wDay, local.wHour, local.wMinute, local.wSecond };
+        std::ifstream in(path, std::ios::binary);
+        return { std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
+    }
+
+    // The engine opens a relative name from the current directory (System);
+    // the editor's own map name is relative to MapsEd.
+    fs::path Resolve(const std::string& value)
+    {
+        fs::path target(value);
+        if (!target.is_relative()) return target;
+        std::error_code error;
+        const auto here = fs::absolute(target, error);
+        return !error && fs::is_regular_file(here, error) ? here : MapsEd() / target;
     }
 
     // The file the last MAP LOAD opened: when the open map is a backup, a
     // save over its map must not remove it before the save has read it.
     std::string loaded;
     // MAP SAVE commands passed to the engine so far, but for the stock
-    // autosave's, which may run while a Save As box is open.
+    // autosave's own, which may run while a Save As box is open.
     std::atomic<unsigned> saves = 0;
 
     // The files in one map's backup folder, by path.
     std::vector<SaveBackups::File> Files(const fs::path& folder, const std::string& map)
     {
         std::vector<SaveBackups::File> files;
+        const auto savedOver = ReadText(folder / kSavedOverList);
         WIN32_FIND_DATAW found{};
         HANDLE find = FindFirstFileW((folder / L"*").c_str(), &found);
         if (find == INVALID_HANDLE_VALUE) return files;
@@ -87,10 +105,31 @@ namespace
             if (!(found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
                 files.push_back({ map, Utf8((folder / found.cFileName).wstring()),
                                   (std::uint64_t(found.nFileSizeHigh) << 32) | found.nFileSizeLow, Ticks(found.ftLastWriteTime),
-                                  Local(found.ftLastWriteTime) });
+                                  Ticks(found.ftCreationTime), SaveBackups::Listed(savedOver, Utf8(found.cFileName)) });
         while (FindNextFileW(find, &found));
         FindClose(find);
         return files;
+    }
+
+    // A save into a kept backup (Save As onto one, or Save while one is open
+    // on an editor whose File > Save is not redirected): from now on it holds
+    // the user's work. Its name goes into SavedOver.txt beside it, and Prune
+    // then neither removes nor counts it, whatever its times say.
+    void NoteSavedOver(const std::string& value)
+    {
+        const auto target = Resolve(value);
+        if (!SaveBackups::IsBackupPath(Utf8(target.wstring()))) return;
+        std::error_code error;
+        const auto folder = target.parent_path();
+        if (!fs::is_directory(folder, error)) return; // The save cannot be written either.
+        const auto name = Utf8(target.filename().wstring());
+        const auto list = folder / kSavedOverList;
+        if (SaveBackups::Listed(ReadText(list), name)) return;
+        std::ofstream out(list, std::ios::binary | std::ios::app);
+        out << name << "\r\n";
+        out.close();
+        if (!out) throw std::runtime_error("could not list " + name + " in " + Utf8(list.wstring()));
+        Logger::log("Save backups: " + name + " is saved over, so it is kept and not counted from now on");
     }
 
     // Every map's backups, for the total.
@@ -115,14 +154,7 @@ namespace
         if (SaveBackups::IsPlayLevelName(value)) return;
         const auto mapsEd = MapsEd();
         std::error_code error;
-        // The engine opens a relative name from the current directory
-        // (System); the editor's own map name is relative to MapsEd.
-        fs::path target(value);
-        if (target.is_relative())
-        {
-            const auto here = fs::absolute(target, error);
-            target = !error && fs::is_regular_file(here, error) ? here : mapsEd / target;
-        }
+        const auto target = Resolve(value);
         if (!fs::is_regular_file(target, error)) return; // A new map: nothing to keep.
         // Only the game's own MapsEd, not a release folder's.
         if (!fs::equivalent(target.parent_path(), mapsEd, error)) return;
@@ -157,10 +189,24 @@ namespace
             throw std::runtime_error("could not copy " + name + " to " + Utf8(backup.wstring()) + " (error " + std::to_string(code) + ")");
         }
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-        // A read-only map gives a read-only copy, which Prune could never remove.
-        if (const DWORD attributes = GetFileAttributesW(backup.c_str());
-            attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_READONLY))
-            SetFileAttributesW(backup.c_str(), attributes & ~FILE_ATTRIBUTE_READONLY);
+        WIN32_FILE_ATTRIBUTE_DATA copied{};
+        if (GetFileAttributesExW(backup.c_str(), GetFileExInfoStandard, &copied))
+        {
+            // A read-only map gives a read-only copy, which Prune could never remove.
+            if (copied.dwFileAttributes & FILE_ATTRIBUTE_READONLY)
+                SetFileAttributesW(backup.c_str(), copied.dwFileAttributes & ~FILE_ATTRIBUTE_READONLY);
+            // The copy is created now with the map's write time. A map written
+            // later than now (by a clock that ran ahead) would make it look
+            // saved over since, so its creation time is moved up to match.
+            if (Ticks(copied.ftLastWriteTime) > Ticks(copied.ftCreationTime))
+                if (const HANDLE file = CreateFileW(backup.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                                    nullptr, OPEN_EXISTING, 0, nullptr);
+                    file != INVALID_HANDLE_VALUE)
+                {
+                    SetFileTime(file, &copied.ftLastWriteTime, nullptr, nullptr);
+                    CloseHandle(file);
+                }
+        }
 
         size_t removed = 0;
         for (const auto& old : SaveBackups::Prune(AllFiles(), static_cast<size_t>(keep), std::uint64_t((std::max)(maxMB, 0)) * 1024 * 1024, loaded))
@@ -227,7 +273,8 @@ void SaveBackups::BeforeMapSave(const char* command) noexcept
     {
         if (const auto target = SaveTarget(command))
         {
-            if (!Sessions::IsAutosaveName(*target)) ++saves;
+            if (!IsStockAutosave(command)) ++saves;
+            NoteSavedOver(*target);
             Backup(*target);
         }
         else if (const auto file = LoadTarget(command)) loaded = Utf8(fs::path(*file).wstring());
