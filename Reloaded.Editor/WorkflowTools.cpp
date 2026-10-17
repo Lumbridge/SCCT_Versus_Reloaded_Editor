@@ -1048,18 +1048,17 @@ namespace
         }
         if(command==Fourth || command==Fifth)
         {
-            auto entry=Entry(s); Json next=document;
+            // Asked before copying the library: a camera bookmark stored from a
+            // viewport while the box is open must not be written over.
+            auto entry=Entry(s); std::string name;
+            if(command==Fourth) { name=entry.at("name"); if(!GetName(s.window,"Rename Entry",name)) return; }
+            else if(MessageBoxA(s.window,"Delete this saved entry? Placed actors are kept.","Delete Entry",MB_OKCANCEL|MB_ICONQUESTION)!=IDOK) return;
+            Json next=document;
             auto& entries=s.kind==Kind::Views?next["maps"][mapKey]["views"]:next["assemblies"];
-            if(command==Fourth)
-            {
-                std::string name=entry.at("name"); if(!GetName(s.window,"Rename Entry",name)) return;
-                for(auto& j:entries) if(j.at("id")==s.selectedId) { j["name"]=name; j["modified"]=Timestamp(); }
-            }
-            else
-            {
-                if(MessageBoxA(s.window,"Delete this saved entry? Placed actors are kept.","Delete Entry",MB_OKCANCEL|MB_ICONQUESTION)!=IDOK) return;
-                entries.erase(std::remove_if(entries.begin(),entries.end(),[&](const Json& j){return j.at("id")==s.selectedId;}),entries.end());
-            }
+            auto held=[&](const Json& j){return j.at("id")==s.selectedId;};
+            if(std::none_of(entries.begin(),entries.end(),held)) { Populate(s); throw std::runtime_error("That entry is no longer listed. Select an entry in the refreshed list."); }
+            if(command==Fourth) { for(auto& j:entries) if(held(j)) { j["name"]=name; j["modified"]=Timestamp(); } }
+            else entries.erase(std::remove_if(entries.begin(),entries.end(),held),entries.end());
             Save(next);
             if(command==Fifth) { try { std::error_code error; std::filesystem::remove(ThumbnailPath(s.kind==Kind::Views,s.selectedId),error); } catch(const std::exception&) {} }
             Populate(s);

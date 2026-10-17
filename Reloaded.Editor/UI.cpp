@@ -158,13 +158,14 @@ static void InjectReloadedMenuItems(HWND frame)
         // The keys work over a viewport (GridSizeShortcut.cpp); the labels only show them.
         if (HMENU bookmarks = CreatePopupMenu())
         {
-            for (UINT slot = 1; slot <= 9; ++slot)
+            const UINT count = WorkflowTools::kBookmarkSetFirst - WorkflowTools::kBookmarkGoFirst;
+            for (UINT slot = 1; slot <= count; ++slot)
             {
                 const std::string n = std::to_string(slot);
                 AppendMenuA(bookmarks, MF_STRING, WorkflowTools::kBookmarkGoFirst + slot - 1, ("Go to Bookmark &" + n + "\t" + n).c_str());
             }
             AppendMenuA(bookmarks, MF_SEPARATOR, 0, nullptr);
-            for (UINT slot = 1; slot <= 9; ++slot)
+            for (UINT slot = 1; slot <= count; ++slot)
             {
                 const std::string n = std::to_string(slot);
                 AppendMenuA(bookmarks, MF_STRING, WorkflowTools::kBookmarkSetFirst + slot - 1, ("Set Bookmark " + n + "\tCtrl+" + n).c_str());
