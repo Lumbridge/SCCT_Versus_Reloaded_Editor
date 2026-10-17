@@ -60,6 +60,10 @@ namespace
 
     std::uint64_t Ticks(const FILETIME& time) { return (std::uint64_t(time.dwHighDateTime) << 32) | time.dwLowDateTime; }
 
+    // The file the last MAP LOAD opened: when the open map is a backup, a
+    // save over its map must not remove it before the save has read it.
+    std::string loaded;
+
     // The files in one map's backup folder, by path.
     std::vector<SaveBackups::File> Files(const fs::path& folder, const std::string& map)
     {
@@ -137,9 +141,13 @@ namespace
             throw std::runtime_error("could not copy " + name + " to " + Utf8(backup.wstring()) + " (error " + std::to_string(code) + ")");
         }
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        // A read-only map gives a read-only copy, which Prune could never remove.
+        if (const DWORD attributes = GetFileAttributesW(backup.c_str());
+            attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_READONLY))
+            SetFileAttributesW(backup.c_str(), attributes & ~FILE_ATTRIBUTE_READONLY);
 
         size_t removed = 0;
-        for (const auto& old : SaveBackups::Prune(AllFiles(), static_cast<size_t>(keep), std::uint64_t((std::max)(maxMB, 0)) * 1024 * 1024))
+        for (const auto& old : SaveBackups::Prune(AllFiles(), static_cast<size_t>(keep), std::uint64_t((std::max)(maxMB, 0)) * 1024 * 1024, loaded))
             if (DeleteFileW(Wide(old).c_str())) ++removed;
             else Logger::log("Save backups: could not remove " + old + " (error " + std::to_string(GetLastError()) + ")");
         Logger::log(std::format("Save backups: copied {} ({:.1f} MB) in {:.2f} s", name, static_cast<double>(size) / (1024.0 * 1024.0), seconds)
@@ -166,6 +174,7 @@ void SaveBackups::BeforeMapSave(const char* command) noexcept
     try
     {
         if (const auto target = SaveTarget(command)) Backup(*target);
+        else if (const auto file = LoadTarget(command)) loaded = Utf8(fs::path(*file).wstring());
     }
     catch (const std::exception& e) { Report(e.what()); }
     catch (...) { Report("unknown error"); }
@@ -177,7 +186,7 @@ void SaveBackups::OpenDialog(HWND frame)
     std::error_code error;
     if (!fs::is_directory(folder, error))
         throw std::runtime_error("No saved versions have been kept yet. Before a save replaces a map in Packages\\MapsEd, "
-                                 "RE+ copies the file being replaced into\n" + Utf8(folder.wstring()) + "\n\n"
+                                 "RE+ copies the file being replaced into\n" + folder.string() + "\n\n"
                                  "[SaveBackups] Keep in Reloaded_Editor.ini says how many of each map stay; Keep=0 turns it off.");
     // In the open map's own folder, when it has one (for an open backup, the
     // folder of the map it was taken from).
@@ -201,8 +210,9 @@ void SaveBackups::OpenDialog(HWND frame)
     choose.lpstrFilter = L"Map backups (*.sdc)\0*.sdc\0";
     choose.lpstrInitialDir = initial.c_str();
     choose.lpstrTitle = L"Open Map Backup";
-    // The engine's relative paths depend on the current directory staying System.
-    choose.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    // The engine's relative paths depend on the current directory staying
+    // System. A backup always opens normally: no read-only choice to ignore.
+    choose.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_HIDEREADONLY;
     if (!GetOpenFileNameW(&choose)) return;
     EditorExtras::OpenMap(fs::path(path).string(), frame, "Open Map Backup");
 }

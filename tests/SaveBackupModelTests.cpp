@@ -31,6 +31,11 @@ void Targets()
     Check(!SaveTarget("MAP SAVEAS FILE=MoonD.sdc") && !SaveTarget("MAPS SAVE FILE=MoonD.sdc"), "only whole words");
     Check(!SaveTarget("OBJ SAVEPACKAGE PACKAGE=MoonD-i FILE=\"..\\Packages\\Textures\\MoonD-i.utc\""), "a package save is not a map save");
     Check(!SaveTarget(""), "an empty command");
+
+    Check(LoadTarget("MAP LOAD FILE=\"C:\\G\\System\\ReloadedEditor\\Backups\\MoonD\\MoonD_20261017_143205.sdc\"")
+          == "C:\\G\\System\\ReloadedEditor\\Backups\\MoonD\\MoonD_20261017_143205.sdc", "the file a load opens");
+    Check(LoadTarget("map load file=MoonD.sdc") == "MoonD.sdc", "a load, lower case and unquoted");
+    Check(!LoadTarget("MAP SAVE FILE=\"MoonD.sdc\"") && !LoadTarget("MAP LOAD"), "a save is not a load, nor a load without FILE=");
 }
 
 void Names()
@@ -103,6 +108,19 @@ void Pruning()
     Check(none.size() == 6 && !none.count("MoonD_20261017_150000.sdc") && !none.count("ShipD_20261017_090000.sdc"),
           "a cap nothing fits under leaves each map its newest");
     Check(!none.count("readme.txt"), "a file that is not a backup is never deleted");
+
+    // The open map was loaded from a backup: a save over its map must not
+    // remove it first.
+    Check(Prune(files, 5, 2048 * kMB, "C:\\G\\System\\ReloadedEditor\\Backups\\MoonD\\MoonD_20261017_100000.sdc").empty(),
+          "the backup the open map came from stays past keep");
+    Check(Prune(files, 5, 2048 * kMB, "c:/g/system/reloadededitor/backups/moond/MOOND_20261017_100000.SDC").empty(),
+          "it is matched by file name, whatever the case and slashes");
+    Check(Set(Prune(files, 5, 65 * kMB, "C:\\G\\System\\ReloadedEditor\\Backups\\ShipD\\ShipD_20261016_090000.sdc"))
+              == std::set<std::string>{ "MoonD_20261017_100000.sdc", "MoonD_20261017_110000.sdc", "MoonD_20261017_120000.sdc",
+                                        "MoonD_20261017_130000.sdc" },
+          "under the total cap it stays and counts, and the next oldest go instead");
+    Check(Prune(files, 5, 2048 * kMB, "C:\\G\\Packages\\MapsEd\\MoonD.sdc") == std::vector<std::string>{ "MoonD_20261017_100000.sdc" },
+          "an open map from MapsEd protects nothing");
 
     const std::vector<File> folded = {
         { "MoonD", "MoonD_20261017_100000.sdc", kMB, 0 },

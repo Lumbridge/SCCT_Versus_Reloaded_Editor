@@ -55,13 +55,13 @@ namespace SaveBackups
         return true;
     }
 
-    // The file a MAP SAVE writes, as the command names it. FILE= is found as
-    // the engine's Parse finds it: anywhere after the verb, in any case, its
-    // value quoted or running to the next blank or comma.
-    inline std::optional<std::string> SaveTarget(const std::string& command)
+    // The file a MAP <verb> command names. FILE= is found as the engine's
+    // Parse finds it: anywhere after the verb, in any case, its value quoted
+    // or running to the next blank or comma.
+    inline std::optional<std::string> CommandFile(const std::string& command, const char* verb)
     {
         size_t at = 0;
-        if (!Word(command, at, "MAP") || !Word(command, at, "SAVE")) return std::nullopt;
+        if (!Word(command, at, "MAP") || !Word(command, at, verb)) return std::nullopt;
         std::string rest = command.substr(at);
         for (auto& c : rest) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
         const auto key = rest.find("FILE=");
@@ -81,6 +81,10 @@ namespace SaveBackups
         if (value.empty()) return std::nullopt;
         return value;
     }
+    // The file a MAP SAVE writes, as the command names it.
+    inline std::optional<std::string> SaveTarget(const std::string& command) { return CommandFile(command, "SAVE"); }
+    // The file a MAP LOAD opens.
+    inline std::optional<std::string> LoadTarget(const std::string& command) { return CommandFile(command, "LOAD"); }
 
     inline std::string Digits(int value, size_t width)
     {
@@ -132,7 +136,9 @@ namespace SaveBackups
         return std::pair{ name.substr(0, at), stamp };
     }
 
-    // Later stamps are larger.
+    // Later stamps are larger. The stamp is local time, so in the hour that
+    // repeats when the clocks go back a backup can order before those taken
+    // in the first pass of that hour.
     inline std::uint64_t Order(const Stamp& stamp)
     {
         return ((((std::uint64_t(stamp.year) * 100 + stamp.month) * 100 + stamp.day) * 100 + stamp.hour) * 100 + stamp.minute) * 100
@@ -158,19 +164,25 @@ namespace SaveBackups
     // The backups to delete: of each map all but the newest keep, then, while
     // the rest together take more than maxBytes, the oldest of any map. A
     // map's newest always stays, and a file not named as a backup is never
-    // deleted or counted.
-    inline std::vector<std::string> Prune(std::vector<File> files, size_t keep, std::uint64_t maxBytes)
+    // deleted or counted. inUse, the file the open map was loaded from, stays
+    // too, as the save about to run may still read from it; it is matched by
+    // file name, which carries its map's name.
+    inline std::vector<std::string> Prune(std::vector<File> files, size_t keep, std::uint64_t maxBytes, const std::string& inUse = {})
     {
         struct Entry
         {
             std::string map, name;
             std::uint64_t size = 0, order = 0;
-            bool newest = false, gone = false;
+            bool used = false, newest = false, gone = false;
         };
+        const auto used = Lower(FileName(inUse));
         std::vector<Entry> entries;
         for (auto& file : files)
             if (const auto backup = ParseBackup(file.name))
-                entries.push_back({ Lower(file.map), std::move(file.name), file.size, Order(backup->second) });
+            {
+                const bool open = !used.empty() && Lower(FileName(file.name)) == used;
+                entries.push_back({ Lower(file.map), std::move(file.name), file.size, Order(backup->second), open });
+            }
         // Newest first.
         std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b)
                   { return a.order != b.order ? a.order > b.order : a.name > b.name; });
@@ -182,11 +194,11 @@ namespace SaveBackups
         {
             auto counted = std::find_if(seen.begin(), seen.end(), [&](const auto& map) { return map.first == entry.map; });
             if (counted == seen.end()) { seen.emplace_back(entry.map, 0); counted = seen.end() - 1; entry.newest = true; }
-            if (++counted->second > (std::max)(keep, size_t(1))) { entry.gone = true; removed.push_back(entry.name); }
+            if (++counted->second > (std::max)(keep, size_t(1)) && !entry.used) { entry.gone = true; removed.push_back(entry.name); }
             else total += entry.size;
         }
         for (auto entry = entries.rbegin(); entry != entries.rend() && total > maxBytes; ++entry)
-            if (!entry->newest && !entry->gone)
+            if (!entry->newest && !entry->gone && !entry->used)
             {
                 entry->gone = true;
                 total -= entry->size;

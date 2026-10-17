@@ -13,7 +13,8 @@
 namespace SaveBackups
 {
     // With every editor command, before it runs. Only a save over a map in
-    // MapsEd is acted on; a failure is logged and never stops the save.
+    // MapsEd is acted on; a failure is logged and never stops the save. The
+    // file a MAP LOAD opens is noted, so a backup the open map came from stays.
     void BeforeMapSave(const char* command) noexcept;
     // File > Open Map Backup..., on the frame's thread.
     void OpenDialog(HWND frame);
