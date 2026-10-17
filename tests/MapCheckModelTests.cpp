@@ -436,6 +436,7 @@ int main()
         auto onShelf = FindCheck(shelved, "Over a mesh that does not block");
         assert(onShelf->severity == Severity::Note && onShelf->actors == std::vector<std::string>{"MyLevel.Crate20"});
         assert(onShelf->message.find("Crate20 is 20 units above") == 0 && onShelf->message.find("press End") == std::string::npos);
+        assert(onShelf->message.find("End may drop it through") != std::string::npos);
 
         // A line check that failed stops the scan: the rows found so far, and a note.
         auto stopped = scene;
@@ -451,8 +452,29 @@ int main()
 
         // Gaps under 10 keep a decimal; 1 is singular.
         auto close = scene;
-        close.floors.gaps = {{"MyLevel.Mat", "Mat", 1.04, {0, 0, 1}, {10, 10, 2}}};
+        close.floors.gaps = {{"MyLevel.Mat", "Mat", 1.04, {0, 0, 1.04}, {10, 10, 12}}};
         assert(FindCheck(Analyse(close, Settings{}), "Floating mesh")->message.find("Mat floats 1 unit above") == 0);
+
+        // A flat mesh (under 2 units high: a decal, a puddle) lifted 2 units or
+        // less is left out, even with the widest limits; higher, or a thicker
+        // mesh, is listed.
+        auto flat = scene;
+        flat.floors.gaps = {
+            {"MyLevel.Puddle", "Puddle", 1.5, {0, 0, 1.5}, {40, 40, 1.5}},
+            {"MyLevel.Sign", "Sign", 2, {0, 50, 2}, {40, 60, 3.9}},
+            {"MyLevel.Stain", "Stain", 0.6, {0, 70, 0.6}, {40, 80, 1}},
+            {"MyLevel.Sheet", "Sheet", 2.5, {50, 0, 2.5}, {90, 40, 3.5}},
+            {"MyLevel.Plank", "Plank", 1.5, {50, 50, 1.5}, {90, 60, 3.5}},
+        };
+        Settings widest;
+        widest.floatMinGap = 0.5;
+        for (const auto& settings : {Settings{}, widest})
+        {
+            const auto flats = Analyse(flat, settings);
+            assert(CountCheck(flats, "Floating mesh") == 2);
+            assert(FindCheck(flats, "Floating mesh")->actors[0] == "MyLevel.Sheet" && FindCheck(flats, "Floating mesh", 1)->actors[0] == "MyLevel.Plank");
+            assert(FindCheck(flats, "Floating meshes")->actors == (std::vector<std::string>{"MyLevel.Sheet", "MyLevel.Plank"}));
+        }
 
         // Wider limits, and FloatingMaxGap 0 turns the check off.
         Settings wide;

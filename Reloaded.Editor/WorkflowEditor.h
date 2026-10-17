@@ -139,7 +139,7 @@ namespace Workflow::Editor
     MapCheck::Scene MapCheckScene(const MapCheck::Settings& settings);
     // Map Check's floating meshes: how far Drop to Floor would move each
     // visible static mesh, tracing at most maxGap below it, and the boxes of
-    // the meshes that do not block (the trace cannot see them).
+    // the meshes that do not block (the trace may not see them).
     MapCheck::FloorScan MapCheckFloorGaps(double maxGap);
     // Selects the actors (framing them when asked) and the BSP surfaces of a row.
     size_t SelectMapCheckRow(const std::vector<std::string>& actors, const std::vector<int>& surfaces, bool frame);

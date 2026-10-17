@@ -154,7 +154,7 @@ namespace MapCheck
     };
 
     // The editor's drop traces for every visible static mesh, and the boxes of
-    // the meshes those traces cannot see (not colliding or not blocking).
+    // the meshes those traces may not see (not colliding or not blocking).
     struct FloorScan
     {
         bool ran = false;
@@ -852,12 +852,16 @@ namespace MapCheck
             return std::to_string(tenths / 10) + "." + std::to_string(tenths % 10);
         }
 
+        // A flat mesh (a decal, a puddle, a floor sign) under this high is
+        // often lifted up to kFlatMeshLift on purpose, against z-fighting.
+        constexpr double kFlatMeshHeight = 2, kFlatMeshLift = 2;
+
         // Static meshes a little above the surface below them: left behind when
-        // the floor or the mesh under them moved. The trace cannot see a mesh
+        // the floor or the mesh under them moved. The trace may not see a mesh
         // that does not block, so one whose box tops out at the mesh's bottom
         // may be what it rests on: not floating. One inside such a box (a
         // shelf, a cart) may rest on a surface within it, and Drop to Floor
-        // would drop it through, so it is listed apart without the End advice.
+        // may drop it through, so it is listed apart without the End advice.
         inline void CheckProps(const Scene& scene, const Settings& settings, Report& report)
         {
             const auto& floors = scene.floors;
@@ -866,6 +870,7 @@ namespace MapCheck
             for (const auto& gap : floors.gaps)
             {
                 if (gap.gap < settings.floatMinGap || gap.gap > settings.floatMaxGap) continue;
+                if (gap.hi[2] - gap.lo[2] < kFlatMeshHeight && gap.gap <= kFlatMeshLift) continue;
                 const double bottom = gap.lo[2];
                 bool resting = false, within = false;
                 for (const auto& [lo, hi] : floors.soft)
@@ -897,7 +902,7 @@ namespace MapCheck
             {
                 auto p = Make(Severity::Note, kProps, "Over a mesh that does not block",
                               gap->name + " is " + units(gap->gap) + " above the surface below it, inside the box of a static mesh that does not block (a shelf, or a mesh "
-                              "with its collision off). If it rests on that mesh, leave it: End would drop it through.");
+                              "with its collision off). If it rests on that mesh, leave it: End may drop it through.");
                 p.actors = {gap->path};
                 report.problems.push_back(std::move(p));
             }
