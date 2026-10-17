@@ -163,6 +163,17 @@ camera pose that frames an assembly's actor locations (yaw kept, a fixed
 three-quarter pitch, far enough for the narrower field of view, a minimum
 distance for one actor, bad FOV or bounds handled).
 
+`WindowPlacementModelTests.cpp` covers where RE+ windows reopen: the
+`[WindowPlacement]` entry written and read back (negative places, maximised,
+blanks around the numbers; four or six numbers, a maximised flag other than 0
+or 1, no size, letters, decimals, an empty field and an out-of-range number
+refused), sizes kept between a usable minimum (or the window's own, when
+larger) and 16384, and whether the place can be used: enough of the title bar
+on one monitor's work area to drag it (maximised edges just off it, a window
+mostly off either side, a few pixels above the top), not a sliver, not under
+the taskbar or above the monitor, not on an unplugged second monitor, and no
+overflow far beyond any monitor.
+
 `ViewBookmarkModelTests.cpp` covers camera bookmarks, which are Working Views
 with a key: slots 1 to 9 only (0, 10, negative, text and fractional slots are
 not keys), finding a slot's entry among ordinary views, a new bookmark holding

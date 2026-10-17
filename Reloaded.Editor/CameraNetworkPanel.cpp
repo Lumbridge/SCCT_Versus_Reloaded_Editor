@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "CameraNetworkPanel.h"
+#include "WindowPlacement.h"
 #include "CameraNetworkModel.h"
 #include "WorkflowEditor.h"
 #include <commctrl.h>
@@ -237,7 +238,7 @@ LRESULT CALLBACK Proc(HWND w,UINT message,WPARAM wp,LPARAM lp)
             else if(s->revision!=Editor::ContentRevision())Set(*s,Status,"The map has changed. Refresh to show current camera settings.");return 0;
         }
         if(message==WM_CLOSE){try{Restore(*s);}catch(...){}DestroyWindow(w);return 0;}
-        if(message==WM_NCDESTROY){KillTimer(w,1);panel=nullptr;DeleteObject(s->font);SetWindowLongPtr(w,GWLP_USERDATA,0);delete s;return DefWindowProcA(w,message,wp,lp);}
+        if(message==WM_NCDESTROY){WindowPlacement::Remember(w,"CameraNetworks");KillTimer(w,1);panel=nullptr;DeleteObject(s->font);SetWindowLongPtr(w,GWLP_USERDATA,0);delete s;return DefWindowProcA(w,message,wp,lp);}
     }
     catch(const std::exception& e){Set(*s,Status,e.what());}
     return DefWindowProcA(w,message,wp,lp);
@@ -253,6 +254,6 @@ void Open(HWND owner)
     state->level=Editor::LevelIdentity();state->generation=Editor::MapGeneration();
     state->dpi=owner?GetDpiForWindow(owner):96;
     panel=CreateWindowExA(WS_EX_CONTROLPARENT,wc.lpszClassName,"SCamNetwork Manager",WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,Px(*state,1000),Px(*state,730),owner,nullptr,wc.hInstance,state);
-    if(panel)ShowWindow(panel,SW_SHOW);
+    if(panel){WindowPlacement::Restore(panel,"CameraNetworks");ShowWindow(panel,SW_SHOW);}
 }
 }

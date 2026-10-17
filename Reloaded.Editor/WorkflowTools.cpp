@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "WorkflowTools.h"
+#include "WindowPlacement.h"
 #include "CharacterSkinsWindow.h"
 #include "CharacterSkinPresetsWindow.h"
 #include "EmitterLibraryWindow.h"
@@ -67,6 +68,12 @@ namespace
     enum Button { Refresh=200,Primary,Secondary,Third,Fourth,Fifth,Sixth,Seventh,Eighth,Ninth,Tenth,Eleventh,Twelfth };
     constexpr int UpdateThumbnail=Twelfth; // List right-click menu only.
     enum class Kind { Assets,Connections,Views,Assemblies };
+    // [WindowPlacement] keys, one per kind of window: Working Views opens
+    // where a Working Views window was last closed.
+    const char* PlacementKey(Kind kind)
+    {
+        return kind==Kind::Assets?"FindUsages":kind==Kind::Connections?"GameplayConnections":kind==Kind::Views?"WorkingViews":"ActorAssemblies";
+    }
     Json ObjectiveOwner(const std::string& path = "")
     {
         auto actors=path.empty()?Editor::Actors(true):Editor::Actors();
@@ -1197,7 +1204,7 @@ namespace
             else MessageBoxA(window,e.what(),"RE+ Tools",MB_OK|MB_ICONERROR);
             return message==WM_CREATE?-1:0;
         }
-        if(message==WM_NCDESTROY) {KillTimer(window,1);windows.erase(std::remove(windows.begin(),windows.end(),s),windows.end());SetWindowLongPtr(window,GWLP_USERDATA,0);delete s;}
+        if(message==WM_NCDESTROY) {WindowPlacement::Remember(window,PlacementKey(s->kind));KillTimer(window,1);windows.erase(std::remove(windows.begin(),windows.end(),s),windows.end());SetWindowLongPtr(window,GWLP_USERDATA,0);delete s;}
         return DefWindowProcA(window,message,w,l);
     }
     HWND Open(Kind kind,HWND owner,std::string source={},bool mesh=false)
@@ -1207,7 +1214,7 @@ namespace
         auto s=new State{kind}; s->source=std::move(source);s->mesh=mesh; windows.push_back(s);
         const char* title=kind==Kind::Assets?"Asset Find and Replace":kind==Kind::Connections?"Gameplay Connections":kind==Kind::Views?"Working Views":"Actor Assemblies";
         HWND window=CreateWindowExA(WS_EX_CONTROLPARENT,wc.lpszClassName,title,WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,1000,650,owner,nullptr,wc.hInstance,s);
-        if(window) ShowWindow(window,SW_SHOW); return window;
+        if(window) {WindowPlacement::Restore(window,PlacementKey(kind));ShowWindow(window,SW_SHOW);} return window;
     }
     void __fastcall VertexClickHook(void* self,void*,void* cause,void* hit)
     {

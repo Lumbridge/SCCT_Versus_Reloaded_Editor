@@ -181,6 +181,8 @@
     <ClInclude Include="MapCheckModel.h" />
     <ClInclude Include="LightShadowMap.h" />
     <ClInclude Include="LightShadowModel.h" />
+    <ClInclude Include="WindowPlacement.h" />
+    <ClInclude Include="WindowPlacementModel.h" />
     <ClInclude Include="BudgetWindow.h" />
     <ClInclude Include="RenderBudget.h" />
     <ClInclude Include="RenderBudgetModel.h" />
@@ -329,6 +331,7 @@
     <ClCompile Include="LightingBudget.cpp" />
     <ClCompile Include="MapCheck.cpp" />
     <ClCompile Include="LightShadowMap.cpp" />
+    <ClCompile Include="WindowPlacement.cpp" />
     <ClCompile Include="RenderBudget.cpp" />
     <ClCompile Include="MinimapWindow.cpp" />
     <ClCompile Include="LevelSnapshot.cpp" />

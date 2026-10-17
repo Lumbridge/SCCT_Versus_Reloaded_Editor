@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "EmitterLibraryWindow.h"
+#include "WindowPlacement.h"
 #include "EmitterEditModel.h"
 #include "EmitterLibraryModel.h"
 #include "EmitterPreview.h"
@@ -786,9 +787,9 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
         }
         if(message==WM_ERASEBKGND){RECT r{};GetClientRect(w,&r);FillRect(reinterpret_cast<HDC>(wp),&r,s->background);return 1;}
         // Closing hides the window and empties the preview; the editor destroys it on exit.
-        if(message==WM_CLOSE){if(!EndEdit(*s))return 0;try{WriteDocument(Editor::Directory()/"emitter-library-window.json",{{"version",1},{"left",s->left},{"right",s->right},{"loopMin",s->loopMin},{"loopMax",s->loopMax}});}catch(...){}EmitterPreview::Clear();ShowWindow(w,SW_HIDE);return 0;}
+        if(message==WM_CLOSE){if(!EndEdit(*s))return 0;try{WriteDocument(Editor::Directory()/"emitter-library-window.json",{{"version",1},{"left",s->left},{"right",s->right},{"loopMin",s->loopMin},{"loopMax",s->loopMax}});}catch(...){}EmitterPreview::Clear();WindowPlacement::Remember(w,"EmitterLibrary");ShowWindow(w,SW_HIDE);return 0;}
         // Children are destroyed after this: delete the preview viewport first.
-        if(message==WM_DESTROY){KillTimer(w,1);EmitterPreview::Detach();return 0;}
+        if(message==WM_DESTROY){WindowPlacement::Remember(w,"EmitterLibrary");KillTimer(w,1);EmitterPreview::Detach();return 0;}
         if(message==WM_NCDESTROY){window=nullptr;DeleteObject(s->font);DeleteObject(s->heading);DeleteObject(s->background);DeleteObject(s->panel);SetWindowLongPtr(w,GWLP_USERDATA,0);delete s;return DefWindowProcA(w,message,wp,lp);}
     }
     catch(const std::exception& e)
@@ -815,6 +816,7 @@ void Open(HWND owner)
         const double min=prefs.value("loopMin",5.0),max=prefs.value("loopMax",10.0);EmitterLibrary::CheckLoopWait(min,max);s->loopMin=min;s->loopMax=max;}catch(...){}
     window=CreateWindowExA(WS_EX_CONTROLPARENT,wc.lpszClassName,"Emitter Library",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1240,760,owner,nullptr,wc.hInstance,s);
     if(!window){delete s;throw std::runtime_error("The Emitter Library window could not be created.");}
+    WindowPlacement::Restore(window,"EmitterLibrary");
     ShowWindow(window,SW_SHOW);
     if(!EmitterPreview::Active())ShowEntry(*s);
 }

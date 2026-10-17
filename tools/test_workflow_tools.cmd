@@ -22,6 +22,10 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\EntryThumbnailModelTests.cpp /
 if errorlevel 1 goto failed
 "%TEMP%\EntryThumbnailModelTests.exe"
 if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\WindowPlacementModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\WindowPlacementModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\WindowPlacementModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\ViewBookmarkModelTests.cpp Reloaded.Editor\WorkflowModel.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\ViewBookmarkModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\ViewBookmarkModelTests.exe"

@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "WorkflowGraph.h"
+#include "WindowPlacement.h"
 #include "WorkflowGraphModel.h"
 #include "WorkflowEditor.h"
 #include "WorkflowTools.h"
@@ -274,7 +275,7 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
         }
         if(message==WM_CLOSE){DestroyWindow(w);return 0;}
     }catch(const std::exception& e){if(s->status)SetWindowTextA(s->status,e.what());if(message==WM_CREATE)return -1;}
-    if(message==WM_NCDESTROY){KillTimer(w,1);if(s->tooltip)DestroyWindow(s->tooltip);SetWindowLongPtr(w,GWLP_USERDATA,0);graphWindow=nullptr;delete s;}
+    if(message==WM_NCDESTROY){WindowPlacement::Remember(w,"ConnectionGraph");KillTimer(w,1);if(s->tooltip)DestroyWindow(s->tooltip);SetWindowLongPtr(w,GWLP_USERDATA,0);graphWindow=nullptr;delete s;}
     return DefWindowProcA(w,message,wp,lp);
 }
 }
@@ -284,6 +285,6 @@ void Open(HWND owner)
     WNDCLASSA canvas{};canvas.lpfnWndProc=CanvasProc;canvas.hInstance=GetModuleHandle(nullptr);canvas.lpszClassName="ReloadedConnectionCanvas";canvas.style=CS_DBLCLKS;canvas.hCursor=LoadCursor(nullptr,IDC_ARROW);RegisterClassA(&canvas);
     WNDCLASSA wc{};wc.lpfnWndProc=WindowProc;wc.hInstance=canvas.hInstance;wc.lpszClassName="ReloadedConnectionGraph";wc.hCursor=canvas.hCursor;wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1);RegisterClassA(&wc);
     auto state=new State;graphWindow=CreateWindowExA(WS_EX_CONTROLPARENT,wc.lpszClassName,"Gameplay Connection Graph",WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,1200,800,owner,nullptr,wc.hInstance,state);
-    if(graphWindow)ShowWindow(graphWindow,SW_SHOW);
+    if(graphWindow){WindowPlacement::Restore(graphWindow,"ConnectionGraph");ShowWindow(graphWindow,SW_SHOW);}
 }
 }

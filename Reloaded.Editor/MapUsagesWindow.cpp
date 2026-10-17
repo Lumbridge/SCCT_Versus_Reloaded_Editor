@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "MapUsagesWindow.h"
+#include "WindowPlacement.h"
 #include "MapUsages.h"
 #include "EditorExtras.h"
 #include "WorkflowEditor.h"
@@ -311,6 +312,7 @@ namespace
         }
         if (message == WM_NCDESTROY)
         {
+            WindowPlacement::Remember(window, "FindUsagesInAllMaps");
             KillTimer(window, kTimer);
             if (s->job) s->job->cancel = true;
             if (s->worker.joinable()) s->worker.join(); // At most one map's read.
@@ -337,6 +339,7 @@ void Open(HWND owner, const std::string& object)
         openWindow = CreateWindowExA(WS_EX_CONTROLPARENT, wc.lpszClassName, "Find Usages in All Maps", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 900, 560,
                                      owner, nullptr, wc.hInstance, state);
         if (!openWindow) throw std::runtime_error("Could not open Find Usages in All Maps."); // WM_NCDESTROY freed the state.
+        WindowPlacement::Restore(openWindow, "FindUsagesInAllMaps");
         ShowWindow(openWindow, SW_SHOW);
     }
     else

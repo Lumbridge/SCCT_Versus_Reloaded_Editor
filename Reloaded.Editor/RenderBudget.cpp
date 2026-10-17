@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "RenderBudget.h"
+#include "WindowPlacement.h"
 #include "RenderBudgetModel.h"
 #include "BudgetWindow.h"
 #include "WorkflowEditor.h"
@@ -401,6 +402,7 @@ LRESULT CALLBACK BudgetProc(HWND window, UINT message, WPARAM w, LPARAM l)
             DestroyWindow(window);
             return 0;
         case WM_DESTROY:
+            WindowPlacement::Remember(window, "RenderBudget");
             budget.window = nullptr;
             return 0;
         }
@@ -430,6 +432,7 @@ void Show(HWND owner)
     budget.window = CreateWindowExA(WS_EX_TOOLWINDOW, "ReloadedRenderBudget", kTitle, WS_OVERLAPPEDWINDOW & ~WS_MINIMIZEBOX,
                                     CW_USEDEFAULT, CW_USEDEFAULT, 1080, 680, owner, nullptr, GetModuleHandle(nullptr), nullptr);
     if (!budget.window) throw std::runtime_error("Could not open the Render Budget window.");
+    WindowPlacement::Restore(budget.window, "RenderBudget");
     Fill();
     ShowWindow(budget.window, SW_SHOW);
 }
