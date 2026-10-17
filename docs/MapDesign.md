@@ -713,7 +713,8 @@ the click is in (a light at that room's ceiling). Every room is drawn in these
 views, but only one that the Depth position passes through counts. Where the
 click is in no room, the clicked height stands in for the floor, so a light goes
 160 units above it and a player start 48. Lasers, cameras and motion sensors are
-aimed across the floor with two clicks, so they are placed in the top view.
+aimed across the floor with two clicks, so they are placed in the top view;
+the front and side views grey them out of **Security device here**.
 
 ## Level, environment and map settings
 

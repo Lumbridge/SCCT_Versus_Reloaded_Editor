@@ -4731,8 +4731,11 @@ void DesignContextMenu(DesignState& s,POINT at)
     item(DCtxPlayHere,"Playtest from here...");
     HMENU devices=CreatePopupMenu();
     const auto& catalogue=Security::Devices();
+    // Two-click devices are aimed across the floor, which only the top view
+    // shows, so the elevations grey them rather than start a placement that
+    // every click would refuse.
     for(size_t i=0;i<catalogue.size() && DCtxDeviceFirst+static_cast<int>(i)<=DCtxDeviceLast;++i)
-        AppendMenuA(devices,MF_STRING,DCtxDeviceFirst+static_cast<int>(i),catalogue[i].kind);
+        AppendMenuA(devices,MF_STRING|(s.plane!=0 && catalogue[i].clicks==2?MF_GRAYED:0),DCtxDeviceFirst+static_cast<int>(i),catalogue[i].kind);
     AppendMenuA(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(devices),"Security device here");
     separator();
     item(DFit,"Fit map / preview");
