@@ -479,7 +479,7 @@ bool SecurityHandleAt(DesignState& s,double x,double y,Json& device,bool& aim)
     {
         if(!Security::Find(actor.value("kind",std::string())))continue;
         const Vector position=actor.at("position");
-        if(!DesignOnFloor(s,position[2],position[2]))continue;
+        if(!DesignPointShown(s,actor) || !DesignOnFloor(s,position[2],position[2]))continue;
         Gdiplus::PointF handle;
         if(SecurityAimHandle(s,actor,position,actor.at("rotation").get<Rotation>(),actor.value("length",300.0),handle))
         {
@@ -505,7 +505,7 @@ void SecurityPaint(DesignState& s,Gdiplus::Graphics& g,const std::function<void(
     for(const auto& stored:s.securityActors)
     {
         Json actor=stored;
-        if(!DesignTypeShown(s,actor.at("path").get<std::string>()))continue;
+        if(!DesignPointShown(s,actor))continue;
         // A device being dragged is drawn where the cursor has it.
         if(dragging && actor.at("path")==s.drag.device.at("path"))
         {

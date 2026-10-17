@@ -95,6 +95,9 @@ struct DesignDrag
     Json device;
     Pose devicePose{};
     double deviceLength=0;
+    // The workspace before a reference or route point was dragged: the drag
+    // edits the panel's copy, so this is what Undo and a cancel go back to.
+    Json before;
 };
 struct DesignState
 {
@@ -577,6 +580,13 @@ bool DesignTypeShown(DesignState& s,const std::string& path)
     DesignTallyTypes(s);
     const auto found=s.typeOf.find(path);
     return found==s.typeOf.end() || s.hiddenTypes.count(found->second)==0;
+}
+// A light, device or game actor from those lists: hidden in the editor or
+// switched off by its chip, it is neither drawn nor clicked. The floor is
+// each caller's own test.
+bool DesignPointShown(DesignState& s,const Json& actor)
+{
+    return !actor.value("hidden",false) && DesignTypeShown(s,actor.at("path").get_ref<const std::string&>());
 }
 bool DesignShows(DesignState& s,const Json& actor)
 {
@@ -1479,7 +1489,7 @@ void DesignPaintInto(DesignState& s,Gdiplus::Graphics& g,const RECT& rect)
         Pen edge(Color(200,60,80,100),1);
         for(int i=0;i<3;++i)
         {
-            const float w=i==1?48:40;
+            const float w=i==1?48.f:40.f;
             const RectF box(x,28,w,18);
             SolidBrush fill(s.plane==i?Color(230,0,120,200):Color(170,255,255,255));
             SolidBrush text(s.plane==i?Color(255,255,255,255):Color(255,20,30,40));
@@ -2880,7 +2890,7 @@ void DesignBoxSelect(DesignState& s,const DesignDrag& drag,bool add)
     };
     Json identities=Json::array();
     std::set<std::string> chosen;
-    auto push=[&](const Json& a){if(chosen.insert(a.at("path").get<std::string>()).second)identities.push_back(a);};
+    auto push=[&](const Json& a){if(!chosen.insert(a.at("path").get<std::string>()).second)return false;identities.push_back(a);return true;};
     if(add)for(auto& actor:s.scene)if(actor.at("selected").get<bool>())push(actor);
     std::set<std::string> hits,members;
     for(auto& actor:s.scene)
@@ -2905,14 +2915,16 @@ void DesignBoxSelect(DesignState& s,const DesignDrag& drag,bool add)
     size_t brushes=0;
     for(auto& actor:s.scene)
         if(hits.count(actor.at("path").get<std::string>()) && !members.count(actor.at("path").get<std::string>())){push(actor);++brushes;}
+    // Lights, devices and game actors are scene actors as well: one the loops
+    // above already took is not counted again.
     size_t others=0;
     for(const auto* list:{&s.securityActors,&s.lights,&s.objectives})
         for(const auto& actor:*list)
         {
             const Vector position=actor.at("position");
-            if(!DesignOnFloor(s,position[2],position[2]) || !inside(DesignScreen(s,position)))continue;
+            if(!DesignPointShown(s,actor) || !DesignOnFloor(s,position[2],position[2]) || !inside(DesignScreen(s,position)))continue;
             if(DesignLockedPath(s,actor.at("path").get<std::string>()))continue;
-            push(actor);++others;
+            if(push(actor))++others;
         }
     Editor::Select(identities,false);
     DesignCatchUp(s);
@@ -3686,12 +3698,14 @@ void DesignBeginDrag(DesignState& s,POINT p,const Vector& world)
         s.drag.kind=DesignDrag::Kind::RoutePoint;
         s.drag.index=index;
         s.drag.point=point;
+        s.drag.before=DesignData(s);
         return;
     }
     if(DesignGuideAt(s,p.x,p.y,index))
     {
         s.drag.kind=DesignDrag::Kind::Guide;
         s.drag.index=index;
+        s.drag.before=DesignData(s);
         return;
     }
     Json device;bool aim=false;
@@ -3944,7 +3958,10 @@ void DesignEndDrag(DesignState& s,bool add)
             else DesignEditAnnotation(s,drag.index);
             return;
         }
+        // Saved against the workspace as it was before the drag, so the move
+        // is one workspace Undo step.
         Json data=s.data;
+        s.data=drag.before;
         DesignSave(s,data);
         if(drag.kind==DesignDrag::Kind::Guide)
             DesignStatus(s,"Moved "+data["guides"][drag.index].value("name",std::string("the reference"))+". Double-click it to rename or resize it.");
@@ -4088,7 +4105,7 @@ Json DesignDeviceAt(DesignState& s,double x,double y)
     for(const auto& actor:s.securityActors)
     {
         const Vector position=actor.at("position");
-        if(!DesignOnFloor(s,position[2],position[2]))continue;
+        if(!DesignPointShown(s,actor) || !DesignOnFloor(s,position[2],position[2]))continue;
         const double distance=DesignPointDistance(DesignScreen(s,position),x,y);
         if(distance<best){best=distance;found=actor;}
     }
@@ -4117,17 +4134,16 @@ void DesignBlockoutAt(DesignState& s,const std::string& kind,const Vector& at)
 }
 // Right-click: first what applies to the thing under the cursor, then what can
 // start at that point.
-// Deletes a piece's brushes through the editor and drops it from the library.
-void DesignDeletePiece(DesignState& s,const Json& piece)
+// Deletes a piece's brushes through the editor. The library keeps the piece,
+// as it keeps one an edit replaced: Undo brings the brushes back, and they
+// find their piece again by path. The piece is a copy, because the one being
+// edited arrives as s.previous, which deactivating clears.
+void DesignDeletePiece(DesignState& s,Json piece)
 {
-    Json data=DesignData(s);
     Editor::Select(piece.at("members"),false);
     if(!Editor::Exec("ACTOR DELETE"))throw std::runtime_error("The editor refused to delete the brushes.");
-    auto& pieces=data["pieces"];
-    pieces.erase(std::remove(pieces.begin(),pieces.end(),piece),pieces.end());
     if(s.previous==piece)DesignDeactivate(s);
     DesignRefresh(s);
-    DesignSave(s,data,false);
     InvalidateRect(s.canvas,nullptr,FALSE);
     DesignStatus(s,"Deleted "+piece.at("spec").value("name",std::string("the piece"))+" and its brushes. Undo brings them back; rebuild geometry afterwards.");
 }
@@ -4145,18 +4161,8 @@ void DesignDeleteSelection(DesignState& s)
     for(const auto& actor:s.scene)if(actor.value("selected",false))selected.push_back(actor);
     if(selected.empty())throw std::runtime_error("Nothing selected: click a piece, light, device, reference or route point first.");
     if(!Editor::Exec("ACTOR DELETE"))throw std::runtime_error("The editor refused to delete the selection.");
-    Json data=DesignData(s);
-    auto& pieces=data["pieces"];
-    const size_t before=pieces.size();
-    pieces.erase(std::remove_if(pieces.begin(),pieces.end(),[&](const Json& piece)
-    {
-        for(auto& member:piece.at("members"))
-            for(auto& actor:selected)
-                if(member.at("path")==actor.at("path"))return true;
-        return false;
-    }),pieces.end());
+    // The pieces stay in the library, as DesignDeletePiece leaves them.
     DesignRefresh(s);
-    if(pieces.size()!=before)DesignSave(s,data,false);
     InvalidateRect(s.canvas,nullptr,FALSE);
     DesignStatus(s,"Deleted "+std::to_string(selected.size())+" selected actor(s). Undo brings them back; rebuild geometry if brushes went.");
 }
@@ -5023,8 +5029,10 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             if(s->drag.kind==DesignDrag::Kind::None)DesignCatchUp(*s);
             if(!s->mode.empty() || s->drag.kind!=DesignDrag::Kind::None)
             {
-                // Right-click ends whatever is being placed or dragged.
+                // Right-click ends whatever is being placed or dragged. A
+                // reference or route point goes back to where it was.
                 if(s->mode=="Element")ElementCancel(*s);
+                if((s->drag.kind==DesignDrag::Kind::Guide || s->drag.kind==DesignDrag::Kind::RoutePoint) && !s->drag.before.is_null())s->data=s->drag.before;
                 s->mode.clear();s->points=Json::array();s->drag={};s->securityFirstSet=false;
                 InvalidateRect(window,nullptr,FALSE);
                 DesignStatus(*s,"Cancelled.");
