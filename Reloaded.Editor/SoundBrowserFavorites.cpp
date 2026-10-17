@@ -1508,7 +1508,8 @@ static LRESULT CALLBACK SBF_BrowserSubclassProc(HWND window, UINT message, WPARA
 void SoundBrowserFavorites::Initialize()
 {
     // Searches match the English for French names too: "drop" finds goutte_01.
-    SoundFavorites::SearchText() = [](const std::string& path) {
+    // The Static Mesh Browser's search shares this text.
+    Favorites::SearchText() = [](const std::string& path) {
         std::string text = path;
         const auto parts = SoundFavorites::Split(path);
         for (const auto* part : {&parts.package, &parts.group, &parts.name})

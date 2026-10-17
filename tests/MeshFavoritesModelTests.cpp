@@ -80,6 +80,42 @@ int main()
         for (const auto& row : Rows(favorites, "", Sort::Name))
             Check(row.favorite < favorites.size() && row.label.find(Split(favorites[row.favorite].path).name) == 0, "row index");
 
+        // Search rows over every loaded mesh, with a gloss standing in for
+        // the editor's English for French names.
+        const std::vector<std::string> meshes = {
+            "Ind03_Props.Portes.Porte_Metal01", "Generic_Props.Crates.Crate01", "ind03_props.Portes.Porte_Bois01",
+            "Ind03_Props.Tuyaux.Tuyau01", "Ind03_Props.Portes.Garage.Porte_Garage", "Lobby.MyLevel.Porte_Metal02"};
+        SearchText() = [](const std::string& path) {
+            std::string text = path;
+            if (path.find("Porte") != std::string::npos) text += " door";
+            if (path.find("Metal") != std::string::npos) text += " metal";
+            if (path.find("Tuyau") != std::string::npos) text += " pipe";
+            return text;
+        };
+        Check(Labels(SearchRows(meshes, "", "door metal", Sort::Package)) == std::vector<std::string>{
+                  "Ind03_Props.Portes.Porte_Metal01", "Lobby.MyLevel.Porte_Metal02"},
+              "English words, every package, full paths");
+        Check(Labels(SearchRows(meshes, "", "metal door", Sort::Name)) == std::vector<std::string>{
+                  "Porte_Metal01  (Ind03_Props.Portes)", "Porte_Metal02  (Lobby.MyLevel)"},
+              "by name");
+        auto search = SearchRows(meshes, "", "PIPE", Sort::Package);
+        Check(search.size() == 1 && meshes[search[0].favorite] == "Ind03_Props.Tuyaux.Tuyau01", "row points at its mesh");
+        Check(SearchRows(meshes, "", "door wood", Sort::Package).empty(), "no match, no rows");
+
+        // One package, whatever its case, then one group and those inside it.
+        Check(Labels(SearchRows(meshes, "IND03_PROPS", "door", Sort::Package)) == std::vector<std::string>{
+                  "ind03_props.Portes.Porte_Bois01", "Ind03_Props.Portes.Porte_Metal01", "Ind03_Props.Portes.Garage.Porte_Garage"},
+              "one package");
+        Check(SearchRows(meshes, "Ind03_Props", "door", Sort::Package, "portes").size() == 3, "a group holds the groups inside it");
+        Check(Labels(SearchRows(meshes, "Ind03_Props", "door", Sort::Package, "Portes.Garage")) == std::vector<std::string>{
+                  "Ind03_Props.Portes.Garage.Porte_Garage"},
+              "a nested group");
+        Check(SearchRows(meshes, "Ind03_Props", "", Sort::Package, "Port").empty(), "a group name is matched whole");
+        Check(SearchRows(meshes, "Ind03_Props", "", Sort::Package, "Tuyaux").size() == 1, "blank search, one group");
+        Check(SearchRows(meshes, "Missing", "door", Sort::Package).empty(), "package with no meshes");
+        SearchText() = nullptr;
+        Check(SearchRows(meshes, "", "door", Sort::Package).empty(), "no English without the gloss");
+
         // Sort keys round-trip, and an unknown key falls back to package order.
         for (Sort s : kSorts) Check(SortFromKey(SortKey(s)) == s && std::string(SortLabel(s)).rfind("Sort: ", 0) == 0, "sort key");
         Check(SortFromKey("newest") == Sort::Newest && SortFromKey("") == Sort::Package && SortFromKey("bogus") == Sort::Package, "sort fallback");

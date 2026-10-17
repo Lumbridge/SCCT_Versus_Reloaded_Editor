@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "StaticMeshBrowserFavorites.h"
 #include "MeshFavoritesModel.h"
+#include "AssetNameGloss.h"
 #include "WorkflowTools.h"
 #include "MapUsagesWindow.h"
 #include "FavoritesWindow.h"
@@ -24,6 +25,7 @@
 #define GOBJECTS_NUM_PTR               0x11697B74u
 #define GNAMES_DATA_PTR                0x1169CFBCu
 #define GNAMES_NUM_PTR                 0x1169CFC0u
+#define GOBJ_BEGIN_LOAD_COUNT_PTR      0x11697B10u // UObject::GObjBeginLoadCount
 #define USTATICMESH_CLASS              0x11820B68u
 
 #define SM_NATIVE_REFRESH_LIST         0x10E86A40u
@@ -50,9 +52,14 @@
 #define IDC_SM_FAVORITES_FILTER        40910
 #define IDC_SM_FAVORITES_PACKAGE       40914
 #define IDC_SM_FAVORITES_SORT          40915
+// The search row under the list (reserved block 41015-41029).
+#define IDC_SM_SEARCH_LABEL            41015
+#define IDC_SM_SEARCH                  41016
+#define IDC_SM_SEARCH_ALL              41017
 #define WM_SM_ATTACH_FAVORITES         (WM_APP + 0x5A)
 #define WM_SM_REFRESH_FAVORITES        (WM_APP + 0x5B)
 #define TIMER_SM_FAVORITES_REFRESH     0x5AF1
+#define TIMER_SM_SEARCH                0x5AF4
 
 static constexpr const char* kFavoritesIniSection =
     "StaticMeshBrowserFavorites";
@@ -69,14 +76,28 @@ static size_t g_LastResolvedCount = 0;
 // Packages already loaded (or found missing) for unloaded favourites; cleared
 // when favourites drop out of memory, as they do when another map is opened.
 static std::unordered_set<std::string> g_AttemptedPackages;
-// The list's rows, by item index, while Favorites is shown.
-static std::vector<MeshFavorites::Row> g_Rows;
+// Every loaded mesh, for the search; rebuilt when the object count changes.
+static std::vector<std::string> g_MeshPaths;
+static std::vector<void*> g_MeshObjects;
+static int g_ScannedObjectCount = -1;
+// The list's rows, by item index, while Favorites or a search is shown (not
+// ListRow, which names the Sound Browser's rows).
+struct MeshRow
+{
+    std::string path;
+    void* mesh = nullptr; // nullptr: not loaded
+};
+static std::vector<MeshRow> g_Rows;
 static std::string g_PackageFilter; // empty: every package
 static MeshFavorites::Sort g_Sort = MeshFavorites::Sort::Package;
-// The favourite a right-click on the list was over, while its menu is open.
+static std::string g_Query;
+static bool g_AllPackages = true;
+// The mesh a right-click on Favorites or search rows was over, while its
+// menu is open.
 static std::string g_ContextPath;
 static std::string g_IniPath;
 static volatile LONG g_FavoritesActive = FALSE;
+static bool g_CustomView = false; // the list currently holds Reloaded rows
 static bool g_FeatureSupported = false;
 static int g_LastGObjectsCount = -1;
 
@@ -91,6 +112,10 @@ static HWND g_FilterButton = nullptr;
 static HWND g_PackageFilterCombo = nullptr;
 static HWND g_SortCombo = nullptr;
 static HWND g_WindowButton = nullptr; // opens the Favorites window
+static HWND g_SearchLabel = nullptr;
+static HWND g_SearchEdit = nullptr;
+static HWND g_SearchAllCheck = nullptr;
+static RECT g_ListRect = {}; // the list as the search row last left it
 static bool g_PackageWasVisible = true;
 static bool g_GroupWasVisible = true;
 static bool g_GroupAllWasVisible = true;
@@ -304,6 +329,21 @@ static bool SM_ReadGObjectAt(void** data, INT index, void** object)
     }
 }
 
+// True while a package or map is being loaded. Its progress updates pump
+// messages, so the browser's timer can run in the middle of a load; the search
+// does not scan the objects then.
+static bool SM_Loading()
+{
+    __try
+    {
+        return *reinterpret_cast<const INT*>(GOBJ_BEGIN_LOAD_COUNT_PTR) > 0;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return true;
+    }
+}
+
 static void* SM_GetCurrentMesh()
 {
     __try
@@ -372,6 +412,7 @@ static void SM_LoadView()
     GetPrivateProfileStringA(kViewIniSection, "Package", "", value,
                              static_cast<DWORD>(std::size(value)), SM_GetIniPath().c_str());
     g_PackageFilter = value;
+    g_AllPackages = GetPrivateProfileIntA(kViewIniSection, "SearchAllPackages", 1, SM_GetIniPath().c_str()) != 0;
 }
 
 static void SM_SaveView()
@@ -379,6 +420,7 @@ static void SM_SaveView()
     const std::string ini = SM_GetIniPath();
     WritePrivateProfileStringA(kViewIniSection, "Sort", MeshFavorites::SortKey(g_Sort), ini.c_str());
     WritePrivateProfileStringA(kViewIniSection, "Package", g_PackageFilter.c_str(), ini.c_str());
+    WritePrivateProfileStringA(kViewIniSection, "SearchAllPackages", g_AllPackages ? "1" : "0", ini.c_str());
 }
 
 static void SM_SaveFavorites()
@@ -399,6 +441,30 @@ static void SM_SaveFavorites()
         WritePrivateProfileStringA(kFavoritesIniSection, key,
                                    g_FavoritePaths[i].c_str(),
                                    g_IniPath.c_str());
+    }
+}
+
+static void SM_ScanMeshes(bool force)
+{
+    void** objects = nullptr;
+    INT objectCount = 0;
+    if (SM_Loading() || !SM_ReadGObjects(&objects, &objectCount))
+        return;
+    if (!force && objectCount == g_ScannedObjectCount)
+        return;
+    g_ScannedObjectCount = objectCount;
+    g_MeshPaths.clear();
+    g_MeshObjects.clear();
+    for (INT i = 0; i < objectCount; ++i)
+    {
+        void* object = nullptr;
+        if (!SM_ReadGObjectAt(objects, i, &object) || !SM_IsStaticMesh(object))
+            continue;
+        std::string path;
+        if (!SM_BuildObjectPath(object, path))
+            continue;
+        g_MeshPaths.push_back(path);
+        g_MeshObjects.push_back(object);
     }
 }
 
@@ -452,18 +518,15 @@ static void SM_RefreshResolvedFavorites()
     g_LastResolvedCount = resolvedCount;
 }
 
-// The favourite's mesh, if it is still the object the list was built with: a
-// map change can free it and reuse its memory before the next refresh.
-static void* SM_LiveFavorite(size_t favorite)
+// The row's mesh, if it is still the object the list was built with: a map
+// change can free it and reuse its memory before the next refresh.
+static void* SM_LiveRow(const MeshRow& row)
 {
-    if (favorite >= g_FavoriteObjects.size() || !g_FavoriteObjects[favorite])
-        return nullptr;
-    void* object = g_FavoriteObjects[favorite];
     std::string path;
-    if (!SM_IsStaticMesh(object) || !SM_BuildObjectPath(object, path) ||
-        SM_ToLower(path) != SM_ToLower(g_FavoritePaths[favorite]))
+    if (!row.mesh || !SM_IsStaticMesh(row.mesh) || !SM_BuildObjectPath(row.mesh, path) ||
+        SM_ToLower(path) != SM_ToLower(row.path))
         return nullptr;
-    return object;
+    return row.mesh;
 }
 
 static bool __cdecl SM_ExecEditorCommand(const char* command)
@@ -703,15 +766,14 @@ static void SM_SelectFavoriteItem(int index)
 {
     if (!g_MeshList || index < 0 || static_cast<size_t>(index) >= g_Rows.size())
         return;
-    void* mesh = SM_LiveFavorite(g_Rows[index].favorite);
+    void* mesh = SM_LiveRow(g_Rows[index]);
     if (mesh)
     {
         SM_UpdateNativePreview(mesh);
         return;
     }
     // Freed since the list was built: rebuild it, once this notification is over.
-    const size_t favorite = g_Rows[index].favorite;
-    if (favorite < g_FavoriteObjects.size() && g_FavoriteObjects[favorite] && g_BrowserWindow)
+    if (g_Rows[index].mesh && g_BrowserWindow)
         PostMessage(g_BrowserWindow, WM_SM_REFRESH_FAVORITES, 0, 0);
 }
 
@@ -760,19 +822,30 @@ static std::string SM_PackageAt(int index)
     return index > 0 && static_cast<size_t>(index) <= packages.size() ? packages[index - 1].name : std::string{};
 }
 
+// The package and group the native boxes show, for a search kept to one
+// package; the group is left empty while the native "All" box is ticked.
+static bool SM_NativeFilter(std::string& package, std::string& group)
+{
+    char text[256] = {};
+    if (g_PackageCombo)
+        GetWindowTextA(g_PackageCombo, text, static_cast<int>(std::size(text)));
+    package = text;
+    group.clear();
+    if (g_GroupCombo && !(g_GroupAll && SendMessage(g_GroupAll, BM_GETCHECK, 0, 0) == BST_CHECKED))
+    {
+        text[0] = '\0';
+        GetWindowTextA(g_GroupCombo, text, static_cast<int>(std::size(text)));
+        group = text;
+    }
+    return !package.empty();
+}
+
+// Fills the list with Reloaded rows: the favourites while Favorites is shown,
+// else the loaded meshes matching the search.
 static void __cdecl SM_PopulateFavorites(void* browser)
 {
-    if (!InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
+    if (!g_CustomView)
         return;
-
-    void** objects = nullptr;
-    INT objectCount = 0;
-    if (SM_ReadGObjects(&objects, &objectCount) &&
-        objectCount != g_LastGObjectsCount)
-        SM_RefreshResolvedFavorites();
-    const auto favorites = SM_FavoriteStates();
-    SM_FillPackageFilter(favorites);
-    g_Rows = MeshFavorites::Rows(favorites, g_PackageFilter, g_Sort);
 
     if (!g_MeshList || !IsWindow(g_MeshList))
     {
@@ -787,6 +860,41 @@ static void __cdecl SM_PopulateFavorites(void* browser)
         g_MeshList = meshList;
     }
 
+    // Mid-load the objects are half made and the rows' meshes may be gone:
+    // show nothing until the timer sees the load finish.
+    g_Rows.clear();
+    if (SM_Loading())
+    {
+        g_ScannedObjectCount = -1;
+        g_LastGObjectsCount = -1;
+        ListView_DeleteAllItems(g_MeshList);
+        return;
+    }
+
+    std::vector<MeshFavorites::Row> rows;
+    if (InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
+    {
+        void** objects = nullptr;
+        INT objectCount = 0;
+        if (SM_ReadGObjects(&objects, &objectCount) &&
+            objectCount != g_LastGObjectsCount)
+            SM_RefreshResolvedFavorites();
+        const auto favorites = SM_FavoriteStates();
+        SM_FillPackageFilter(favorites);
+        rows = MeshFavorites::Rows(favorites, g_PackageFilter, g_Sort, g_Query);
+        for (const auto& row : rows)
+            g_Rows.push_back({ g_FavoritePaths[row.favorite], g_FavoriteObjects[row.favorite] });
+    }
+    else
+    {
+        SM_ScanMeshes(false);
+        std::string package, group;
+        if (g_AllPackages || SM_NativeFilter(package, group))
+            rows = MeshFavorites::SearchRows(g_MeshPaths, package, g_Query, MeshFavorites::Sort::Package, group);
+        for (const auto& row : rows)
+            g_Rows.push_back({ g_MeshPaths[row.favorite], g_MeshObjects[row.favorite] });
+    }
+
     void* current = SM_GetCurrentMesh();
     SendMessage(g_MeshList, WM_SETREDRAW, FALSE, 0);
     ListView_DeleteAllItems(g_MeshList);
@@ -796,11 +904,11 @@ static void __cdecl SM_PopulateFavorites(void* browser)
     {
         // lParam keeps the mesh, as the native list's items do; rows that are
         // not loaded carry none. g_Rows follows the item order exactly.
-        void* object = g_FavoriteObjects[g_Rows[i].favorite];
+        void* object = g_Rows[i].mesh;
         LVITEMA item = {};
         item.mask = LVIF_TEXT | LVIF_PARAM;
         item.iItem = static_cast<int>(i);
-        item.pszText = const_cast<char*>(g_Rows[i].label.c_str());
+        item.pszText = const_cast<char*>(rows[i].label.c_str());
         item.lParam = reinterpret_cast<LPARAM>(object);
         const int inserted = static_cast<int>(SendMessageA(
             g_MeshList, LVM_INSERTITEMA, 0,
@@ -823,31 +931,62 @@ static void __cdecl SM_PopulateFavorites(void* browser)
                  RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
 }
 
-// Detour WBrowserStaticMesh::RefreshStaticMeshList. Native refresh requests
-// repopulate our list while the filter is active; otherwise the exact original
-// prologue is replayed before resuming the editor function.
-__declspec(naked) static void SM_RefreshListHook()
+static bool SM_WantCustom()
+{
+    return InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE) ||
+        !MeshFavorites::IsBlank(g_Query);
+}
+
+static void SM_SwitchView(bool custom);
+static void SM_NativeRefreshTrampoline();
+
+// Every list refresh, the browser's own included, comes through here: the
+// Reloaded rows while Favorites or a search is shown, else the native list.
+static void __cdecl SM_RefreshDispatch(void* browser)
+{
+    const bool ours = g_BrowserObject && browser == g_BrowserObject && g_MeshList;
+    const bool wasCustom = g_CustomView;
+    if (ours)
+        SM_SwitchView(SM_WantCustom());
+    if (ours && g_CustomView)
+    {
+        SM_PopulateFavorites(browser);
+        return;
+    }
+    reinterpret_cast<NativeRefreshListFn>(&SM_NativeRefreshTrampoline)(browser);
+    if (ours && wasCustom && g_NormalColumnWidth > 0)
+        ListView_SetColumnWidth(g_MeshList, 0, g_NormalColumnWidth);
+}
+
+static void SM_Refresh()
+{
+    if (g_BrowserObject)
+        reinterpret_cast<NativeRefreshListFn>(SM_NATIVE_REFRESH_LIST)(g_BrowserObject);
+}
+
+// The native RefreshStaticMeshList: the exact original prologue, replayed
+// before resuming the editor function.
+__declspec(naked) static void SM_NativeRefreshTrampoline()
 {
     static int resumeNative = static_cast<int>(SM_NATIVE_REFRESH_LIST_RESUME);
     __asm
     {
-        cmp  dword ptr [g_FavoritesActive], 0
-        je   native_refresh
-
-        pushfd
-        pushad
-        push ecx
-        call SM_PopulateFavorites
-        add  esp, 4
-        popad
-        popfd
-        ret
-
-    native_refresh:
         push ebp
         mov  ebp, esp
         push 0FFFFFFFFh
         jmp  dword ptr [resumeNative]
+    }
+}
+
+// Detour WBrowserStaticMesh::RefreshStaticMeshList (thiscall, no arguments).
+__declspec(naked) static void SM_RefreshListHook()
+{
+    __asm
+    {
+        push ecx
+        call SM_RefreshDispatch
+        add  esp, 4
+        ret
     }
 }
 
@@ -907,6 +1046,55 @@ static void SM_PositionFilterButton()
                      (std::max)(1L, groupRect.right - sortRight - gap), groupRect.bottom - groupRect.top, SWP_NOACTIVATE);
 }
 
+static RECT SM_PaneRect(HWND child)
+{
+    RECT rect = {};
+    if (child && GetWindowRect(child, &rect))
+        MapWindowPoints(nullptr, g_MeshListParent, reinterpret_cast<POINT*>(&rect), 2);
+    return rect;
+}
+
+static int SM_TextWidth(const char* text)
+{
+    HDC dc = GetDC(g_MeshListParent);
+    HFONT font = reinterpret_cast<HFONT>(SendMessage(g_SearchEdit, WM_GETFONT, 0, 0));
+    HGDIOBJ old = font ? SelectObject(dc, font) : nullptr;
+    SIZE size = {};
+    GetTextExtentPoint32A(dc, text, static_cast<int>(strlen(text)), &size);
+    if (old)
+        SelectObject(dc, old);
+    ReleaseDC(g_MeshListParent, dc);
+    return size.cx;
+}
+
+// The search row takes the bottom of the list's place, which gives up one row
+// of its height. Only a list the native layout has placed since (anywhere but
+// where this left it) is shortened again.
+static void SM_LayoutSearch()
+{
+    if (!g_SearchEdit || !g_MeshList || !g_MeshListParent)
+        return;
+    const RECT list = SM_PaneRect(g_MeshList);
+    if (EqualRect(&list, &g_ListRect))
+        return;
+    const RECT package = SM_PaneRect(g_PackageCombo);
+    const int rowHeight = (std::max)(18L, package.bottom - package.top);
+    constexpr int gap = 3;
+    const int rowTop = static_cast<int>(list.bottom) - rowHeight;
+    SetWindowPos(g_MeshList, nullptr, list.left, list.top, list.right - list.left,
+                 (std::max)(20L, static_cast<LONG>(rowTop - gap) - list.top), SWP_NOZORDER | SWP_NOACTIVATE);
+    g_ListRect = SM_PaneRect(g_MeshList);
+
+    const int labelWidth = SM_TextWidth("Search:") + 6;
+    const int allWidth = SM_TextWidth("All packages") + 24;
+    const int allLeft = static_cast<int>(list.right) - allWidth;
+    const int editLeft = static_cast<int>(list.left) + labelWidth;
+    SetWindowPos(g_SearchLabel, nullptr, list.left, rowTop + 3, labelWidth, rowHeight - 3, SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(g_SearchEdit, nullptr, editLeft, rowTop, (std::max)(40, allLeft - gap - editLeft), rowHeight,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(g_SearchAllCheck, nullptr, allLeft, rowTop, allWidth, rowHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
 // Native package, group and "all groups" controls give way to the Favorites
 // package filter and sort order while Favorites is shown.
 static void SM_ShowNativeFilters(bool show)
@@ -953,6 +1141,24 @@ static void SM_SuspendListSorting(bool suspend)
     }
 }
 
+// Reloaded rows in the list, or the native ones back; the dispatch refills it.
+static void SM_SwitchView(bool custom)
+{
+    if (custom == g_CustomView)
+        return;
+    g_CustomView = custom;
+    if (custom)
+    {
+        g_NormalColumnWidth = ListView_GetColumnWidth(g_MeshList, 0);
+        SM_SuspendListSorting(true);
+    }
+    else
+    {
+        g_Rows.clear();
+        SM_SuspendListSorting(false);
+    }
+}
+
 static void SM_SetFavoritesActive(bool active)
 {
     if (!g_FeatureSupported || !g_BrowserObject || !g_MeshList)
@@ -965,7 +1171,6 @@ static void SM_SetFavoritesActive(bool active)
 
     if (active)
     {
-        g_NormalColumnWidth = ListView_GetColumnWidth(g_MeshList, 0);
         // Pick up favourites another open editor saved, and retry every
         // package: switching Favorites on is the way to ask again.
         SM_LoadFavorites();
@@ -974,30 +1179,24 @@ static void SM_SetFavoritesActive(bool active)
         SM_LoadMissingFavoritePackages();
         InterlockedExchange(&g_FavoritesActive, TRUE);
         SM_ShowNativeFilters(false);
-        SM_SuspendListSorting(true);
-        if (g_FilterButton)
-            SendMessage(g_FilterButton, BM_SETCHECK, BST_CHECKED, 0);
-        SM_PopulateFavorites(g_BrowserObject);
     }
     else
     {
         InterlockedExchange(&g_FavoritesActive, FALSE);
-        g_Rows.clear();
-        if (g_FilterButton)
-            SendMessage(g_FilterButton, BM_SETCHECK, BST_UNCHECKED, 0);
-        SM_SuspendListSorting(false);
         SM_ShowNativeFilters(true);
-        reinterpret_cast<NativeRefreshListFn>(SM_NATIVE_REFRESH_LIST)(
-            g_BrowserObject);
-        if (g_NormalColumnWidth > 0)
-            ListView_SetColumnWidth(g_MeshList, 0, g_NormalColumnWidth);
     }
+    if (g_FilterButton)
+        SendMessage(g_FilterButton, BM_SETCHECK, active ? BST_CHECKED : BST_UNCHECKED, 0);
+    // The search covers the favourites while they are shown.
+    if (g_SearchAllCheck)
+        EnableWindow(g_SearchAllCheck, !active);
+    SM_Refresh();
 }
 
 static void SM_ToggleCurrentFavorite()
 {
-    // A right-click in the Favorites list names its row, which may not be
-    // loaded; anywhere else it is the browser's current mesh.
+    // A right-click on Favorites or search rows names its row, which may not
+    // be loaded; anywhere else it is the browser's current mesh.
     std::string path = g_ContextPath;
     if (path.empty())
     {
@@ -1073,9 +1272,10 @@ static HMENU WINAPI SM_LoadMenuA_Hook(HINSTANCE instance, LPCSTR menuName)
     bool isFavorite = hasMesh && SM_FindFavorite(path);
     if (!g_ContextPath.empty())
     {
-        // A Favorites row that is not loaded can still be removed.
+        // A Favorites row that is not loaded can still be removed; a search
+        // row is a favourite or not like any other mesh.
         hasMesh = hasMesh && SM_ToLower(path) == SM_ToLower(g_ContextPath);
-        isFavorite = true;
+        isFavorite = SM_FindFavorite(g_ContextPath);
     }
     const char* label = isFavorite
         ? "Remove from &Favorites"
@@ -1145,11 +1345,11 @@ static void SM_ShowContextMenu(HWND list, LPARAM mousePosition)
     SetFocus(list);
 
     g_ContextPath.clear();
-    if (InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
+    if (g_CustomView)
     {
         SM_SelectFavoriteItem(item);
         if (static_cast<size_t>(item) < g_Rows.size())
-            g_ContextPath = g_FavoritePaths[g_Rows[item].favorite];
+            g_ContextPath = g_Rows[item].path;
     }
     struct ClearContext { ~ClearContext() { g_ContextPath.clear(); } } clearContext;
 
@@ -1174,6 +1374,47 @@ static void SM_ShowContextMenu(HWND list, LPARAM mousePosition)
         PostMessage(g_BrowserWindow, WM_NULL, 0, 0);
     }
     DestroyMenu(menu);
+}
+
+static bool SM_HandleSearchCommand(WPARAM wParam)
+{
+    if (LOWORD(wParam) == IDC_SM_SEARCH && HIWORD(wParam) == EN_CHANGE)
+    {
+        // Wait for a pause in typing before searching every loaded mesh.
+        if (g_BrowserWindow)
+            SetTimer(g_BrowserWindow, TIMER_SM_SEARCH, 150, nullptr);
+        return true;
+    }
+    if (LOWORD(wParam) == IDC_SM_SEARCH_ALL && HIWORD(wParam) == BN_CLICKED)
+    {
+        g_AllPackages = SendMessage(g_SearchAllCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+        SM_SaveView();
+        if (g_CustomView)
+            SM_Refresh();
+        return true;
+    }
+    return false;
+}
+
+static LRESULT CALLBACK SM_SearchEditProc(HWND window, UINT message,
+                                          WPARAM wParam, LPARAM lParam,
+                                          UINT_PTR, DWORD_PTR)
+{
+    if (message == WM_KEYDOWN && wParam == VK_ESCAPE)
+    {
+        SetWindowTextA(window, "");
+        return 0;
+    }
+    if (message == WM_KEYDOWN && wParam == VK_DOWN && g_MeshList)
+    {
+        SetFocus(g_MeshList);
+        return 0;
+    }
+    if (message == WM_CHAR && (wParam == VK_RETURN || wParam == VK_ESCAPE))
+        return 0;
+    if (message == WM_NCDESTROY)
+        RemoveWindowSubclass(window, SM_SearchEditProc, 14);
+    return DefSubclassProc(window, message, wParam, lParam);
 }
 
 static bool SM_AttachBrowserControls()
@@ -1254,6 +1495,35 @@ static bool SM_AttachBrowserControls()
             SendMessage(g_WindowButton, WM_SETFONT, SendMessage(g_FilterButton, WM_GETFONT, 0, 0), TRUE);
     }
 
+    // The search row under the list. Its controls share the list's parent, so
+    // their notifications reach SM_ListParentSubclassProc.
+    if (g_MeshListParent && (!g_SearchEdit || !IsWindow(g_SearchEdit)))
+    {
+        auto createSearch = [](DWORD exStyle, const char* className, const char* text, DWORD style, int id) {
+            HWND control = CreateWindowExA(
+                exStyle, className, text, WS_CHILD | WS_VISIBLE | style,
+                0, 0, 10, 10, g_MeshListParent,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                GetModuleHandleA(nullptr), nullptr);
+            if (control)
+                SendMessage(control, WM_SETFONT, SendMessage(g_FilterButton, WM_GETFONT, 0, 0), TRUE);
+            return control;
+        };
+        g_SearchLabel = createSearch(0, "STATIC", "Search:", SS_LEFT, IDC_SM_SEARCH_LABEL);
+        g_SearchEdit = createSearch(WS_EX_CLIENTEDGE, "EDIT", "", WS_TABSTOP | ES_AUTOHSCROLL, IDC_SM_SEARCH);
+        g_SearchAllCheck = createSearch(0, "BUTTON", "All packages", WS_TABSTOP | BS_AUTOCHECKBOX, IDC_SM_SEARCH_ALL);
+        if (g_SearchEdit)
+        {
+            SendMessage(g_SearchEdit, EM_LIMITTEXT, 200, 0);
+            SetWindowSubclass(g_SearchEdit, SM_SearchEditProc, 14, 0);
+        }
+        else
+            Logger::log("StaticMeshBrowserFavorites: could not create the search box");
+        if (g_SearchAllCheck)
+            SendMessage(g_SearchAllCheck, BM_SETCHECK, g_AllPackages ? BST_CHECKED : BST_UNCHECKED, 0);
+        g_ListRect = {};
+    }
+
     if (g_MeshListParent)
         SetWindowSubclass(g_MeshListParent, SM_ListParentSubclassProc, 12, 0);
     for (HWND commandWindow = g_MeshList; commandWindow;
@@ -1265,6 +1535,7 @@ static bool SM_AttachBrowserControls()
     }
 
     SM_PositionFilterButton();
+    SM_LayoutSearch();
     SetTimer(g_BrowserWindow, TIMER_SM_FAVORITES_REFRESH, 1000, nullptr);
     g_ControlsAttached = true;
     Logger::log("StaticMeshBrowserFavorites: Favorites filter attached");
@@ -1356,22 +1627,43 @@ static LRESULT CALLBACK SM_BrowserSubclassProc(HWND window, UINT message,
         return 0;
     }
 
+    if (message == WM_TIMER && wParam == TIMER_SM_SEARCH)
+    {
+        KillTimer(window, TIMER_SM_SEARCH);
+        char text[256] = {};
+        if (g_SearchEdit)
+            GetWindowTextA(g_SearchEdit, text, static_cast<int>(std::size(text)));
+        g_Query = text;
+        SM_Refresh();
+        return 0;
+    }
+
     if (message == WM_TIMER && wParam == TIMER_SM_FAVORITES_REFRESH)
     {
         // Ticks since the object count last changed.
         static int steadyTicks = 0;
-        if (InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
+        // Keep the search row clear if the native layout moved the list back.
+        SM_LayoutSearch();
+        // Nothing is rebuilt while a package or map is loading.
+        if (g_CustomView && SM_Loading())
+            steadyTicks = 0;
+        else if (g_CustomView)
         {
+            // Favourites and search rows are rebuilt when the object count
+            // changes; only then does the search scan the objects again.
+            const bool favorites =
+                InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE) != FALSE;
             void** objects = nullptr;
             INT objectCount = 0;
             if (SM_ReadGObjects(&objects, &objectCount) &&
-                objectCount != g_LastGObjectsCount)
+                objectCount != (favorites ? g_LastGObjectsCount : g_ScannedObjectCount))
             {
                 steadyTicks = 0;
-                SM_RefreshResolvedFavorites();
+                if (favorites)
+                    SM_RefreshResolvedFavorites();
                 SM_PopulateFavorites(g_BrowserObject);
             }
-            else if (++steadyTicks == 2)
+            else if (favorites && ++steadyTicks == 2)
             {
                 // Opening another map unloads the packages it does not use.
                 // Load the favourites' packages back once nothing has loaded
@@ -1393,6 +1685,8 @@ static LRESULT CALLBACK SM_BrowserSubclassProc(HWND window, UINT message,
     if (message == WM_SM_REFRESH_FAVORITES)
     {
         SM_RefreshResolvedFavorites();
+        if (g_CustomView && !InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
+            SM_ScanMeshes(true);
         SM_PopulateFavorites(g_BrowserObject);
         return 0;
     }
@@ -1401,12 +1695,15 @@ static LRESULT CALLBACK SM_BrowserSubclassProc(HWND window, UINT message,
     {
         const LRESULT result = DefSubclassProc(window, message, wParam, lParam);
         SM_PositionFilterButton();
+        if (wParam != SIZE_MINIMIZED)
+            SM_LayoutSearch();
         return result;
     }
 
     if (message == WM_NCDESTROY)
     {
         KillTimer(window, TIMER_SM_FAVORITES_REFRESH);
+        KillTimer(window, TIMER_SM_SEARCH);
         InterlockedExchange(&g_FavoritesActive, FALSE);
         g_BrowserObject = nullptr;
         g_BrowserWindow = nullptr;
@@ -1419,7 +1716,14 @@ static LRESULT CALLBACK SM_BrowserSubclassProc(HWND window, UINT message,
         g_PackageFilterCombo = nullptr;
         g_SortCombo = nullptr;
         g_WindowButton = nullptr;
+        g_SearchLabel = nullptr;
+        g_SearchEdit = nullptr;
+        g_SearchAllCheck = nullptr;
+        g_ListRect = {};
         g_Rows.clear();
+        g_Query.clear();
+        g_CustomView = false;
+        g_NativeListSortStyle = 0;
         g_ControlsAttached = false;
         RemoveWindowSubclass(window, SM_BrowserSubclassProc, 11);
     }
@@ -1430,11 +1734,17 @@ static LRESULT CALLBACK SM_ListParentSubclassProc(HWND window, UINT message,
                                                    WPARAM wParam, LPARAM lParam,
                                                    UINT_PTR, DWORD_PTR)
 {
-    if (message == WM_COMMAND && SM_HandleCommand(wParam))
+    if (message == WM_COMMAND && (SM_HandleSearchCommand(wParam) || SM_HandleCommand(wParam)))
         return 0;
 
-    if (message == WM_NOTIFY &&
-        InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
+    if (message == WM_SIZE)
+    {
+        const LRESULT result = DefSubclassProc(window, message, wParam, lParam);
+        SM_LayoutSearch();
+        return result;
+    }
+
+    if (message == WM_NOTIFY && g_CustomView)
     {
         const NMHDR* header = reinterpret_cast<const NMHDR*>(lParam);
         if (header && header->hwndFrom == g_MeshList)
@@ -1506,7 +1816,14 @@ bool StaticMeshBrowserFavorites::ShowFavorite(const std::string& path)
         return false;
     SM_LoadFavorites();
     SM_RefreshResolvedFavorites();
-    // A package filter that would hide it gives way.
+    // A search or package filter that would hide it gives way.
+    if (!MeshFavorites::IsBlank(g_Query))
+    {
+        g_Query.clear();
+        if (g_SearchEdit)
+            SetWindowTextA(g_SearchEdit, "");
+        KillTimer(g_BrowserWindow, TIMER_SM_SEARCH);
+    }
     if (!g_PackageFilter.empty() &&
         SM_ToLower(MeshFavorites::Split(path).package) != SM_ToLower(g_PackageFilter))
     {
@@ -1521,7 +1838,7 @@ bool StaticMeshBrowserFavorites::ShowFavorite(const std::string& path)
         return false;
     for (size_t i = 0; i < g_Rows.size(); ++i)
     {
-        if (SM_ToLower(g_FavoritePaths[g_Rows[i].favorite]) != SM_ToLower(path))
+        if (SM_ToLower(g_Rows[i].path) != SM_ToLower(path))
             continue;
         const int item = static_cast<int>(i);
         ListView_SetItemState(g_MeshList, -1, 0, LVIS_SELECTED);
@@ -1544,6 +1861,16 @@ bool StaticMeshBrowserFavorites::UseMesh(void* mesh)
 
 void StaticMeshBrowserFavorites::Initialize()
 {
+    // Searches match the English for French names too: "door metal" finds
+    // Porte_Metal01. The Sound Browser sets the same text when it starts first.
+    if (!MeshFavorites::SearchText())
+        MeshFavorites::SearchText() = [](const std::string& path) {
+            std::string text = path;
+            const auto parts = MeshFavorites::Split(path);
+            for (const auto* part : {&parts.package, &parts.group, &parts.name})
+                if (!part->empty()) text += " " + AssetNameGloss::GlossFor(part->c_str());
+            return text;
+        };
     SM_LoadFavorites();
     SM_LoadView();
 

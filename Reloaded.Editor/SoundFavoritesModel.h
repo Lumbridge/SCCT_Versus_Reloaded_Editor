@@ -1,11 +1,12 @@
 #pragma once
 // The pure part of the Sound Browser's search and Favorites: a sound's
-// package, group and name, the search match, the package list with counts,
-// the rows the list shows for a filter and sort order, and the saved list's
-// add/remove merge. No engine and no Windows, so the tests compile it alone.
+// package, group and name, the search match (the Static Mesh Browser's too),
+// the package list with counts, the rows the list shows for a filter and sort
+// order, and the saved list's add/remove merge. No engine and no Windows, so
+// the tests compile it alone.
+#include "FavoritesModel.h"
 #include <algorithm>
 #include <cstddef>
-#include <functional>
 #include <string>
 #include <vector>
 
@@ -30,35 +31,10 @@ namespace SoundFavorites
     }
     inline bool SameName(const std::string& a, const std::string& b) { return Lower(a) == Lower(b); }
 
-    // The text a search looks in for a sound: its path, unless the editor
-    // adds more (the English for French names).
-    inline std::function<std::string(const std::string&)>& SearchText()
-    {
-        static std::function<std::string(const std::string&)> text;
-        return text;
-    }
-
-    // A search matches when every space-separated word of it appears in the
-    // path (or its SearchText), ignoring case; an empty search matches everything.
-    inline bool Matches(const std::string& path, const std::string& query)
-    {
-        const std::string haystack = Lower(SearchText() ? SearchText()(path) : path);
-        size_t at = 0;
-        while (at < query.size())
-        {
-            const size_t start = query.find_first_not_of(" \t", at);
-            if (start == std::string::npos) break;
-            size_t end = query.find_first_of(" \t", start);
-            if (end == std::string::npos) end = query.size();
-            if (haystack.find(Lower(query.substr(start, end - start))) == std::string::npos) return false;
-            at = end;
-        }
-        return true;
-    }
-    inline bool IsBlank(const std::string& query)
-    {
-        return query.find_first_not_of(" \t") == std::string::npos;
-    }
+    // The search is the one the Static Mesh Browser uses, English included.
+    using Favorites::SearchText;
+    using Favorites::Matches;
+    using Favorites::IsBlank;
 
     enum class Sort { Package, Name, Newest, Oldest };
     constexpr Sort kSorts[] = {Sort::Package, Sort::Name, Sort::Newest, Sort::Oldest};

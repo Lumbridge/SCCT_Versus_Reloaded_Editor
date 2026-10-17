@@ -1,5 +1,6 @@
-// The Texture Browser's side of the shared favourites model; the path split,
-// package counts and row order are covered by MeshFavoritesModelTests.
+// The Texture Browser's side of the shared favourites model, and the search
+// the browsers share; the path split, package counts and row order are covered
+// by MeshFavoritesModelTests.
 #include "../Reloaded.Editor/FavoritesModel.h"
 #include <iostream>
 #include <source_location>
@@ -60,6 +61,31 @@ int main()
         Check(packages.size() == 4 && packages[0].name == "Echelon" && packages[0].count == 2 && packages[0].loaded == 2,
               "echelon package");
         Check(packages[2].name == "Gone_TXT" && packages[2].count == 1 && packages[2].loaded == 0, "missing package");
+
+        // Search: every word, in any order and case, somewhere in the path.
+        Check(Matches("GenTex.Walls.Brick", "brick"), "name part");
+        Check(Matches("GenTex.Walls.Brick", "WALLS.br"), "across the dot");
+        Check(Matches("GenTex.Walls.Brick", "brick gentex"), "two words, any order");
+        Check(!Matches("GenTex.Walls.Brick", "brick floors"), "every word must match");
+        Check(Matches("GenTex.Walls.Brick", "") && Matches("GenTex.Walls.Brick", " \t "), "blank matches all");
+        Check(IsBlank("") && IsBlank(" \t ") && !IsBlank(" a "), "blank");
+
+        // The text the editor adds (the English for French names) is searched too.
+        SearchText() = [](const std::string& path) { return path == "Ind03.Portes.Porte_Metal01" ? path + " door metal 01" : path; };
+        Check(Matches("Ind03.Portes.Porte_Metal01", "DOOR metal"), "English words");
+        Check(Matches("Ind03.Portes.Porte_Metal01", "porte"), "French still matches");
+        Check(!Matches("Ind03.Portes.Porte_Bois01", "door"), "only where the text adds it");
+        SearchText() = nullptr;
+        Check(!Matches("Ind03.Portes.Porte_Metal01", "door"), "path alone");
+
+        // A search on the favourites, not loaded ones included, keeps the order.
+        auto found = Rows(favorites, "", Sort::Package, "walls");
+        Check(found.size() == 2 && found[0].favorite == 5 && found[1].favorite == 1, "search the favourites");
+        found = Rows(favorites, "", Sort::Name, "TILE");
+        Check(found.size() == 1 && found[0].favorite == 2 && found[0].label == "Tile  (Gone_TXT.Floors)  [not loaded]",
+              "not loaded favourites are searched");
+        Check(Rows(favorites, "echelon", Sort::Package, "brick").empty(), "search within the package");
+        Check(Rows(favorites, "", Sort::Oldest, "  ").size() == favorites.size(), "blank search keeps every favourite");
 
         std::cout << "FavoritesModelTests: " << checks << " checks passed\n";
         return 0;
