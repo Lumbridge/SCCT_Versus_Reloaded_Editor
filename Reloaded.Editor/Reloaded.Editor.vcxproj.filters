@@ -27,6 +27,7 @@
     <ClInclude Include="MapOptimiseNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapUsages.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapUsagesModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="UsageMarksModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapUsagesWindow.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="LightingBudget.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MinimapModel.h"><Filter>Header Files</Filter></ClInclude>

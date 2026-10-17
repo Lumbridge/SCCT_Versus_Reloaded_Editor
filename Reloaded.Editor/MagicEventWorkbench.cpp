@@ -34,7 +34,7 @@ struct State
     std::string eventPath,inspectedPath,propertyPointer;
     int group=0,action=-1,left=260,right=365,split=0,scroll=0;
     double scale=75,playhead=0,dragDelay=0;int dragAction=-1;bool loading=false,snap=true,preview=false;
-    uintptr_t level=0;unsigned generation=0,revision=0;UINT dpi=96;DWORD tick=0;
+    uintptr_t level=0;unsigned generation=0,revision=0,selectionRevision=0;UINT dpi=96;DWORD tick=0;
 };
 HWND workbench=nullptr;
 int Px(const State& s,int n){return MulDiv(n,s.dpi,96);}
@@ -116,13 +116,22 @@ void FilterActors(State& s)
         int index=static_cast<int>(SendMessageA(Item(s,Actors),LB_ADDSTRING,0,reinterpret_cast<LPARAM>(label.c_str())));s.actorRows.push_back(actor);if(path==selectedPath)SendMessage(Item(s,Actors),LB_SETCURSEL,index,0);
     }
 }
+// Only the selection changed: the actors take the new flags and nothing is read from the map again. The event and the
+// inspector stay as they are; the actor list is filtered again only while it shows the selection.
+void SyncSelection(State& s)
+{
+    s.selectionRevision=Editor::Revision();
+    std::set<std::string> selected;for(const auto& path:Editor::SelectedActorPaths())selected.insert(Fold(path));
+    for(auto& actor:s.actors)actor["selected"]=selected.count(Fold(actor.at("path").get<std::string>()))!=0;
+    if(Text(Item(s,Category))=="Selected in map")FilterActors(s);
+}
 void RefreshAll(State& s,bool inspect)
 {
     s.loading=true;
     struct Done{bool& b;~Done(){b=false;}} done{s.loading};
     auto level=Editor::LevelIdentity();auto generation=Editor::MapGeneration();
     if(s.level && (s.level!=level || s.generation!=generation)){s.eventPath.clear();s.inspectedPath.clear();s.action=-1;s.group=0;}
-    s.level=level;s.generation=generation;s.revision=Editor::Revision();s.actors=Editor::Actors();s.events=Json::array();
+    s.level=level;s.generation=generation;s.revision=Editor::ContentRevision();s.selectionRevision=Editor::Revision();s.actors=Editor::Actors();s.events=Json::array();
     auto query=Fold(Text(Item(s,EventSearch)));std::vector<std::string> names;int selected=-1;bool exists=false;
     for(const auto& actor:s.actors)
     {
@@ -559,7 +568,8 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
             if(s->preview){auto now=GetTickCount();s->playhead=std::fmod(s->playhead+(now-s->tick)/1000.0,86400.0);s->tick=now;InvalidateRect(s->timeline,nullptr,FALSE);}
             if(s->dragAction<0 && !s->split && GetFocus()!=Item(*s,Value) && GetFocus()!=Item(*s,Choices))
             {
-                if(s->level!=Editor::LevelIdentity() || s->generation!=Editor::MapGeneration() || s->revision!=Editor::Revision())RefreshAll(*s);
+                if(s->level!=Editor::LevelIdentity() || s->generation!=Editor::MapGeneration() || s->revision!=Editor::ContentRevision())RefreshAll(*s);
+                else if(s->selectionRevision!=Editor::Revision())SyncSelection(*s);
             }
             return 0;
         }

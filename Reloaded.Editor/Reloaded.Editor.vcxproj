@@ -171,6 +171,7 @@
     <ClInclude Include="MapOptimiseNative.inl" />
     <ClInclude Include="MapUsages.h" />
     <ClInclude Include="MapUsagesModel.h" />
+    <ClInclude Include="UsageMarksModel.h" />
     <ClInclude Include="MapUsagesWindow.h" />
     <ClInclude Include="LightingBudget.h" />
     <ClInclude Include="MinimapModel.h" />

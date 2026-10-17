@@ -936,7 +936,7 @@ Json PreviewTagRename(const Json& identity,const std::string& newTag)
     if(IsA(actor,"Camera") || IsA(actor,"LevelInfo"))throw std::runtime_error("Editor infrastructure Tags cannot be renamed here.");
     if(!std::regex_match(newTag,std::regex("[A-Za-z_][A-Za-z0-9_]{0,62}")) || Fold(newTag)=="none")throw std::runtime_error("Use 1-63 letters, digits or underscores, starting with a letter or underscore. None is not a target Tag.");
     auto old=NameField(actor,"Tag");if(Fold(old)==Fold(newTag))throw std::runtime_error("Tag matching ignores case. Enter a different Tag.");
-    Json preview={{"actor",Identity(actor)},{"old",old},{"new",newTag},{"level",LevelIdentity()},{"generation",MapGeneration()},{"revision",Revision()},{"changes",Json::array()}};
+    Json preview={{"actor",Identity(actor)},{"old",old},{"new",newTag},{"level",LevelIdentity()},{"generation",MapGeneration()},{"revision",ContentRevision()},{"changes",Json::array()}};
     bool untagged=old.empty() || Fold(old)=="none";
     for(const auto& s:TagSlots())
     {

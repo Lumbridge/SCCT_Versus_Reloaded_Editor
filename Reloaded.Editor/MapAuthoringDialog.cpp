@@ -153,9 +153,10 @@ void Open(HWND owner,bool exporting)
         auto document=Workflow::Json::parse(input,[](int depth,Workflow::Json::parse_event_t,Workflow::Json&){if(depth>64)throw std::runtime_error("Change file is nested too deeply.");return true;});
         Workflow::Authoring::Rebase(document,std::filesystem::path(path).parent_path()); // Texture files beside the change file.
         auto preview=Workflow::Editor::PreviewMapAuthoring(document);
-        const auto level=Workflow::Editor::LevelIdentity();const auto generation=Workflow::Editor::MapGeneration();const auto revision=Workflow::Editor::Revision();
+        // A row click selects its actor, which is not a change to the map, so the check leaves the selection out.
+        const auto level=Workflow::Editor::LevelIdentity();const auto generation=Workflow::Editor::MapGeneration();const auto revision=Workflow::Editor::ContentRevision();
         if(!Confirm(owner,preview,document))return;
-        if(level!=Workflow::Editor::LevelIdentity() || generation!=Workflow::Editor::MapGeneration() || revision!=Workflow::Editor::Revision())throw std::runtime_error("Map changed during preview. Import again to review the current changes.");
+        if(level!=Workflow::Editor::LevelIdentity() || generation!=Workflow::Editor::MapGeneration() || revision!=Workflow::Editor::ContentRevision())throw std::runtime_error("Map changed during preview. Import again to review the current changes.");
         Workflow::Editor::ApplyMapAuthoring(document);
         MessageBoxW(owner,L"Map JSON changes imported. Undo reverses the batch in one step. Save the map to keep the changes.",L"Map JSON",MB_OK);
     }

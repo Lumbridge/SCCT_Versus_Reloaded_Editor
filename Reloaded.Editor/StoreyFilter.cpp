@@ -101,15 +101,16 @@ namespace
 
     // Where everything stands, read once per change to the map: dragging the
     // slider asks for this at every detent, and walking a map's brushes is
-    // not work to repeat while the mouse moves. Our own hiding bumps the
-    // revision, so the boxes are refreshed by hand after it instead.
+    // not work to repeat while the mouse moves. A click that only selects is
+    // not a change. Our own hiding opens no transaction, so neither counter
+    // moves for it; the cache is corrected by hand after it instead.
     Json spans = Json::array();
     unsigned spansRevision = ~0u;
 
     Json& Spans(bool reread = false)
     {
         unsigned now = 0;
-        try { now = Editor::Revision(); }
+        try { now = Editor::ContentRevision(); }
         catch (const std::exception&) { return spans; }
         if (reread || now != spansRevision)
         {
@@ -161,7 +162,7 @@ namespace
             else if (showing.count(path)) actor["hidden"] = false;
         }
         current = index;
-        revision = Editor::Revision();
+        revision = Editor::ContentRevision();
         spansRevision = revision;
         if (index == 0)
             status = "Every storey is showing" + std::string(ours.empty() ? "." : "; " + std::to_string(ours.size()) + " still hidden.");
@@ -180,7 +181,7 @@ namespace
         try
         {
             mapGeneration = Editor::MapGeneration();
-            mapRevision = Editor::Revision();
+            mapRevision = Editor::ContentRevision();
         }
         catch (const std::exception&) { return; }
         if (mapGeneration != generation)

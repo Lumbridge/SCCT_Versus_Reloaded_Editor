@@ -59,7 +59,7 @@ void Rebuild(State& s,bool reload,bool fit)
     if(reload || changed)
     {
         auto actors=Editor::Actors();auto links=Editor::Connections("");
-        s.actors=std::move(actors);s.links=std::move(links);s.revision=Editor::Revision();s.generation=generation;s.level=level;
+        s.actors=std::move(actors);s.links=std::move(links);s.revision=Editor::ContentRevision();s.generation=generation;s.level=level;
         auto combo=GetDlgItem(s.window,Class);auto previous=Text(combo);SendMessage(combo,CB_RESETCONTENT,0,0);SendMessageA(combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>("All actor classes"));
         std::set<std::string> classes;for(auto& a:s.actors)classes.insert(a.at("class"));int selected=0,index=1;
         for(auto& c:classes){SendMessageA(combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(c.c_str()));if(c==previous)selected=index;++index;}SendMessage(combo,CB_SETCURSEL,selected,0);
@@ -268,8 +268,8 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
         }
         if(message==WM_TIMER)
         {
-            if(s->level!=Editor::LevelIdentity() || s->generation!=Editor::MapGeneration() || s->revision!=Editor::Revision())Rebuild(*s,true,false);
-            else if(Checked(*s,Follow) && SendMessage(GetDlgItem(w,Mode),CB_GETCURSEL,0,0)==0){auto selected=Editor::Actors(true);auto root=selected.empty()?"":selected[0].at("path").get<std::string>();if(root!=s->root){s->depth=1;Rebuild(*s,false,true);}}
+            if(s->level!=Editor::LevelIdentity() || s->generation!=Editor::MapGeneration() || s->revision!=Editor::ContentRevision())Rebuild(*s,true,false);
+            else if((Checked(*s,Follow) || s->root.empty()) && SendMessage(GetDlgItem(w,Mode),CB_GETCURSEL,0,0)==0){auto selected=Editor::Actors(true);auto root=selected.empty()?"":selected[0].at("path").get<std::string>();if(root!=s->root){s->depth=1;Rebuild(*s,false,true);}}
             return 0;
         }
         if(message==WM_CLOSE){DestroyWindow(w);return 0;}
