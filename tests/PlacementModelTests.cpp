@@ -1,6 +1,7 @@
 // Standalone: cl /std:c++20 /W4 /WX /EHsc tests\PlacementModelTests.cpp
 #include "../Reloaded.Editor/PlacementModel.h"
 #include <iostream>
+#include <limits>
 #include <source_location>
 using namespace Workflow;
 using namespace Workflow::Placement;
@@ -67,6 +68,42 @@ int main()
     Reject([&]{DistributeLineDeltas(line,1,1);});
     Reject([&]{DistributeLineDeltas({line[0],line[0],line[1]},0,1);});
 
+    // Snap pivots to the grid: halves go away from zero, negatives included;
+    // X and Y leave Z alone.
+    std::vector<Box> unused(3);
+    std::vector<Vector> pivots{{-24,24,7},{3,-5,100},{40,8,-9}};
+    auto snapped=GridSnapDeltas(unused,pivots,{16,16,16},3,SnapBy::Pivot);
+    Check(Near(snapped[0],Vector{-8,8,0}) && Near(snapped[1],Vector{-3,5,0}) && Near(snapped[2],Vector{8,8,0}),"pivots round on X and Y; Z stays");
+    snapped=GridSnapDeltas(unused,pivots,{16,16,16},7,SnapBy::Pivot);
+    Check(Near(snapped[0],Vector{-8,8,-7}) && Near(snapped[1],Vector{-3,5,-4}) && Near(snapped[2],Vector{8,8,-7}),"pivots round on all axes");
+    Check(Near(Add(pivots[0],snapped[0]),Vector{-32,32,0}),"-24 goes to -32 and 24 to 32");
+    // Box edges: the nearer edge, the minimum on ties (as the brush edge snap).
+    std::vector<Box> edged{{{3,-13,19},{12,-4,27}},{{7,-13,19},{15,-4,27}},{{-8,-8,-8},{8,8,8}}};
+    snapped=GridSnapDeltas(edged,pivots,{16,16,16},7,SnapBy::Edges);
+    Check(Near(snapped[0],Vector{-3,-3,-3}) && Near(snapped[1],Vector{1,-3,-3}) && Near(snapped[2],Vector{-8,-8,-8}),"box edges: nearer edge, minimum on ties");
+    snapped=GridSnapDeltas(edged,pivots,{16,16,16},3,SnapBy::Edges);
+    Check(Near(snapped[1],Vector{1,-3,0}),"box edges on X and Y leave Z alone");
+    // A grid of 0 on an axis that is not snapped does not matter.
+    snapped=GridSnapDeltas(unused,pivots,{16,16,0},3,SnapBy::Pivot);
+    Check(Near(snapped[0],Vector{-8,8,0}),"an unused Z grid is ignored");
+    Reject([&]{GridSnapDeltas(unused,pivots,{0,16,16},3,SnapBy::Pivot);});
+    Reject([&]{GridSnapDeltas(edged,pivots,{16,16,0},7,SnapBy::Edges);});
+    Reject([&]{GridSnapDeltas(unused,pivots,{16,std::numeric_limits<double>::infinity(),16},3,SnapBy::Pivot);});
+    Reject([&]{GridSnapDeltas(unused,{pivots[0]},{16,16,16},3,SnapBy::Pivot);});
+    // Yaw to the nearest step: a turn wraps to 0, pitch and roll stay.
+    Check(SnapYaw({0,65000,0},90)==Rotation({0,0,0}),"65000 at 90 degrees is 0");
+    Check(SnapYaw({100,9000,-200},45)==Rotation({100,8192,-200}),"9000 at 45 degrees is 8192; pitch and roll stay");
+    Check(SnapYaw({0,-16384,0},90)==Rotation({0,49152,0}) && SnapYaw({0,-100,0},90)==Rotation({0,0,0}),"negative yaws come within a turn");
+    // 15 degrees is 2730.67 units: steps round to the nearest unit.
+    Check(SnapYaw({0,2000,0},15)[1]==2731 && SnapYaw({0,5000,0},15)[1]==5461,"15 degree steps");
+    for(int yaw=-70000;yaw<=140000;yaw+=997)
+    {
+        const auto r=SnapYaw({0,yaw,0},15);
+        Check(r[1]>=0 && r[1]<65536 && YawDistance(r[1],yaw)<=1366,"15 degree steps stay within a turn and half a step");
+        Check(SnapYaw(r,15)==r,"a snapped yaw stays");
+    }
+    Reject([]{SnapYaw({0,0,0},0);});
+
     // Drop: rays from the box's centre depth; the nearest surface wins.
     Box crate{{-16,-16,100},{16,16,132}};
     const Vector down=DropDirection(Surface::Floor,{});
@@ -95,6 +132,18 @@ int main()
     auto standing=CylinderBox({0,0,500},22,40);
     move=DropDistance(standing,down,{500.0});
     Check(move && Near(500-*move,40),"pawn rests on its collision height");
+    // Push to the wall along a world axis, whichever way the actor faces.
+    Check(Near(DropDirection(Surface::PlusX,{0,16384,0}),Vector{1,0,0}) && Near(DropDirection(Surface::MinusX,{}),Vector{-1,0,0})
+          && Near(DropDirection(Surface::PlusY,{}),Vector{0,1,0}) && Near(DropDirection(Surface::MinusY,{16384,0,0}),Vector{0,-1,0}),"walls along X and Y");
+    Box bench{{0,-20,0},{100,20,40}};
+    starts=DropStarts(bench,DropDirection(Surface::PlusX,{}));
+    Check(starts.size()==5 && Near(starts[0],Vector{50,0,20}),"rays towards +X from the centre");
+    // u along +Y and w along +Z.
+    Check(Near(starts[1],Vector{50,-16,4}) && Near(starts[2],Vector{50,16,4}) && Near(starts[4],Vector{50,16,36}),"across Y and Z at 80% of the face");
+    move=DropDistance(bench,{1,0,0},{300.0,300.0,300.0,300.0,300.0});
+    Check(move && Near(*move,250),"a box 100 wide meets a wall 300 from its centre after 250");
+    for(auto wall:{Surface::Wall,Surface::PlusX,Surface::MinusX,Surface::PlusY,Surface::MinusY})Check(IsWall(wall) && std::string(SurfaceName(wall))=="wall","every wall is a wall");
+    Check(!IsWall(Surface::Floor) && !IsWall(Surface::Ceiling) && std::string(SurfaceName(Surface::Ceiling))=="ceiling","floor and ceiling are not walls");
 
     // Aligning to a surface: up along a floor normal, yaw kept on a level floor.
     auto aligned=AlignToSurface({0,12000,0},{0,0,1},Surface::Floor);
@@ -109,6 +158,7 @@ int main()
     Check(aligned==Rotation({0,0,0}),"a level ceiling keeps an upright actor");
     aligned=AlignToSurface({0,0,0},{0,-1,0},Surface::Wall);
     Check(Near(Column(Axes(aligned),0),Vector{0,1,0},1e-4),"facing into the wall");
+    Check(AlignToSurface({0,0,0},{0,-1,0},Surface::PlusY)==aligned,"a wall along an axis aligns as the wall ahead");
     aligned=AlignToSurface({0,0,0},{0,0,-1},Surface::Floor);
     Check(Near(Column(Axes(aligned),2),Vector{0,0,-1},1e-4),"upside-down surface flips the actor");
 

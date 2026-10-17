@@ -318,9 +318,13 @@ namespace Workflow::Editor
     // Moves actors by their "delta" in one Undo step; locked ones stay.
     // Returns how many moved (none: no Undo step).
     size_t PlacementMove(const Json& moves, const std::string& label);
+    // Turns actors to their "rotation" in one Undo step; locked ones, and ones
+    // already turned that way, stay. Returns how many turned (none: no Undo step).
+    size_t PlacementTurn(const Json& changes, const std::string& label);
     // Drops the selection onto the surface below (0), above (1) or ahead (2),
-    // optionally turning meshes to sit flat on it, in one Undo step; a drop
-    // that changes nothing leaves none. Returns {moved,missed,unchanged,locked,brushes}.
+    // or pushes it to the wall towards +X, -X, +Y or -Y (3-6), optionally
+    // turning meshes to sit flat on it, in one Undo step; a drop that changes
+    // nothing leaves none. Returns {moved,missed,unchanged,locked,brushes}.
     Json PlacementDrop(int surface, bool align);
     // Copies of the members, one per {before,pivot,yaw,turn,after}
     // (Placement::Copy), pasted in one Undo step; the originals and copies

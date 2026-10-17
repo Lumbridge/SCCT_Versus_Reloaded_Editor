@@ -1,5 +1,6 @@
 #pragma once
 #include "WorkflowModel.h"
+#include "BrushGridSnapModel.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -11,9 +12,10 @@
 #include <vector>
 
 // Placement tools for selected actors: drop onto the surface below (or above,
-// or ahead), align and distribute by bounding box, and copies in a line, round
-// a centre or along a path. The editor side (PlacementNative.inl) reads the
-// boxes and traces the level; everything here is plain geometry.
+// or ahead, or along X or Y), align and distribute by bounding box, snap to
+// the grid, and copies in a line, round a centre or along a path. The editor
+// side (PlacementNative.inl) reads the boxes and traces the level; everything
+// here is plain geometry.
 //
 // Conventions are Unreal's: a Rotation is pitch/yaw/roll in 65536ths of a
 // turn, yaw turns +X towards +Y, and an actor's local point p reaches the
@@ -198,15 +200,55 @@ inline std::vector<Vector> DistributeLineDeltas(const std::vector<Box>& boxes, s
     return deltas;
 }
 
+// ------------------------------------------------------------------ Snap
+
+enum class SnapBy { Pivot, Edges };
+// How far each actor moves onto the editor's grid along the chosen axes (bit
+// 0 X, 1 Y, 2 Z): its pivot to the nearest grid point (halves away from
+// zero), or its box by whichever of its two edges is nearer a grid line (the
+// minimum on ties), as a brush's edge snap does.
+inline std::vector<Vector> GridSnapDeltas(const std::vector<Box>& boxes, const std::vector<Vector>& pivots, const Vector& grid, unsigned axes, SnapBy by)
+{
+    if (boxes.size() != pivots.size() || !axes || (axes & ~7u)) throw std::runtime_error("Invalid grid snap.");
+    for (int axis = 0; axis < 3; ++axis)
+        if ((axes & (1u << axis)) && (!std::isfinite(grid[axis]) || grid[axis] <= 0)) throw std::runtime_error("The editor grid spacing must be greater than zero.");
+    std::vector<Vector> deltas(boxes.size());
+    for (size_t i = 0; i < boxes.size(); ++i)
+    {
+        if (by == SnapBy::Edges) { deltas[i] = BrushGridSnap::Translation(boxes[i].lo, boxes[i].hi, grid, axes); continue; }
+        Check(pivots[i]);
+        for (int axis = 0; axis < 3; ++axis)
+            if (axes & (1u << axis)) deltas[i][axis] = std::round(pivots[i][axis] / grid[axis]) * grid[axis] - pivots[i][axis];
+    }
+    return deltas;
+}
+// The yaw turned to the nearest whole step of degrees, within one turn
+// (0-65535); pitch and roll stay. A step need not be a whole number of units.
+inline Rotation SnapYaw(const Rotation& r, double degrees)
+{
+    if (!std::isfinite(degrees) || degrees <= 0 || degrees > 360) throw std::runtime_error("Invalid yaw step.");
+    const double step = 65536 * degrees / 360;
+    Rotation out = r;
+    out[1] = WrapYaw(std::llround(std::round(r[1] / step) * step));
+    return out;
+}
+
 // ------------------------------------------------------------------ Drop
 
-enum class Surface { Floor, Ceiling, Wall };
+// Below, above, ahead of the actor, or along a world axis: all but the first
+// two are walls.
+enum class Surface { Floor, Ceiling, Wall, PlusX, MinusX, PlusY, MinusY };
+inline bool IsWall(Surface s) { return s != Surface::Floor && s != Surface::Ceiling; }
 inline const char* SurfaceName(Surface s) { return s == Surface::Floor ? "floor" : s == Surface::Ceiling ? "ceiling" : "wall"; }
-// Down, up, or level along the way the actor faces (its X axis).
+// Down, up, level along the way the actor faces (its X axis), or along X or Y.
 inline Vector DropDirection(Surface surface, const Rotation& rotation)
 {
     if (surface == Surface::Floor) return { 0, 0, -1 };
     if (surface == Surface::Ceiling) return { 0, 0, 1 };
+    if (surface == Surface::PlusX) return { 1, 0, 0 };
+    if (surface == Surface::MinusX) return { -1, 0, 0 };
+    if (surface == Surface::PlusY) return { 0, 1, 0 };
+    if (surface == Surface::MinusY) return { 0, -1, 0 };
     const auto forward = Column(Axes(rotation), 0);
     const Vector level{ forward[0], forward[1], 0 };
     if (Length(level) < 1e-6) throw std::runtime_error("The actor faces straight up or down, so it has no wall ahead.");
@@ -254,7 +296,7 @@ inline Rotation AlignToSurface(const Rotation& rotation, const Vector& normal, S
 {
     const Vector n = Unit(normal);
     const auto axes = Axes(rotation);
-    const int which = surface == Surface::Wall ? 0 : 2;
+    const int which = IsWall(surface) ? 0 : 2;
     const Vector from = Column(axes, which);
     const Vector to = surface == Surface::Floor ? n : Scale(n, -1);
     const double cosine = std::clamp(Dot(from, to), -1.0, 1.0);
