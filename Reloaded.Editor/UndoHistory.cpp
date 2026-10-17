@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "UndoHistory.h"
+#include "WindowPlacement.h"
 #include "UndoHistoryModel.h"
 #include "MemoryWriter.h"
 #include <algorithm>
@@ -682,6 +683,7 @@ namespace
                 DestroyWindow(hwnd);
                 return 0;
             case WM_NCDESTROY:
+                WindowPlacement::Remember(hwnd, "UndoHistory");
                 window = nullptr;
                 if (font) DeleteObject(font);
                 if (bold) DeleteObject(bold);
@@ -749,6 +751,7 @@ void Open()
     window = CreateWindowExA(WS_EX_TOOLWINDOW, wc.lpszClassName, "Undo History", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                              CW_USEDEFAULT, CW_USEDEFAULT, 380, 560, Owner(), nullptr, wc.hInstance, nullptr);
     if (!window) throw std::runtime_error("Cannot open the Undo History window.");
+    WindowPlacement::Restore(window, "UndoHistory");
     auto add = [](const char* cls, const char* text, int id, DWORD style)
     {
         HWND child = CreateWindowExA(cls[0] == 'L' ? WS_EX_CLIENTEDGE : 0, cls, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 10, 10, window,

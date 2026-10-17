@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "StoreyFilter.h"
+#include "WindowPlacement.h"
 #include "WorkflowEditor.h"
 #include "MapDesignModel.h"
 #include <objidl.h>
@@ -308,7 +309,12 @@ namespace
                 DestroyWindow(hwnd);
                 return 0;
             }
-            if (message == WM_NCDESTROY) { window = nullptr; return DefWindowProcA(hwnd, message, w, l); }
+            if (message == WM_NCDESTROY)
+            {
+                WindowPlacement::Remember(hwnd, "Storeys");
+                window = nullptr;
+                return DefWindowProcA(hwnd, message, w, l);
+            }
         }
         catch (const std::exception& error)
         {
@@ -349,6 +355,7 @@ void Open()
                              WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, 230, 520,
                              owner ? owner : GetActiveWindow(), nullptr, wc.hInstance, nullptr);
     if (!window) throw std::runtime_error("Cannot open the storey palette.");
+    WindowPlacement::Restore(window, "Storeys");
     SetTimer(window, kTimer, 1500, nullptr);
     generation = 0;
     Refresh(true);

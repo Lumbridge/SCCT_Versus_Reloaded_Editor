@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "LightShadowMap.h"
+#include "WindowPlacement.h"
 #include "LightShadowModel.h"
 #include "MeasureModel.h"
 #include "WorkflowEditor.h"
@@ -467,7 +468,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM w, LPARAM l)
             }
             break;
         case WM_CLOSE: DestroyWindow(window); return 0;
-        case WM_DESTROY: state.window = nullptr; return 0;
+        case WM_DESTROY: WindowPlacement::Remember(window, "LightShadow"); state.window = nullptr; return 0;
         }
     }
     catch (const std::exception& e)
@@ -498,6 +499,7 @@ void OpenSettings(HWND owner)
         state.window = CreateWindowExA(WS_EX_TOOLWINDOW, wc.lpszClassName, kTitle, style, CW_USEDEFAULT, CW_USEDEFAULT,
                                        rect.right - rect.left, rect.bottom - rect.top, owner, nullptr, wc.hInstance, nullptr);
         if (!state.window) throw std::runtime_error("Could not open the Light and Shadow Map window.");
+        WindowPlacement::Restore(state.window, "LightShadow");
     }
     FillWindow();
     SetDlgItemTextA(state.window, kStatusText, state.status.c_str());

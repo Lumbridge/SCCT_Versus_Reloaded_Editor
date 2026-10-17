@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "LightingBudget.h"
+#include "WindowPlacement.h"
 #include "LightingBudgetModel.h"
 #include "BudgetWindow.h"
 #include "RebuildAllMaps.h"
@@ -480,6 +481,7 @@ LRESULT CALLBACK BudgetProc(HWND window, UINT message, WPARAM w, LPARAM l)
             DestroyWindow(window);
             return 0;
         case WM_DESTROY:
+            WindowPlacement::Remember(window, "LightingBudget");
             budget.window = nullptr;
             return 0;
         }
@@ -509,6 +511,7 @@ void Show(HWND owner)
     budget.window = CreateWindowExA(WS_EX_TOOLWINDOW, "ReloadedLightingBudget", kTitle, WS_OVERLAPPEDWINDOW & ~WS_MINIMIZEBOX,
                                     CW_USEDEFAULT, CW_USEDEFAULT, 900, 680, owner, nullptr, GetModuleHandle(nullptr), nullptr);
     if (!budget.window) throw std::runtime_error("Could not open the Lighting Budget window.");
+    WindowPlacement::Restore(budget.window, "LightingBudget");
     Fill();
     ShowWindow(budget.window, SW_SHOW);
 }

@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "MagicEventWorkbench.h"
+#include "WindowPlacement.h"
 #include "MagicEventModel.h"
 #include "WorkflowEditor.h"
 #include "WorkflowTools.h"
@@ -576,7 +577,7 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
         if(message==WM_CTLCOLORSTATIC || message==WM_CTLCOLOREDIT || message==WM_CTLCOLORLISTBOX){SetTextColor(reinterpret_cast<HDC>(wp),Ink);SetBkColor(reinterpret_cast<HDC>(wp),message==WM_CTLCOLORSTATIC?Background:Panel);return reinterpret_cast<LRESULT>(message==WM_CTLCOLORSTATIC?s->background:s->panel);}
         if(message==WM_ERASEBKGND){RECT r{};GetClientRect(w,&r);FillRect(reinterpret_cast<HDC>(wp),&r,s->background);return 1;}
         if(message==WM_CLOSE){try{WriteDocument(Editor::Directory()/"magic-workbench.json",{{"version",1},{"left",s->left},{"right",s->right},{"scale",s->scale},{"snap",s->snap}});}catch(...){}DestroyWindow(w);return 0;}
-        if(message==WM_NCDESTROY){KillTimer(w,1);workbench=nullptr;DeleteObject(s->font);DeleteObject(s->background);DeleteObject(s->panel);SetWindowLongPtr(w,GWLP_USERDATA,0);delete s;return DefWindowProcA(w,message,wp,lp);}
+        if(message==WM_NCDESTROY){WindowPlacement::Remember(w,"MagicEventWorkbench");KillTimer(w,1);workbench=nullptr;DeleteObject(s->font);DeleteObject(s->background);DeleteObject(s->panel);SetWindowLongPtr(w,GWLP_USERDATA,0);delete s;return DefWindowProcA(w,message,wp,lp);}
     }
     catch(const std::exception& e){StatusText(*s,e.what());}
     return DefWindowProcA(w,message,wp,lp);
@@ -591,6 +592,6 @@ void Open(HWND owner,const std::string& actorPath)
     try{auto prefs=ReadDocument(Editor::Directory()/"magic-workbench.json",Json::object());s->left=std::clamp(prefs.value("left",260),215,600);s->right=std::clamp(prefs.value("right",365),280,700);s->scale=std::clamp(prefs.value("scale",75.0),0.002,600.0);s->snap=prefs.value("snap",true);}catch(...){}
     if(actorPath.empty())for(const auto& actor:Editor::SelectedIdentities())if(Editor::Compatible(actor.at("path"),"SBase.SMagicEvent")){s->eventPath=actor.at("path");s->inspectedPath=s->eventPath;break;}
     workbench=CreateWindowExA(WS_EX_CONTROLPARENT,wc.lpszClassName,"SMagicEvent Workbench",WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,1380,820,owner,nullptr,wc.hInstance,s);
-    if(workbench)ShowWindow(workbench,SW_SHOW);
+    if(workbench){WindowPlacement::Restore(workbench,"MagicEventWorkbench");ShowWindow(workbench,SW_SHOW);}
 }
 }

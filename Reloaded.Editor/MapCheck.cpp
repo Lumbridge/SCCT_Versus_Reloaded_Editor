@@ -2,6 +2,7 @@
 #undef min
 #undef max
 #include "MapCheck.h"
+#include "WindowPlacement.h"
 #include "MapCheckModel.h"
 #include "MeasureTool.h"
 #include "WorkflowEditor.h"
@@ -343,6 +344,7 @@ LRESULT CALLBACK CheckProc(HWND window, UINT message, WPARAM w, LPARAM l)
             DestroyWindow(window);
             return 0;
         case WM_DESTROY:
+            WindowPlacement::Remember(window, "MapCheck");
             ClearPath();
             check.window = nullptr;
             return 0;
@@ -379,6 +381,7 @@ void Show(HWND owner)
     check.window = CreateWindowExA(WS_EX_TOOLWINDOW, wc.lpszClassName, kTitle, WS_OVERLAPPEDWINDOW & ~WS_MINIMIZEBOX,
                                    CW_USEDEFAULT, CW_USEDEFAULT, 1000, 560, owner, nullptr, wc.hInstance, nullptr);
     if (!check.window) throw std::runtime_error("Could not open the Map Check window.");
+    WindowPlacement::Restore(check.window, "MapCheck");
     Fill();
     ShowWindow(check.window, SW_SHOW);
 }
