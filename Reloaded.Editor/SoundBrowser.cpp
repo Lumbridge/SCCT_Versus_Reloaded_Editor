@@ -405,14 +405,19 @@ static HWND GetListHWND(void* t)
 // The package, group and name of list item `item`. A search or Favorites row
 // names its own sound (false when that sound is not loaded); a native row's
 // item data is its sound, whichever package and group the boxes show. A nested
-// group stays dotted. Only a native row with no sound falls back to the
-// browser's package and group with the row's text.
+// group stays dotted. A native row with no sound, or whose sound no longer has
+// the row's name (a map change can free it and reuse its memory before the
+// next refresh), falls back to the browser's package and group with the row's
+// text, and is false while no package is shown.
 static bool SB_ItemParts(void* t, int item, char* pkg, char* grp, char* name, size_t size)
 {
     pkg[0] = grp[0] = name[0] = '\0';
-    LVITEMA row = {};
-    row.mask    = LVIF_PARAM;
-    row.iItem   = item;
+    char text[256] = {};
+    LVITEMA row    = {};
+    row.mask       = LVIF_TEXT | LVIF_PARAM;
+    row.iItem      = item;
+    row.pszText    = text;
+    row.cchTextMax = sizeof(text);
     SendMessageA(GetListHWND(t), LVM_GETITEMA, 0, reinterpret_cast<LPARAM>(&row));
     std::string path;
     if (SoundBrowserFavorites::RowPath(item, path))
@@ -420,22 +425,13 @@ static bool SB_ItemParts(void* t, int item, char* pkg, char* grp, char* name, si
         if (!row.lParam)
             return false;
     }
-    else if (row.lParam)
-    {
-        if (!SoundBrowserFavorites::SoundPath(reinterpret_cast<void*>(row.lParam), path))
-            return false;
-    }
-    else
+    else if (!row.lParam || !SoundBrowserFavorites::SoundPath(reinterpret_cast<void*>(row.lParam), path) ||
+             _stricmp(SoundFavorites::Split(path).name.c_str(), text) != 0)
     {
         GetWindowTextA(GetPackageComboHWND(t), pkg, static_cast<int>(size));
         GetWindowTextA(GetGroupComboHWND(t), grp, static_cast<int>(size));
-        LVITEMA lvi    = {};
-        lvi.mask       = LVIF_TEXT;
-        lvi.iItem      = item;
-        lvi.pszText    = name;
-        lvi.cchTextMax = static_cast<int>(size);
-        SendMessageA(GetListHWND(t), LVM_GETITEMA, 0, reinterpret_cast<LPARAM>(&lvi));
-        return name[0] != '\0';
+        strncpy_s(name, size, text, _TRUNCATE);
+        return pkg[0] != '\0' && name[0] != '\0';
     }
     if (path.find('.') == std::string::npos)
         return false;
@@ -449,8 +445,7 @@ static bool SB_ItemParts(void* t, int item, char* pkg, char* grp, char* name, si
 // The engine's command parser reads at most this many characters of an object name.
 static constexpr size_t kEngineNameMax = 63;
 
-// Package[.Group].Name: named in full, the engine finds the sound under any
-// package without taking a same-named one from another.
+// A sound's full path, Package[.Group].Name.
 static void SB_JoinPath(const char* pkg, const char* grp, const char* name, char* out, size_t size)
 {
     if (grp[0])
@@ -459,53 +454,78 @@ static void SB_JoinPath(const char* pkg, const char* grp, const char* name, char
         snprintf(out, size, "%s.%s", pkg, name);
 }
 
+typedef void*(__cdecl* StaticFindObjectFn)(void* objectClass, void* outer, const char* name, int exactClass);
+static constexpr uintptr_t kStaticFindObject = 0x10FACE00u;
+
+// The loaded object of `objectClass` (0: any class) the engine finds for
+// `name`. Package[.Group].Name looked up in no package is exactly that object;
+// looked up under any package, as OBJ EXPORT and a bare name are, a same-named
+// object in a group below the one named, or anywhere for a bare name, can be
+// found first.
+static void* SB_FindObject(uintptr_t objectClass, const char* name, bool anyPackage)
+{
+    __try
+    {
+        return reinterpret_cast<StaticFindObjectFn>(kStaticFindObject)(
+            reinterpret_cast<void*>(objectClass), anyPackage ? reinterpret_cast<void*>(-1) : nullptr, name, 0);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return nullptr;
+    }
+}
+
 // Reads a dialog's package, group and name boxes. What the user typed is made
 // a name a Sound'Package.Group.Name' reference can carry (no spaces or
-// brackets); a box still showing what the dialog filled in, an existing
-// package, group or sound, is kept. Changed text is written back to the boxes
-// and shown once. False, with the dialog left open and the buffers as filled
-// in, when no package name is left.
+// brackets); a box still showing what the dialog filled in, or naming a
+// package or group that is already loaded, is kept. Changed text is written
+// back to the boxes and shown, and the dialog stays open for OK again. False,
+// with the dialog left open and the buffers as filled in, when anything was
+// changed or no package name is left.
 static bool SB_ReadDialogNames(HWND hDlg, int pkgId, int grpId, int nameId,
                                char* pkg, char* grp, char* name, size_t size,
                                const char* filledPkg, const char* filledGrp, const char* filledName)
 {
+    static const char* const labels[3] = {"Package", "Group", "Name"};
     const int         ids[3]    = {pkgId, grpId, nameId};
     char* const       fields[3] = {pkg, grp, name};
     const std::string filled[3] = {filledPkg, filledGrp, filledName};
     std::string       safe[3];
-    bool              changed   = false;
+    std::string       changes;
     for (int i = 0; i < 3; ++i)
     {
         GetDlgItemTextA(hDlg, ids[i], fields[i], static_cast<int>(size));
-        safe[i] = fields[i] == filled[i] ? std::string(fields[i])
-                : i == 0                 ? AssetNames::SafeName(fields[i], "")
-                : i == 1                 ? AssetNames::SafeGroup(fields[i])
-                                         : AssetNames::SafeName(fields[i]);
-        changed = changed || safe[i] != fields[i];
+        const bool loaded = i < 2 && fields[i][0] &&
+                            SB_FindObject(0, (i == 0 ? std::string(fields[0]) : safe[0] + "." + fields[1]).c_str(), false);
+        safe[i] = (fields[i] == filled[i] || loaded) ? std::string(fields[i])
+                : i == 0                               ? AssetNames::SafeName(fields[i], "")
+                : i == 1                               ? AssetNames::SafeGroup(fields[i])
+                                                       : AssetNames::SafeName(fields[i]);
+        if (safe[i] != fields[i])
+            changes += std::string(labels[i]) + ": " + fields[i] + "  >  " + (safe[i].empty() ? "(none)" : safe[i]) + "\n";
     }
+    for (int i = 0; i < 3; ++i)
+        strncpy_s(fields[i], size, filled[i].c_str(), _TRUNCATE);
     if (safe[0].empty())
     {
-        for (int i = 0; i < 3; ++i)
-            strncpy_s(fields[i], size, filled[i].c_str(), _TRUNCATE);
         MessageBoxA(hDlg, "Enter a package name.", "Message", MB_OK);
         SetFocus(GetDlgItem(hDlg, pkgId));
         return false;
     }
-    if (!changed)
-        return true;
-    for (int i = 0; i < 3; ++i)
+    if (changes.empty())
     {
-        strncpy_s(fields[i], size, safe[i].c_str(), _TRUNCATE);
-        SetDlgItemTextA(hDlg, ids[i], fields[i]);
+        for (int i = 0; i < 3; ++i)
+            strncpy_s(fields[i], size, safe[i].c_str(), _TRUNCATE);
+        return true;
     }
-    char msg[1024];
-    snprintf(msg, sizeof(msg),
-             "Names keep only letters, digits, _ and -, so a Sound'Package.Name' reference "
-             "is not cut off at a space or bracket. The sound is named:\n\n"
-             "Package: %s\nGroup: %s\nName: %s",
-             pkg, grp[0] ? grp : "(none)", name);
-    MessageBoxA(hDlg, msg, "Message", MB_OK);
-    return true;
+    for (int i = 0; i < 3; ++i)
+        SetDlgItemTextA(hDlg, ids[i], safe[i].c_str());
+    const std::string msg =
+        "A Sound'Package.Name' reference is cut off at a space or a bracket, so the names you "
+        "type keep only letters, digits, _ and -, with accents dropped:\n\n" + changes +
+        "\nPress OK again to go ahead, or change them first.";
+    MessageBoxA(hDlg, msg.c_str(), "Message", MB_OK);
+    return false;
 }
 
 
@@ -2721,6 +2741,30 @@ static void __cdecl SB_HandleExport(void* this_ptr)
         if (!SB_ItemParts(this_ptr, selItems[i], pkgName, grpName, soundName, sizeof(soundName)))
             continue;
 
+        // OBJ EXPORT ignores PACKAGE= and looks NAME= up under every package,
+        // where a bare name can find a same-named sound from another package.
+        // The full path is sent, or the bare name when the path is longer than
+        // the engine reads, and the export is refused when even that finds
+        // another sound first (one of the same name in a group below).
+        char fullName[768] = {};
+        SB_JoinPath(pkgName, grpName, soundName, fullName, sizeof(fullName));
+        const char* sent  = strlen(fullName) <= kEngineNameMax ? fullName : soundName;
+        void*       found = SB_FindObject(USOUND_CLASS_PTR, sent, true);
+        if (!found || found != SB_FindObject(USOUND_CLASS_PTR, fullName, false))
+        {
+            std::string other;
+            char errMsg[1024];
+            if (found && SoundBrowserFavorites::SoundPath(found, other))
+                snprintf(errMsg, sizeof(errMsg),
+                         "Can't export sound.\n\nThe engine's export would write %s, "
+                         "another loaded sound named %s, instead of %s.",
+                         other.c_str(), soundName, fullName);
+            else
+                snprintf(errMsg, sizeof(errMsg), "Can't export sound.\n\nSound %s is not loaded.", fullName);
+            MessageBoxA(hParent, errMsg, "Message", MB_OK);
+            continue;
+        }
+
         // Pre-fill the save path with SoundName.wav
         char filePath[MAX_PATH * 2] = {};
         snprintf(filePath, sizeof(filePath), "%s.wav", soundName);
@@ -2738,15 +2782,10 @@ static void __cdecl SB_HandleExport(void* this_ptr)
         if (!GetSaveFileNameA(&ofn))
             break;
 
-        // OBJ EXPORT ignores PACKAGE= and looks NAME= up in every package, so a
-        // bare name could export a same-named sound from another package. It
-        // is kept only for a full path longer than the engine reads.
-        char fullName[768] = {};
-        SB_JoinPath(pkgName, grpName, soundName, fullName, sizeof(fullName));
         char cmd[MAX_PATH * 2 + 1024];
         snprintf(cmd, sizeof(cmd),
                  "OBJ EXPORT TYPE=SOUND PACKAGE=\"%s\" NAME=\"%s\" FILE=\"%s\"",
-                 pkgName, strlen(fullName) <= kEngineNameMax ? fullName : soundName, filePath);
+                 pkgName, sent, filePath);
         ExecEditorCommand(cmd);
     }
 }
@@ -2826,10 +2865,27 @@ static void __cdecl SB_HandleImport(void* this_ptr)
         char* dot = strrchr(data.soundName, '.');
         if (dot) *dot = '\0';
         // A space or bracket from the file name would cut off Sound'Package.Name'.
-        strncpy_s(data.soundName, AssetNames::SafeName(data.soundName).c_str(), _TRUNCATE);
+        // Tidied, two files, or a file and a loaded sound, can share a name, and
+        // AUDIO IMPORT replaces the sound already there: the dialog asks first,
+        // even after OK All.
+        const std::string safeName = AssetNames::SafeName(data.soundName);
+        char safePath[768] = {};
+        SB_JoinPath(data.pkgName, data.grpName, safeName.c_str(), safePath, sizeof(safePath));
+        const bool taken = safeName != data.soundName && data.pkgName[0] &&
+                           SB_FindObject(USOUND_CLASS_PTR, safePath, false);
+        strncpy_s(data.soundName, safeName.c_str(), _TRUNCATE);
+        if (taken)
+        {
+            char msg[1024];
+            snprintf(msg, sizeof(msg),
+                     "A sound named %s is already loaded, and importing %s under that name "
+                     "replaces it.\n\nGive it another name, or press OK to replace it.",
+                     safePath, fileOnly);
+            MessageBoxA(hParent, msg, "Message", MB_OK);
+        }
 
         INT_PTR dlgResult = IDOK;
-        if (!okAllMode)
+        if (!okAllMode || taken)
         {
             dlgResult = DialogBoxParamA(hExeInst,
                                         MAKEINTRESOURCEA(IDD_IMPORT_SOUND),
@@ -2910,17 +2966,23 @@ static void __cdecl SB_HandleDelete(void* this_ptr)
     char fullName[768] = {};
     SB_JoinPath(pkgName, grpName, soundName, fullName, sizeof(fullName));
 
-    // DELETE looks OBJECT= up in every package unless PACKAGE= is given, so a
-    // bare name could delete a same-named sound from another package. Name the
-    // sound in full, or by its package and the rest of its path when the full
-    // path is longer than the engine reads.
+    // DELETE looks OBJECT= up under every package unless PACKAGE= is given, and
+    // there a same-named sound from another package, or from a group below the
+    // one named, can be found first. With PACKAGE= only the sound at exactly
+    // this path is; the engine reads at most 63 characters of the rest.
+    const char* rest = fullName + strlen(pkgName) + 1;
+    if (strlen(rest) > kEngineNameMax)
+    {
+        char errMsg[1024];
+        snprintf(errMsg, sizeof(errMsg),
+                 "Can't delete sound.\n\nThe group and name of %s are longer than the %zu characters "
+                 "the engine reads.", fullName, kEngineNameMax);
+        MessageBoxA(hParent, errMsg, "Message", MB_OK);
+        return;
+    }
     const bool customRows = SoundBrowserFavorites::CustomRows();
     char cmd[1024];
-    if (strlen(fullName) <= kEngineNameMax)
-        snprintf(cmd, sizeof(cmd), "DELETE CLASS=SOUND OBJECT=\"%s\"", fullName);
-    else
-        snprintf(cmd, sizeof(cmd), "DELETE CLASS=SOUND PACKAGE=\"%s\" OBJECT=\"%s\"",
-                 pkgName, fullName + strlen(pkgName) + 1);
+    snprintf(cmd, sizeof(cmd), "DELETE CLASS=SOUND PACKAGE=\"%s\" OBJECT=\"%s\"", pkgName, rest);
     CallEditorGet("OBJ", cmd);
 
     RefreshList(this_ptr);
@@ -3113,20 +3175,28 @@ static void AutoExportStreamWAV(void* pSound)
              "%s..\\Packages\\Sounds\\%s\\%s.wav", sysDir, pkgName, resName);
     if (GetFileAttributesA(pkgPath) != INVALID_FILE_ATTRIBUTES) return;
 
+    // OBJ EXPORT ignores PACKAGE= and looks NAME= up under every package, where
+    // a bare name can find an identically named sound from another loaded
+    // package: name it in full, unless the full path is longer than the engine
+    // reads, and skip it when even that finds another sound first.
+    std::string path;
+    if (!SoundBrowserFavorites::SoundPath(pSound, path)) return;
+    const char* sent = path.size() <= kEngineNameMax ? path.c_str() : resName;
+    if (SB_FindObject(USOUND_CLASS_PTR, sent, true) != pSound)
+    {
+        Logger::log("SoundBrowser: " + path + " not exported, the export would take another sound of its name");
+        return;
+    }
+
     // OBJ EXPORT won't create directories, make sure the package folder exists.
     char pkgDir[MAX_PATH];
     snprintf(pkgDir, sizeof(pkgDir), "%s..\\Packages\\Sounds\\%s", sysDir, pkgName);
     CreateDirectoryA(pkgDir, nullptr);
 
-    // OBJ EXPORT ignores PACKAGE= and looks NAME= up in every package, so a bare
-    // name could export an identically named sound from another loaded package:
-    // name it in full, unless the full path is longer than the engine reads.
-    std::string path;
-    if (!SoundBrowserFavorites::SoundPath(pSound, path)) return;
     char cmd[MAX_PATH + 1024];
     snprintf(cmd, sizeof(cmd),
              "OBJ EXPORT TYPE=SOUND PACKAGE=\"%s\" NAME=\"%s\" FILE=\"%s\"",
-             pkgName, path.size() <= kEngineNameMax ? path.c_str() : resName, pkgPath);
+             pkgName, sent, pkgPath);
     ExecEditorCommand(cmd);
 
     WIN32_FILE_ATTRIBUTE_DATA fad = {};
@@ -3336,7 +3406,7 @@ static INT_PTR CALLBACK ImportSoundDlgProc(HWND hDlg, UINT msg, WPARAM wParam, L
         {
             ImportSoundData* d = reinterpret_cast<ImportSoundData*>(
                 GetWindowLongA(hDlg, GWL_USERDATA));
-            // The boxes were filled from d, which keeps those values until read.
+            // The boxes were filled from d, which keeps those values until OK goes ahead.
             if (d && !SB_ReadDialogNames(hDlg, IDC_IMPORT_PACKAGE, IDC_IMPORT_GROUP, IDC_IMPORT_NAME,
                                          d->pkgName, d->grpName, d->soundName, sizeof(d->soundName),
                                          d->pkgName, d->grpName, d->soundName))

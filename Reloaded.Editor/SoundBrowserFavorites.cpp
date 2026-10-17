@@ -1076,6 +1076,16 @@ static int __cdecl SBF_CustomCopyShortcut(void* browser)
     std::string path;
     if (!SBF_SelectedPath(path))
         return g_CustomView ? 1 : 0;
+    // A map change can free a native row's sound and reuse its memory before
+    // the next refresh: one that no longer has the row's name is left to the
+    // copy from the boxes.
+    char text[256] = {};
+    LVITEMA lvi    = {};
+    lvi.pszText    = text;
+    lvi.cchTextMax = static_cast<int>(std::size(text));
+    if (!g_CustomView && (!SendMessageA(g_List, LVM_GETITEMTEXTA, SBF_SelectedItem(), reinterpret_cast<LPARAM>(&lvi)) ||
+                          !SF::SameName(SF::Split(path).name, text)))
+        return 0;
     SBF_ClipboardCopy(("Sound'" + path + "'").c_str());
     return 1;
 }
