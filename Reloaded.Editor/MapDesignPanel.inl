@@ -1661,8 +1661,16 @@ void DesignVerifyActive(DesignState& s)
     Design::Extent actual;
     if(!DesignActualBounds(s,s.previous,actual))
     {
+        // Some brushes left is not the same as none: the rest can still be
+        // brought back or freed.
+        size_t present=0;
+        const auto& members=s.previous.at("members");
+        for(const auto& member:members)if(DesignActorAt(s,member.at("path")))++present;
+        const bool partly=present>0 && present<members.size();
         DesignDeactivate(s);
-        DesignStatus(s,"The piece being edited is no longer in the map, so the preview was cleared.");
+        if(partly)
+            DesignStatus(s,"Some of this piece's brushes were deleted: Undo brings them back, or right-click > Detach to edit the rest as brushes.");
+        else DesignStatus(s,"The piece being edited is no longer in the map, so the preview was cleared.");
         return;
     }
     try
@@ -3952,12 +3960,14 @@ void DesignUpdateDrag(DesignState& s,POINT p)
 }
 // A reference or route point dragged and not yet let go goes back to where it
 // was, and the drag ends: it moved only the panel's copy of the workspace.
-// Any other drag is left alone.
-void DesignDropReferenceDrag(DesignState& s)
+// Any other drag is left alone. Says whether it put one back.
+bool DesignDropReferenceDrag(DesignState& s)
 {
-    if(s.drag.kind!=DesignDrag::Kind::Guide && s.drag.kind!=DesignDrag::Kind::RoutePoint)return;
+    if(s.drag.kind!=DesignDrag::Kind::Guide && s.drag.kind!=DesignDrag::Kind::RoutePoint)return false;
     if(!s.drag.before.is_null())s.data=s.drag.before;
     s.drag={};
+    InvalidateRect(s.canvas,nullptr,FALSE);
+    return true;
 }
 void DesignEndDrag(DesignState& s,bool add)
 {
@@ -5094,6 +5104,9 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
         }
         if(message==WM_KEYDOWN)
         {
+            // Any key but a modifier puts back a reference or route point
+            // still held, so no key acts on a move that was never saved.
+            const bool dropped=w!=VK_SHIFT && w!=VK_CONTROL && w!=VK_MENU && DesignDropReferenceDrag(*s);
             const bool fine=(GetKeyState(VK_CONTROL)&0x8000)!=0;
             int axis=-1,direction=0;
             if(w==VK_LEFT || w==VK_RIGHT){axis=DesignHorizontal(*s);direction=w==VK_RIGHT?1:-1;}
@@ -5126,9 +5139,9 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             }
             if((w=='Z' || w=='Y') && (GetKeyState(VK_CONTROL)&0x8000))
             {
-                // A reference or route point still held goes back first, so
-                // the step undone is the one before the drag.
-                DesignDropReferenceDrag(*s);
+                // Ctrl+Z on a reference or route point still held undoes just
+                // the drag, not the step before it as well.
+                if(dropped && w=='Z'){DesignStatus(*s,"Drag cancelled.");return 0;}
                 DesignCommand(*s,w=='Z'?DUndo:DRedo);
                 return 0;
             }
@@ -5197,7 +5210,6 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             }
             if(w==VK_DELETE)
             {
-                DesignDropReferenceDrag(*s);
                 DesignDeleteSelection(*s);
                 return 0;
             }
@@ -5216,7 +5228,6 @@ LRESULT CALLBACK DesignCanvasProc(HWND window,UINT message,WPARAM w,LPARAM l)
             if(w==VK_ESCAPE)
             {
                 if(s->mode=="Element")ElementCancel(*s);
-                DesignDropReferenceDrag(*s);
                 s->mode.clear();s->points=Json::array();s->securityFirstSet=false;
                 DesignDeactivate(*s);
                 DesignStatus(*s,"Cancelled. The map is unchanged.");
