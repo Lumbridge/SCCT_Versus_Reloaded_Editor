@@ -103,12 +103,22 @@ inline Offset GogglesForNewModel(const Offset& current, const Offset& previousSu
                ? newSuggestion
                : current;
 }
-// The suggestion a team's offset is weighed against when the map's values are shown. An
-// offset the map has with a model came in with that model (a model preset or an earlier
-// Apply), so it gives way when the model changes; one without a model counts as typed.
-inline Offset MapGoggleSuggestion(const std::string& modelProperty, const std::string& mesh, const Offset& mapOffset)
+// Unreal object names ignore case.
+inline bool SameMesh(const std::string& a, const std::string& b)
 {
-    return mesh.empty() ? SuggestedGoggles(modelProperty, mesh) : mapOffset;
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) return false;
+    return true;
+}
+// The goggle light offset that goes with mesh, the model a team's row names. An offset the
+// map has with its own model came in with that model (a model preset or an earlier Apply),
+// so it is that model's: it gives way when the model changes and comes back with it. Other
+// models have the one RE+ suggests, and an offset the map has without a model counts as typed.
+inline Offset ModelGoggleSuggestion(const std::string& modelProperty, const std::string& mesh, const std::string& mapMesh,
+                                    const Offset& mapOffset)
+{
+    return !mesh.empty() && SameMesh(mesh, mapMesh) ? mapOffset : SuggestedGoggles(modelProperty, mesh);
 }
 inline std::string Number(double v)
 {

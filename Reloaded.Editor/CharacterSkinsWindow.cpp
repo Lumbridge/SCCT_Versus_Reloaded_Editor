@@ -33,9 +33,14 @@ constexpr UINT_PTR kDrawTimer = 1, kRefreshTimer = 2;
 constexpr int kDialogUnits = 640, kLeftUnits = 420;
 const char* const kHostClass = "ReloadedCharacterSkinsPreview";
 std::wstring lastFolder;
-// The goggle light offset each model row's model suggests, or the one the map has with
-// that model, which a new model replaces.
-CharacterSkins::Offset suggested[CharacterSkins::Models.size()];
+// Per model row: the model it names and the goggle light offset that goes with it, which
+// a new model replaces, and the map's own model and offset, which come back together.
+struct ModelRow
+{
+    std::string model, mapModel;
+    CharacterSkins::Offset suggested, mapGoggles;
+};
+ModelRow rows[CharacterSkins::Models.size()];
 
 std::filesystem::path PickFolder(HWND owner)
 {
@@ -151,19 +156,24 @@ CharacterSkins::Offset Goggles(HWND window, size_t model)
     }
     return CharacterSkins::CheckOffset({values[0], values[1], values[2]});
 }
-// A model row now names mesh: an offset the old model suggested gives way to the new
-// model's. One typed by hand stays, as does one that is not a number.
+// A model row now names mesh: an offset that went with the old model gives way to the new
+// model's. One typed by hand stays, as does one that is not a number. The same model again
+// changes nothing.
 void NewModel(HWND window, size_t model, const std::string& mesh)
 {
-    const auto next = CharacterSkins::SuggestedGoggles(CharacterSkins::Models[model].property, mesh);
+    auto& row = rows[model];
+    if (CharacterSkins::SameMesh(mesh, row.model))
+        return;
+    const auto next = CharacterSkins::ModelGoggleSuggestion(CharacterSkins::Models[model].property, mesh, row.mapModel, row.mapGoggles);
     try
     {
         const auto now = Goggles(window, model);
-        const auto offset = CharacterSkins::GogglesForNewModel(now, suggested[model], next);
+        const auto offset = CharacterSkins::GogglesForNewModel(now, row.suggested, next);
         if (offset.x != now.x || offset.y != now.y || offset.z != now.z) SetGoggles(window, model, offset);
     }
     catch (const std::exception&) {}
-    suggested[model] = next;
+    row.model = mesh;
+    row.suggested = next;
 }
 // Enter applies without leaving a model box: a name typed there counts before the values are read.
 void NewModels(HWND window)
@@ -206,7 +216,7 @@ void Show(HWND window, const Json& settings)
         const auto& g = settings.at("goggles").at(model.goggles);
         const CharacterSkins::Offset offset{g[0].get<double>(), g[1].get<double>(), g[2].get<double>()};
         SetGoggles(window, m, offset);
-        suggested[m] = CharacterSkins::MapGoggleSuggestion(model.property, mesh, offset);
+        rows[m] = {mesh, mesh, CharacterSkins::ModelGoggleSuggestion(model.property, mesh, mesh, offset), offset};
     }
     EnableWindow(GetDlgItem(window, kRemove), settings.at("placed").get<bool>());
     std::string status = settings.at("placed").get<bool>()
