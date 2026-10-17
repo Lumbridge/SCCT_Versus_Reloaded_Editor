@@ -128,6 +128,65 @@ void Carrying()
     Check(!UsageMarks::Default(direct[0], false).excluded, "Refresh marks a row afresh");
 }
 
+void Returning()
+{
+    // A's mesh row unchecked by hand. Another mesh set on A, or A deleted,
+    // takes it off the list with B's checked row; Undo brings them back.
+    const Json three = Json::array({Usage("Map.A", "StaticMesh"), Usage("Map.B", "StaticMesh"), Usage("Map.C", "StaticMesh", true, true)});
+    const std::vector<Mark> marks = {{false, false}, {true, false}, {true, true}};
+    const Json onlyC = Json::array({three[2]});
+    std::multiset<std::string> away;
+    auto gone = UsageMarks::Carry(three, marks, onlyC, false, false, &away);
+    Check(gone.size() == 1 && Same(gone[0], true, true), "the row still listed keeps its marks");
+    Check(away.size() == 1 && away.count(UsageMarks::Key(three[0])) == 1, "a row left out by hand is remembered when it leaves the list");
+    auto carried = UsageMarks::Carry(onlyC, gone, three, false, false, &away);
+    Check(Same(carried[0], false, false) && carried[0].excluded, "a row left out by hand comes back unchecked");
+    Check(Same(carried[1], true, false) && !carried[1].excluded, "a checked row that left the list comes back as a new one");
+    Check(Same(carried[2], true, true), "the row that stayed keeps its marks");
+    Check(away.empty(), "the row that came back takes its entry");
+    carried = UsageMarks::Carry(three, carried, three, false, false, &away);
+    Check(Same(carried[0], false, false) && Same(carried[1], true, false), "it stays unchecked at the next listing");
+    // Scope on: it comes back unchecked as any new row does, and still left out.
+    away = {UsageMarks::Key(three[0])};
+    carried = UsageMarks::Carry(onlyC, gone, three, true, false, &away);
+    Check(Same(carried[0], false, false) && carried[0].excluded, "scope on: a row left out by hand comes back left out");
+
+    // Back read-only (its slot holds a shader using the asset), then replaceable:
+    // still left out.
+    away = {UsageMarks::Key(Usage("Map.A", "Skins[0]"))};
+    const Json sharedA = Json::array({Usage("Map.A", "Skins[0]", false)});
+    const Json directA = Json::array({Usage("Map.A", "Skins[0]")});
+    carried = UsageMarks::Carry(Json::array(), {}, sharedA, false, false, &away);
+    Check(Same(carried[0], false, false) && carried[0].excluded, "a row left out by hand comes back read-only and left out");
+    carried = UsageMarks::Carry(sharedA, carried, directA, false, false, &away);
+    Check(Same(carried[0], false, false), "it stays unchecked once it can be replaced");
+
+    // Without the list of rows away, a row that comes back is a new one.
+    carried = UsageMarks::Carry(onlyC, gone, three, false);
+    Check(Same(carried[0], true, false), "nothing remembered: a returning row is new");
+
+    // One entry per row: two left out with the same key, one comes back.
+    const Json twice = Json::array({Surface(7), Surface(7), Surface(8)});
+    away.clear();
+    gone = UsageMarks::Carry(twice, {{false, false}, {false, false}, {true, false}}, Json::array({Surface(8)}), false, false, &away);
+    Check(away.count(UsageMarks::Key(Surface(7))) == 2, "each row left out has its own entry");
+    carried = UsageMarks::Carry(Json::array({Surface(8)}), gone, Json::array({Surface(7), Surface(8)}), false, false, &away);
+    Check(Same(carried[0], false, false) && Same(carried[1], true, false) && away.size() == 1, "a row that comes back takes one entry");
+
+    // A build drops the surfaces away: their numbers name other faces now, so
+    // the listed surfaces come in left out. Actor rows away stay remembered.
+    const Json brush = {{"path", "Map.Brush4"}, {"class", "Engine.Brush"}};
+    away = {UsageMarks::Key(Surface(12, brush)), UsageMarks::Key(three[0])};
+    const Json faces = Json::array({Surface(10, brush), Surface(11, brush)});
+    const Json moved = Json::array({Surface(12, brush), Surface(13, brush)});
+    carried = UsageMarks::Carry(faces, {{true, false}, {true, false}}, moved, false, true, &away);
+    Check(Same(carried[0], false, false) && Same(carried[1], false, false) && carried[0].excluded && carried[1].excluded,
+          "after a build, a face left out that had left the list leaves every surface row unchecked");
+    Check(away.size() == 1 && away.count(UsageMarks::Key(three[0])) == 1, "a build forgets the surfaces away, not the actor rows");
+    carried = UsageMarks::Carry(faces, {{true, false}, {true, false}}, moved, false, false, &away);
+    Check(Same(carried[0], true, false) && Same(carried[1], true, false), "without a build an actor row away does not reach the faces");
+}
+
 void Rebuilding()
 {
     // Brush A's faces 10 to 12, face 12 unchecked by hand, and an actor row unchecked.
@@ -191,6 +250,33 @@ void Rebuilding()
     const std::vector<Mark> leftSharedMarks = {{true, false}, {true, false}, {false, false, true}};
     carried = UsageMarks::Carry(leftShared, leftSharedMarks, after, false, true);
     Check(Same(carried[1], false, false) && Same(carried[2], false, false) && Same(carried[3], false, false), "after a build, a surface left out while read-only leaves every surface row unchecked");
+
+    // Faces 10 to 12, 12 unchecked by hand; a shader using the asset on 12; a
+    // build moves them to 12 to 14, 14 (the old 12) read-only; 14 replaceable
+    // again: the face left out stays unchecked, and so do the others.
+    const Json faces = Json::array({Surface(10, brush), Surface(11, brush), Surface(12, brush)});
+    Json shaded = faces;
+    shaded[2]["replaceable"] = false;
+    Json built14 = Json::array({Surface(12, brush), Surface(13, brush), Surface(14, brush)});
+    built14[2]["replaceable"] = false;
+    Json direct14 = built14;
+    direct14[2]["replaceable"] = true;
+    auto spell = UsageMarks::Carry(faces, {{true, false}, {true, false}, {false, false}}, shaded, false);
+    Check(Same(spell[2], false, false) && spell[2].excluded, "the face left out is remembered while read-only");
+    spell = UsageMarks::Carry(shaded, spell, built14, false, true);
+    Check(Same(spell[0], false, false) && Same(spell[1], false, false) && Same(spell[2], false, false), "after the build every surface row is unchecked");
+    Check(spell[0].excluded && spell[1].excluded && spell[2].excluded, "after the build every surface row counts as left out");
+    spell = UsageMarks::Carry(built14, spell, direct14, false);
+    Check(Same(spell[0], false, false) && Same(spell[1], false, false) && Same(spell[2], false, false), "a face read-only at the build stays unchecked once it can be replaced");
+    // A face left out before a build with nothing read-only: the same.
+    spell = UsageMarks::Carry(faces, {{true, false}, {true, false}, {false, false}}, built14, false, true);
+    Check(spell[2].excluded, "a read-only face after a build that left one out counts as left out");
+    // Nothing left out: a read-only face after a build comes back checked once it
+    // can be replaced, as a new usage does.
+    spell = UsageMarks::Carry(faces, {{true, false}, {true, false}, {true, false}}, built14, false, true);
+    Check(!spell[2].excluded, "a build that left nothing out marks nothing left out");
+    spell = UsageMarks::Carry(built14, spell, direct14, false);
+    Check(Same(spell[2], true, false), "a read-only face comes back checked when nothing was left out");
     // A surface left out by hand does not reach a new actor row after a build.
     const Json withMesh = Json::array({after[1], Usage("Map.F", "StaticMesh")});
     carried = UsageMarks::Carry(before, marks, withMesh, false, true);
@@ -204,6 +290,7 @@ int main()
         Keys();
         Defaults();
         Carrying();
+        Returning();
         Rebuilding();
     }
     catch (const std::exception& error)

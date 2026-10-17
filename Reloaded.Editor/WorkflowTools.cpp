@@ -694,8 +694,9 @@ namespace
         Kind kind; HWND window{},list{},status{}; Json rows=Json::array(); std::string selectedId,source,connectionActor; bool mesh=false;
         Json editing; Json members=Json::array(), instance; Pose frame{}; uintptr_t editLevel=0; unsigned epoch=0,revision=0; unsigned long builds=0;
         // Find Usages: the level and map generation its rows were listed from,
-        // and whether a build has renumbered the BSP surfaces since Refresh.
-        uintptr_t usageLevel=0; unsigned usageGeneration=0; bool renumberedSurfaces=false;
+        // and whether a build has renumbered the BSP surfaces since Refresh; the
+        // usages left out by hand that an edit has taken off the list since.
+        uintptr_t usageLevel=0; unsigned usageGeneration=0; bool renumberedSurfaces=false; std::multiset<std::string> usagesAway;
         std::vector<HWND> buttons;
     };
     std::vector<State*> windows;
@@ -743,8 +744,8 @@ namespace
             // A geometry build numbers the BSP surfaces afresh: their old marks name other faces.
             const auto builds=Editor::GeometryBuilds(); const bool renumbered=!fresh && !another && builds!=s.builds; s.builds=builds;
             auto previous=std::move(s.rows); s.rows=std::move(usages); bool only=SendMessage(GetDlgItem(s.window,kScope),BM_GETCHECK,0,0)==BST_CHECKED;
-            if(fresh || another) { marks.clear(); for(const auto& j:s.rows) marks.push_back(UsageMarks::Default(j,only)); }
-            else marks=UsageMarks::Carry(previous,marks,s.rows,only,renumbered);
+            if(fresh || another) { marks.clear(); s.usagesAway.clear(); for(const auto& j:s.rows) marks.push_back(UsageMarks::Default(j,only)); }
+            else marks=UsageMarks::Carry(previous,marks,s.rows,only,renumbered,&s.usagesAway);
             int i=0; bool surfaces=false; for(auto& j:s.rows)
             {
                 // Replace Checked reads the scope from here, and the next listing
