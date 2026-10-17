@@ -41,7 +41,7 @@ inline std::vector<size_t> Matching(const std::vector<Actor>& actors,std::string
 }
 inline std::vector<size_t> SameClass(const std::vector<Actor>& actors){return Matching(actors,&Actor::cls,"class");}
 inline std::vector<size_t> SameTag(const std::vector<Actor>& actors){return Matching(actors,&Actor::tag,"Tag");}
-// The rest of the selection, among the actors on show.
+// The visible actors that are not selected.
 inline std::vector<size_t> Inverted(const std::vector<Actor>& actors)
 {
     std::vector<size_t> result;
@@ -55,12 +55,12 @@ inline std::vector<size_t> ToHide(const std::vector<Actor>& actors)
     if(result.empty())throw std::runtime_error("Select something to hide first.");
     return result;
 }
-// Without a selection, isolating would hide the whole map in one step. With
-// everything else hidden already there is nothing to do, which is no error.
+// Without a visible selection, isolating would hide the whole map in one step.
+// With everything else hidden already there is nothing to do, which is no error.
 inline std::vector<size_t> ToIsolate(const std::vector<Actor>& actors)
 {
     bool kept=false;
-    for(const auto& actor:actors)if(actor.authorable && actor.selected)kept=true;
+    for(const auto& actor:actors)if(actor.authorable && actor.selected && !actor.hidden)kept=true;
     if(!kept)throw std::runtime_error("Select what should stay visible first.");
     return Inverted(actors);
 }

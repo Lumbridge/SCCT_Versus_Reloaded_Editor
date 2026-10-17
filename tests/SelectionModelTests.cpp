@@ -85,6 +85,11 @@ int main()
     Check(Picked(hiddenToo,Selection::ToHide(hiddenToo))==Names{"MyLevel.SCamera0"},"a hidden actor is not hidden again");
     auto hiddenOnly=Map({"MyLevel.Light1"});
     Reject([&]{Selection::ToHide(hiddenOnly);},"Select something to hide first.");
+    // A hidden selection (a Scene panel row, a restored Working View) keeps
+    // nothing on show, so isolating it would hide the whole map too.
+    Reject([&]{Selection::ToIsolate(Map({"MyLevel.SCamera2"}));},"Select what should stay visible first.");
+    Reject([&]{Selection::ToIsolate(hiddenOnly);},"Select what should stay visible first.");
+    Check(Picked(hiddenToo,Selection::ToIsolate(hiddenToo))==Names{"MyLevel.SCamera1","MyLevel.Light0","MyLevel.Mover0","MyLevel.Mover1"},"one visible actor in the selection is enough to isolate");
     auto everyone=Map({"MyLevel.SCamera0","MyLevel.SCamera1","MyLevel.Light0","MyLevel.Mover0","MyLevel.Mover1"});
     Check(Selection::ToIsolate(everyone).empty(),"isolating with the rest already hidden is nothing to do");
 
