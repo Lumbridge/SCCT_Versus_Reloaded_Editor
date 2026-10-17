@@ -7,6 +7,7 @@
 #include "GEKeybindSwap.h"
 #include "LevelSnapshot.h"
 #include "PlayLevelPlayers.h"
+#include "PropertyPaste.h"
 #include "SelfUpdater.h"
 #include "Version.h"
 #include "logger.h"
@@ -557,8 +558,8 @@ void EditorExtras::Attach(HWND frame)
 
 void EditorExtras::AppendActorMenu(HMENU menu)
 {
-    HMENU select = CreatePopupMenu(), visibility = CreatePopupMenu();
-    if (!select || !visibility) return;
+    HMENU select = CreatePopupMenu(), visibility = CreatePopupMenu(), properties = CreatePopupMenu();
+    if (!select || !visibility || !properties) return;
     AppendMenuA(select, MF_STRING, kSelectSameClass, "All of this &class");
     AppendMenuA(select, MF_STRING, kSelectSameTag, "All with this &Tag");
     AppendMenuA(select, MF_STRING, kSelectSameMesh, "Same static &mesh");
@@ -566,8 +567,13 @@ void EditorExtras::AppendActorMenu(HMENU menu)
     AppendMenuA(visibility, MF_STRING, kHideSelected, "&Hide selected");
     AppendMenuA(visibility, MF_STRING, kIsolateSelected, "&Isolate selected (hide the rest)");
     AppendMenuA(visibility, MF_STRING, kUnhideAll, "&Unhide all");
+    const UINT pasteable = PropertyPaste::HasCopy() ? 0 : MF_GRAYED;
+    AppendMenuA(properties, MF_STRING, PropertyPaste::kCopy, "&Copy Properties");
+    AppendMenuA(properties, MF_STRING | pasteable, PropertyPaste::kPaste, "&Paste Properties...");
+    AppendMenuA(properties, MF_STRING | pasteable, PropertyPaste::kPasteAgain, "Paste &Again");
     AppendMenuA(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(select), "RE+: &Select");
     AppendMenuA(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(visibility), "RE+: &Visibility");
+    AppendMenuA(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(properties), "RE+: &Properties");
 }
 
 bool EditorExtras::HandleCommand(UINT command)

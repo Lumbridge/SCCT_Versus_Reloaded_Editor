@@ -6,6 +6,7 @@
 #include "EmitterLibraryModel.h"
 #include "EmitterLibraryDefaults.gen.h"
 #include "MagicEventModel.h"
+#include "PropertyPasteModel.h"
 #include "MapAuthoringModel.h"
 #include "CameraNetworkModel.h"
 #include "MapDesignModel.h"

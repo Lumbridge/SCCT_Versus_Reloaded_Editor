@@ -61,6 +61,10 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\PropertyFilterModelTests.cpp /
 if errorlevel 1 goto failed
 "%TEMP%\PropertyFilterModelTests.exe"
 if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\PropertyPasteModelTests.cpp Reloaded.Editor\WorkflowModel.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\PropertyPasteModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\PropertyPasteModelTests.exe"
+if errorlevel 1 goto failed
 if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\AssetNameGlossModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\AssetNameGlossModelTests.exe"
 if errorlevel 1 goto failed
