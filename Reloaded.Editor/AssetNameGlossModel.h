@@ -123,6 +123,54 @@ inline std::string SafeGroup(std::string_view text)
     return out;
 }
 
+// A group typed under one that is already loaded: the longest run of leading
+// parts `loaded` finds ("A", then "A.B", and so on, stopping at the first it
+// does not) is kept as typed, and only the parts after it are made safe, so
+// "Short Loops.New Sub" under a loaded "Short Loops" gives
+// "Short Loops.New_Sub". With nothing loaded it is SafeGroup.
+template <class Loaded>
+inline std::string SafeGroupUnder(std::string_view text, Loaded&& loaded)
+{
+    size_t kept = std::string_view::npos;
+    size_t pos = 0;
+    while (pos < text.size())
+    {
+        size_t end = text.find('.', pos);
+        if (end == std::string_view::npos)
+            end = text.size();
+        if (end == pos || !loaded(text.substr(0, end)))
+            break;
+        kept = end;
+        pos = end + 1;
+    }
+    if (kept == std::string_view::npos)
+        return SafeGroup(text);
+    const std::string rest = kept < text.size() ? SafeGroup(text.substr(kept + 1)) : std::string();
+    return std::string(text.substr(0, kept)) + (rest.empty() ? std::string() : "." + rest);
+}
+
+// Whether the engine's object lookup can take `name`: it copies the name into
+// a 256-byte buffer without checking, and no part between dots can be longer
+// than the 63 characters a name holds, so nothing longer could be found.
+inline bool FitsLookup(std::string_view name)
+{
+    constexpr size_t kLookupMax = 255, kPartMax = 63;
+    if (name.size() > kLookupMax)
+        return false;
+    size_t pos = 0;
+    for (;;)
+    {
+        size_t end = name.find('.', pos);
+        if (end == std::string_view::npos)
+            end = name.size();
+        if (end - pos > kPartMax)
+            return false;
+        if (end == name.size())
+            return true;
+        pos = end + 1;
+    }
+}
+
 class Dictionary
 {
 public:

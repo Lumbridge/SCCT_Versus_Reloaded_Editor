@@ -51,6 +51,35 @@ int main()
         Same(SafeGroup(".A..B."), "A.B", "empty group parts dropped");
         Same(SafeGroup(""), "", "no group");
 
+        // A new group under a loaded one keeps the loaded part as typed.
+        const std::vector<std::string> groups = {"Short Loops", "Short Loops.Old Ones", "A.B"};
+        int asked = 0;
+        const auto loaded = [&](std::string_view group) {
+            ++asked;
+            return std::find(groups.begin(), groups.end(), group) != groups.end();
+        };
+        Same(SafeGroupUnder("Short Loops.New Sub", loaded), "Short Loops.New_Sub", "loaded parent kept");
+        Same(SafeGroupUnder("Short Loops", loaded), "Short Loops", "loaded group kept");
+        Same(SafeGroupUnder("Short Loops.Old Ones.New (2)", loaded), "Short Loops.Old Ones.New_2",
+             "longest loaded run kept");
+        Same(SafeGroupUnder("Short Loops..X.", loaded), "Short Loops.X", "empty parts after it dropped");
+        Same(SafeGroupUnder("My Group.Sub", loaded), "My_Group.Sub", "nothing loaded");
+        asked = 0;
+        Same(SafeGroupUnder("A.B", loaded), "A.B", "unloaded first part");
+        Check(asked == 1, "no lookups after the first part not found");
+        Same(SafeGroupUnder(".Short Loops", loaded), "Short_Loops", "leading dot");
+        Same(SafeGroupUnder("", loaded), "", "no group under");
+
+        // Names the engine's lookup can take: 255 characters, 63 between dots.
+        const std::string part63(63, 'a');
+        Check(FitsLookup(part63 + "." + part63 + "." + part63 + "." + part63), "255 characters");
+        Check(!FitsLookup(part63 + "." + part63 + "." + part63 + "." + std::string(62, 'a') + ".a"),
+              "256 characters");
+        Check(!FitsLookup("Pkg." + part63 + "a"), "64-character part");
+        Check(!FitsLookup(part63 + "a"), "64-character name");
+        Check(FitsLookup("Pkg.Group.Name"), "plain path");
+        Check(FitsLookup(""), "empty name");
+
         Dictionary d;
         d.Load(R"(
 # comment

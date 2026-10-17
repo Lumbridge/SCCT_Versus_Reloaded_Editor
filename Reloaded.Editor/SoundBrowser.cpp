@@ -461,9 +461,11 @@ static constexpr uintptr_t kStaticFindObject = 0x10FACE00u;
 // `name`. Package[.Group].Name looked up in no package is exactly that object;
 // looked up under any package, as OBJ EXPORT and a bare name are, a same-named
 // object in a group below the one named, or anywhere for a bare name, can be
-// found first.
+// found first. A name too long for the lookup's buffer finds nothing.
 static void* SB_FindObject(uintptr_t objectClass, const char* name, bool anyPackage)
 {
+    if (!AssetNames::FitsLookup(name))
+        return nullptr;
     __try
     {
         return reinterpret_cast<StaticFindObjectFn>(kStaticFindObject)(
@@ -478,10 +480,11 @@ static void* SB_FindObject(uintptr_t objectClass, const char* name, bool anyPack
 // Reads a dialog's package, group and name boxes. What the user typed is made
 // a name a Sound'Package.Group.Name' reference can carry (no spaces or
 // brackets); a box still showing what the dialog filled in, or naming a
-// package or group that is already loaded, is kept. Changed text is written
-// back to the boxes and shown, and the dialog stays open for OK again. False,
-// with the dialog left open and the buffers as filled in, when anything was
-// changed or no package name is left.
+// package or group that is already loaded, is kept, and a new group under a
+// loaded one keeps that one's name and tidies only the rest. Changed text is
+// written back to the boxes and shown, and the dialog stays open for OK
+// again. False, with the dialog left open and the buffers as filled in, when
+// anything was changed or no package name is left.
 static bool SB_ReadDialogNames(HWND hDlg, int pkgId, int grpId, int nameId,
                                char* pkg, char* grp, char* name, size_t size,
                                const char* filledPkg, const char* filledGrp, const char* filledName)
@@ -495,12 +498,18 @@ static bool SB_ReadDialogNames(HWND hDlg, int pkgId, int grpId, int nameId,
     for (int i = 0; i < 3; ++i)
     {
         GetDlgItemTextA(hDlg, ids[i], fields[i], static_cast<int>(size));
-        const bool loaded = i < 2 && fields[i][0] &&
-                            SB_FindObject(0, (i == 0 ? std::string(fields[0]) : safe[0] + "." + fields[1]).c_str(), false);
-        safe[i] = (fields[i] == filled[i] || loaded) ? std::string(fields[i])
-                : i == 0                               ? AssetNames::SafeName(fields[i], "")
-                : i == 1                               ? AssetNames::SafeGroup(fields[i])
-                                                       : AssetNames::SafeName(fields[i]);
+        if (fields[i] == filled[i])
+            safe[i] = fields[i];
+        else if (i == 0)
+            safe[i] = fields[0][0] && SB_FindObject(0, fields[0], false) ? std::string(fields[0])
+                                                                          : AssetNames::SafeName(fields[0], "");
+        else if (i == 1)
+            safe[i] = AssetNames::SafeGroupUnder(fields[1], [&](std::string_view group) {
+                return !safe[0].empty() &&
+                       SB_FindObject(0, (safe[0] + "." + std::string(group)).c_str(), false) != nullptr;
+            });
+        else
+            safe[i] = AssetNames::SafeName(fields[2]);
         if (safe[i] != fields[i])
             changes += std::string(labels[i]) + ": " + fields[i] + "  >  " + (safe[i].empty() ? "(none)" : safe[i]) + "\n";
     }
@@ -2841,6 +2850,13 @@ static void __cdecl SB_HandleImport(void* this_ptr)
     char      lastGrp[256] = {};
     strncpy_s(lastPkg, defPkg, _TRUNCATE);
     strncpy_s(lastGrp, defGrp, _TRUNCATE);
+    // The paths this import has used, in lower case as the engine ignores case.
+    std::unordered_set<std::string> importedPaths;
+    const auto pathKey = [](const char* path) {
+        std::string key = path;
+        for (auto& c : key) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+        return key;
+    };
 
     for (;;)
     {
@@ -2867,20 +2883,28 @@ static void __cdecl SB_HandleImport(void* this_ptr)
         // A space or bracket from the file name would cut off Sound'Package.Name'.
         // Tidied, two files, or a file and a loaded sound, can share a name, and
         // AUDIO IMPORT replaces the sound already there: the dialog asks first,
-        // even after OK All.
+        // even after OK All, for a tidied name that is loaded and for any name
+        // an earlier file of this import was given, tidied or not.
         const std::string safeName = AssetNames::SafeName(data.soundName);
         char safePath[768] = {};
         SB_JoinPath(data.pkgName, data.grpName, safeName.c_str(), safePath, sizeof(safePath));
-        const bool taken = safeName != data.soundName && data.pkgName[0] &&
-                           SB_FindObject(USOUND_CLASS_PTR, safePath, false);
+        const bool earlier = data.pkgName[0] && importedPaths.count(pathKey(safePath)) != 0;
+        const bool taken   = earlier || (safeName != data.soundName && data.pkgName[0] &&
+                                         SB_FindObject(USOUND_CLASS_PTR, safePath, false));
         strncpy_s(data.soundName, safeName.c_str(), _TRUNCATE);
         if (taken)
         {
             char msg[1024];
-            snprintf(msg, sizeof(msg),
-                     "A sound named %s is already loaded, and importing %s under that name "
-                     "replaces it.\n\nGive it another name, or press OK to replace it.",
-                     safePath, fileOnly);
+            if (earlier)
+                snprintf(msg, sizeof(msg),
+                         "An earlier file of this import was imported as %s, and importing %s "
+                         "under that name replaces it.\n\nGive it another name, or press OK to replace it.",
+                         safePath, fileOnly);
+            else
+                snprintf(msg, sizeof(msg),
+                         "A sound named %s is already loaded, and importing %s under that name "
+                         "replaces it.\n\nGive it another name, or press OK to replace it.",
+                         safePath, fileOnly);
             MessageBoxA(hParent, msg, "Message", MB_OK);
         }
 
@@ -2933,6 +2957,9 @@ static void __cdecl SB_HandleImport(void* this_ptr)
                      shortPath, data.pkgName, data.soundName);
         ExecEditorCommand(cmd);
         anyImported = true;
+        char importedPath[768] = {};
+        SB_JoinPath(data.pkgName, data.grpName, data.soundName, importedPath, sizeof(importedPath));
+        importedPaths.insert(pathKey(importedPath));
 
         if (!multiSel)
             break;
@@ -2969,20 +2996,36 @@ static void __cdecl SB_HandleDelete(void* this_ptr)
     // DELETE looks OBJECT= up under every package unless PACKAGE= is given, and
     // there a same-named sound from another package, or from a group below the
     // one named, can be found first. With PACKAGE= only the sound at exactly
-    // this path is; the engine reads at most 63 characters of the rest.
+    // this path is, but the engine reads at most 63 characters of the rest: a
+    // longer group and name is deleted by the bare name, and only when the
+    // engine's lookup of that name finds this very sound.
     const char* rest = fullName + strlen(pkgName) + 1;
-    if (strlen(rest) > kEngineNameMax)
+    char cmd[1024];
+    if (strlen(rest) <= kEngineNameMax)
+        snprintf(cmd, sizeof(cmd), "DELETE CLASS=SOUND PACKAGE=\"%s\" OBJECT=\"%s\"", pkgName, rest);
+    else
     {
-        char errMsg[1024];
-        snprintf(errMsg, sizeof(errMsg),
-                 "Can't delete sound.\n\nThe group and name of %s are longer than the %zu characters "
-                 "the engine reads.", fullName, kEngineNameMax);
-        MessageBoxA(hParent, errMsg, "Message", MB_OK);
-        return;
+        void* found = strlen(soundName) <= kEngineNameMax ? SB_FindObject(USOUND_CLASS_PTR, soundName, true)
+                                                          : nullptr;
+        if (!found || found != SB_FindObject(USOUND_CLASS_PTR, fullName, false))
+        {
+            std::string other;
+            char errMsg[1024];
+            if (found && SoundBrowserFavorites::SoundPath(found, other) && _stricmp(other.c_str(), fullName) != 0)
+                snprintf(errMsg, sizeof(errMsg),
+                         "Can't delete sound.\n\nThe group and name of %s are longer than the %zu characters "
+                         "the engine reads, and its name alone finds %s, another loaded sound.",
+                         fullName, kEngineNameMax, other.c_str());
+            else
+                snprintf(errMsg, sizeof(errMsg),
+                         "Can't delete sound.\n\nThe group and name of %s are longer than the %zu characters "
+                         "the engine reads.", fullName, kEngineNameMax);
+            MessageBoxA(hParent, errMsg, "Message", MB_OK);
+            return;
+        }
+        snprintf(cmd, sizeof(cmd), "DELETE CLASS=SOUND OBJECT=\"%s\"", soundName);
     }
     const bool customRows = SoundBrowserFavorites::CustomRows();
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "DELETE CLASS=SOUND PACKAGE=\"%s\" OBJECT=\"%s\"", pkgName, rest);
     CallEditorGet("OBJ", cmd);
 
     RefreshList(this_ptr);
