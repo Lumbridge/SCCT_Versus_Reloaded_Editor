@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // Engine-independent document, identity and placement logic.
@@ -16,6 +17,25 @@ namespace Workflow
     struct ActorText { std::string name, type, text; };
     struct Reference { std::string type, path; size_t begin{}, end{}; };
     std::string Fold(std::string value);
+    // Objects by path, compared without case as a search of the map does. The
+    // first of two paths that differ only in case is kept, which is the one a
+    // search in list order would find.
+    template<class Handle> class PathIndex
+    {
+    public:
+        void Add(const std::string& path, Handle h) { entries.emplace(Fold(path), h); }
+        const Handle* Find(const std::string& path) const
+        {
+            if (path.empty()) return nullptr;
+            const auto key = Fold(path);
+            if (key == "none") return nullptr;
+            const auto at = entries.find(key);
+            return at == entries.end() ? nullptr : &at->second;
+        }
+        size_t size() const { return entries.size(); }
+    private:
+        std::unordered_map<std::string, Handle> entries;
+    };
     // Exclusions identify exact preview rows; never accept replacement changes.
     Json SelectedTagChanges(const Json& preview);
     std::string Id();

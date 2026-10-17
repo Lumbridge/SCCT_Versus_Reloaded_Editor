@@ -186,10 +186,10 @@ std::vector<uintptr_t> SelectedActorAddresses()
 }
 size_t PlacementMove(const Json& moves,const std::string& label)
 {
-    std::vector<std::pair<Address,Vector>> changes;
+    std::vector<std::pair<Address,Vector>> changes;const ActorIndex index;
     for(const auto& move:moves)
     {
-        auto actor=ResolveIdentity(move);
+        auto actor=index.Resolve(move);
         if(!actor)throw std::runtime_error("The selection changed. Try again.");
         if(Property(actor,"bLockLocation") && DesignBool(actor,"bLockLocation"))continue;
         const auto delta=move.at("delta").get<Vector>();
@@ -197,6 +197,7 @@ size_t PlacementMove(const Json& moves,const std::string& label)
         auto target=Place::Add(Position(actor),delta);Place::Check(target);
         changes.push_back({actor,target});
     }
+    index.Report(moves.size(),"PlacementMove");
     if(changes.empty())return 0;
     Transaction transaction(label.c_str());
     for(auto& [actor,target]:changes){Modify(actor);SetPosition(actor,target);Call(actor,0x44);}

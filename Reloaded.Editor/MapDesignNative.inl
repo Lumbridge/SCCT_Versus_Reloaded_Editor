@@ -110,7 +110,9 @@ namespace
     }
     Json DesignFingerprint(const Json& members)
     {
-        for(auto& id:members)if(!ResolveIdentity(id))throw std::runtime_error("A blockout brush is missing. Undo/redo or restore it before editing this piece.");
+        const ActorIndex index;
+        for(auto& id:members)if(!index.Resolve(id))throw std::runtime_error("A blockout brush is missing. Undo/redo or restore it before editing this piece.");
+        index.Report(members.size(),"DesignFingerprint");
         return NormalizeFingerprint(CaptureAssembly(members,{}));
     }
 }
@@ -318,15 +320,16 @@ void FollowNow(const Json& members,const Vector& delta)
 {
     if(!members.is_array() || members.empty())return;
     if(std::abs(delta[0])<1e-9 && std::abs(delta[1])<1e-9 && std::abs(delta[2])<1e-9)return;
-    std::vector<Address> actors;
+    std::vector<Address> actors;const ActorIndex index;
     auto add=[&](Address a){if(std::find(actors.begin(),actors.end(),a)==actors.end())actors.push_back(a);};
     for(auto& id:members)
     {
-        auto a=ResolveIdentity(id);
+        auto a=index.Resolve(id);
         if(!a || (Property(a,"bLockLocation") && DesignBool(a,"bLockLocation")))continue;
         add(a);
         for(auto volume:SensorVolumes(a))add(volume);
     }
+    index.Report(members.size(),"FollowNow");
     for(auto a:actors){Modify(a);auto p=Position(a);for(int i=0;i<3;++i)p[i]+=delta[i];SetPosition(a,p);Call(a,0x44);}
 }
 Json DesignBlockout(const Json& spec,const Pose& frame,const Json& previous,const Json& followers,const Vector& delta)
@@ -364,26 +367,28 @@ Json DesignBlockoutBatch(const Json& items,const Json& followers,const Vector& d
 }
 void DesignAlign(const Json& scene,int axis,const std::string& mode,double spacing)
 {
-    std::vector<Vector> positions;std::vector<Address> actors;
+    std::vector<Vector> positions;std::vector<Address> actors;const ActorIndex index;
     for(auto& item:scene)
     {
         if(item.at("level").get<uintptr_t>()!=LevelIdentity() || item.at("generation").get<unsigned>()!=MapGeneration())throw std::runtime_error("The map changed. Refresh the design view.");
-        auto a=ResolveIdentity(item);if(!a || Position(a)!=item.at("position").get<Vector>())throw std::runtime_error("Selection moved. Refresh the design view.");
+        auto a=index.Resolve(item);if(!a || Position(a)!=item.at("position").get<Vector>())throw std::runtime_error("Selection moved. Refresh the design view.");
         if(DesignBool(a,"bLockLocation"))throw std::runtime_error("Unlock selected actors before aligning.");
         actors.push_back(a);positions.push_back(Position(a));
     }
+    index.Report(scene.size(),"DesignAlign");
     auto after=Design::Align(positions,axis,mode,spacing);Transaction transaction("Align or distribute actors");
     for(size_t i=0;i<actors.size();++i){Modify(actors[i]);SetPosition(actors[i],after[i]);Call(actors[i],0x44);}transaction.Commit();Redraw();
 }
 void DesignLayer(const Json& members,bool hidden,bool locked,const std::string& group,const std::string& groupAction)
 {
-    std::vector<Address> actors;auto live=LiveActors();
+    std::vector<Address> actors;auto live=LiveActors();const ActorIndex index;
     for(auto& id:members)
     {
-        auto a=ResolveIdentity(id);if(!a)continue;
+        auto a=index.Resolve(id);if(!a)continue;
         if(a==live[0] || a==live[1] || IsA(a,"Camera"))throw std::runtime_error("Layers cannot contain editor infrastructure.");
         if(!Property(a,"bLockLocation"))throw std::runtime_error("Actor does not expose location locking.");actors.push_back(a);
     }
+    index.Report(members.size(),"DesignLayer");
     if(groupAction!="none" && groupAction!="add" && groupAction!="remove")throw std::runtime_error("Invalid layer group action.");
     // Membership is written into the map's own Group field, so the layer
     // survives sharing the .sdc without the workspace file.
@@ -459,16 +464,20 @@ size_t DesignSetHidden(const Json& hide,const Json& show)
 {
     std::vector<Address> hiding,showing;
     auto live=LiveActors();
+    // Storeys re-applies its floor on every map change, often with nothing to do.
+    if(hide.empty() && show.empty())return 0;
+    const ActorIndex index;
     auto gather=[&](const Json& members,std::vector<Address>& into)
     {
         for(const auto& id:members)
         {
-            auto a=ResolveIdentity(id);
+            auto a=index.Resolve(id);
             if(!a || a==live[0] || a==live[1] || IsA(a,"Camera"))continue;
             into.push_back(a);
         }
     };
     gather(hide,hiding);gather(show,showing);
+    index.Report(hide.size()+show.size(),"DesignSetHidden");
     if(hiding.empty() && showing.empty())return 0;
     size_t changed=0,deselected=0;
     for(auto a:hiding)
@@ -496,14 +505,15 @@ size_t DesignTurnActors(const Json& members,double degrees,const Vector& pivot)
 {
     if(!std::isfinite(degrees))throw std::runtime_error("Enter a finite angle.");
     Design::CheckVector(pivot);
-    std::vector<Address> actors;auto live=LiveActors();
+    std::vector<Address> actors;auto live=LiveActors();const ActorIndex index;
     for(auto& id:members)
     {
-        auto a=ResolveIdentity(id);
+        auto a=index.Resolve(id);
         if(!a || a==live[0] || a==live[1] || IsA(a,"Camera"))continue;
         if(DesignBool(a,"bLockLocation"))continue;
         actors.push_back(a);
     }
+    index.Report(members.size(),"DesignTurnActors");
     if(actors.empty())return 0;
     const double radians=degrees*3.14159265358979323846/180,cosine=std::cos(radians),sine=std::sin(radians);
     const int step=static_cast<int>(std::lround(degrees*65536/360));
@@ -532,8 +542,19 @@ size_t DesignTurnActors(const Json& members,double degrees,const Vector& pivot)
 // locked actors leave the selection so nothing moves them by accident.
 void DesignSetFlags(const Json& members,int hidden,int locked)
 {
-    std::vector<Address> actors;auto live=LiveActors();
-    for(auto& id:members){auto a=ResolveIdentity(id);if(!a || a==live[0] || a==live[1] || IsA(a,"Camera"))continue;actors.push_back(a);}
+    std::vector<Address> actors;auto live=LiveActors();const ActorIndex index;
+    // Actors already as asked are left out, so isolating a map that is mostly
+    // hidden already puts only what changes into the Undo buffer, and asking
+    // again for what is already so leaves no Undo step at all.
+    auto settled=[&](Address a)
+    {
+        const auto flags=Read<unsigned>(a+0x2f4);
+        if(hidden>=0 && ((flags&0x10u)!=0)!=(hidden!=0))return false;
+        if(locked>=0 && Property(a,"bLockLocation") && DesignBool(a,"bLockLocation")!=(locked!=0))return false;
+        return !((hidden>0 || locked>0) && (flags&0x40u));
+    };
+    for(auto& id:members){auto a=index.Resolve(id);if(!a || a==live[0] || a==live[1] || settled(a) || IsA(a,"Camera"))continue;actors.push_back(a);}
+    index.Report(members.size(),"DesignSetFlags");
     if(actors.empty())return;
     Transaction transaction(locked>0?"Lock actors":locked==0?"Unlock actors":hidden>0?"Hide actors":"Show actors");
     for(auto a:actors)
@@ -551,14 +572,15 @@ void DesignGroupMembers(const Json& members,const std::string& group,const std::
 {
     if(action!="add" && action!="remove")throw std::runtime_error("Invalid group action.");
     if(action=="add" && !Design::ValidGroupName(group))throw std::runtime_error("Use 1-62 letters, digits or underscores for a group that travels with the map.");
-    std::vector<std::pair<Address,std::string>> changes;
+    std::vector<std::pair<Address,std::string>> changes;const ActorIndex index;
     for(auto& id:members)
     {
-        auto a=ResolveIdentity(id);if(!a || !Property(a,"Group"))continue;
+        auto a=index.Resolve(id);if(!a || !Property(a,"Group"))continue;
         auto current=NameField(a,"Group");
         auto next=action=="add"?Design::AddGroup(current,group):Design::RemoveGroup(current,group);
         if(next!=current)changes.push_back({a,next});
     }
+    index.Report(members.size(),"DesignGroupMembers");
     if(changes.empty())return;
     Transaction transaction(action=="add"?"Add actors to group":"Remove actors from group");
     for(auto& [a,next]:changes){Modify(a);DesignSetGroup(a,next);}
@@ -570,8 +592,9 @@ void DesignTranslate(const Json& members,const Vector& delta)
 {
     if(!members.is_array() || members.empty())return;
     // No empty Undo step when everything asked for is locked or gone.
-    bool movable=false;
-    for(auto& id:members){auto a=ResolveIdentity(id);if(a && !(Property(a,"bLockLocation") && DesignBool(a,"bLockLocation")))movable=true;}
+    bool movable=false;const ActorIndex index;
+    for(auto& id:members){auto a=index.Resolve(id);if(a && !(Property(a,"bLockLocation") && DesignBool(a,"bLockLocation")))movable=true;}
+    index.Report(members.size(),"DesignTranslate");
     if(!movable)return;
     Transaction transaction("Move group");
     FollowNow(members,delta);
@@ -618,29 +641,31 @@ Json CreateLift(const Vector& position,double width,double length,double thickne
 // BSP build; a missing actor reads as null.
 Json DesignPolyFlags(const Json& members)
 {
-    Json result=Json::array();
+    Json result=Json::array();const ActorIndex index;
     for(auto& id:members)
     {
-        auto a=ResolveIdentity(id);
+        auto a=index.Resolve(id);
         if(!a){result.push_back(nullptr);continue;}
         try{result.push_back(Read<unsigned>(Field(a,"PolyFlags")));}
         catch(const std::exception&){result.push_back(nullptr);}
     }
+    index.Report(members.size(),"DesignPolyFlags");
     return result;
 }
 // Sets brush actors' PolyFlags in one Undo step; null leaves one alone.
 size_t DesignSetPolyFlags(const Json& members,const Json& flags)
 {
     if(!members.is_array() || !flags.is_array() || members.size()!=flags.size())throw std::runtime_error("One flags value per brush.");
-    std::vector<std::pair<Address,unsigned>> changes;
+    std::vector<std::pair<Address,unsigned>> changes;const ActorIndex index;
     for(size_t i=0;i<members.size();++i)
     {
         if(flags[i].is_null())continue;
-        auto a=ResolveIdentity(members[i]);
+        auto a=index.Resolve(members[i]);
         if(!a)continue;
         try{if(Read<unsigned>(Field(a,"PolyFlags"))!=flags[i].get<unsigned>())changes.push_back({a,flags[i].get<unsigned>()});}
         catch(const std::exception&){}
     }
+    index.Report(members.size(),"DesignSetPolyFlags");
     if(changes.empty())return 0;
     Transaction transaction("Repair brush flags");
     for(auto& [a,value]:changes){Modify(a);Write(Field(a,"PolyFlags"),value);Call(a,0x44);}
@@ -652,8 +677,9 @@ size_t DesignSetPolyFlags(const Json& members,const Json& flags)
 // nothing happens when they are already last in this order.
 size_t DesignSendToLast(const Json& members)
 {
-    std::vector<Address> actors;
-    for(auto& id:members)if(auto a=ResolveIdentity(id))actors.push_back(a);
+    std::vector<Address> actors;const ActorIndex index;
+    for(auto& id:members)if(auto a=index.Resolve(id))actors.push_back(a);
+    index.Report(members.size(),"DesignSendToLast");
     if(actors.empty())return 0;
     auto level=Level();
     auto data=Read<Address>(level+0x2c);const int count=Read<int>(level+0x30);
