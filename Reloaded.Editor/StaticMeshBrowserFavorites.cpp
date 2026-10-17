@@ -1077,29 +1077,44 @@ static int SM_TextWidth(const char* text)
     return size.cx;
 }
 
+static MeshFavorites::Box SM_Box(const RECT& rect)
+{
+    return {rect.left, rect.top, rect.right, rect.bottom};
+}
+
 // The search row takes the bottom of the list's place, which gives up one row
-// of its height. Only a list the native layout has placed since (anywhere but
-// where this left it) is shortened again.
+// of its height. A list the native layout has placed since (anywhere but where
+// this left it) is shortened again, and so is one put back exactly there in a
+// pane that no longer shows the row under it; a row no longer right under the
+// list goes back there.
 static void SM_LayoutSearch()
 {
     if (!g_SearchEdit || !g_MeshList || !g_MeshListParent)
         return;
     const RECT list = SM_PaneRect(g_MeshList);
-    if (EqualRect(&list, &g_ListRect))
-        return;
+    const RECT edit = SM_PaneRect(g_SearchEdit);
+    RECT client = {};
+    GetClientRect(g_MeshListParent, &client);
     const RECT package = SM_PaneRect(g_PackageCombo);
     const int rowHeight = (std::max)(18L, package.bottom - package.top);
     constexpr int gap = 3;
-    const int rowTop = static_cast<int>(list.bottom) - rowHeight;
-    SetWindowPos(g_MeshList, nullptr, list.left, list.top, list.right - list.left,
-                 (std::max)(20L, static_cast<LONG>(rowTop - gap) - list.top), SWP_NOZORDER | SWP_NOACTIVATE);
+    MeshFavorites::SearchRowPlace place;
+    if (!MeshFavorites::LayOutSearchRow(SM_Box(list), SM_Box(g_ListRect), {list.left, edit.top, list.right, edit.bottom},
+                                        SM_Box(client), rowHeight, gap, place))
+    {
+        g_ListRect = list;
+        return;
+    }
+    SetWindowPos(g_MeshList, nullptr, place.list.left, place.list.top, place.list.right - place.list.left,
+                 place.list.bottom - place.list.top, SWP_NOZORDER | SWP_NOACTIVATE);
     g_ListRect = SM_PaneRect(g_MeshList);
 
+    const int rowTop = static_cast<int>(place.row.top);
     const int labelWidth = SM_TextWidth("Search:") + 6;
     const int allWidth = SM_TextWidth("All packages") + 24;
-    const int allLeft = static_cast<int>(list.right) - allWidth;
-    const int editLeft = static_cast<int>(list.left) + labelWidth;
-    SetWindowPos(g_SearchLabel, nullptr, list.left, rowTop + 3, labelWidth, rowHeight - 3, SWP_NOZORDER | SWP_NOACTIVATE);
+    const int allLeft = static_cast<int>(place.row.right) - allWidth;
+    const int editLeft = static_cast<int>(place.row.left) + labelWidth;
+    SetWindowPos(g_SearchLabel, nullptr, place.row.left, rowTop + 3, labelWidth, rowHeight - 3, SWP_NOZORDER | SWP_NOACTIVATE);
     SetWindowPos(g_SearchEdit, nullptr, editLeft, rowTop, (std::max)(40, allLeft - gap - editLeft), rowHeight,
                  SWP_NOZORDER | SWP_NOACTIVATE);
     SetWindowPos(g_SearchAllCheck, nullptr, allLeft, rowTop, allWidth, rowHeight, SWP_NOZORDER | SWP_NOACTIVATE);
@@ -1643,8 +1658,13 @@ static LRESULT CALLBACK SM_BrowserSubclassProc(HWND window, UINT message,
         char text[256] = {};
         if (g_SearchEdit)
             GetWindowTextA(g_SearchEdit, text, static_cast<int>(std::size(text)));
+        // The same words (Esc in an empty box, a letter typed and deleted
+        // again, a space added) leave the rows as they are: no list rebuild,
+        // no scroll position lost.
+        const bool same = MeshFavorites::SameSearch(text, g_Query);
         g_Query = text;
-        SM_Refresh();
+        if (!same)
+            SM_Refresh();
         return 0;
     }
 

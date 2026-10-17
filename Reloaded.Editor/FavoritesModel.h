@@ -1,8 +1,9 @@
 #pragma once
 // The pure part of the Static Mesh and Texture Browsers' Favorites and of the
 // browsers' search: a favourite's package, group and name, the search match,
-// the package list with counts, and the rows shown for a package filter, sort
-// order and search. No engine and no Windows, so the tests compile it alone.
+// the package list with counts, the rows shown for a package filter, sort
+// order and search, and where the search row goes under a list. No engine and
+// no Windows, so the tests compile it alone.
 #include <algorithm>
 #include <cstddef>
 #include <functional>
@@ -60,6 +61,27 @@ namespace Favorites
             at = end;
         }
         return true;
+    }
+
+    // The words of a search, in lower case.
+    inline std::vector<std::string> Words(const std::string& query)
+    {
+        std::vector<std::string> words;
+        size_t at = 0;
+        while ((at = query.find_first_not_of(" \t", at)) != std::string::npos)
+        {
+            const size_t end = (std::min)(query.find_first_of(" \t", at), query.size());
+            words.push_back(Lower(query.substr(at, end - at)));
+            at = end;
+        }
+        return words;
+    }
+
+    // Two searches match the same objects when they have the same words,
+    // whatever their case and spacing; blank ones all match everything.
+    inline bool SameSearch(const std::string& a, const std::string& b)
+    {
+        return Words(a) == Words(b);
     }
 
     enum class Sort { Package, Name, Newest, Oldest };
@@ -210,6 +232,56 @@ namespace Favorites
         for (const auto& entry : order)
             rows.push_back({entry.second, Label(paths[entry.second], byName ? Sort::Name : Sort::Package, true)});
         return rows;
+    }
+
+    // The search row under a browser's list, in the client coordinates of the
+    // list's parent.
+    struct Box
+    {
+        long left = 0, top = 0, right = 0, bottom = 0;
+        bool operator==(const Box&) const = default;
+    };
+    inline bool Inside(const Box& box, const Box& client)
+    {
+        return box.left >= client.left && box.top >= client.top && box.right <= client.right && box.bottom <= client.bottom;
+    }
+
+    struct SearchRowPlace
+    {
+        Box list, row;
+    };
+
+    // The row takes the bottom of the list's place and sits right under what
+    // is left of it, which keeps at least 20 pixels.
+    inline SearchRowPlace PlaceSearchRow(const Box& list, long rowHeight, long gap)
+    {
+        SearchRowPlace place{list, list};
+        place.list.bottom = (std::max)(list.top + 20, list.bottom - rowHeight - gap);
+        place.row.top = place.list.bottom + gap;
+        place.row.bottom = place.row.top + rowHeight;
+        return place;
+    }
+
+    // Whether the list and the row move, and where to (place). A list that is
+    // not where the last layout left it (lastList) has been placed by the
+    // native layout, so it gives up its bottom again. One that is still there
+    // keeps its height and has the row put back right under it, unless the row
+    // would then fall outside the pane while the list fits: the native layout
+    // has put the list back exactly there in a pane that shrank by the row's
+    // height, so it gives up its bottom again too. A list that does not fit
+    // either is not shortened further, which would only repeat on every check.
+    inline bool LayOutSearchRow(const Box& list, const Box& lastList, const Box& row, const Box& client, long rowHeight,
+                                long gap, SearchRowPlace& place)
+    {
+        SearchRowPlace next{list, {list.left, list.bottom + gap, list.right, list.bottom + gap + rowHeight}};
+        if (!(list == lastList) || (Inside(list, client) && !Inside(next.row, client)))
+            next = PlaceSearchRow(list, rowHeight, gap);
+        // Nothing moves when both are there already, a list as short as it
+        // goes with the row under it included.
+        if (next.list == list && next.row == row)
+            return false;
+        place = next;
+        return true;
     }
 
     // The Texture Browser draws loaded favourites as thumbnails, which need

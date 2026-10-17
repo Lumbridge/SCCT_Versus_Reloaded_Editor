@@ -70,6 +70,14 @@ int main()
         Check(Matches("GenTex.Walls.Brick", "") && Matches("GenTex.Walls.Brick", " \t "), "blank matches all");
         Check(IsBlank("") && IsBlank(" \t ") && !IsBlank(" a "), "blank");
 
+        // A new search text that matches the same objects needs no new rows.
+        Check(Words(" Door\tmetal  ") == std::vector<std::string>{"door", "metal"} && Words(" \t ").empty(), "words");
+        Check(SameSearch("door", "door") && SameSearch("", ""), "the same text");
+        Check(SameSearch("", "  \t") && SameSearch(" ", ""), "blank both times");
+        Check(SameSearch("door metal", " DOOR  metal "), "case and spacing");
+        Check(!SameSearch("door", "doo") && !SameSearch("", "d") && !SameSearch("door", ""), "a word changed");
+        Check(!SameSearch("door", "door metal") && !SameSearch("door metal", "door"), "a word added or taken away");
+
         // The text the editor adds (the English for French names) is searched too.
         SearchText() = [](const std::string& path) { return path == "Ind03.Portes.Porte_Metal01" ? path + " door metal 01" : path; };
         Check(Matches("Ind03.Portes.Porte_Metal01", "DOOR metal"), "English words");

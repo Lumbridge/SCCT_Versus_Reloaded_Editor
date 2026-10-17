@@ -116,6 +116,47 @@ int main()
         SearchText() = nullptr;
         Check(SearchRows(meshes, "", "door", Sort::Package).empty(), "no English without the gloss");
 
+        // The search row under the list: 21 pixels high, 3 below the list.
+        // The native layout gives the list 10..300 in a pane 306 high.
+        const Box pane{0, 0, 200, 306};
+        SearchRowPlace place, first;
+        Check(LayOutSearchRow({4, 10, 196, 300}, {}, {}, pane, 21, 3, first), "a new list is laid out");
+        Check(first.list == Box{4, 10, 196, 276} && first.row == Box{4, 279, 196, 300}, "the row takes the list's bottom");
+        Check(!LayOutSearchRow(first.list, first.list, first.row, pane, 21, 3, place), "laid out, it stays");
+        Check(LayOutSearchRow({4, 10, 196, 400}, first.list, first.row, {0, 0, 200, 406}, 21, 3, place)
+                  && place.list == Box{4, 10, 196, 376} && place.row == Box{4, 379, 196, 400},
+              "a list the native layout places again gives up its bottom again");
+
+        // The pane shrinks by the row's height and the native layout puts the
+        // list back exactly where the last layout left it: the row, still
+        // right under it, is now past the pane's bottom edge.
+        const Box shrunk{0, 0, 200, 282};
+        Check(LayOutSearchRow(first.list, first.list, first.row, shrunk, 21, 3, place)
+                  && place.list == Box{4, 10, 196, 252} && place.row == Box{4, 255, 196, 276} && Inside(place.row, shrunk),
+              "a list put back where it was left gives up its bottom again");
+        const SearchRowPlace again = place;
+        Check(!LayOutSearchRow(again.list, again.list, again.row, shrunk, 21, 3, place), "and then stays");
+
+        // A row moved away from the list goes back under it; the list keeps its height.
+        Check(LayOutSearchRow(first.list, first.list, {4, 100, 196, 121}, pane, 21, 3, place)
+                  && place.list == first.list && place.row == first.row,
+              "a row no longer under the list goes back");
+
+        // A list the pane cannot hold is not shortened again and again.
+        const Box tiny{0, 0, 200, 250};
+        Check(LayOutSearchRow({4, 10, 196, 300}, first.list, first.row, tiny, 21, 3, place) && place.list.bottom == 276,
+              "a list too long for the pane is laid out");
+        const SearchRowPlace overflow = place;
+        Check(!LayOutSearchRow(overflow.list, overflow.list, overflow.row, tiny, 21, 3, place), "but only once");
+
+        // A short list keeps 20 pixels with the row under it, even past the pane.
+        const Box low{0, 0, 200, 46};
+        Check(LayOutSearchRow({4, 10, 196, 40}, first.list, first.row, low, 21, 3, place)
+                  && place.list == Box{4, 10, 196, 30} && place.row == Box{4, 33, 196, 54},
+              "the list keeps 20 pixels");
+        const SearchRowPlace shortest = place;
+        Check(!LayOutSearchRow(shortest.list, shortest.list, shortest.row, low, 21, 3, place), "and stays at that");
+
         // Sort keys round-trip, and an unknown key falls back to package order.
         for (Sort s : kSorts) Check(SortFromKey(SortKey(s)) == s && std::string(SortLabel(s)).rfind("Sort: ", 0) == 0, "sort key");
         Check(SortFromKey("newest") == Sort::Newest && SortFromKey("") == Sort::Package && SortFromKey("bogus") == Sort::Package, "sort fallback");
