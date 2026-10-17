@@ -38,10 +38,16 @@ namespace Favorites
         return text;
     }
 
+    inline bool IsBlank(const std::string& query)
+    {
+        return query.find_first_not_of(" \t") == std::string::npos;
+    }
+
     // A search matches when every space-separated word of it appears in the
     // path (or its SearchText), ignoring case; an empty search matches everything.
     inline bool Matches(const std::string& path, const std::string& query)
     {
+        if (IsBlank(query)) return true;
         const std::string haystack = Lower(SearchText() ? SearchText()(path) : path);
         size_t at = 0;
         while (at < query.size())
@@ -54,10 +60,6 @@ namespace Favorites
             at = end;
         }
         return true;
-    }
-    inline bool IsBlank(const std::string& query)
-    {
-        return query.find_first_not_of(" \t") == std::string::npos;
     }
 
     enum class Sort { Package, Name, Newest, Oldest };

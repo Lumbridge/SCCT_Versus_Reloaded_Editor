@@ -950,6 +950,16 @@ static void __cdecl SM_RefreshDispatch(void* browser)
         SM_SwitchView(SM_WantCustom());
     if (ours && g_CustomView)
     {
+        // The editor refreshes after a delete, rename, import or load, which
+        // can reuse freed object slots and leave the count as it was: read the
+        // meshes again rather than trust the count.
+        if (!SM_Loading())
+        {
+            if (InterlockedCompareExchange(&g_FavoritesActive, TRUE, TRUE))
+                SM_RefreshResolvedFavorites();
+            else
+                SM_ScanMeshes(true);
+        }
         SM_PopulateFavorites(browser);
         return;
     }
@@ -1816,14 +1826,12 @@ bool StaticMeshBrowserFavorites::ShowFavorite(const std::string& path)
         return false;
     SM_LoadFavorites();
     SM_RefreshResolvedFavorites();
-    // A search or package filter that would hide it gives way.
-    if (!MeshFavorites::IsBlank(g_Query))
-    {
-        g_Query.clear();
-        if (g_SearchEdit)
-            SetWindowTextA(g_SearchEdit, "");
-        KillTimer(g_BrowserWindow, TIMER_SM_SEARCH);
-    }
+    // A search or package filter that would hide it gives way, a search still
+    // waiting for its timer included.
+    g_Query.clear();
+    if (g_SearchEdit)
+        SetWindowTextA(g_SearchEdit, "");
+    KillTimer(g_BrowserWindow, TIMER_SM_SEARCH);
     if (!g_PackageFilter.empty() &&
         SM_ToLower(MeshFavorites::Split(path).package) != SM_ToLower(g_PackageFilter))
     {
