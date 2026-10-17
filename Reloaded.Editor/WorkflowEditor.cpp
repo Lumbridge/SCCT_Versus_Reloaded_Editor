@@ -189,6 +189,9 @@ namespace
         for(int i=0;i<count;++i) result.push_back(data+i*stride);
         return result;
     }
+    // A node vertex's point index as the patched engine reads it (16 bits,
+    // unsigned); -1 for none or one past the point count.
+    int BspPointIndex(Address vert,size_t count) { return MapCheck::PointIndex(Read<unsigned short>(vert),count); }
     std::vector<Address> LiveActors()
     {
         std::vector<Address> result;

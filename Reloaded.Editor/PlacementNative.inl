@@ -373,3 +373,108 @@ Json PlacementCopy(const Json& members,const Json& copies,const std::string& lab
     Select(all);Redraw();
     return created;
 }
+namespace
+{
+    // What the floating check reads per class, resolved once (Map Check's
+    // FieldsOf and the fields PlaceMeshBox looks up by name): a map can hold
+    // thousands of static meshes.
+    struct FloorFields
+    {
+        const CheckFields* check=nullptr;
+        bool mesh=false;   // a StaticMeshActor with every field below
+        int staticMesh=-1,drawScale=-1,drawScale3D=-1,prePivot=-1,rotation=-1;
+    };
+    const FloorFields& FloorFieldsOf(Address cls,std::map<Address,CheckFields>& checks,std::map<Address,FloorFields>& cache)
+    {
+        if(auto found=cache.find(cls);found!=cache.end())return found->second;
+        FloorFields fields;fields.check=&FieldsOf(cls,checks);
+        bool staticMeshActor=false;
+        for(const auto& name:fields.check->classes)staticMeshActor=staticMeshActor || Fold(name)=="staticmeshactor";
+        for(auto p:Properties(cls))
+        {
+            const auto name=Fold(NameOf(p));
+            int* offset=name=="staticmesh"?&fields.staticMesh:name=="drawscale"?&fields.drawScale:name=="drawscale3d"?&fields.drawScale3D
+                :name=="prepivot"?&fields.prePivot:name=="rotation"?&fields.rotation:nullptr;
+            if(offset && *offset<0)*offset=Read<int>(p+0x3c);   // the first, as Property finds it
+        }
+        fields.mesh=staticMeshActor && fields.staticMesh>=0 && fields.drawScale>=0 && fields.drawScale3D>=0 && fields.prePivot>=0 && fields.rotation>=0;
+        return cache.emplace(cls,std::move(fields)).first->second;
+    }
+    // A static mesh actor's box as PlaceMeshBox builds it, from those offsets.
+    std::optional<Place::Box> FloorMeshBox(Address actor,const FloorFields& fields,std::map<Address,bool>& meshClasses)
+    {
+        const auto mesh=Read<Address>(actor+fields.staticMesh);
+        if(!mesh)return std::nullopt;
+        const auto meshClass=Read<Address>(mesh+0x24);
+        auto known=meshClasses.find(meshClass);
+        if(known==meshClasses.end())known=meshClasses.emplace(meshClass,IsA(mesh,"StaticMesh")).first;
+        if(!known->second)return std::nullopt;
+        const auto box=Read<std::array<float,6>>(mesh+0x28);
+        const auto scale=Read<float>(actor+fields.drawScale);
+        const auto scale3=Read<std::array<float,3>>(actor+fields.drawScale3D);
+        const auto pivot=Read<std::array<float,3>>(actor+fields.prePivot);
+        for(int axis=0;axis<3;++axis)
+            if(!std::isfinite(box[axis]) || !std::isfinite(box[axis+3]) || box[axis]>box[axis+3])return std::nullopt;
+        const Place::Box local{{box[0],box[1],box[2]},{box[3],box[4],box[5]}};
+        return Place::WorldBox(local,Position(actor),Read<Rotation>(actor+fields.rotation),{static_cast<double>(scale)*scale3[0],static_cast<double>(scale)*scale3[1],static_cast<double>(scale)*scale3[2]},{pivot[0],pivot[1],pivot[2]});
+    }
+}
+// Map Check's floating meshes (MapCheckModel.h CheckProps): Drop to Floor's
+// rays for every visible static mesh, each reaching only maxGap past the
+// mesh's bottom instead of PlaceTrace's whole world. A line check that
+// faults stops the scan, since it leaves the editor's memory mark behind, and
+// Map Check says so.
+MapCheck::FloorScan MapCheckFloorGaps(double maxGap)
+{
+    MapCheck::FloorScan scan;scan.ran=true;
+    const auto started=std::chrono::steady_clock::now();
+    const auto level=Level();
+    auto live=LiveActors();
+    std::map<Address,CheckFields> checks;
+    std::map<Address,FloorFields> cache;
+    std::map<Address,bool> meshClasses;
+    const Vector down{0,0,-1};
+    size_t meshes=0,rays=0;bool failed=false;
+    for(size_t i=2;i<live.size() && !scan.stopped;++i)
+    {
+        const auto actor=live[i];
+        try
+        {
+            if(Read<unsigned>(actor+0x2E8)&0x1000)continue;
+            const auto& fields=FloorFieldsOf(Read<Address>(actor+0x24),checks,cache);
+            if(!fields.mesh)continue;
+            const auto& check=*fields.check;
+            const bool soft=!(check.collide>=0 && (Read<unsigned>(actor+check.collide)&check.collideMask))
+                || !(check.block>=0 && (Read<unsigned>(actor+check.block)&check.blockMask));
+            // A mesh hidden only in the editor is still there to rest on.
+            const bool hiddenEd=(Read<unsigned>(actor+0x2f4)&0x10)!=0;
+            if(hiddenEd && !soft)continue;
+            const auto box=FloorMeshBox(actor,fields,meshClasses);
+            if(!box)continue;
+            if(soft)scan.soft.push_back({box->lo,box->hi});
+            if(hiddenEd)continue;
+            ++meshes;
+            const double reach=Place::Support(*box,down)+maxGap+2;
+            std::vector<std::optional<double>> hits;
+            for(const auto& start:Place::DropStarts(*box,down))
+            {
+                const auto end=Place::Add(start,Place::Scale(down,reach));
+                const PlaceFVec s{static_cast<float>(start[0]),static_cast<float>(start[1]),static_cast<float>(start[2])};
+                const PlaceFVec e{static_cast<float>(end[0]),static_cast<float>(end[1]),static_cast<float>(end[2])};
+                PlaceHit hit{};++rays;
+                if(!PlaceTraceRaw(level,actor,&s,e,&hit)){scan.stopped=true;scan.checked=meshes-1;throw std::runtime_error("The editor's line check failed.");}
+                if(!hit.found){hits.push_back(std::nullopt);continue;}
+                hits.push_back(Place::Dot(Place::Sub({hit.location[0],hit.location[1],hit.location[2]},start),down));
+            }
+            if(const auto gap=Place::DropDistance(*box,down,hits))scan.gaps.push_back({Path(actor),NameOf(actor),*gap,box->lo,box->hi});
+        }
+        catch(const std::exception& e)
+        {
+            if(!failed || scan.stopped)Logger::log(std::string("MapCheck: floating check skipped an actor: ")+e.what()+(scan.stopped?" The check stopped there.":""));
+            failed=true;
+        }
+    }
+    const auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
+    Logger::log("MapCheck: floating check: "+std::to_string(meshes)+" meshes, "+std::to_string(rays)+" rays, "+std::to_string(ms)+" ms");
+    return scan;
+}

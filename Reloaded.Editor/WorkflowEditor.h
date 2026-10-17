@@ -3,7 +3,7 @@
 #include "CharacterSkinsImage.h"
 #include <memory>
 
-namespace MapCheck { struct Scene; struct Settings; }
+namespace MapCheck { struct Scene; struct Settings; struct FloorScan; }
 
 namespace LightShadow { struct Scene; }
 namespace Minimap { struct Camera; struct Scene; }
@@ -137,6 +137,10 @@ namespace Workflow::Editor
     // actors with the editor's encroachment test, and the stock CheckForErrors
     // entries (when settings.stockChecks).
     MapCheck::Scene MapCheckScene(const MapCheck::Settings& settings);
+    // Map Check's floating meshes: how far Drop to Floor would move each
+    // visible static mesh, tracing at most maxGap below it, and the boxes of
+    // the meshes that do not block (the trace may not see them).
+    MapCheck::FloorScan MapCheckFloorGaps(double maxGap);
     // Selects the actors (framing them when asked) and the BSP surfaces of a row.
     size_t SelectMapCheckRow(const std::vector<std::string>& actors, const std::vector<int>& surfaces, bool frame);
     // Light and Shadow map (LightShadowModel.h): walkable BSP floor triangles

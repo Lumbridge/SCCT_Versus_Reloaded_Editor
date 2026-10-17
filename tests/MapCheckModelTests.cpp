@@ -374,8 +374,157 @@ int main()
         assert(report.problems.size() == 1);
     }
 
+    // Static meshes floating above the surface below them, from the editor's drop traces.
+    {
+        auto scene = Base(true, 100);
+        scene.floors.ran = true;
+        auto gap = [&](const char* name, double distance, Vec3 lo, Vec3 hi)
+        {
+            scene.floors.gaps.push_back({std::string("MyLevel.") + name, name, distance, lo, hi});
+        };
+        gap("Crate20", 20, {10, 10, 20}, {30, 30, 40});
+        gap("Barrel2", 2, {40, 10, 2}, {50, 20, 30});
+        gap("Resting", 0.3, {60, 10, 0.3}, {70, 20, 10});
+        gap("Nudged", 0.8, {60, 30, 0.8}, {70, 40, 10});
+        gap("Lamp", 60, {60, 60, 60}, {70, 70, 80});
+        gap("Sunk", -5, {80, 10, -5}, {90, 20, 10});
+        const auto report = Analyse(scene, Settings{});
+        assert(CountCheck(report, "Floating mesh") == 2);
+        auto crate = FindCheck(report, "Floating mesh");
+        assert(crate && crate->actors == std::vector<std::string>{"MyLevel.Crate20"});
+        assert(crate->severity == Severity::Warning && crate->group == "Props");
+        assert(crate->message.find("Crate20 floats 20 units above the surface below it") == 0);
+        assert(FindCheck(report, "Floating mesh", 1)->actors[0] == "MyLevel.Barrel2");
+        // Two or more get a row first that selects them all.
+        auto all = FindCheck(report, "Floating meshes");
+        assert(all && all->severity == Severity::Warning && CountCheck(report, "Floating meshes") == 1);
+        assert(all->actors == (std::vector<std::string>{"MyLevel.Crate20", "MyLevel.Barrel2"}));
+        assert(all->message.find("2 static meshes float 1-48 units") == 0);
+        assert(all < crate);
+
+        auto one = scene;
+        one.floors.gaps.resize(1);
+        const auto single = Analyse(one, Settings{});
+        assert(CountCheck(single, "Floating mesh") == 1 && !FindCheck(single, "Floating meshes"));
+
+        // A mesh that does not block (the trace went through it) whose box tops
+        // out at Crate20's bottom may be what it rests on: no row. Soft boxes
+        // beside it, above it or well below its bottom leave the row.
+        for (const double top : {19.5, 20.0, 20.8})
+        {
+            auto rug = scene;
+            rug.floors.soft.push_back({{0, 0, 0}, {40, 40, top}});
+            const auto rugged = Analyse(rug, Settings{});
+            assert(CountCheck(rugged, "Floating mesh") == 1 && FindCheck(rugged, "Floating mesh")->actors[0] == "MyLevel.Barrel2");
+            assert(!FindCheck(rugged, "Floating meshes") && !FindCheck(rugged, "Over a mesh that does not block"));
+        }
+        auto beside = scene;
+        beside.floors.soft.push_back({{100, 100, 0}, {120, 120, 19.5}});
+        beside.floors.soft.push_back({{0, 0, 0}, {40, 40, 1}});       // a rug 19 units below it
+        beside.floors.soft.push_back({{0, 0, 30}, {40, 40, 60}});     // a lamp above it
+        beside.floors.soft.push_back({{10, 10, 20}, {30, 30, 20}});   // its own box, a flat mesh
+        beside.floors.gaps[0].hi[2] = 20;
+        const auto besides = Analyse(beside, Settings{});
+        assert(CountCheck(besides, "Floating mesh") == 2 && !FindCheck(besides, "Over a mesh that does not block"));
+
+        // Inside the box of one (a shelf it may stand on): listed apart, without End.
+        auto shelf = scene;
+        shelf.floors.soft.push_back({{0, 0, 0}, {40, 40, 50}});
+        const auto shelved = Analyse(shelf, Settings{});
+        assert(CountCheck(shelved, "Floating mesh") == 1 && FindCheck(shelved, "Floating mesh")->actors[0] == "MyLevel.Barrel2");
+        assert(!FindCheck(shelved, "Floating meshes") && CountCheck(shelved, "Over a mesh that does not block") == 1);
+        auto onShelf = FindCheck(shelved, "Over a mesh that does not block");
+        assert(onShelf->severity == Severity::Note && onShelf->actors == std::vector<std::string>{"MyLevel.Crate20"});
+        assert(onShelf->message.find("Crate20 is 20 units above") == 0 && onShelf->message.find("press End") == std::string::npos);
+        assert(onShelf->message.find("End may drop it through") != std::string::npos);
+
+        // A line check that failed stops the scan: the rows found so far, and a note.
+        auto stopped = scene;
+        stopped.floors.stopped = true;
+        stopped.floors.checked = 6;
+        const auto partial = Analyse(stopped, Settings{});
+        auto note = FindCheck(partial, "Floating check stopped");
+        assert(note && note->severity == Severity::Note && CountCheck(partial, "Floating mesh") == 2);
+        assert(note->message.find("stopped after 6 static meshes because") != std::string::npos);
+        stopped.floors.checked = 1;
+        assert(FindCheck(Analyse(stopped, Settings{}), "Floating check stopped")->message.find("after 1 static mesh because") != std::string::npos);
+        assert(!FindCheck(report, "Floating check stopped"));
+
+        // Gaps under 10 keep a decimal; 1 is singular.
+        auto close = scene;
+        close.floors.gaps = {{"MyLevel.Mat", "Mat", 1.04, {0, 0, 1.04}, {10, 10, 12}}};
+        assert(FindCheck(Analyse(close, Settings{}), "Floating mesh")->message.find("Mat floats 1 unit above") == 0);
+
+        // A flat mesh (under 2 units high: a decal, a puddle) lifted 2 units or
+        // less is left out, even with the widest limits; higher, or a thicker
+        // mesh, is listed.
+        auto flat = scene;
+        flat.floors.gaps = {
+            {"MyLevel.Puddle", "Puddle", 1.5, {0, 0, 1.5}, {40, 40, 1.5}},
+            {"MyLevel.Sign", "Sign", 2, {0, 50, 2}, {40, 60, 3.9}},
+            {"MyLevel.Stain", "Stain", 0.6, {0, 70, 0.6}, {40, 80, 1}},
+            {"MyLevel.Sheet", "Sheet", 2.5, {50, 0, 2.5}, {90, 40, 3.5}},
+            {"MyLevel.Plank", "Plank", 1.5, {50, 50, 1.5}, {90, 60, 3.5}},
+        };
+        Settings widest;
+        widest.floatMinGap = 0.5;
+        for (const auto& settings : {Settings{}, widest})
+        {
+            const auto flats = Analyse(flat, settings);
+            assert(CountCheck(flats, "Floating mesh") == 2);
+            assert(FindCheck(flats, "Floating mesh")->actors[0] == "MyLevel.Sheet" && FindCheck(flats, "Floating mesh", 1)->actors[0] == "MyLevel.Plank");
+            assert(FindCheck(flats, "Floating meshes")->actors == (std::vector<std::string>{"MyLevel.Sheet", "MyLevel.Plank"}));
+        }
+
+        // Wider limits, and FloatingMaxGap 0 turns the check off.
+        Settings wide;
+        wide.floatMinGap = 0.5;
+        wide.floatMaxGap = 64;
+        const auto widened = Analyse(scene, wide);
+        assert(CountCheck(widened, "Floating mesh") == 4);
+        assert(FindCheck(widened, "Floating mesh", 2)->message.find("Nudged floats 0.8 units above") == 0);
+        assert(FindCheck(widened, "Floating meshes")->message.find("4 static meshes float 0.5-64 units") == 0);
+        Settings off;
+        off.floatMaxGap = 0;
+        off = ClampSettings(off);
+        assert(off.floatMaxGap == 0 && !FindCheck(Analyse(scene, off), "Floating mesh") && !FindCheck(Analyse(scene, off), "Floating meshes"));
+
+        // Not run, or no BSP: nothing.
+        auto notRun = scene;
+        notRun.floors.ran = false;
+        assert(!FindCheck(Analyse(notRun, Settings{}), "Floating mesh"));
+        Scene unbuilt;
+        unbuilt.floors = scene.floors;
+        const auto skipped = Analyse(unbuilt, Settings{});
+        assert(FindCheck(skipped, "BSP not built") && skipped.problems.size() == 1);
+
+        // Settings bounds.
+        Settings s;
+        s.floatMinGap = 0.1;
+        s.floatMaxGap = 1000;
+        s = ClampSettings(s);
+        assert(s.floatMinGap == 0.5 && s.floatMaxGap == 512);
+        s.floatMinGap = 100;
+        s.floatMaxGap = 10;
+        s = ClampSettings(s);
+        assert(s.floatMinGap == 64 && s.floatMaxGap == 64);
+        s.floatMinGap = 8;
+        s.floatMaxGap = -5;
+        s = ClampSettings(s);
+        assert(s.floatMinGap == 8 && s.floatMaxGap == 0);
+    }
+
+    // BSP point indices, read unsigned as the patched engine reads them.
+    {
+        assert(PointIndex(0x8001, 0x9000) == 0x8001);
+        assert(PointIndex(0xFFFF, 70000) == -1);
+        assert(PointIndex(0xABCD1234, 0x2000) == 0x1234);
+        assert(PointIndex(0x2000, 0x2000) == -1 && PointIndex(0x1FFF, 0x2000) == 0x1FFF && PointIndex(0, 0) == -1);
+    }
+
     // Check groups are listed for the window and future checks.
-    assert(CheckGroups().size() == 3 && std::string(CheckGroups()[0].id) == "actors");
+    assert(CheckGroups().size() == 4 && std::string(CheckGroups()[0].id) == "actors");
+    assert(std::string(CheckGroups()[2].id) == "props" && std::string(CheckGroups()[3].id) == "stock");
 
     std::puts("MapCheckModelTests passed");
     return 0;

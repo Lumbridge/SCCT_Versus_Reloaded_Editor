@@ -33,7 +33,8 @@
 //   0x2C each, flags +0x14). A portal that does not seal its opening leaves the
 //   same zone on both sides, which merges the rooms it was meant to divide.
 // Everything here is plain data so it can be tested without the editor
-// (tests/MapCheckModelTests.cpp). MapCheckNative.inl reads the scene.
+// (tests/MapCheckModelTests.cpp). MapCheckNative.inl reads the scene, and
+// PlacementNative.inl (MapCheckFloorGaps) traces below the static meshes.
 namespace MapCheck
 {
     using Vec3 = std::array<double, 3>;
@@ -102,6 +103,16 @@ namespace MapCheck
         return result;
     }
 
+    // A node vertex's point index: FVert.pVertex is 16 bits, and RE+ patches
+    // the engine to read it unsigned (BspDiagnostics), so 0x8000-0xFFFE are
+    // points and 0xFFFF is none. A rebuild leaves the next two bytes undefined.
+    // -1 when it names no point.
+    inline int PointIndex(uint32_t raw, size_t count)
+    {
+        const uint32_t index = raw & 0xFFFF;
+        return index == 0xFFFF || index >= count ? -1 : static_cast<int>(index);
+    }
+
     // ------------------------------------------------------------- scene --
 
     struct Actor
@@ -133,6 +144,26 @@ namespace MapCheck
         std::string actor, message;
     };
 
+    // A static mesh's gap above the surface below it: how far Drop to Floor
+    // would move it down (negative when sunk into it), and its box.
+    struct FloorGap
+    {
+        std::string path, name;
+        double gap = 0;
+        Vec3 lo{}, hi{};
+    };
+
+    // The editor's drop traces for every visible static mesh, and the boxes of
+    // the meshes those traces may not see (not colliding or not blocking).
+    struct FloorScan
+    {
+        bool ran = false;
+        bool stopped = false;   // a line check failed: only the first `checked` meshes were traced
+        size_t checked = 0;
+        std::vector<FloorGap> gaps;
+        std::vector<std::pair<Vec3, Vec3>> soft;   // lo, hi
+    };
+
     struct Scene
     {
         Bsp bsp;
@@ -144,6 +175,7 @@ namespace MapCheck
         std::vector<std::string> zoneActors;                // Zones[i].ZoneActor paths ("" = none)
         bool stockRan = false;
         std::vector<StockEntry> stock;
+        FloorScan floors;
     };
 
     struct Settings
@@ -153,6 +185,8 @@ namespace MapCheck
         int leakGridCells = 2000000;     // budget for the leak path search grid
         bool zonesWithoutZoneInfo = true;
         bool stockChecks = true;
+        double floatMinGap = 1;          // a static mesh this far above the surface below it floats...
+        double floatMaxGap = 48;         // ...up to this far (0 turns the check off)
     };
 
     inline Settings ClampSettings(Settings s)
@@ -160,6 +194,9 @@ namespace MapCheck
         s.geometryTolerance = std::clamp(s.geometryTolerance, 0.0, 64.0);
         s.farOutside = std::clamp(s.farOutside, 0.0, 262144.0);
         s.leakGridCells = std::clamp(s.leakGridCells, 10000, 20000000);
+        s.floatMinGap = std::clamp(s.floatMinGap, 0.5, 64.0);
+        s.floatMaxGap = std::clamp(s.floatMaxGap, 0.0, 512.0);
+        if (s.floatMaxGap > 0 && s.floatMaxGap < s.floatMinGap) s.floatMaxGap = s.floatMinGap;
         return s;
     }
 
@@ -563,6 +600,7 @@ namespace MapCheck
 
         constexpr const char* kActors = "Actors";
         constexpr const char* kZones = "Zones";
+        constexpr const char* kProps = "Props";
         constexpr const char* kStock = "Editor checks";
 
         inline void CheckActors(const Scene& scene, const Settings& settings, Report& report)
@@ -806,6 +844,74 @@ namespace MapCheck
             }
         }
 
+        // A gap in units, with one decimal below 10 when it is not whole (0.7).
+        inline std::string GapUnits(double value)
+        {
+            const long long tenths = std::llround(value * 10);
+            if (value <= 0 || value >= 10 || tenths % 10 == 0) return Units(value);
+            return std::to_string(tenths / 10) + "." + std::to_string(tenths % 10);
+        }
+
+        // A flat mesh (a decal, a puddle, a floor sign) under this high is
+        // often lifted up to kFlatMeshLift on purpose, against z-fighting.
+        constexpr double kFlatMeshHeight = 2, kFlatMeshLift = 2;
+
+        // Static meshes a little above the surface below them: left behind when
+        // the floor or the mesh under them moved. The trace may not see a mesh
+        // that does not block, so one whose box tops out at the mesh's bottom
+        // may be what it rests on: not floating. One inside such a box (a
+        // shelf, a cart) may rest on a surface within it, and Drop to Floor
+        // may drop it through, so it is listed apart without the End advice.
+        inline void CheckProps(const Scene& scene, const Settings& settings, Report& report)
+        {
+            const auto& floors = scene.floors;
+            if (!floors.ran) return;
+            std::vector<const FloorGap*> floating, inside;
+            for (const auto& gap : floors.gaps)
+            {
+                if (gap.gap < settings.floatMinGap || gap.gap > settings.floatMaxGap) continue;
+                if (gap.hi[2] - gap.lo[2] < kFlatMeshHeight && gap.gap <= kFlatMeshLift) continue;
+                const double bottom = gap.lo[2];
+                bool resting = false, within = false;
+                for (const auto& [lo, hi] : floors.soft)
+                {
+                    if (lo == gap.lo && hi == gap.hi) continue;   // its own box
+                    if (!(lo[0] < gap.hi[0] && hi[0] > gap.lo[0] && lo[1] < gap.hi[1] && hi[1] > gap.lo[1])) continue;
+                    resting = resting || (hi[2] >= bottom - 1 && hi[2] <= bottom + 1);
+                    within = within || (lo[2] < bottom && hi[2] > bottom + 1);
+                }
+                if (!resting) (within ? inside : floating).push_back(&gap);
+            }
+            auto units = [](double value) { const auto n = GapUnits(value); return n + (n == "1" ? " unit" : " units"); };
+            if (floating.size() >= 2)
+            {
+                auto p = Make(Severity::Warning, kProps, "Floating meshes",
+                              std::to_string(floating.size()) + " static meshes float " + GapUnits(settings.floatMinGap) + "-" + GapUnits(settings.floatMaxGap)
+                              + " units above the surface below them. This row selects them all: review the list (wall-mounted props near a ledge can show up), then press End over a viewport.");
+                for (const auto* gap : floating) p.actors.push_back(gap->path);
+                report.problems.push_back(std::move(p));
+            }
+            for (const auto* gap : floating)
+            {
+                auto p = Make(Severity::Warning, kProps, "Floating mesh",
+                              gap->name + " floats " + units(gap->gap) + " above the surface below it; select it and press End over a viewport (Drop to Floor).");
+                p.actors = {gap->path};
+                report.problems.push_back(std::move(p));
+            }
+            for (const auto* gap : inside)
+            {
+                auto p = Make(Severity::Note, kProps, "Over a mesh that does not block",
+                              gap->name + " is " + units(gap->gap) + " above the surface below it, inside the box of a static mesh that does not block (a shelf, or a mesh "
+                              "with its collision off). If it rests on that mesh, leave it: End may drop it through.");
+                p.actors = {gap->path};
+                report.problems.push_back(std::move(p));
+            }
+            if (floors.stopped)
+                report.problems.push_back(Make(Severity::Note, kProps, "Floating check stopped",
+                    "The floating mesh check stopped after " + std::to_string(floors.checked) + (floors.checked == 1 ? " static mesh" : " static meshes")
+                    + " because the editor's line check failed, so the meshes after those were not checked. Refresh to try again."));
+        }
+
         inline void CheckStock(const Scene& scene, const Settings&, Report& report)
         {
             for (const auto& entry : scene.stock)
@@ -822,6 +928,7 @@ namespace MapCheck
         static const std::vector<CheckGroup> groups{
             {"actors", "Actors outside the world or stuck in geometry", Detail::CheckActors},
             {"zones", "BSP leaks and zones that are not sealed", Detail::CheckZones},
+            {"props", "Static meshes floating above the surface below them", Detail::CheckProps},
             {"stock", "The editor's own Check Map for Errors", Detail::CheckStock},
         };
         return groups;
@@ -833,10 +940,12 @@ namespace MapCheck
         report.bspBuilt = scene.bsp.Built();
         if (!report.bspBuilt)
             report.problems.push_back(Detail::Make(Severity::Warning, Detail::kZones, "BSP not built",
-                "The map's BSP has not been built, so the void, geometry and zone checks were skipped. Build geometry and refresh."));
+                "The map's BSP has not been built, so the void, geometry, zone and floating mesh checks were skipped. Build geometry and refresh."));
         for (const auto& group : CheckGroups())
         {
-            if (!report.bspBuilt && std::string(group.id) == "zones") continue;
+            const std::string id = group.id;
+            if (!report.bspBuilt && (id == "zones" || id == "props")) continue;
+            if (id == "props" && settings.floatMaxGap <= 0) continue;
             group.run(scene, settings, report);
         }
         std::stable_sort(report.problems.begin(), report.problems.end(), [](const Problem& a, const Problem& b) { return a.severity < b.severity; });
