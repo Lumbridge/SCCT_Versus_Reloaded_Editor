@@ -204,16 +204,35 @@ size_t PlacementMove(const Json& moves,const std::string& label)
     transaction.Commit();Redraw();
     return changes.size();
 }
+size_t PlacementTurn(const Json& changes,const std::string& label)
+{
+    std::vector<std::pair<Address,Rotation>> turns;
+    for(const auto& change:changes)
+    {
+        auto actor=ResolveIdentity(change);
+        if(!actor)throw std::runtime_error("The selection changed. Try again.");
+        if(Property(actor,"bLockLocation") && DesignBool(actor,"bLockLocation"))continue;
+        const auto rotation=change.at("rotation").get<Rotation>();
+        if(rotation==RotationOf(actor))continue;
+        turns.push_back({actor,rotation});
+    }
+    if(turns.empty())return 0;
+    Transaction transaction(label.c_str());
+    for(auto& [actor,rotation]:turns){Modify(actor);Write(Field(actor,"Rotation"),rotation);Call(actor,0x44);}
+    transaction.Commit();Redraw();
+    return turns.size();
+}
 Json PlacementDrop(int surfaceIndex,bool align)
 {
-    if(surfaceIndex<0 || surfaceIndex>2)throw std::runtime_error("Invalid surface.");
+    if(surfaceIndex<0 || surfaceIndex>6)throw std::runtime_error("Invalid surface.");
     const auto surface=static_cast<Place::Surface>(surfaceIndex);
     const auto level=Level();
     auto actors=PlaceSelectedActors();
     if(actors.empty())throw std::runtime_error("Select the actors to drop first.");
     Json report={{"moved",0},{"missed",0},{"unchanged",0},{"locked",0},{"brushes",0}};
     // The lowest first onto a floor (the highest onto a ceiling), so a stack
-    // settles from the bottom up.
+    // settles from the bottom up; the nearest first to a wall along X or Y,
+    // so a row packs against it.
     std::vector<std::pair<Address,Place::Box>> order;
     for(auto actor:actors)
     {
@@ -224,7 +243,13 @@ Json PlacementDrop(int surfaceIndex,bool align)
         if(placed.kind==PlaceKind::Csg){report["brushes"]=report["brushes"].get<int>()+1;continue;}
         order.push_back({actor,placed.box});
     }
-    std::stable_sort(order.begin(),order.end(),[&](const auto& a,const auto& b){return surface==Place::Surface::Ceiling?a.second.hi[2]>b.second.hi[2]:a.second.lo[2]<b.second.lo[2];});
+    const bool axis=Place::IsWall(surface) && surface!=Place::Surface::Wall;
+    const auto push=axis?Place::DropDirection(surface,{}):Vector{};
+    std::stable_sort(order.begin(),order.end(),[&](const auto& a,const auto& b)
+    {
+        if(axis)return Place::Dot(Place::Centre(a.second),push)>Place::Dot(Place::Centre(b.second),push);
+        return surface==Place::Surface::Ceiling?a.second.hi[2]>b.second.hi[2]:a.second.lo[2]<b.second.lo[2];
+    });
     // A first look decides whether anything moves at all, so a drop that
     // changes nothing leaves no empty Undo step.
     bool any=false;

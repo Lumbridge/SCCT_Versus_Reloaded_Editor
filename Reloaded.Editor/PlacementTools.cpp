@@ -44,7 +44,7 @@ namespace
         catch (const std::exception&) { order.clear(); orderLevel = 0; }
     }
 
-    struct Member { Json identity; Place::Box box; uintptr_t address = 0; std::string kind; };
+    struct Member { Json identity; Place::Box box; uintptr_t address = 0; std::string kind; Vector position{}; Rotation rotation{}; };
     struct Selection
     {
         std::vector<Member> members; // in selection order, key last
@@ -62,6 +62,8 @@ namespace
             member.box = { item.at("lo").get<Vector>(), item.at("hi").get<Vector>() };
             member.address = static_cast<uintptr_t>(item.at("address").get<uint64_t>());
             member.kind = item.at("kind").get<std::string>();
+            member.position = item.at("position").get<Vector>();
+            member.rotation = item.at("rotation").get<Rotation>();
             unordered.push_back(std::move(member));
         }
         for (auto address : order)
@@ -85,6 +87,7 @@ namespace
     HWND toast = nullptr;
     HWND dialog = nullptr;
     void SetDialogStatus(const std::string& text);
+    std::string Format(double value);
     LRESULT CALLBACK ToastProc(HWND window, UINT message, WPARAM w, LPARAM l)
     {
         if (message == WM_TIMER) { DestroyWindow(window); return 0; }
@@ -192,13 +195,108 @@ namespace
         Track();
         const auto report = Editor::PlacementDrop(static_cast<int>(surface), align);
         const int moved = report.at("moved"), missed = report.at("missed"), unchanged = report.at("unchanged"), locked = report.at("locked"), brushes = report.at("brushes");
-        std::string text = moved ? std::string(surface == Place::Surface::Wall ? "Pushed " : "Dropped ") + Count(moved, "actor", "actors") + " to the " + Place::SurfaceName(surface) + "."
+        std::string text = moved ? std::string(Place::IsWall(surface) ? "Pushed " : "Dropped ") + Count(moved, "actor", "actors") + " to the " + Place::SurfaceName(surface) + "."
                                  : std::string("Nothing moved.");
         if (unchanged) text += " " + Count(unchanged, "was", "were") + " already there.";
         if (missed) text += " No " + std::string(Place::SurfaceName(surface)) + " found for " + Count(missed, "actor.", "actors.");
         if (locked) text += " " + Count(locked, "locked actor stays", "locked actors stay") + " put.";
         if (brushes) text += " " + Count(brushes, "CSG brush was", "CSG brushes were") + " skipped: a brush would only find its own geometry.";
         Report(text, !moved);
+    }
+
+    // Snapping to the grid leaves brushes out. A CSG brush's faces, not its
+    // pivot, belong on the grid, and the brush menus snap those. A volume or
+    // mover collides, so the level's collision hash files it by where it
+    // stood when added (StairSmoothNative.inl); writing its Location or
+    // Rotation here would leave it filed in the wrong place for the stock
+    // Undo and delete.
+    Selection WithoutBrushes(size_t& brushes, size_t& volumes)
+    {
+        Selection chosen;
+        brushes = volumes = 0;
+        for (const auto& member : Selected().members)
+            if (member.kind == "csg") ++brushes;
+            else if (member.kind == "brush") ++volumes;
+            else chosen.members.push_back(member);
+        if (chosen.members.empty() && !brushes && !volumes) throw std::runtime_error("Select the actors to snap first.");
+        return chosen;
+    }
+    std::string BrushesLeft(size_t brushes, size_t volumes, bool faceSnap)
+    {
+        std::string text = brushes ? Count(brushes, "CSG brush", "CSG brushes") + " left alone" + (faceSnap ? ": right-click a brush face for Snap brush edge to grid." : ".") : "";
+        if (volumes) text += (text.empty() ? "" : " ") + Count(volumes, "volume or mover", "volumes and movers") + " left alone.";
+        return text;
+    }
+    std::string StayLocked(size_t locked) { return Count(locked, "locked actor stays", "locked actors stay"); }
+    std::string GridName(const Vector& grid, unsigned axes)
+    {
+        std::string sizes;
+        bool same = true;
+        for (int axis = 0; axis < 3; ++axis)
+            if (axes & (1u << axis))
+            {
+                same = same && grid[axis] == grid[0];
+                sizes += (sizes.empty() ? "" : " x ") + Format(grid[axis]);
+            }
+        return same ? Format(grid[0]) + "-unit grid" : sizes + " grid";
+    }
+    // Pivots or box edges onto the editor's grid on X and Y (axes 3) or on
+    // all three (7).
+    void Snap(unsigned axes, Place::SnapBy by)
+    {
+        size_t brushes = 0, volumes = 0;
+        const auto chosen = WithoutBrushes(brushes, volumes);
+        std::string text;
+        bool problem = chosen.members.empty();
+        if (!chosen.members.empty())
+        {
+            const auto grid = Editor::DesignGrid();
+            std::vector<Vector> pivots;
+            for (const auto& member : chosen.members) pivots.push_back(member.position);
+            auto deltas = Place::GridSnapDeltas(Boxes(chosen), pivots, grid, axes, by);
+            // As the brush edge snap does: a move the float position cannot
+            // take is no move, so a second snap finds nothing to do.
+            for (size_t i = 0; i < deltas.size(); ++i) deltas[i] = Place::FloatDelta(pivots[i], deltas[i]);
+            const auto wanted = Movable(deltas);
+            const auto moved = Move(chosen, deltas, "Snap to grid");
+            const auto locked = wanted - moved;
+            if (!wanted) text = "Nothing to snap: already on the grid.";
+            else if (!moved) { text = "Nothing snapped: " + StayLocked(locked) + " put."; problem = true; }
+            else text = "Snapped " + Count(moved, "actor's", "actors'") + (by == Place::SnapBy::Pivot ? (moved == 1 ? " pivot" : " pivots") : " box edges")
+                      + " to the " + GridName(grid, axes) + (axes == 7 ? " (X, Y and Z)" : " (X and Y)") + (locked ? "; " + StayLocked(locked) : "") + ".";
+        }
+        if (brushes || volumes) text += (text.empty() ? "" : " ") + BrushesLeft(brushes, volumes, true);
+        Report(text, problem);
+    }
+    // Yaws to the nearest step of 90, 45 or 15 degrees; pitch and roll stay.
+    void SnapYaw(int degrees)
+    {
+        size_t brushes = 0, volumes = 0;
+        const auto chosen = WithoutBrushes(brushes, volumes);
+        std::string text;
+        bool problem = chosen.members.empty();
+        if (!chosen.members.empty())
+        {
+            Json changes = Json::array();
+            for (const auto& member : chosen.members)
+            {
+                const auto rotation = Place::SnapYaw(member.rotation, degrees);
+                // A yaw of -16384 already faces where 49152 does.
+                if (Place::WrapYaw(rotation[1]) == Place::WrapYaw(member.rotation[1])) continue;
+                auto change = member.identity;
+                change["rotation"] = rotation;
+                changes.push_back(change);
+            }
+            const auto turned = Editor::PlacementTurn(changes, "Snap yaw");
+            const auto locked = changes.size() - turned;
+            const auto step = std::to_string(degrees) + " degrees";
+            if (changes.empty()) text = "Nothing to turn: every yaw is already a multiple of " + step + ".";
+            else if (!turned) { text = "Nothing turned: " + StayLocked(locked) + " put."; problem = true; }
+            else text = "Turned " + Count(turned, "actor", "actors") + " to the nearest " + step + (locked ? "; " + StayLocked(locked) : "") + ".";
+        }
+        // The face snap only moves a brush, so it is no help with a turn.
+        if (brushes || volumes) text += (text.empty() ? "" : " ") + BrushesLeft(brushes, volumes, false);
+        Report(text, problem);
     }
 
     // --------------------------------------------------------------- copies
@@ -574,12 +672,17 @@ namespace
 
     HMENU BuildMenu()
     {
-        HMENU menu = CreatePopupMenu(), align = CreatePopupMenu(), distribute = CreatePopupMenu();
-        if (!menu || !align || !distribute) return menu;
+        HMENU menu = CreatePopupMenu(), align = CreatePopupMenu(), distribute = CreatePopupMenu(), push = CreatePopupMenu(), snap = CreatePopupMenu();
+        if (!menu || !align || !distribute || !push || !snap) return menu;
         AppendMenuA(menu, MF_STRING, kDropFloor, "&Drop to Floor\tEnd");
         AppendMenuA(menu, MF_STRING, kDropFloorAlign, "Drop to Floor and &Align to Surface\tShift+End");
         AppendMenuA(menu, MF_STRING, kDropCeiling, "Drop to &Ceiling\tCtrl+End");
         AppendMenuA(menu, MF_STRING, kDropWall, "Push to the &Wall Ahead");
+        AppendMenuA(push, MF_STRING, kPushPlusX, "Towards +X");
+        AppendMenuA(push, MF_STRING, kPushMinusX, "Towards -X");
+        AppendMenuA(push, MF_STRING, kPushPlusY, "Towards +Y");
+        AppendMenuA(push, MF_STRING, kPushMinusY, "Towards -Y");
+        AppendMenuA(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(push), "Push to Wall Al&ong");
         AppendMenuA(menu, MF_SEPARATOR, 0, nullptr);
         static const char* labels[9] = { "&X minimum", "X c&entre", "X ma&ximum", "&Y minimum", "Y ce&ntre", "Y maxi&mum", "&Z minimum", "Z cen&tre", "Z maximu&m" };
         for (UINT i = 0; i < 9; ++i)
@@ -593,6 +696,15 @@ namespace
         AppendMenuA(distribute, MF_STRING, kDistributeZ, "Along &Z");
         AppendMenuA(distribute, MF_STRING, kDistributeLine, "&Between First and Last Selected");
         AppendMenuA(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(distribute), "Distribute &Evenly");
+        AppendMenuA(snap, MF_STRING, kSnapPivotsXY, "&Pivots (X and Y)");
+        AppendMenuA(snap, MF_STRING, kSnapPivotsXYZ, "Pivots (X, Y and &Z)");
+        AppendMenuA(snap, MF_STRING, kSnapEdgesXY, "&Box Edges (X and Y)");
+        AppendMenuA(snap, MF_STRING, kSnapEdgesXYZ, "Box Edges (X, Y and Z)");
+        AppendMenuA(snap, MF_SEPARATOR, 0, nullptr);
+        AppendMenuA(snap, MF_STRING, kSnapYaw90, "&Yaw to 90 Degrees");
+        AppendMenuA(snap, MF_STRING, kSnapYaw45, "Yaw to 45 Degrees");
+        AppendMenuA(snap, MF_STRING, kSnapYaw15, "Yaw to 15 Degrees");
+        AppendMenuA(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(snap), "Snap to &Grid");
         AppendMenuA(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuA(menu, MF_STRING, kCopiesLinear, "Copies in a &Line...");
         AppendMenuA(menu, MF_STRING, kCopiesRadial, "Copies &Round a Centre...");
@@ -631,13 +743,24 @@ void InstallMenu(HMENU bar)
 
 bool HandleCommand(UINT command)
 {
-    if (command < kDropFloor || command > kCopiesPath) return false;
+    if ((command < kDropFloor || command > kCopiesPath) && (command < kSnapPivotsXY || command > kPushMinusY)) return false;
     try
     {
         if (command == kDropFloor) Drop(Place::Surface::Floor, false);
         else if (command == kDropFloorAlign) Drop(Place::Surface::Floor, true);
         else if (command == kDropCeiling) Drop(Place::Surface::Ceiling, false);
         else if (command == kDropWall) Drop(Place::Surface::Wall, false);
+        else if (command == kPushPlusX) Drop(Place::Surface::PlusX, false);
+        else if (command == kPushMinusX) Drop(Place::Surface::MinusX, false);
+        else if (command == kPushPlusY) Drop(Place::Surface::PlusY, false);
+        else if (command == kPushMinusY) Drop(Place::Surface::MinusY, false);
+        else if (command == kSnapPivotsXY) Snap(3, Place::SnapBy::Pivot);
+        else if (command == kSnapPivotsXYZ) Snap(7, Place::SnapBy::Pivot);
+        else if (command == kSnapEdgesXY) Snap(3, Place::SnapBy::Edges);
+        else if (command == kSnapEdgesXYZ) Snap(7, Place::SnapBy::Edges);
+        else if (command == kSnapYaw90) SnapYaw(90);
+        else if (command == kSnapYaw45) SnapYaw(45);
+        else if (command == kSnapYaw15) SnapYaw(15);
         else if (command >= kAlignFirst && command <= kAlignLast)
         {
             const UINT i = command - kAlignFirst;
