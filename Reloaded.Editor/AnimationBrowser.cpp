@@ -1277,13 +1277,17 @@ static bool GO_DeleteMeshAnimSeqRaw(int classOffset,
             // Serialization-allocated TArrays in SCCT don't reliably come
             // through the IAT-hooked mimalloc path - mi_free on those
             // pointers AVs and the SEH wrapper would convert the AV into
-            // "Failed to delete".  The leaked memory is reclaimed by the
-            // next save/reload of the package.
+            // "Failed to delete".  Nothing owns them once the elements
+            // are gone, so they stay allocated until the editor exits.
+            //
+            // Motions first: DeleteCurrentSequence's snapshot has read every
+            // sequence but no motion, so a fault comes before the sequences
+            // move.
             int tailElems = (seqsNum - seqIndex - 1);
             if (tailElems > 0)
             {
-                memmove(seqTarget,  seqTarget  + UMA_SEQ_STRIDE,  tailElems * UMA_SEQ_STRIDE);
                 memmove(moveTarget, moveTarget + UMA_MOVE_STRIDE, tailElems * UMA_MOVE_STRIDE);
+                memmove(seqTarget,  seqTarget  + UMA_SEQ_STRIDE,  tailElems * UMA_SEQ_STRIDE);
             }
 
             *(int*)((char*)obj + UMA_OFF_ANIMSEQS + 4) = seqsNum - 1;
@@ -1549,17 +1553,11 @@ static void Set_SeqName(const char* t, void*)
     // carries its name, as GO_FindMeshAnimSeqRaw resolves it.
     std::string pkg  = PackageComboText();
     std::string anim = AnimComboText();
-    std::vector<std::string> others;
+    std::vector<std::string> names;
     if (GO_EnumSequencesRaw(g_uobjClassOffset, pkg.c_str(), anim.c_str(), &s_seqBuf))
-    {
-        bool self = false;
-        for (int i = 0; i < s_seqBuf.count; ++i)
-        {
-            if (!self && _stricmp(s_seqBuf.items[i], g_curSeqName) == 0) { self = true; continue; }
-            others.emplace_back(s_seqBuf.items[i]);
-        }
-    }
-    const std::string problem = AnimImportOptions::RenameProblem(t, others);
+        for (int i = 0; i < s_seqBuf.count; ++i) names.emplace_back(s_seqBuf.items[i]);
+    const std::string problem =
+        AnimImportOptions::RenameProblem(t, AnimImportOptions::OtherSequences(names, g_curSeqName));
     if (!problem.empty())
     {
         s_refusing = true;
@@ -1915,6 +1913,18 @@ static void DeleteCurrentSequence()
     if (MessageBoxA(g_hWnd, DeleteConfirmText(prevName, pkg, anim, notifies).c_str(), "Delete Sequence",
                     MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
         return;
+
+    // The main editor stays usable while the box is up, and a map load
+    // there can free the set or load it again elsewhere: delete only from
+    // the set the question was about, still holding the same sequences.
+    if (GO_FindMeshAnimRaw(pkg.c_str(), anim.c_str(), nullptr, nullptr, 0) != set ||
+        !GO_SnapshotAnimRaw(set, &s_snapExisting) ||
+        SnapshotToSet(s_snapExisting).sequences != before.sequences)
+    {
+        MessageBoxA(g_hWnd, "Failed to delete sequence.",
+                    "Message", MB_OK);
+        return;
+    }
 
     int removed = -1;
     if (!GO_DeleteMeshAnimSeqRaw(g_uobjClassOffset,
@@ -5353,7 +5363,8 @@ static void AutoRefreshIfDirty()
 
     // Only while the browser is the window in use: the walks below scan
     // every object, which a big map makes slow, and the editor would pay
-    // for them every second.  WM_ACTIVATE catches up on return.
+    // for them every second.  WM_ACTIVATE catches up on return, or WM_SIZE
+    // when the browser comes back from minimised.
     if (GetForegroundWindow() != g_hWnd || IsIconic(g_hWnd)) return;
 
     // Don't yank the listbox out from under a user who has a dropdown
@@ -6380,6 +6391,15 @@ static void OnRenameMesh(HWND hParent)
 
     RefreshAll();
     if (newPkg[0])  ComboAddSelect(g_hPackageCombo, newPkg);
+    // Renamed into another package: list what that one holds, keeping
+    // the picks it also has.
+    if (!BuiltFor(PackageComboText(), g_meshListFor))
+    {
+        RefreshMeshList(false);
+        RefreshAnimList(false);
+        RefreshSequenceList();
+        RefreshSequenceTab();
+    }
     if (newName[0]) ComboAddSelect(g_hMeshCombo,    newName);
     RefreshMeshTab();
     UpdateWindowTitle();
@@ -6438,6 +6458,14 @@ static void OnRenameAnim(HWND hParent)
 
     RefreshAll();
     if (newPkg[0])  ComboAddSelect(g_hPackageCombo, newPkg);
+    // Renamed into another package: list what that one holds, keeping
+    // the picks it also has.
+    if (!BuiltFor(PackageComboText(), g_animListFor))
+    {
+        RefreshMeshList(false);
+        RefreshAnimList(false);
+        RefreshMeshTab();
+    }
     if (newName[0]) ComboAddSelect(g_hAnimCombo,    newName);
     RefreshSequenceList();
     RefreshSequenceTab();
@@ -6928,6 +6956,16 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
     {
         RECT rc; GetClientRect(hWnd, &rc);
         PositionChildControls(rc.right - rc.left, rc.bottom - rc.top);
+        // Restoring from the taskbar activates the browser while it is
+        // still minimised, so the refresh WM_ACTIVATE asks for is skipped;
+        // run it once the window is back.
+        static bool s_minimised = false;
+        if (wParam == SIZE_MINIMIZED) s_minimised = true;
+        else if (s_minimised && (wParam == SIZE_RESTORED || wParam == SIZE_MAXIMIZED))
+        {
+            s_minimised = false;
+            AutoRefreshIfDirty();
+        }
         return 0;
     }
 

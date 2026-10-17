@@ -115,8 +115,11 @@ int main()
         Check(Has(RenameProblem("walk fast", others), "letters, digits, _ and - only"), "space refused");
         Check(Has(RenameProblem("walk'", others), "letters, digits, _ and - only"), "quote refused");
         Check(RenameProblem("run", others) == "Another sequence in this set is already called Run.", "clash ignoring case");
-        Check(RenameProblem("walk", others).empty(), "own old name is not in others");
         Check(RenameProblem("Walk_02-b", others).empty(), "valid name");
+        Check((OtherSequences({"idle", "walk", "Run"}, "WALK") == std::vector<std::string>{"idle", "Run"}), "renamed sequence left out");
+        Check((OtherSequences({"walk", "idle", "walk"}, "walk") == std::vector<std::string>{"idle", "walk"}), "only its first copy left out");
+        Check(RenameProblem("walk", OtherSequences({"idle", "walk", "Run"}, "walk")).empty(), "renaming to its own name");
+        Check(Has(RenameProblem("walk", OtherSequences({"walk", "idle", "walk"}, "walk")), "already called walk"), "duplicate name still clashes");
 
         std::cout << "AnimImportOptionsModelTests: " << checks << " checks passed\n";
         return 0;

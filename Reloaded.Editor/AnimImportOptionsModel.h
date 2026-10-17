@@ -297,6 +297,13 @@ namespace AnimImportOptions
                "change, or reload it to get the sequence back.";
     }
 
+    // The set's sequences without `current`, the one being renamed: the
+    // first that carries its name, as the browser finds a sequence by name.
+    inline std::vector<std::string> OtherSequences(const std::vector<std::string>& names, const std::string& current)
+    {
+        return WithoutSequence(names, IndexOf(names, current));
+    }
+
     // Why `name` can't be a sequence's new name, or an empty string when it
     // can. `others` holds the set's other sequences, not the one renamed.
     inline std::string RenameProblem(const std::string& name, const std::vector<std::string>& others)
