@@ -253,11 +253,12 @@ namespace
         Json next=document;
         if(level && current==level && generation==nativeMapGeneration && key!=mapKey && !key.empty())
         {
-            // Save As carries the entry to the new name. A kept backup or an
-            // autosave saved over a map puts back an older version of that
-            // map: the map keeps its own entry (Map Design, Working Views,
-            // camera bookmarks, assemblies), which the copy never had.
-            const bool restored=(SaveBackups::IsBackupPath(mapKey) || Sessions::IsAutosaveName(mapKey)) && next["maps"].contains(key);
+            // Save As carries the entry to the new name. A kept backup saved
+            // over the map it was taken from, or an autosave saved over a map,
+            // puts back an older version of that map: the map keeps its own
+            // entry (Map Design, Working Views, camera bookmarks, assemblies),
+            // which the copy never had.
+            const bool restored=(SaveBackups::RestoresMap(mapKey,key) || Sessions::IsAutosaveName(mapKey)) && next["maps"].contains(key);
             if(!restored)
             {
                 next["maps"][key]=next["maps"].value(mapKey,EmptyMap());

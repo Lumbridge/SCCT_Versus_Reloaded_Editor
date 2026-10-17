@@ -202,6 +202,18 @@ void Paths()
           "a Backups folder elsewhere, another ReloadedEditor folder");
     Check(!IsBackupPath("C:\\G\\System\\ReloadedEditor\\Backups"), "the folder itself");
     Check(!IsBackupPath(""), "an empty path");
+
+    const std::string backup = "c:\\g\\system\\reloadededitor\\backups\\moond\\moond_20261017_143205.sdc";
+    Check(RestoresMap(backup, "c:\\g\\packages\\mapsed\\moond.sdc") && RestoresMap(backup, "C:/G/Packages/MapsEd/MoonD.sdc"),
+          "a backup saved over its own map, any case or slashes");
+    Check(RestoresMap("C:\\G\\System\\ReloadedEditor\\Backups\\Moon_Base_v2\\Moon_Base_v2_20261017_143205.sdc", "C:\\G\\Packages\\MapsEd\\Moon_Base_v2.sdc"),
+          "a map name with underscores");
+    Check(!RestoresMap(backup, "c:\\g\\packages\\mapsed\\shipd.sdc"), "a backup saved over another map is a new map");
+    Check(!RestoresMap(backup, "c:\\g\\packages\\mapsed\\moond_copy.sdc"), "saved under a new name");
+    Check(!RestoresMap("c:\\g\\packages\\mapsed\\moond_20261017_143205.sdc", "c:\\g\\packages\\mapsed\\moond.sdc"),
+          "a file named like a backup outside the Backups folder");
+    Check(!RestoresMap("c:\\g\\system\\reloadededitor\\backups\\moond\\notes.sdc", "c:\\g\\packages\\mapsed\\moond.sdc"), "no stamp");
+    Check(!RestoresMap(backup, ""), "no target");
 }
 
 int main()

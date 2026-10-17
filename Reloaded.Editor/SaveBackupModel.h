@@ -294,4 +294,17 @@ namespace SaveBackups
             if (parts[i] == "backups" && parts[i - 1] == "reloadededitor") return true;
         return false;
     }
+
+    // A kept backup saved over the map it was taken from (the same name, case
+    // ignored) puts back an older version of that map. Saved under any other
+    // name, it is a new map.
+    inline bool RestoresMap(const std::string& backupPath, const std::string& target)
+    {
+        if (!IsBackupPath(backupPath)) return false;
+        const auto backup = ParseBackup(backupPath);
+        if (!backup) return false;
+        auto stem = FileName(target);
+        if (const auto dot = stem.find_last_of('.'); dot != std::string::npos) stem.resize(dot);
+        return !stem.empty() && Lower(backup->first) == Lower(stem);
+    }
 }

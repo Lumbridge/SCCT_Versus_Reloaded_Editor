@@ -892,9 +892,12 @@ before shipping it.
 Saved-map workspace data lives alongside Working Views and assemblies in
 `System/ReloadedEditor/library.json`, keyed by map path. Untitled-map metadata
 stays in memory until the map is first saved; Save As carries the current
-workspace to the new map path, except that a kept backup or an autosave saved
-over a map the library already holds leaves that map's own entry, workspace
-included, in place: the backup is an older version of the same map. The `.sdc` itself contains ordinary generated
+workspace to the new map path, except that a kept backup saved over the map it
+was taken from, or an autosave saved over a map the library already holds, leaves
+that map's own entry, workspace included, in place: the backup is an older version
+of the same map. Pieces added while the backup or autosave was open stay with that
+file. Map Design's workspace Undo starts again when another map opens or the map is
+saved under a new name. The `.sdc` itself contains ordinary generated
 brushes and actors, and layer membership travels inside it in each actor's
 `Group` field.
 
