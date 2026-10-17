@@ -94,6 +94,32 @@ inline Offset SuggestedGoggles(const std::string& modelProperty, const std::stri
     if (modelProperty == "MercModel" && name.rfind("HazmatMerc", 0) == 0) return {-0.1, -2.8, -0.8};
     return {};
 }
+// The goggle light offset once a team's model changes: while it is still the old
+// model's suggestion, the new model's (zero without one); an offset typed by hand stays.
+inline Offset GogglesForNewModel(const Offset& current, const Offset& previousSuggestion, const Offset& newSuggestion)
+{
+    const auto same = [](double a, double b) { return std::fabs(a - b) <= 1e-4; };
+    return same(current.x, previousSuggestion.x) && same(current.y, previousSuggestion.y) && same(current.z, previousSuggestion.z)
+               ? newSuggestion
+               : current;
+}
+// Unreal object names ignore case.
+inline bool SameMesh(const std::string& a, const std::string& b)
+{
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) return false;
+    return true;
+}
+// The goggle light offset that goes with mesh, the model a team's row names. An offset the
+// map has with its own model came in with that model (a model preset or an earlier Apply),
+// so it is that model's: it gives way when the model changes and comes back with it. Other
+// models have the one RE+ suggests, and an offset the map has without a model counts as typed.
+inline Offset ModelGoggleSuggestion(const std::string& modelProperty, const std::string& mesh, const std::string& mapMesh,
+                                    const Offset& mapOffset)
+{
+    return !mesh.empty() && SameMesh(mesh, mapMesh) ? mapOffset : SuggestedGoggles(modelProperty, mesh);
+}
 inline std::string Number(double v)
 {
     std::ostringstream out;

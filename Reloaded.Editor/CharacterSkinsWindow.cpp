@@ -33,6 +33,14 @@ constexpr UINT_PTR kDrawTimer = 1, kRefreshTimer = 2;
 constexpr int kDialogUnits = 640, kLeftUnits = 420;
 const char* const kHostClass = "ReloadedCharacterSkinsPreview";
 std::wstring lastFolder;
+// Per model row: the model it names and the goggle light offset that goes with it, which
+// a new model replaces, and the map's own model and offset, which come back together.
+struct ModelRow
+{
+    std::string model, mapModel;
+    CharacterSkins::Offset suggested, mapGoggles;
+};
+ModelRow rows[CharacterSkins::Models.size()];
 
 std::filesystem::path PickFolder(HWND owner)
 {
@@ -148,6 +156,31 @@ CharacterSkins::Offset Goggles(HWND window, size_t model)
     }
     return CharacterSkins::CheckOffset({values[0], values[1], values[2]});
 }
+// A model row now names mesh: an offset that went with the old model gives way to the new
+// model's. One typed by hand stays, as does one that is not a number. The same model again
+// changes nothing.
+void NewModel(HWND window, size_t model, const std::string& mesh)
+{
+    auto& row = rows[model];
+    if (CharacterSkins::SameMesh(mesh, row.model))
+        return;
+    const auto next = CharacterSkins::ModelGoggleSuggestion(CharacterSkins::Models[model].property, mesh, row.mapModel, row.mapGoggles);
+    try
+    {
+        const auto now = Goggles(window, model);
+        const auto offset = CharacterSkins::GogglesForNewModel(now, row.suggested, next);
+        if (offset.x != now.x || offset.y != now.y || offset.z != now.z) SetGoggles(window, model, offset);
+    }
+    catch (const std::exception&) {}
+    row.model = mesh;
+    row.suggested = next;
+}
+// Enter applies without leaving a model box: a name typed there counts before the values are read.
+void NewModels(HWND window)
+{
+    for (size_t m = 0; m < CharacterSkins::Models.size(); ++m)
+        NewModel(window, m, Text(window, kModel + static_cast<int>(m)));
+}
 // The window's values as Apply uses them: {slots, models, goggles, any}.
 Json Values(HWND window)
 {
@@ -178,9 +211,12 @@ void Show(HWND window, const Json& settings)
     for (size_t m = 0; m < CharacterSkins::Models.size(); ++m)
     {
         const auto& model = CharacterSkins::Models[m];
-        SetDlgItemTextA(window, kModel + static_cast<int>(m), settings.at("models").value(model.property, std::string{}).c_str());
+        const auto mesh = settings.at("models").value(model.property, std::string{});
+        SetDlgItemTextA(window, kModel + static_cast<int>(m), mesh.c_str());
         const auto& g = settings.at("goggles").at(model.goggles);
-        SetGoggles(window, m, {g[0].get<double>(), g[1].get<double>(), g[2].get<double>()});
+        const CharacterSkins::Offset offset{g[0].get<double>(), g[1].get<double>(), g[2].get<double>()};
+        SetGoggles(window, m, offset);
+        rows[m] = {mesh, mesh, CharacterSkins::ModelGoggleSuggestion(model.property, mesh, mesh, offset), offset};
     }
     EnableWindow(GetDlgItem(window, kRemove), settings.at("placed").get<bool>());
     std::string status = settings.at("placed").get<bool>()
@@ -276,20 +312,24 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
                                       ((HIWORD(w) == CBN_EDITCHANGE || HIWORD(w) == CBN_KILLFOCUS) && LOWORD(w) >= kModel &&
                                        LOWORD(w) < kModel + static_cast<int>(CharacterSkins::Models.size()))))
         {
+            // A model name typed into the box counts once the box is left.
+            if (HIWORD(w) == CBN_KILLFOCUS)
+                NewModel(window, LOWORD(w) - kModel, Text(window, LOWORD(w)));
             ScheduleRefresh(window);
             return TRUE;
         }
         if (message == WM_COMMAND && HIWORD(w) == CBN_SELCHANGE && LOWORD(w) >= kModel &&
             LOWORD(w) < kModel + static_cast<int>(CharacterSkins::Models.size()))
         {
-            // Choosing a model suggests the goggle light offset seen to fit it, if there is one.
-            const size_t m = LOWORD(w) - kModel;
+            // Choosing a model puts its goggle light suggestion in place of the old model's.
             const auto box = GetDlgItem(window, LOWORD(w));
             const auto index = SendMessageA(box, CB_GETCURSEL, 0, 0);
-            char mesh[512]{};
-            if (index != CB_ERR) SendMessageA(box, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(mesh));
-            const auto suggested = CharacterSkins::SuggestedGoggles(CharacterSkins::Models[m].property, mesh);
-            if (suggested.x || suggested.y || suggested.z) SetGoggles(window, m, suggested);
+            if (index != CB_ERR)
+            {
+                char mesh[512]{};
+                SendMessageA(box, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(mesh));
+                NewModel(window, LOWORD(w) - kModel, mesh);
+            }
             // The box takes its new text after this notification: preview the choice shortly.
             ScheduleRefresh(window);
             return TRUE;
@@ -348,6 +388,7 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
         }
         if (id == kApply)
         {
+            NewModels(window);
             const auto values = Values(window);
             if (!values.at("any").get<bool>())
             {
@@ -364,6 +405,7 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
         {
             // Save Current as Preset keeps what the window shows, applied or not.
             Json values;
+            NewModels(window);
             try { values = Values(window); values.erase("any"); }
             catch (const std::exception&) { values = Json(); }
             if (CharacterSkinPresetsWindow::Open(window, values))

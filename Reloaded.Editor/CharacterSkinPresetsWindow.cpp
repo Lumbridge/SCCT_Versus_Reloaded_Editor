@@ -30,6 +30,7 @@ enum Id
     TeamSpy = 340, TeamMerc
 };
 constexpr int ThumbSide = 20, Thumb = 26; // tree icons: the team's body and head side by side
+constexpr UINT ApplyDoubleClicked = WM_APP + 1; // posted when a preset is double-clicked
 size_t lastTeam = 0;                      // the team shown when the window opens again
 struct State
 {
@@ -649,6 +650,11 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
             PaintPreview(*s, *reinterpret_cast<DRAWITEMSTRUCT*>(l));
             return TRUE;
         }
+        if (message == ApplyDoubleClicked)
+        {
+            Command(*s, Apply);
+            return TRUE;
+        }
         if (message == WM_NOTIFY)
         {
             const auto* header = reinterpret_cast<NMHDR*>(l);
@@ -656,17 +662,34 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM l)
             // W notification; the A and W NMTREEVIEW layouts agree up to lParam.
             if (header->idFrom == Tree && (header->code == TVN_SELCHANGEDA || header->code == TVN_SELCHANGEDW) && !s->filling)
             {
+                // A category row holds no preset: Apply, Rename, Delete and Export wait for one.
                 const auto* change = reinterpret_cast<NMTREEVIEWA*>(l);
-                if (change->itemNew.lParam >= 0 && static_cast<size_t>(change->itemNew.lParam) < Entries(*s).size())
-                {
-                    s->selected = Entries(*s)[change->itemNew.lParam].at("id").get<std::string>();
-                    ShowEntry(*s);
-                }
+                const bool preset = change->itemNew.hItem && change->itemNew.lParam >= 0 &&
+                                    static_cast<size_t>(change->itemNew.lParam) < Entries(*s).size();
+                s->selected = preset ? Entries(*s)[change->itemNew.lParam].at("id").get<std::string>() : std::string{};
+                ShowEntry(*s);
                 return TRUE;
             }
-            if (header->idFrom == Tree && header->code == NM_DBLCLK && Current(*s))
+            if (header->idFrom == Tree && header->code == NM_DBLCLK)
             {
-                Command(*s, Apply);
+                // Only a double-click on the highlighted preset's name or picture applies it; on a
+                // category row the tree folds or unfolds it. A first click on a row cut off at the
+                // bottom scrolls it into view, so the second can land on the row below: that one
+                // is not applied. The apply rebuilds the tree, so it waits until the tree is done
+                // with the click.
+                const auto at = GetMessagePos();
+                TVHITTESTINFO hit{};
+                hit.pt = {static_cast<short>(LOWORD(at)), static_cast<short>(HIWORD(at))};
+                ScreenToClient(s->tree, &hit.pt);
+                TVITEMA item{};
+                item.mask = TVIF_PARAM;
+                item.hItem = TreeView_HitTest(s->tree, &hit);
+                if (!item.hItem || !(hit.flags & (TVHT_ONITEMLABEL | TVHT_ONITEMICON)) || item.hItem != TreeView_GetSelection(s->tree) ||
+                    !TreeView_GetItem(s->tree, &item) || item.lParam < 0 || static_cast<size_t>(item.lParam) >= Entries(*s).size())
+                    return FALSE;
+                s->selected = Entries(*s)[item.lParam].at("id").get<std::string>();
+                SetWindowLongPtr(window, DWLP_MSGRESULT, TRUE);
+                PostMessage(window, ApplyDoubleClicked, 0, 0);
                 return TRUE;
             }
             return FALSE;

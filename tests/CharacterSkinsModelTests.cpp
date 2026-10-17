@@ -135,6 +135,65 @@ int main()
         Check(suggested.x == 0 && suggested.y == 0 && suggested.z == 0, "no suggestion for a merc's own model");
         suggested = SuggestedGoggles("MercModel", "MyLevel.HazmatMerc");
         Check(suggested.x == -0.1 && suggested.y == -2.8 && suggested.z == -0.8, "hazmat suit visor");
+        // A new model: the old model's suggestion gives way to the new one's, typed offsets stay.
+        const Offset mercOnSpy = SuggestedGoggles("SpyModel", "SPerso.DEF_01"),
+                     hazmat = SuggestedGoggles("MercModel", "MyLevel.HazmatMerc_1a2b"), none{};
+        auto goggles = GogglesForNewModel({0, 0, 0}, none, mercOnSpy);
+        Check(goggles.x == 4 && goggles.y == 0 && goggles.z == 0, "follows the new model's suggestion");
+        goggles = GogglesForNewModel({4, 0, 0}, mercOnSpy, SuggestedGoggles("SpyModel", "SPerso.ATT_01"));
+        Check(goggles.x == 0 && goggles.y == 0 && goggles.z == 0, "back to zero for the stock spy model");
+        // The map keeps offsets as floats: -0.1 read back is still the suggestion.
+        goggles = GogglesForNewModel({static_cast<float>(-0.1), static_cast<float>(-2.8), static_cast<float>(-0.8)}, hazmat,
+                                     SuggestedGoggles("MercModel", "SPerso.DEF_01"));
+        Check(goggles.x == 0 && goggles.y == 0 && goggles.z == 0, "zero for a model without a suggestion");
+        goggles = GogglesForNewModel({2, 0, 1}, mercOnSpy, none);
+        Check(goggles.x == 2 && goggles.y == 0 && goggles.z == 1, "typed offset kept");
+        goggles = GogglesForNewModel({4, 0, 0.5}, mercOnSpy, none);
+        Check(goggles.x == 4 && goggles.y == 0 && goggles.z == 0.5, "a suggestion changed by hand is kept");
+        goggles = GogglesForNewModel({1, 0, 0}, none, mercOnSpy);
+        Check(goggles.x == 1 && goggles.y == 0 && goggles.z == 0, "typed offset kept over a suggestion");
+        // The map's own offset: one it has with a model (a model preset's) gives way to the next model's.
+        Check(SameMesh("MyLevel.Custom_1a2b", "mylevel.CUSTOM_1A2B") && !SameMesh("MyLevel.Custom_1a2b", "MyLevel.Custom_1a2"),
+              "model names ignore case");
+        const std::string custom = "MyLevel.Custom_1a2b";
+        const Offset preset{1, 2, 3};
+        auto shown = ModelGoggleSuggestion("SpyModel", custom, custom, preset);
+        Check(shown.x == 1 && shown.y == 2 && shown.z == 3, "the map's offset with a model is that model's");
+        goggles = GogglesForNewModel(preset, shown, ModelGoggleSuggestion("SpyModel", "SPerso.DEF_01", custom, preset));
+        Check(goggles.x == 4 && goggles.y == 0 && goggles.z == 0, "a model preset's offset gives way to the new model's");
+        auto next = ModelGoggleSuggestion("SpyModel", "MyLevel.Foo", custom, preset);
+        goggles = GogglesForNewModel(preset, shown, next);
+        Check(goggles.x == 0 && goggles.y == 0 && goggles.z == 0, "a model preset's offset gives way to zero");
+        // Back to the map's model, the map's offset comes back with it, in any case.
+        goggles = GogglesForNewModel(goggles, next, ModelGoggleSuggestion("SpyModel", "mylevel.custom_1a2b", custom, preset));
+        Check(goggles.x == 1 && goggles.y == 2 && goggles.z == 3, "the map's model again brings back its offset");
+        goggles = GogglesForNewModel({5, 0, 0}, next, ModelGoggleSuggestion("SpyModel", custom, custom, preset));
+        Check(goggles.x == 5 && goggles.y == 0 && goggles.z == 0, "an offset typed for another model stays on the map's model");
+        // The same model again, as Apply, Presets... and leaving the box judge it: nothing changes.
+        goggles = GogglesForNewModel(preset, shown, ModelGoggleSuggestion("SpyModel", custom, custom, preset));
+        Check(goggles.x == 1 && goggles.y == 2 && goggles.z == 3, "the same model again keeps the map's offset");
+        const Offset tuned{4, 0, 1};
+        shown = ModelGoggleSuggestion("SpyModel", "SPerso.DEF_01", "SPerso.DEF_01", tuned);
+        goggles = GogglesForNewModel(tuned, shown, ModelGoggleSuggestion("SpyModel", "SPerso.DEF_01", "SPerso.DEF_01", tuned));
+        Check(goggles.x == 4 && goggles.y == 0 && goggles.z == 1, "a suggestion tuned and applied stays with its model");
+        next = ModelGoggleSuggestion("SpyModel", "SPerso.ATT_01", "SPerso.DEF_01", tuned);
+        goggles = GogglesForNewModel(tuned, shown, next);
+        Check(goggles.x == 0 && goggles.y == 0 && goggles.z == 0, "a tuned offset gives way to the stock model's");
+        goggles = GogglesForNewModel(goggles, next, ModelGoggleSuggestion("SpyModel", "SPerso.DEF_01", "SPerso.DEF_01", tuned));
+        Check(goggles.x == 4 && goggles.y == 0 && goggles.z == 1, "and comes back with its model, not the suggestion");
+        // The boxes show six digits of the map's float: read back, it is still the map's offset.
+        const Offset rounded{static_cast<float>(-12.34567), static_cast<float>(63.98765), 0};
+        shown = ModelGoggleSuggestion("MercModel", custom, custom, rounded);
+        goggles = GogglesForNewModel({std::stod(Number(shown.x)), std::stod(Number(shown.y)), 0}, shown,
+                                     ModelGoggleSuggestion("MercModel", "SPerso.DEF_01", custom, rounded));
+        Check(goggles.x == 0 && goggles.y == 0 && goggles.z == 0, "the map's offset read back from the boxes");
+        shown = ModelGoggleSuggestion("SpyModel", "", "", preset);
+        Check(shown.x == 0 && shown.y == 0 && shown.z == 0, "no model: the map's offset counts as typed");
+        goggles = GogglesForNewModel(preset, shown, ModelGoggleSuggestion("SpyModel", "SPerso.DEF_01", "", preset));
+        Check(goggles.x == 1 && goggles.y == 2 && goggles.z == 3, "an offset kept without a model stays");
+        goggles = GogglesForNewModel(preset, ModelGoggleSuggestion("SpyModel", custom, custom, preset),
+                                     ModelGoggleSuggestion("SpyModel", "", custom, preset));
+        Check(goggles.x == 0 && goggles.y == 0 && goggles.z == 0, "clearing the model clears the map's offset with it");
     }
     catch (const std::exception& e)
     {
