@@ -206,8 +206,16 @@ var(Conveyor) StaticMesh ItemMeshes[@ITEMS@];
 var vector ItemOffsets[@ITEMS@];  // kept by the editor from the meshes' bounds
 var const int Version;
 // A chain's first belt runs the items of the whole chain.
+// Between belts items cross from one's end to the nearest point of the next one's
+// centre line (Gap units, none on a straight joint) and ride on from there (Entry
+// units along it): at a corner they cross the corner piece to its centre line.
 var ConveyorBelt Seg[@SEGS@];
-var float SegStart[@SEGS@];  // where each belt starts, along the chain
+var float SegStart[@SEGS@];  // where each belt's part of the chain starts
+var float Gap[@SEGS@];
+var float Entry[@SEGS@];
+var vector From[@SEGS@];
+var vector To[@SEGS@];
+var rotator FromTurn[@SEGS@];
 var int Segs;
 var float Total;
 var bool bLoop;
@@ -261,6 +269,7 @@ simulated function bool Leads()
 simulated function BuildChain()
 {
 	local ConveyorBelt B;
+	local int s;
 
 	for (B = self; B != None && Segs < @SEGS@; B = B.NextBelt)
 	{
@@ -270,10 +279,34 @@ simulated function BuildChain()
 			break;
 		}
 		Seg[Segs] = B;
-		SegStart[Segs] = Total;
-		Total += FMax(B.Length, 1);
 		Segs++;
 	}
+	for (s = 0; s < Segs; s++)
+	{
+		if (s > 0)
+			Join(s, Seg[s - 1]);
+		else if (bLoop)
+			Join(0, Seg[Segs - 1]);
+		SegStart[s] = Total;
+		Total += Gap[s] + FMax(Seg[s].Length - Entry[s], 1);
+	}
+}
+
+// Where items come onto belt s from the end of the belt before it.
+simulated function Join(int s, ConveyorBelt Before)
+{
+	local vector X;
+	local ConveyorBelt B;
+
+	B = Seg[s];
+	X = vector(B.Rotation);
+	From[s] = Before.Location + vector(Before.Rotation) * Before.Length;
+	FromTurn[s] = Before.Rotation;
+	Entry[s] = FClamp((From[s] - B.Location) dot X, 0, FMax(B.Length - 1, 0));
+	To[s] = B.Location + X * Entry[s];
+	Gap[s] = VSize(To[s] - From[s]);
+	if (Gap[s] < 1)
+		Gap[s] = 0;
 }
 
 simulated function SpawnRollers()
@@ -345,6 +378,7 @@ simulated function MoveItems(float DeltaTime)
 	local int i, s;
 	local float A, F;
 	local rotator R;
+	local vector P;
 	local ConveyorBelt B;
 
 	for (i = 0; i < ItemCount; i++)
@@ -377,11 +411,21 @@ simulated function MoveItems(float DeltaTime)
 		F = 1;
 		if (!bLoop && FadeDistance > 0)
 			F = FClamp(FMin(A, Total - A) / FadeDistance, 0.02, 1.0);
-		R = B.Rotation;
+		A -= SegStart[s];
+		if (A < Gap[s])
+		{
+			R = FromTurn[s];
+			P = From[s] + (To[s] - From[s]) * (A / Gap[s]);
+		}
+		else
+		{
+			R = B.Rotation;
+			P = B.Location + vector(B.Rotation) * (Entry[s] + A - Gap[s]);
+		}
 		R.Yaw += Jitter[i];
 		Items[i].SetDrawScale(Items[i].Size * F);
 		Items[i].SetRotation(R);
-		Items[i].SetLocation(B.Location + vector(B.Rotation) * (A - SegStart[s]) + ((Items[i].Offset * F) >> R));
+		Items[i].SetLocation(P + ((Items[i].Offset * F) >> R));
 	}
 }
 

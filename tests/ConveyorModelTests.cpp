@@ -62,6 +62,8 @@ int main()
               Contains(belt, "Spawn(class'ConveyorItem',,,") && !Contains(belt, ", self"), "spawned parts have no owner");
         Check(Contains(belt, "var(Conveyor) ConveyorBelt NextBelt;") && Contains(belt, "var ConveyorBelt Seg[16];"), "belts chain");
         Check(Contains(belt, "if (!bLoop && FadeDistance > 0)"), "a closed loop never fades");
+        Check(Contains(belt, "simulated function Join(int s, ConveyorBelt Before)") && Contains(belt, "Join(0, Seg[Segs - 1]);"),
+              "items cross from a belt's end onto the next one's centre line, a loop's last onto its first");
         Check(!Contains(belt, "@"), "every placeholder filled");
         Check(!Contains(belt, "\nfunction ") && !Contains(belt, "\tfunction "), "every belt function is simulated");
         Check(Contains(roller, "RemoteRole=ROLE_None") && Contains(item, "RemoteRole=ROLE_None"), "local parts");

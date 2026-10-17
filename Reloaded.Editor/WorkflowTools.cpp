@@ -1251,7 +1251,15 @@ namespace
                 try {if(!Editor::SelectedEmitters().empty())AppendMenuA(sub,MF_STRING,kSaveToEmitterLibrary,"Save to &Emitter Library...");}
                 catch(const std::exception&) { /* Only available with emitters selected in a source map. */ }
                 AppendMenuA(sub,MF_STRING,MagicEventWorkbench::Command,"Edit SMagicEvent...");
-                try {if(!Editor::SelectedConveyorBelt().is_null())AppendMenuA(sub,MF_STRING,kAddNextConveyorBelt,"Add &Next Conveyor Belt");}
+                try
+                {
+                    if(!Editor::SelectedConveyorBelt().is_null())
+                    {
+                        AppendMenuA(sub,MF_STRING,kAddNextConveyorBelt,"Add &Next Conveyor Belt");
+                        AppendMenuA(sub,MF_STRING,kAddNextConveyorBeltLeft,"Add Next Conveyor Belt, Turning &Left");
+                        AppendMenuA(sub,MF_STRING,kAddNextConveyorBeltRight,"Add Next Conveyor Belt, Turning &Right");
+                    }
+                }
                 catch(const std::exception&) { /* Only with one conveyor belt selected. */ }
                 try {ObjectiveMenu(sub,ObjectiveOwner());}catch(const std::exception&){}
                 try
@@ -1437,13 +1445,15 @@ bool HandleCommand(UINT command)
         catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Remove Staircase Smoothing",MB_OK|MB_ICONINFORMATION); }
         return true;
     }
-    if(command==kAddNextConveyorBelt)
+    if(command==kAddNextConveyorBelt || command==kAddNextConveyorBeltLeft || command==kAddNextConveyorBeltRight)
     {
         try
         {
             auto belt=Editor::SelectedConveyorBelt();
             if(belt.is_null())throw std::runtime_error("Select one conveyor belt first.");
-            Editor::AddConveyorBelt({{"after",belt.at("path")}});
+            Json spec={{"after",belt.at("path")}};
+            if(command!=kAddNextConveyorBelt)spec["turn"]=command==kAddNextConveyorBeltLeft?"left":"right";
+            Editor::AddConveyorBelt(spec);
         }
         catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Conveyor Belt",MB_OK|MB_ICONINFORMATION); }
         return true;

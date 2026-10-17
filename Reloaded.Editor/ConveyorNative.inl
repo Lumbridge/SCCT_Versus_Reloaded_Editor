@@ -177,8 +177,10 @@ Json SelectedConveyorBelt()
 // standing on the floor when that was a floor. after (a belt's name or path) puts it
 // at that belt's end, turned as it is, with its width, speed and options, and links
 // it in: the belt carries its items on onto the new one (and the new one onto the
-// belt that came next, if any). properties sets its own (Length, Speed,
-// ItemMeshes, ...) as the property window would.
+// belt that came next, if any). turn ("left" or "right") with after first adds a
+// level corner piece, a square of that belt's width beyond its end, open on the
+// side the belt comes in, and the new belt carries on from the corner. properties
+// sets its own (Length, Speed, ItemMeshes, ...) as the property window would.
 Json AddConveyorBelt(const Json& spec)
 {
     PrepareConveyors();
@@ -190,6 +192,23 @@ Json AddConveyorBelt(const Json& spec)
         if(name.find('.')==std::string::npos)name=LevelPath()+"."+name;
         previous=Find(name,true);
         if(!previous || Read<Address>(previous+0x24)!=c)throw std::runtime_error(spec.at("after").get<std::string>()+" is not a conveyor belt in this map.");
+    }
+    if(spec.contains("turn"))
+    {
+        const auto turn=spec.at("turn").get<std::string>();
+        if(!previous || (turn!="left" && turn!="right"))throw std::runtime_error("A turn is left or right, after a belt.");
+        const bool right=turn=="right";
+        const double width=Read<float>(BeltField(previous,"Width")),length=Read<float>(BeltField(previous,"Length"));
+        const auto rotation=RotationOf(previous);
+        // Unreal's Y is to the right of X: a right turn heads along the belt's Y.
+        const Rotation level{0,rotation[1],0},corner{0,(rotation[1]+(right?16384:-16384))&0xffff,0};
+        const auto end=TransformPoint({length,0,0},{Position(previous),rotation});
+        const auto start=TransformPoint({width/2,right?-width/2:width/2,0},{end,level});
+        Json cornerSpec={{"after",Path(previous)},{"location",start},{"rotation",corner},
+                         {"properties",{{"Length",width},{right?"bRightWall":"bLeftWall",false}}}};
+        const auto piece=AddConveyorBelt(cornerSpec);
+        Json next=spec;next.erase("turn");next.erase("location");next.erase("rotation");next["after"]=piece.at("path");
+        return AddConveyorBelt(next);
     }
     const auto properties=spec.value("properties",Json::object());
     for(auto it=properties.begin();it!=properties.end();++it)
