@@ -283,14 +283,17 @@ the right-click path was verified by hand in a disposable install.
 ## Viewport keys
 
 `tools/test_workflow_tools.cmd` runs `ViewportKeysModelTests.cpp`: Ctrl+D
-duplicates on its first press and swallows the auto-repeats while D is held;
-Ctrl+Shift+D, Ctrl+Alt+D, plain D and Ctrl+W go on to the stock key handler; J
-toggles Game View only without Ctrl, Shift or Alt; and the Shift+letter keys a
-Geometric Event cannot use (A, S, R, D, N and J, in either case) are named with
-their UnrealEd command while the shipped E, H, P, L, Z and F stay free. It also
-runs `GridSizeShortcutTests.cpp`: which viewports are level viewports, the next
-grid preset up or down (including between presets and at either end), and the
-Ctrl + mouse wheel gesture's notches per viewport.
+duplicates on its first press and swallows the auto-repeats while D is held, and
+its character is kept from the stock key handler too; Ctrl+Shift+D, Ctrl+Alt+D,
+plain D and Ctrl+W go on to that handler; J toggles Game View only without Ctrl,
+Shift or Alt, judged by the press when the viewport saw it (so letting go of
+Shift first is still Shift+J) and by the keys held at the key-up when it did
+not; a Ctrl+D key-up duplicates only when the viewport did not see the press;
+and the Shift+letter keys a Geometric Event cannot use (A, S, R, D, N and J, in
+either case) are named with their UnrealEd command while the shipped E, H, P,
+L, Z and F stay free. It also runs `GridSizeShortcutTests.cpp`: which viewports
+are level viewports, the next grid preset up or down (including between presets
+and at either end), and the Ctrl + mouse wheel gesture's notches per viewport.
 
 ## Placement tools
 
@@ -932,8 +935,9 @@ Reloaded's `labs_borderless_fullscreen` setting in `SCCT_Versus.config` controls
 borderless presentation for both play commands and ordinary game launches.
 
 `tools/test_workflow_tools.cmd` runs `PlayLevelConfigTests.cpp` and
-`PlayLevelCommandTests.cpp`. They cover resolution selection, preserving source INI bytes and unrelated
-settings, configuration failure paths, and recognizing explicit INI overrides.
+`PlayLevelCommandTests.cpp`. They cover resolution selection, preserving source
+INI bytes and unrelated settings, configuration failure paths, and recognizing
+explicit INI overrides.
 Play Level clones `Default.ini` to `Reloaded_PlayLevel.ini` and sets viewport
 and menu dimensions before launching. It defaults to the editor monitor's
 current display mode; `[PlayLevel] ResolutionX/ResolutionY` in

@@ -145,14 +145,20 @@ namespace
         // at rather than only from the palette itself.
         if (message == WM_KEYDOWN && StoreyFilter::ViewportKey(wParam))
             return true;
-        // Ctrl+D duplicates on the press, which never reaches UUnrealEdEngine::Key
-        // (its Ctrl+D is Brush From Deintersection); holding D adds nothing more.
-        if (message == WM_KEYDOWN)
+        // Ctrl+D duplicates on the press. UUnrealEdEngine::Key, whose Ctrl+D is Brush From
+        // Deintersection, runs from the press's character and finds D in the key-down table
+        // the press fills: both are kept from it, so holding D adds nothing more. The D and
+        // J key-ups go by the press seen here.
+        const bool press = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
+        if (press || message == WM_CHAR)
         {
             const ViewportKeys::Chord chord{ static_cast<unsigned>(wParam),
                 GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_SHIFT) < 0,
                 GetKeyState(VK_MENU) < 0, (lParam & (1 << 30)) != 0 };
-            const ViewportKeys::KeyDown action = ViewportKeys::OnKeyDown(chord);
+            if (press)
+                General::ViewportKeyPressed(chord);
+            const ViewportKeys::KeyDown action = press
+                ? ViewportKeys::OnKeyDown(chord) : ViewportKeys::OnChar(chord);
             if (action != ViewportKeys::KeyDown::Pass && LevelViewportWindow(viewport))
             {
                 if (action == ViewportKeys::KeyDown::Duplicate)

@@ -207,16 +207,33 @@ static bool __cdecl HandleRecoveredMapSave(UINT commandId)
     return MapRecovery::HandleSaveCommand(commandId);
 }
 
-static bool __cdecl IsControlKeyDown()
+// The D and J key-ups go by their press when a viewport saw it (GridSizeShortcut's hook).
+static ViewportKeys::KeyUps g_viewportKeyUps;
+
+void General::ViewportKeyPressed(const ViewportKeys::Chord& press)
 {
-    return (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    g_viewportKeyUps.Pressed(press);
+}
+
+static ViewportKeys::Chord HeldChord(unsigned key)
+{
+    return { key, GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_SHIFT) < 0,
+             GetKeyState(VK_MENU) < 0 };
+}
+
+// D's key-up: kept from the stock handler while Ctrl is down, and a Ctrl+D the frame got
+// itself (the viewport duplicated the ones it saw on the press) duplicates now.
+static bool __cdecl CtrlDKeyUpTaken()
+{
+    const ViewportKeys::Chord keyUp = HeldChord('D');
+    if (g_viewportKeyUps.DuplicateOnKeyUp(keyUp))
+        General::DuplicateSelection();
+    return keyUp.ctrl;
 }
 
 static bool __cdecl GameViewKeyUpWanted()
 {
-    const ViewportKeys::Chord chord{ 'J', GetKeyState(VK_CONTROL) < 0,
-                                     GetKeyState(VK_SHIFT) < 0, GetKeyState(VK_MENU) < 0 };
-    return ViewportKeys::GameViewOnKeyUp(chord);
+    return g_viewportKeyUps.GameViewOnKeyUp(HeldChord('J'));
 }
 
 // Build All and the lighting rebuilds go through the Lighting Budget check
@@ -1312,12 +1329,12 @@ JMP_HOOK(0x10f00d10, ViewportKeyUpHook)
 
     __asm
     {
-        // Ctrl+D: the selection was duplicated on the key press (GridSizeShortcut's
-        // viewport hook); its key-up is still kept from the stock handler.
+        // Ctrl+D: duplicated on the key press when the viewport saw it (GridSizeShortcut's
+        // viewport hook), otherwise here; its key-up is still kept from the stock handler.
         cmp  dword ptr [esp + 4], 0x44
         jne  check_f12
         push ecx
-        call IsControlKeyDown
+        call CtrlDKeyUpTaken
         pop  ecx
         test al, al
         jnz  swallow
