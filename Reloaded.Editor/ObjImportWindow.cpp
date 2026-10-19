@@ -247,7 +247,8 @@ INT_PTR CALLBACK Proc(HWND window, UINT message, WPARAM w, LPARAM)
             y += 32;
             Control(window, "STATIC", "Scale", SS_CENTERIMAGE, -1, 12, y, 70, 23);
             Control(window, "EDIT", "1", ES_AUTOHSCROLL | WS_TABSTOP, kScale, 86, y, 60, 23);
-            Control(window, "STATIC", "Unreal units per OBJ unit (1: an OBJ unit is 1 cm)", SS_CENTERIMAGE, -1, 152, y, 250, 23);
+            // Up to the combo box: the larger modern font needs more than 250.
+            Control(window, "STATIC", "Unreal units per OBJ unit (1: an OBJ unit is 1 cm)", SS_CENTERIMAGE, -1, 152, y, (std::max)(250, width - 214 - 8 - 152), 23);
             auto up = Control(window, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, kUp, width - 214, y, 226, 200);
             SendMessageA(up, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("Y up (Blender, Maya, most exporters)"));
             SendMessageA(up, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>("Z up (3ds Max, Blender set to Z up)"));

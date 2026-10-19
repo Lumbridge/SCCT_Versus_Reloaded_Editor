@@ -346,7 +346,7 @@ void Layout(HWND window)
         MoveWindow(GetDlgItem(window, id), x, h - 36, width, 26, TRUE);
         x += width + 8;
     }
-    MoveWindow(GetDlgItem(window, IDCANCEL), r.right - 92, h - 36, 80, 26, TRUE);
+    MoveWindow(GetDlgItem(window, IDCANCEL), std::max(x, static_cast<int>(r.right) - 92), h - 36, 80, 26, TRUE); // never over Refresh
 }
 
 // Esc clears the search; Down goes to the list.
@@ -514,7 +514,7 @@ LRESULT CALLBACK OutlinerProc(HWND window, UINT message, WPARAM w, LPARAM l)
             Layout(window);
             return 0;
         case WM_GETMINMAXINFO:
-            reinterpret_cast<MINMAXINFO*>(l)->ptMinTrackSize = {560, 320};
+            reinterpret_cast<MINMAXINFO*>(l)->ptMinTrackSize = {590, 320}; // the buttons in one row, Close clear of Refresh
             return 0;
         case WM_TIMER:
             if (w == kTimer) Tick();

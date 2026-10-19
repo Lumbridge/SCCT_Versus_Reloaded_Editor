@@ -86,14 +86,26 @@ The suites save the map, so give each run fresh copies of the maps.
   SMagicEvent Workbench and Storeys (`-tools2`), Light and Shadow Map with
   Optimise Map Assets (`-tools3`), Map Design, Brush Visibility, SCamNetwork
   Manager and Actor Assemblies with Character Skins (`-tools4`) and Character
-  Skin Presets (`-tools5`). Each window is captured on
+  Skin Presets (`-tools5`), then the 2.8 windows: Map Outliner, Scatter Props
+  (a mesh from the map in its list) and Export Map to OBJ (`-new1`), the
+  Command Palette with a few letters typed (`-new2`), Compare with Backup after
+  a File > Save and three edits (`-new3`), Mover Workbench with Actor Assemblies
+  and a linked prefab placed and picked (`-new4`), Import OBJ with a test OBJ's
+  summary (`-new5`), and Map Check's reachability rows with the Reachability
+  Map's legend in the viewports (`-new6`, taken once the suite has returned, so
+  the viewports have repainted). Run it on ShipD (it has movers); it saves the
+  map and adds an assembly to the library each run. `part = 'new'` takes only
+  the 2.8 pictures. Each window is captured on
   its own and drawn where it sits, without the invisible resize border Windows
   10 and 11 give it (PrintWindow draws that border black), so nothing else on
   the desktop is in them. With `screen = '1'` the pictures are copied from the
   screen instead: the editor's windows are made topmost for a moment and only
   the frame's visible rectangle is copied, in screen pixels, which shows
-  exactly what the user sees; `INFO screen-covered` means another program's
-  topmost window was over the frame, so retake that picture. Set `[Appearance] Theme=Classic`,
+  exactly what the user sees. A picture with another program's window over the
+  frame, or with an editor window that did not go topmost (another editor
+  taking pictures at the same time can cause both), is taken again, up to five
+  times; `INFO screen-covered` means the last try was still covered, so retake
+  that picture. Set `[Appearance] Theme=Classic`,
   `ModernLight` or `ModernDark` in the test install's `Reloaded_Editor.ini`
   first.
 - `meshcost`: Render Budget's lower list switches to Meshes by cost; the rows

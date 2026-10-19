@@ -3,6 +3,7 @@
 #undef max
 #include "ObjExportWindow.h"
 #include "WindowPlacement.h"
+#include "Appearance.h"
 #include "WorkflowEditor.h"
 #include <filesystem>
 #include <shellapi.h>
@@ -170,8 +171,11 @@ LRESULT CALLBACK Proc(HWND hwnd, UINT message, WPARAM w, LPARAM l)
             y += 30;
             Control("STATIC", "1 Unreal unit =", 0, 0, 12, y + 3, 90, 20);
             Control("EDIT", Setting("Centimetres", "1").c_str(), WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, kScale, 104, y, 60, 22);
-            Control("STATIC", "cm (written in metres; 1 matches Blender's metres and the stock exports)", 0, 0, 170, y + 3, width - 158, 20);
-            y += 32;
+            HWND metres = Control("STATIC", "cm (written in metres; 1 matches Blender's metres and the stock exports)", 0, 0, 170, y + 3, width - 158, 20);
+            // Two lines in the larger modern font.
+            const int metresHeight = Appearance::FitHeight(metres, width - 158, 20);
+            MoveWindow(metres, 170, y + 3, width - 158, metresHeight, FALSE);
+            y += 12 + metresHeight;
             Control("STATIC", "Selection only takes the selected static mesh actors and BSP surfaces.", 0, kStatus, 12, y, width, 48);
             Control("BUTTON", "&Export", WS_TABSTOP | BS_DEFPUSHBUTTON, kExport, r.right - 300, r.bottom - 36, 90, 27);
             Control("BUTTON", "&Open Folder", WS_TABSTOP, kOpenFolder, r.right - 202, r.bottom - 36, 92, 27);

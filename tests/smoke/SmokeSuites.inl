@@ -1365,12 +1365,12 @@ bool MenuHas(HWND w, UINT command)
     };
     return has(GetMenu(w));
 }
-void ObjImportSuite()
+// A crate (wood, from a BMP 100 x 60), a lid on it (metal, a 64 x 64 TGA) and a sign (a material with no
+// image), written to System\objimport test\crate.obj (returned).
+std::filesystem::path WriteObjCrate()
 {
-    namespace fs = std::filesystem;
     const auto folder = directory / "objimport test";
-    fs::create_directories(folder);
-    // A crate (wood, from a BMP 100 x 60), a lid on it (metal, a 64 x 64 TGA) and a sign (a material with no image).
+    std::filesystem::create_directories(folder);
     WriteFile(folder / "wood.bmp", Bmp24(100, 60));
     WriteFile(folder / "metal.tga", Tga32(64, 64));
     WriteFile(folder / "crate.mtl", "newmtl CrateWood\nKd 0.6 0.4 0.2\nmap_Kd wood.bmp\nnewmtl CrateMetal\nmap_Kd -s 1 1 1 metal.tga\nnewmtl Plain\nKd 1 1 1\n");
@@ -1378,6 +1378,12 @@ void ObjImportSuite()
                       "o Lid\nusemtl CrateMetal\n" + ObjBox(0.1, 0.8, 0.1, 0.9, 1.0, 0.9, 8) +
                       "o Sign\nusemtl Plain\nv 0 1.1 1.05\nv 1 1.1 1.05\nv 1 1.2 1.05\nv 0 1.2 1.05\nf 17/1 18/2 19/3 20/4\n";
     WriteFile(folder / "crate.obj", obj);
+    return folder / "crate.obj";
+}
+void ObjImportSuite()
+{
+    namespace fs = std::filesystem;
+    const auto folder = WriteObjCrate().parent_path();
     // A wall of 12000 triangles: three parts.
     {
         std::ostringstream o;
@@ -2653,13 +2659,38 @@ std::vector<HWND> EditorWindows() // visible top-level windows of the editor, to
 }
 // What is really on screen (smoke.ini screen=1): the editor's windows brought to the top for a moment,
 // in their own order, and only the frame's visible rectangle copied, in screen pixels.
+int ScreenAttempt(const std::wstring& path);
 bool CaptureScreen(const std::wstring& path)
 {
+    // Another editor taking its own picture the same way can push these windows down again, or keep
+    // them from going topmost: then the picture is taken again, up to five times.
+    for (int attempt = 1;; ++attempt)
+    {
+        const int covered = ScreenAttempt(path);
+        if (covered == 0) return true;
+        if (covered < 0) return false;
+        if (attempt == 5)
+        {
+            Info("screen-covered", std::to_string(covered) + " of 81 points show another window");
+            return true;
+        }
+        Pump(1500);
+    }
+}
+// One try: the picture saved; returns -1 if it could not be saved, else how many of 81 points of the
+// frame show another program's window, or one of the editor's windows that is not on top of the others.
+int ScreenAttempt(const std::wstring& path)
+{
     const auto windows = EditorWindows();
+    std::string refused;
     for (auto it = windows.rbegin(); it != windows.rend(); ++it)
-        SetWindowPos(*it, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        if (!SetWindowPos(*it, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)) refused += "'" + WindowText(*it) + "' error " + std::to_string(GetLastError()) + " ";
     RedrawWindow(frameWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
     Pump(600);
+    int notOnTop = 0;
+    for (HWND w : windows)
+        if (IsWindow(w) && !(GetWindowLongA(w, GWL_EXSTYLE) & WS_EX_TOPMOST)) { ++notOnTop; refused += "'" + WindowText(w).substr(0, 40) + "' "; }
+    if (!refused.empty() || notOnTop) Info("screen-not-topmost", std::to_string(notOnTop) + " window(s); " + refused);
     auto setAwareness = SetAwareness();
     DPI_AWARENESS_CONTEXT previous = setAwareness ? setAwareness(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) : nullptr;
     RECT frame{};
@@ -2679,7 +2710,6 @@ bool CaptureScreen(const std::wstring& path)
             GetWindowThreadProcessId(WindowFromPhysicalPoint({frame.left + width * gx / 10, frame.top + height * gy / 10}), &process);
             if (process != GetCurrentProcessId()) ++covered;
         }
-    if (covered) Info("screen-covered", std::to_string(covered) + " of 81 points show another program's window");
     if (setAwareness && previous) setAwareness(previous);
     for (HWND w : windows)
         if (IsWindow(w)) SetWindowPos(w, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -2688,7 +2718,7 @@ bool CaptureScreen(const std::wstring& path)
     DeleteObject(picture);
     DeleteDC(canvas);
     ReleaseDC(nullptr, screen);
-    return ok;
+    return ok ? covered + notOnTop * 9 : -1;
 }
 // Every window of the editor captured on its own (PrintWindow) and drawn where it sits, without its
 // invisible border, onto a canvas the size of the frame's visible rectangle.
@@ -2740,6 +2770,197 @@ HWND TopWithClassPart(const char* part)
         return TRUE;
     }, reinterpret_cast<LPARAM>(&s));
     return s.r;
+}
+// The 2.8 windows (-new1 to -new6 after the picture's name): Map Outliner, Scatter Props and Export Map to
+// OBJ; the Command Palette; Compare with Backup; Mover Workbench with Actor Assemblies (a linked prefab
+// placed and its row picked); Import OBJ with a file's summary; Map Check's reachability rows with the
+// Reachability Map's legend in the viewports. Needs a map with a mover, static meshes, a light and a
+// player start (ShipD). It saves the map.
+std::filesystem::path NewShot(const std::string& shot, int n)
+{
+    auto path = std::filesystem::path(shot);
+    path.replace_filename(path.stem().string() + "-new" + std::to_string(n) + ".png");
+    return path;
+}
+void PlaceWindow(HWND w, int x, int y, int width, int height)
+{
+    const bool resizable = (GetWindowLongA(w, GWL_STYLE) & WS_THICKFRAME) != 0;
+    RECT r{};
+    GetWindowRect(w, &r);
+    if (!resizable) x = (std::min)(x, static_cast<int>(1590 - (r.right - r.left))); // inside the 1600-wide frame
+    SetWindowPos(w, HWND_TOP, x, y, width, height, SWP_NOACTIVATE | (resizable ? 0 : SWP_NOSIZE));
+}
+void AppearanceNewWindows(const std::string& shot)
+{
+    // 1: Map Outliner, Scatter Props (with a mesh from the map in its list) and Export Map to OBJ.
+    std::vector<HWND> opened;
+    {
+        unsigned char* mesh = nullptr;
+        for (auto a : OfClass("StaticMeshActor"))
+            if (auto m = scatter::MeshOf(a); m && scatter::Extent(m) >= 16 && scatter::Extent(m) <= 96) { mesh = m; break; }
+        if (mesh) *reinterpret_cast<unsigned char**>(*reinterpret_cast<unsigned char**>(kEditor) + 0x13C) = mesh;
+        Exec("SELECT NONE");
+        Command(41560);
+        Pump(800);
+        if (HWND w = OpenedWindow("Map Outliner")) { PlaceWindow(w, 20, 90, 520, 880); opened.push_back(w); }
+        else Info("appearance-tool-missing", "Map Outliner");
+        Command(41500);
+        Pump(800);
+        if (HWND w = OpenedWindow("Scatter Props"))
+        {
+            if (mesh && SendMessageA(GetDlgItem(w, scatter::kList), LVM_GETITEMCOUNT, 0, 0) == 0) scatter::Click(w, scatter::kAddBrowser);
+            PlaceWindow(w, 550, 90, 520, 880);
+            opened.push_back(w);
+        }
+        else Info("appearance-tool-missing", "Scatter Props");
+        Command(41660);
+        Pump(800);
+        if (HWND w = OpenedWindow("Export Map to OBJ")) { PlaceWindow(w, 1080, 90, 500, 600); opened.push_back(w); }
+        else Info("appearance-tool-missing", "Export Map to OBJ");
+        Pump(1200);
+        Check(opened.size() == 3 && CaptureEditor(NewShot(shot, 1).wstring()), "appearance-new1-shot", std::to_string(opened.size()) + " windows");
+        for (HWND w : opened) if (IsWindow(w)) CloseWindowAndWait(w);
+    }
+
+    // 2: the Command Palette, with a few letters typed.
+    if (HWND palette = OpenPalette())
+    {
+        TypeInPalette(palette, "light");
+        Pump(400);
+        Check(CaptureEditor(NewShot(shot, 2).wstring()), "appearance-new2-shot", "Command Palette");
+        SendMessageA(GetDlgItem(palette, 100), WM_KEYDOWN, VK_ESCAPE, 0);
+        Pump(300);
+        if (IsWindow(palette) && IsWindowVisible(palette)) ShowWindow(palette, SW_HIDE);
+    }
+    else Info("appearance-tool-missing", "Command Palette");
+
+    // 3: Compare with Backup, after a save and three edits (a mesh moved, one deleted, a light changed).
+    {
+        const auto folder = directory / "ReloadedEditor" / "Backups" / std::filesystem::path(Ini("map")).stem();
+        Command(40007);
+        Pump(500);
+        const auto backup = NewestBackup(folder);
+        auto meshes = OfClass("StaticMeshActor", 50);
+        auto lights = OfClass("Light", 5);
+        if (backup.empty() || meshes.size() < 2 || lights.empty()) Info("appearance-tool-missing", "Compare with Backup: no backup, meshes or light");
+        else
+        {
+            const Vec at = ReadVector(meshes[0], "Location");
+            WriteVector(meshes[0], "Location", {at.x + 256, at.y, at.z});
+            if (auto p = FindProperty(lights[0], "LightBrightness")) *reinterpret_cast<float*>(lights[0] + *reinterpret_cast<unsigned*>(p + 0x3C)) += 7;
+            SelectOnly({meshes[1]});
+            Exec("ACTOR DELETE");
+            Pump(300);
+            bool captured = false;
+            RunCompare(backup, [&](const std::vector<std::string>&, HWND list) {
+                HWND w = GetParent(list);
+                PlaceWindow(w, 200, 150, 1100, 600);
+                Pump(600);
+                captured = CaptureEditor(NewShot(shot, 3).wstring());
+                return false;
+            });
+            Check(captured, "appearance-new3-shot", "Compare with Backup");
+            Exec("SELECT NONE");
+        }
+    }
+
+    // 4: Mover Workbench for the first mover, with Actor Assemblies (a linked prefab placed, its row picked).
+    {
+        unsigned char* mover = nullptr;
+        for (auto a : Actors()) if (IsKindOf(a, "Mover") && !(Flags(a) & 0x10)) { mover = a; break; }
+        opened.clear();
+        if (mover)
+        {
+            SelectOnly({mover});
+            Command(MoverSmoke::kOpen);
+            Pump(800);
+        }
+        if (HWND w = mover ? OpenedWindow("Mover Workbench") : nullptr) { PlaceWindow(w, 20, 90, 900, 880); opened.push_back(w); }
+        else Info("appearance-tool-missing", "Mover Workbench");
+        auto pair = FreeMeshes(2, 5);
+        if (pair.size() == 2)
+        {
+            SelectOnly(pair);
+            const auto entry = Request({{"op", "prefab.save"}, {"name", "Appearance Prefab"}});
+            const auto a = ReadVector(pair[0], "Location");
+            if (entry.contains("id"))
+                Request({{"op", "prefab.place"}, {"assembly", entry.at("id")}, {"position", {a.x, a.y + 2048, a.z}}, {"rotation", {0, 0, 0}}});
+        }
+        Command(40922);
+        Pump(800);
+        if (HWND w = OpenedWindow("Actor Assemblies"))
+        {
+            PlaceWindow(w, 930, 90, 650, 880);
+            HWND list = FindWindowExA(w, nullptr, WC_LISTVIEWA, nullptr);
+            const auto rows = ListRows(list);
+            for (size_t i = 0; i < rows.size(); ++i)
+                if (rows[i].find("Appearance Prefab") != std::string::npos)
+                {
+                    LVITEMA item{};
+                    item.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+                    item.state = LVIS_SELECTED | LVIS_FOCUSED;
+                    SendMessageA(list, LVM_SETITEMSTATE, i, reinterpret_cast<LPARAM>(&item));
+                }
+            opened.push_back(w);
+        }
+        else Info("appearance-tool-missing", "Actor Assemblies");
+        Pump(1200);
+        Check(opened.size() == 2 && CaptureEditor(NewShot(shot, 4).wstring()), "appearance-new4-shot", std::to_string(opened.size()) + " windows");
+        for (HWND w : opened) if (IsWindow(w)) CloseWindowAndWait(w);
+        Exec("SELECT NONE");
+    }
+
+    // 5: Import OBJ (modal) with a file typed in and its summary shown, then cancelled.
+    {
+        const auto crate = WriteObjCrate().u8string();
+        int ticks = 0;
+        bool captured = false;
+        dialogHandler = [&](HWND w, const std::string& title) {
+            if (title != "Import OBJ") return false;
+            ++ticks;
+            if (ticks == 2)
+            {
+                SetWindowPos(w, HWND_TOP, 300, 120, 0, 0, SWP_NOSIZE);
+                SetDlgItemTextA(w, 200, std::string(crate.begin(), crate.end()).c_str());
+            }
+            if (ticks == 12)
+            {
+                captured = CaptureEditor(NewShot(shot, 5).wstring());
+                PostMessage(w, WM_COMMAND, IDCANCEL, 0);
+            }
+            return true;
+        };
+        Command(41640);
+        dialogHandler = nullptr;
+        Check(captured, "appearance-new5-shot", "Import OBJ");
+    }
+
+    // 6: the Reachability Map worked out, its legend in the viewports and its rows in Map Check.
+    {
+        Command(41220);
+        Pump(500);
+        HWND check = OpenedWindow("Map Check");
+        if (!ReachChecked()) Command(41480);
+        bool done = false;
+        for (const DWORD started = GetTickCount(); check && GetTickCount() - started < 300000;)
+        {
+            Pump(1000);
+            const auto rows = ReachRows(check);
+            if (!rows.empty() && rows.back().find("Worked out on foot") != std::string::npos) { done = true; break; }
+        }
+        Info("appearance-reach", done ? "worked out" : "not finished");
+        if (!check) { Fail("appearance-new6-shot", "Map Check did not open"); return; }
+        PlaceWindow(check, 820, 520, 760, 460);
+        // The last rows (the reachability ones) in view.
+        HWND list = GetDlgItem(check, 100);
+        const int rows = static_cast<int>(SendMessageA(list, LVM_GETITEMCOUNT, 0, 0));
+        if (rows > 0) SendMessageA(list, LVM_ENSUREVISIBLE, rows - 1, FALSE);
+        // The viewports (and the legend in them) only repaint from the editor's own loop: the picture
+        // is taken once the suite has returned.
+        static std::wstring lastShot;
+        lastShot = NewShot(shot, 6).wstring();
+        afterRun = [] { Check(CaptureEditor(lastShot), "appearance-new6-shot", "Map Check and Reachability Map"); };
+    }
 }
 void AppearanceSuite()
 {
@@ -2796,6 +3017,7 @@ void AppearanceSuite()
     }
     const auto shot = Ini("shot");
     if (shot.empty()) return;
+    if (Ini("part") == "new") { AppearanceNewWindows(shot); return; } // only the 2.8 windows
     Check(CaptureEditor(std::filesystem::path(shot).wstring()), "appearance-shot", shot);
     // RE+ Options over the editor, captured while it is open, then cancelled.
     auto optionsShot = std::filesystem::path(shot);
@@ -2983,6 +3205,7 @@ void AppearanceSuite()
         for (HWND w : opened) if (IsWindow(w)) CloseWindowAndWait(w);
         opened.clear();
     }
+    AppearanceNewWindows(shot);
 }
 
 void RunSuites(const std::string& list)

@@ -6,6 +6,7 @@
 #include "BudgetWindow.h"
 #include "MeasureTool.h"
 #include "WindowPlacement.h"
+#include "Appearance.h"
 #include "WorkflowEditor.h"
 #include "WorkflowTools.h"
 #include "logger.h"
@@ -570,7 +571,8 @@ void Layout()
     MoveWindow(Item(kGhosts), 12, y, 220, 22, TRUE);
     MoveWindow(Item(kStatus), 240, y, width - 252, 40, TRUE);
     y += 44;
-    const int top = y, left = 12, right = width * 11 / 20, labelLeft = 170, labelRight = 116;
+    // The right column's labels ("Sound while moving:") are wider in the larger modern font.
+    const int top = y, left = 12, right = width * 11 / 20, labelLeft = 170, labelRight = Appearance::Current() == Appearance::Theme::Classic ? 116 : 136;
     int ly = top, ry = top;
     for (int i = 0; i < kFieldCount; ++i)
     {

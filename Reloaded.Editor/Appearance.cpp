@@ -771,6 +771,15 @@ namespace
             if (result != -1) Created(window, kind);
             return result;
         }
+        if (message == WM_WINDOWPOSCHANGED && kind == Kind::Static)
+        {
+            // A wrapped text static that changes size keeps its old lines under the new ones (version 6
+            // statics do not repaint the whole of themselves): an intro sized to its text then shows
+            // both wraps at once. Repainted whole, with its background.
+            const auto pos = reinterpret_cast<const WINDOWPOS*>(lParam);
+            const DWORD type = GetWindowLongW(window, GWL_STYLE) & SS_TYPEMASK;
+            if (pos && !(pos->flags & SWP_NOSIZE) && (type == SS_LEFT || type == SS_CENTER || type == SS_RIGHT)) InvalidateRect(window, nullptr, TRUE);
+        }
         if (current != Theme::ModernDark) return defSubclass(window, message, wParam, lParam);
         switch (message)
         {
