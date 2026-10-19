@@ -81,3 +81,13 @@ The suites save the map, so give each run fresh copies of the maps.
   selects every copy of that mesh and a double-click frames them; a zone row
   narrows the list to that zone's meshes and the Whole map row widens it again;
   the list switches back to the hotspots.
+- `scatter`: Scatter Props takes a small mesh from the map as the Static Mesh
+  Browser's current one (once only), Re-roll changes the seed, and props are
+  placed in a circle round a player start (also aligned to the slope) and in
+  the builder brush's footprint (the default cube moved over the start): each
+  time inside the area, in the Scatter group, not hidden, selected, as one
+  Undo step that Undo removes, Redo brings back and Undo removes again. A count
+  over 500 is refused; the window comes back where it was closed.
+  `hold = '<ms>'` also points the viewport cameras at the busiest player start
+  and leaves the editor running that long after the report with the preview
+  up, then places the props, for a picture.
