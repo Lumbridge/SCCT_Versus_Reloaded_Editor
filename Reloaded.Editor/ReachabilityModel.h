@@ -172,12 +172,24 @@ public:
         {
             const bool crouched = mode == 1;
             const double h = Half(crouched);
+            // On the middle of its cell first, so every start's steps (both
+            // teams') line up on one grid and their cells compare; then where it
+            // is, and, as the engine's FindSpot does for a start a little too
+            // close to a wall, up to half a cell sideways.
+            const double n = settings_.cell / 2;
+            const double sx = (std::floor(location[0] / settings_.cell) + 0.5) * settings_.cell - location[0];
+            const double sy = (std::floor(location[1] / settings_.cell) + 0.5) * settings_.cell - location[1];
+            const double nudges[10][2] = {{sx, sy}, {0, 0}, {n, 0}, {-n, 0}, {0, n}, {0, -n}, {n, n}, {n, -n}, {-n, n}, {-n, -n}};
+            bool placed = false;
+            for (const auto& nudge : nudges)
             for (double raise : {0.0, pawn_.step, 2 * pawn_.step})
             {
-                const Vec3 centre{location[0], location[1], location[2] + raise};
+                if (placed) break;
+                const Vec3 centre{location[0] + nudge[0], location[1] + nudge[1], location[2] + raise};
                 if (!Fits(centre, Extent(crouched))) continue;
                 const double lowest = location[2] - h - pawn_.maxDrop;
                 const auto land = Sweep(centre, {centre[0], centre[1], lowest + h}, Extent(crouched));
+                placed = true;
                 if (!land.hit) { problem = "there is no floor within " + std::to_string(static_cast<int>(pawn_.maxDrop)) + " units below it"; break; }
                 if (land.normal[2] < pawn_.MinFloorZ()) { problem = "the floor below it is too steep to stand on"; break; }
                 Node node;
@@ -186,8 +198,8 @@ public:
                 node.origin = static_cast<int>(seeds_.size());
                 if (const int existing = Find(node.at); existing >= 0) { seed.node = existing; seed.joined = true; }
                 else seed.node = Add(node);
-                break;
             }
+            if (placed) break;
         }
         if (seed.node < 0) seed.problem = problem;
         seeds_.push_back(seed);
@@ -433,7 +445,8 @@ struct Finding
 };
 
 // Map Check's rows: objectives and pickups a team that needs them cannot get
-// to, and starts that reach nothing. floods[t] is null for a team that was not
+// to (warnings, since a climb may be the way), and starts that reach nothing
+// (errors). floods[t] is null for a team that was not
 // worked out (no starts).
 inline std::vector<Finding> Findings(const Scene& scene, const Flood* const floods[2])
 {
@@ -473,8 +486,9 @@ inline std::vector<Finding> Findings(const Scene& scene, const Flood* const floo
                 const auto* flood = floods[team];
                 if (!flood || flood->Nodes().empty() || Reaches(*flood, target, settings.reach)) continue;
                 const bool spies = team == kSpy;
-                out.push_back({spies ? 0 : 1, spies ? "Spies cannot reach" : "Mercs cannot reach",
-                               target.name + " (" + Fold(target.kind) + ") is out of the " + TeamName(team, false) + "s' reach on foot: no " + TeamName(team, false)
+                // A warning, not an error: a climb the fill does not model may be the way there.
+                out.push_back({1, spies ? "Spies cannot reach" : "Mercs cannot reach",
+                               target.name + " (" + Fold(target.kind) + ") is out of the " + TeamName(team) + "' reach on foot: no " + TeamName(team, false)
                                + " start leads to within " + Number(settings.reach) + " units of it" + (spies ? "." : ", so they cannot defend it.")
                                + " Ladders, pipes, ledge grabs, zip lines and jumps are not modelled.", {target.path}});
             }
@@ -561,7 +575,8 @@ inline std::vector<std::string> Legend(const Summary& s, double cell, bool stale
     lines.push_back("Green  both teams: " + Number(static_cast<double>(s.both)) + " cells");
     lines.push_back("Blue  spies only (one diagonal): " + Number(static_cast<double>(s.spies)));
     lines.push_back("Red  mercs only (both diagonals): " + Number(static_cast<double>(s.mercs)));
-    lines.push_back(std::string(kNotModelled) + ".");
+    lines.push_back("Not modelled: ladders, pipes, ledge grabs, zip lines, jumps.");
+    lines.push_back("Doors count as open; lifts are left out.");
     return lines;
 }
 

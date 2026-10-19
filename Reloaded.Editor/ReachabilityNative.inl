@@ -157,11 +157,12 @@ Reach::Scene ReachabilityScene()
             if(!NameList(actor,"Triggers").empty())continue;
             target.kind="Objective";
         }
+        // The flag and its drop zone are objective triggers too: named first.
+        else if(has(fields,"SFlagDropZone"))target.kind="Drop zone";
+        else if(has(fields,"SFlag"))target.kind="Flag";
         else if(has(fields,"SComputerObjectiveTrigger"))target.kind="Computer terminal";
         else if(has(fields,"SBombTargetObjectiveTrigger"))target.kind="Bomb target";
         else if(has(fields,"SObjectiveTrigger"))target.kind="Objective trigger";
-        else if(has(fields,"SFlagDropZone"))target.kind="Drop zone";
-        else if(has(fields,"SFlag"))target.kind="Flag";
         else if(has(fields,"Pickup") || has(fields,"Inventory"))
         {
             target.kind="Pickup";target.objective=false;target.team=Reach::PickupTeam(fields.classes);

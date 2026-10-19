@@ -284,7 +284,7 @@ int main()
         assert(CountChecks(findings, "Start reaches nothing") == 0);
         for (const auto& f : findings)
         {
-            if (f.check == "Spies cannot reach") assert(f.severity == 0 && (f.actors[0] == "L.VaultTerminal" || f.actors[0] == "L.High"));
+            if (f.check == "Spies cannot reach") assert(f.severity == 1 && (f.actors[0] == "L.VaultTerminal" || f.actors[0] == "L.High"));
             if (f.check == "Mercs cannot reach") assert(f.severity == 1);
             if (f.check == "Pickup out of reach") assert(f.actors[0] == "L.Ammo" && f.message.find("mercs") != std::string::npos);
         }
@@ -339,7 +339,7 @@ int main()
         assert(Outline(both, 32)[0].first[2] == 3);
         Summary s; s.both = 1200; s.spies = 3; s.mercs = 0;
         const auto lines = Legend(s, 32, false);
-        assert(lines.size() == 5 && lines[1].find("1,200") != std::string::npos && lines[4].find("Ladders") != std::string::npos);
+        assert(lines.size() == 6 && lines[1].find("1,200") != std::string::npos && lines[4].find("ladders") != std::string::npos);
         assert(Legend(s, 32, true)[0].find("changed") != std::string::npos);
         assert(Number(1234567) == "1,234,567");
     }

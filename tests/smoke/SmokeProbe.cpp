@@ -289,6 +289,18 @@ void RunAll()
     Line("DONE", "failures", std::to_string(failures));
     if (report) fclose(report);
     report = nullptr;
+    // hold=<seconds> in -Extra: give the editor back its own loop for a while, so the viewports
+    // repaint, then save pictures of the frame and the tool windows (shot=<folder>) and end.
+    if (const int hold = atoi(Ini("hold").c_str()); hold > 0)
+    {
+        SetTimer(nullptr, 0, static_cast<UINT>(hold) * 1000, [](HWND, UINT, UINT_PTR, DWORD) {
+            SaveShot(frameWindow, "hold-frame");
+            if (HWND w = OpenedWindow("Map Check")) SaveShot(w, "hold-mapcheck");
+            if (HWND w = OpenedWindow("Map Design")) SaveShot(w, "hold-design");
+            TerminateProcess(GetCurrentProcess(), failures ? 3 : 0);
+        });
+        return;
+    }
     TerminateProcess(GetCurrentProcess(), failures ? 3 : 0);
 }
 
@@ -336,7 +348,12 @@ DWORD WINAPI WaitUntilReady(void*)
             Sleep(5000);
             hook = SetWindowsHookExA(WH_CALLWNDPROC, OnMessage, nullptr, uiThread);
             DWORD_PTR result = 0;
-            if (hook && SendMessageTimeoutA(frameWindow, kRun, 0, 0, SMTO_ABORTIFHUNG, 1800000, &result)) return 0;
+            // A frame still busy starting up counts as hung and the send fails at once: try again.
+            for (int tries = 0; hook && tries < 90; ++tries)
+            {
+                if (SendMessageTimeoutA(frameWindow, kRun, 0, 0, SMTO_ABORTIFHUNG, 1800000, &result)) return 0;
+                Sleep(2000);
+            }
             Fail("startup", "could not run on the UI thread");
             return 1;
         }

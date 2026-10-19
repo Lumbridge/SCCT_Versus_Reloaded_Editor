@@ -38,8 +38,10 @@ constexpr Address kCanvasSetClip = 0x110b3860, kCanvasPrint = 0x110b6a30, kCanva
 constexpr uint32_t kBoth = 0xFF3CD25A, kSpies = 0xFF3C82FF, kMercs = 0xFFFF3C3C;
 constexpr uint32_t kTextColour = 0xFFF0F0F0, kShadowColour = 0xFF000000;
 constexpr double kViewDistance = 8192;
-// Work per timer tick, so the editor stays responsive while a run goes on.
-constexpr auto kSlice = std::chrono::milliseconds(25);
+// Work per timer tick, and how often, so the editor stays responsive while a
+// run goes on (a quarter of the time is left free).
+constexpr auto kSlice = std::chrono::milliseconds(30);
+constexpr UINT kTickEvery = 40;
 constexpr auto kShowEvery = std::chrono::milliseconds(1500);
 
 struct Options
@@ -99,11 +101,11 @@ void Load()
     const auto ini = IniPath();
     const Options defaults;
     const struct { const char* key; std::string value; } keys[] = {
-        {"CellSize", Reach::Number(defaults.settings.cell)},
+        {"CellSize", std::to_string(static_cast<int>(defaults.settings.cell))},
         {"MaxCells", std::to_string(defaults.settings.maxCells)},
-        {"ReachDistance", Reach::Number(defaults.settings.reach)},
-        {"SpyMaxDrop", Reach::Number(defaults.maxDrop[0])},
-        {"MercMaxDrop", Reach::Number(defaults.maxDrop[1])},
+        {"ReachDistance", std::to_string(static_cast<int>(defaults.settings.reach))},
+        {"SpyMaxDrop", std::to_string(static_cast<int>(defaults.maxDrop[0]))},
+        {"MercMaxDrop", std::to_string(static_cast<int>(defaults.maxDrop[1]))},
         {"RunWithMapCheck", defaults.runWithMapCheck ? "1" : "0"}};
     for (const auto& key : keys)
     {
@@ -315,7 +317,7 @@ void Start()
     state.done = false;
     state.stopped = false;
     state.status.clear();
-    state.timer = SetTimer(nullptr, 0, 10, Tick);
+    state.timer = SetTimer(nullptr, 0, kTickEvery, Tick);
     ++state.version;
 }
 bool TryStart()
@@ -382,12 +384,15 @@ void DrawText(Address viewport, const std::vector<std::pair<std::string, uint32_
     using SetClipFn = void(__thiscall*)(Address, int, int, int, int);
     using PrintFn = void(__cdecl*)(Address, Address, int, const char*, ...);
     using SizeFn = void(__cdecl*)(Address, Address, int*, int*, const char*, ...);
+    // A line too wide for a small viewport wraps and measures taller: the
+    // shortest height is one line's.
     int width = 0, lineHeight = 0;
     for (const auto& line : text)
     {
         int x = 0, y = 0;
         reinterpret_cast<SizeFn>(kCanvasTextSize)(canvas, font, &x, &y, "%s", line.first.c_str());
-        width = std::max(width, x); lineHeight = std::max(lineHeight, y);
+        width = std::max(width, x);
+        if (y > 0) lineHeight = lineHeight ? std::min(lineHeight, y) : y;
     }
     if (lineHeight <= 0) lineHeight = 12;
     const int left = 6, top = 6;
@@ -455,8 +460,8 @@ void DrawChecked(Address viewport, Address node)
     else
     {
         const auto lines = Reach::Legend(state.summary, state.cell, revision != state.revision);
-        const uint32_t colours[] = {kTextColour, kBoth, kSpies, kMercs, kTextColour};
-        for (size_t i = 0; i < lines.size(); ++i) text.push_back({lines[i], colours[std::min<size_t>(i, 4)]});
+        const uint32_t colours[] = {kTextColour, kBoth, kSpies, kMercs};
+        for (size_t i = 0; i < lines.size(); ++i) text.push_back({lines[i], i < 4 ? colours[i] : kTextColour});
     }
     DrawText(viewport, text);
 }

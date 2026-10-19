@@ -170,7 +170,8 @@ void ReachPaint(DesignState& s,Gdiplus::Graphics& g)
     SolidBrush both(Color(110,60,210,90)),spies(Color(130,60,130,255)),mercs(Color(130,255,60,60));
     const int h=DesignHorizontal(s),v=DesignVertical(s);
     const bool top=3-h-v==2;
-    const float side=static_cast<float>(size*0.9*s.zoom),bar=(std::max)(2.f,static_cast<float>(size*0.12*s.zoom));
+    // At least 2 pixels, so a whole map's cells still show zoomed out.
+    const float side=(std::max)(2.f,static_cast<float>(size*0.9*s.zoom)),bar=(std::max)(2.f,static_cast<float>(size*0.12*s.zoom));
     for(const auto& patch:patches)
     {
         if(!DesignOnFloor(s,patch.at[2],patch.at[2]))continue;

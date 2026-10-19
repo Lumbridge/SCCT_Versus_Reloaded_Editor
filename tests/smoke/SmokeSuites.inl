@@ -525,6 +525,149 @@ void MeshCostSuite()
     CloseWindowAndWait(budget);
 }
 
+// ---- Reachability: Build > Reachability Map works out where each team walks, a few steps at a
+// time; Map Check shows that it is being worked out and refreshes with its rows when it ends; the
+// menu item cancels a run going on.
+// A window as it is drawn, saved as a 24-bit BMP (shot=<folder> in -Extra).
+void SaveShot(HWND w, const std::string& name)
+{
+    const auto folder = Ini("shot");
+    if (folder.empty() || !w) return;
+    RECT r{};
+    GetWindowRect(w, &r);
+    const int width = r.right - r.left, height = r.bottom - r.top;
+    HDC screen = GetDC(nullptr), dc = CreateCompatibleDC(screen);
+    BITMAPINFO info{};
+    info.bmiHeader = {sizeof(BITMAPINFOHEADER), width, height, 1, 24, BI_RGB};
+    void* bits = nullptr;
+    HBITMAP bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    auto old = SelectObject(dc, bitmap);
+    // The full content first (the Direct3D viewports); a plain print when that comes back black.
+    const DWORD stride = (static_cast<DWORD>(width) * 3 + 3) & ~3u, size = stride * static_cast<DWORD>(height);
+    auto black = [&] { GdiFlush(); for (DWORD i = 0; i < size; i += 97) if (static_cast<unsigned char*>(bits)[i]) return false; return true; };
+    if (!PrintWindow(w, dc, 2) || black()) PrintWindow(w, dc, 0);
+    Info("shot", name + (black() ? " black" : " ok"));
+    BITMAPFILEHEADER file{0x4D42, static_cast<DWORD>(sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + size), 0, 0, sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER)};
+    FILE* f = nullptr;
+    if (!fopen_s(&f, (folder + "\\" + name + ".bmp").c_str(), "wb") && f)
+    {
+        fwrite(&file, sizeof(file), 1, f);
+        fwrite(&info.bmiHeader, sizeof(info.bmiHeader), 1, f);
+        fwrite(bits, 1, size, f);
+        fclose(f);
+    }
+    SelectObject(dc, old);
+    DeleteObject(bitmap);
+    DeleteDC(dc);
+    ReleaseDC(nullptr, screen);
+}
+std::vector<std::string> ReachRows(HWND check)
+{
+    std::vector<std::string> rows;
+    for (const auto& row : ListRows(GetDlgItem(check, 100)))
+        if (row.find("| Reachability |") != std::string::npos) rows.push_back(row);
+    return rows;
+}
+bool ReachChecked()
+{
+    return (GetMenuState(GetMenu(frameWindow), 41480, MF_BYCOMMAND) & MF_CHECKED) != 0;
+}
+void ReachSuite()
+{
+    Info("command", "41220 " + Fixed(Command(41220)) + " ms");
+    Pump(500);
+    HWND check = OpenedWindow("Map Check");
+    if (!check) { Fail("reach-mapcheck-open", "Map Check did not open"); return; }
+    auto rows = ReachRows(check);
+    Check(!rows.empty() && rows[0].find("being worked out") != std::string::npos, "reach-mapcheck-working", rows.empty() ? "no rows" : rows[0]);
+    Info("command", "41480 " + Fixed(Command(41480)) + " ms");
+    Check(ReachChecked(), "reach-menu-checked");
+    const DWORD started = GetTickCount();
+    bool done = false;
+    while (GetTickCount() - started < 600000)
+    {
+        Pump(1000);
+        rows = ReachRows(check);
+        if (!rows.empty() && rows.back().find("Worked out on foot") != std::string::npos) { done = true; break; }
+    }
+    Check(done, "reach-finished", Fixed((GetTickCount() - started) / 1000.0) + " s; " + std::to_string(rows.size()) + " rows");
+    for (const auto& row : rows) Info("reach-row", row);
+    if (done)
+    {
+        const auto& summary = rows.back();
+        const auto spies = summary.find("spies "), mercs = summary.find("mercs ");
+        Check(spies != std::string::npos && mercs != std::string::npos && Number(summary.substr(spies, 16)) > 100 && Number(summary.substr(mercs, 16)) > 100,
+              "reach-both-teams", summary.substr(spies == std::string::npos ? 0 : spies, 60));
+        // A row selects what it is about.
+        for (size_t i = 0; i + 1 < rows.size(); ++i)
+        {
+            if (Cells(rows[i]).back() == "-") continue;
+            const auto all = ListRows(GetDlgItem(check, 100));
+            const auto at = std::find(all.begin(), all.end(), rows[i]) - all.begin();
+            Exec("SELECT NONE");
+            ClickRow(check, 100, static_cast<int>(at), false);
+            Check(Selected() >= 1, "reach-row-selects", Cells(rows[i]).back() + " selected=" + std::to_string(Selected()));
+            Exec("SELECT NONE");
+            break;
+        }
+        Pump(1500);
+        SaveShot(frameWindow, "reach-viewports");
+        SaveShot(check, "reach-mapcheck");
+    }
+    // Off hides it; on again with the map unchanged shows the same result at once.
+    Info("command", "41480 " + Fixed(Command(41480)) + " ms");
+    Check(!ReachChecked(), "reach-menu-unchecked");
+    Info("command", "41480 " + Fixed(Command(41480)) + " ms");
+    Pump(300);
+    rows = ReachRows(check);
+    Check(ReachChecked() && !rows.empty(), "reach-on-again");
+    // The second map (ShipD): on starts a run, off cancels it and Map Check says so; on again
+    // works it out, and Map Check refreshes with its rows.
+    if (Ini("map2").empty()) { Info("reach-map2", "no map2: cancel and second map skipped"); CloseWindowAndWait(check); return; }
+    boxAnswer = IDNO;
+    Command(40971);
+    boxAnswer = IDOK;
+    Pump(1500);
+    Info("reach-map2", "actors=" + std::to_string(Actors().size()));
+    if (ReachChecked()) Command(41480);
+    Info("command", "41480 on " + Fixed(Command(41480)) + " ms");
+    Pump(1500);
+    Info("command", "41480 off " + Fixed(Command(41480)) + " ms");
+    Info("command", "41220 " + Fixed(Command(41220)) + " ms");
+    Pump(300);
+    rows = ReachRows(check);
+    Check(!rows.empty() && rows.back().find("Cancelled") != std::string::npos, "reach-cancel", rows.empty() ? "no rows" : rows.back());
+    Info("command", "41480 on " + Fixed(Command(41480)) + " ms");
+    Info("command", "41220 " + Fixed(Command(41220)) + " ms");
+    const DWORD second = GetTickCount();
+    done = false;
+    while (GetTickCount() - second < 600000)
+    {
+        Pump(1000);
+        rows = ReachRows(check);
+        if (!rows.empty() && rows.back().find("Worked out on foot") != std::string::npos) { done = true; break; }
+    }
+    Check(done, "reach-map2-finished", Fixed((GetTickCount() - second) / 1000.0) + " s; " + std::to_string(rows.size()) + " rows");
+    for (const auto& row : rows) Info("reach-map2-row", row);
+    Pump(2000);
+    SaveShot(frameWindow, "reach-map2-viewports");
+    SaveShot(check, "reach-map2-mapcheck");
+    // Map Design's plan layer: Tools > Show reachability map (its window's command 777).
+    Info("command", "40948 " + Fixed(Command(40948)) + " ms");
+    Pump(1500);
+    if (HWND design = OpenedWindow("Map Design"))
+    {
+        SendMessageA(design, WM_COMMAND, 777, 0);
+        Pump(1500);
+        const auto status = WindowText(GetDlgItem(design, 720));
+        const bool checked = (GetMenuState(GetMenu(design), 777, MF_BYCOMMAND) & MF_CHECKED) != 0;
+        Check(checked && status.find("Reachability map: green both teams") != std::string::npos, "reach-map-design-layer", status.substr(0, 160));
+        SaveShot(design, "reach-map2-design");
+    }
+    else Fail("reach-map-design-layer", "Map Design did not open");
+    CloseWindowAndWait(check);
+}
+
 void RunSuites(const std::string& list)
 {
     std::stringstream names(list);
@@ -535,6 +678,7 @@ void RunSuites(const std::string& list)
         else if (name == "unsaved") UnsavedSuite();
         else if (name == "placement") PlacementSuite();
         else if (name == "meshcost") MeshCostSuite();
+        else if (name == "reach") ReachSuite();
         else Fail("suite", "no suite called " + name);
     }
 }
