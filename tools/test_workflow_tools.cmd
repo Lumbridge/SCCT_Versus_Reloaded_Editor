@@ -30,6 +30,10 @@ cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\ViewBookmarkModelTests.cpp Rel
 if errorlevel 1 goto failed
 "%TEMP%\ViewBookmarkModelTests.exe"
 if errorlevel 1 goto failed
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\PrefabModelTests.cpp Reloaded.Editor\WorkflowModel.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\PrefabModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\PrefabModelTests.exe"
+if errorlevel 1 goto failed
 rem Not named *Update*: Windows would demand elevation for it as an installer.
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\MapUsagesModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MapUsagesModelTests.exe"
 if errorlevel 1 goto failed

@@ -118,6 +118,8 @@
     <ClInclude Include="PlacementNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="StairSmoothModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="StairSmoothNative.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="PrefabModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="PrefabNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="PlacementTools.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapDesignNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapDesignPanel.inl"><Filter>Header Files</Filter></ClInclude>
