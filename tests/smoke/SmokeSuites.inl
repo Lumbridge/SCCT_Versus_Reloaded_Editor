@@ -823,6 +823,101 @@ bool SaveWindowPicture(HWND w, const std::filesystem::path& file)
     out.write(reinterpret_cast<const char*>(&header), sizeof(header));
     out.write(reinterpret_cast<const char*>(&info.bmiHeader), sizeof(info.bmiHeader));
     out.write(static_cast<const char*>(bits), size);
+// ---- Import OBJ: a small OBJ with an MTL, a BMP that is not a power of two and a TGA that is, imported with
+// hulls and placed; per-polygon and no collision; a mesh over the game's limit split into parts placed together;
+// the window from File and from the Static Mesh Browser.
+nlohmann::json Request(const nlohmann::json& request)
+{
+    using Fn = int(__cdecl*)(const char*, char*, unsigned);
+    static Fn fn = reinterpret_cast<Fn>(GetProcAddress(GetModuleHandleA("Reloaded.Editor.dll"), "ReloadedWorkflowRequest"));
+    if (!fn) return {{"ok", false}, {"error", "no ReloadedWorkflowRequest"}};
+    std::vector<char> out(1 << 20);
+    const int r = fn(request.dump().c_str(), out.data(), static_cast<unsigned>(out.size()));
+    if (r < 0) { out.resize(static_cast<size_t>(-r)); fn(request.dump().c_str(), out.data(), static_cast<unsigned>(out.size())); }
+    return nlohmann::json::parse(out.data());
+}
+void WriteFile(const std::filesystem::path& file, const std::string& bytes)
+{
+    std::ofstream out(file, std::ios::binary);
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+}
+// A box's OBJ faces (counter-clockwise from outside), its corners from vertex `base` + 1.
+std::string ObjBox(double x0, double y0, double z0, double x1, double y1, double z1, int base)
+{
+    std::ostringstream o;
+    for (int i = 0; i < 8; ++i) o << "v " << ((i & 1) ? x1 : x0) << " " << ((i & 2) ? y1 : y0) << " " << ((i & 4) ? z1 : z0) << "\n";
+    const int quads[6][4] = {{0, 2, 3, 1}, {4, 5, 7, 6}, {0, 1, 5, 4}, {2, 6, 7, 3}, {0, 4, 6, 2}, {1, 3, 7, 5}};
+    for (const auto& q : quads)
+        o << "f " << q[0] + 1 + base << "/1 " << q[1] + 1 + base << "/2 " << q[2] + 1 + base << "/3 " << q[3] + 1 + base << "/4\n";
+    return o.str();
+}
+std::string Bmp24(int w, int h)
+{
+    const int row = (w * 3 + 3) & ~3;
+    std::string b(54 + static_cast<size_t>(row) * h, '\0');
+    auto u32 = [&](size_t at, uint32_t v) { for (int k = 0; k < 4; ++k) b[at + k] = static_cast<char>((v >> (8 * k)) & 0xff); };
+    b[0] = 'B'; b[1] = 'M';
+    u32(2, static_cast<uint32_t>(b.size())); u32(10, 54); u32(14, 40); u32(18, static_cast<uint32_t>(w)); u32(22, static_cast<uint32_t>(h));
+    b[26] = 1; b[28] = 24;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+        {
+            char* p = &b[54 + static_cast<size_t>(y) * row + static_cast<size_t>(x) * 3];
+            p[0] = static_cast<char>(40); p[1] = static_cast<char>(90 + (x * 7 % 60)); p[2] = static_cast<char>(140 + (y * 5 % 80));
+        }
+    return b;
+}
+std::string Tga32(int w, int h)
+{
+    std::string t = {0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, static_cast<char>(w & 0xff), static_cast<char>(w >> 8), static_cast<char>(h & 0xff), static_cast<char>(h >> 8), 32, 0x28};
+    for (int i = 0; i < w * h; ++i) { t += static_cast<char>(150); t += static_cast<char>(150); t += static_cast<char>(160); t += static_cast<char>(255); }
+    return t;
+}
+// The window's picture (PrintWindow), with `over` drawn on top where it sits, as a 24-bit BMP.
+void CaptureWindows(HWND base, HWND over, const std::filesystem::path& file)
+{
+    RECT b{}, o{};
+    GetWindowRect(base, &b);
+    const int w = b.right - b.left, h = b.bottom - b.top;
+    HDC screen = GetDC(nullptr);
+    HDC dc = CreateCompatibleDC(screen);
+    BITMAPINFO info{};
+    info.bmiHeader = {sizeof(BITMAPINFOHEADER), w, -h, 1, 24, BI_RGB};
+    void* bits = nullptr;
+    HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    auto old = SelectObject(dc, bitmap);
+    {
+        // PrintWindow draws into a screen-compatible bitmap, not straight into a DIB section.
+        HDC bdc = CreateCompatibleDC(screen);
+        HBITMAP bb = CreateCompatibleBitmap(screen, w, h);
+        auto bold = SelectObject(bdc, bb);
+        PrintWindow(base, bdc, 2);
+        BitBlt(dc, 0, 0, w, h, bdc, 0, 0, SRCCOPY);
+        SelectObject(bdc, bold);
+        DeleteObject(bb);
+        DeleteDC(bdc);
+    }
+    if (over)
+    {
+        GetWindowRect(over, &o);
+        HDC odc = CreateCompatibleDC(screen);
+        HBITMAP ob = CreateCompatibleBitmap(screen, o.right - o.left, o.bottom - o.top);
+        auto oold = SelectObject(odc, ob);
+        PrintWindow(over, odc, 2);
+        BitBlt(dc, o.left - b.left, o.top - b.top, o.right - o.left, o.bottom - o.top, odc, 0, 0, SRCCOPY);
+        SelectObject(odc, oold);
+        DeleteObject(ob);
+        DeleteDC(odc);
+    }
+    GdiFlush();
+    const int row = (w * 3 + 3) & ~3;
+    std::string out(54, '\0');
+    auto u32 = [&](size_t at, uint32_t v) { for (int k = 0; k < 4; ++k) out[at + k] = static_cast<char>((v >> (8 * k)) & 0xff); };
+    out[0] = 'B'; out[1] = 'M';
+    u32(2, static_cast<uint32_t>(54 + row * h)); u32(10, 54); u32(14, 40); u32(18, static_cast<uint32_t>(w)); u32(22, static_cast<uint32_t>(-h));
+    out[26] = 1; out[28] = 24;
+    out.append(static_cast<const char*>(bits), static_cast<size_t>(row) * h);
+    WriteFile(file, out);
     SelectObject(dc, old);
     DeleteObject(bitmap);
     DeleteDC(dc);
@@ -1217,6 +1312,228 @@ void ObjExportSuite()
     w = OpenedWindow("Export Map to OBJ");
     Check(w && WindowText(GetDlgItem(w, 301)) == full.string(), "objexport-folder-remembered", w ? WindowText(GetDlgItem(w, 301)) : "not open");
     if (w) CloseWindowAndWait(w);
+// The window whose menu bar (or one of its popups) holds the command.
+HWND MenuOwner(UINT command)
+{
+    struct S { UINT c; HWND r; } s{command, nullptr};
+    EnumThreadWindows(GetCurrentThreadId(), [](HWND w, LPARAM p) -> BOOL {
+        auto s = reinterpret_cast<S*>(p);
+        std::function<bool(HMENU)> has = [&](HMENU m) {
+            for (int i = 0; m && i < GetMenuItemCount(m); ++i)
+            {
+                if (GetMenuItemID(m, i) == s->c) return true;
+                if (HMENU sub = GetSubMenu(m, i); sub && has(sub)) return true;
+            }
+            return false;
+        };
+        if (IsWindowVisible(w) && has(GetMenu(w)) && w != frameWindow) { s->r = w; return FALSE; }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&s));
+    return s.r;
+}
+bool MenuHas(HWND w, UINT command)
+{
+    std::function<bool(HMENU)> has = [&](HMENU m) {
+        for (int i = 0; m && i < GetMenuItemCount(m); ++i)
+        {
+            if (GetMenuItemID(m, i) == command) return true;
+            if (HMENU sub = GetSubMenu(m, i); sub && has(sub)) return true;
+        }
+        return false;
+    };
+    return has(GetMenu(w));
+}
+void ObjImportSuite()
+{
+    namespace fs = std::filesystem;
+    const auto folder = directory / "objimport test";
+    fs::create_directories(folder);
+    // A crate (wood, from a BMP 100 x 60), a lid on it (metal, a 64 x 64 TGA) and a sign (a material with no image).
+    WriteFile(folder / "wood.bmp", Bmp24(100, 60));
+    WriteFile(folder / "metal.tga", Tga32(64, 64));
+    WriteFile(folder / "crate.mtl", "newmtl CrateWood\nKd 0.6 0.4 0.2\nmap_Kd wood.bmp\nnewmtl CrateMetal\nmap_Kd -s 1 1 1 metal.tga\nnewmtl Plain\nKd 1 1 1\n");
+    std::string obj = "# Import OBJ smoke test\nmtllib crate.mtl\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\no Crate\nusemtl CrateWood\ns 1\n" + ObjBox(0, 0, 0, 1, 0.8, 1, 0) +
+                      "o Lid\nusemtl CrateMetal\n" + ObjBox(0.1, 0.8, 0.1, 0.9, 1.0, 0.9, 8) +
+                      "o Sign\nusemtl Plain\nv 0 1.1 1.05\nv 1 1.1 1.05\nv 1 1.2 1.05\nv 0 1.2 1.05\nf 17/1 18/2 19/3 20/4\n";
+    WriteFile(folder / "crate.obj", obj);
+    // A wall of 12000 triangles: three parts.
+    {
+        std::ostringstream o;
+        o << "o Wall\nusemtl Plain\n";
+        for (int y = 0; y <= 60; ++y)
+            for (int x = 0; x <= 100; ++x) o << "v " << x * 0.1 << " " << y * 0.1 << " 0\n";
+        for (int y = 0; y < 60; ++y)
+            for (int x = 0; x < 100; ++x)
+            {
+                const int a = y * 101 + x + 1;
+                o << "f " << a << " " << a + 1 << " " << a + 102 << " " << a + 101 << "\n";
+            }
+        WriteFile(folder / "wall.obj", "mtllib crate.mtl\n" + o.str());
+    }
+    const auto crate = (folder / "crate.obj").u8string();
+    const std::string crateFile(crate.begin(), crate.end());
+    const auto wallPath = (folder / "wall.obj").u8string();
+    const std::string wallFile(wallPath.begin(), wallPath.end());
+
+    // What it will make.
+    auto preview = Request({{"op", "objimport.preview"}, {"file", crateFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokeCrate"}, {"scale", 100},
+                            {"up", "y"}, {"collision", "parts"}});
+    Info("objimport-preview", preview.dump().substr(0, 1500));
+    if (!preview.value("ok", false)) { Fail("objimport-preview", preview.value("error", std::string())); return; }
+    const auto& p = preview.at("result");
+    const auto& slots = p.at("slots");
+    Check(p.at("triangles") == 26 && p.at("hulls") == 3 && p.at("hullTriangles") == 36, "objimport-preview-counts",
+          "triangles " + p.at("triangles").dump() + " hulls " + p.at("hulls").dump() + " hull triangles " + p.at("hullTriangles").dump());
+    Check(slots.size() == 3 && slots[0].at("kind") == "image" && slots[1].at("kind") == "image" && slots[2].at("kind") == "default", "objimport-preview-materials", slots.dump());
+
+    // The import, placed where the viewport was last clicked: one Undo step.
+    auto unrealEd = *reinterpret_cast<unsigned char**>(0x117a59b0);
+    if (unrealEd) { auto click = reinterpret_cast<float*>(unrealEd + 0x1bc); click[0] = 128; click[1] = -256; click[2] = 64; }
+    const auto before = Undo();
+    auto imported = Request({{"op", "objimport.import"}, {"file", crateFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokeCrate"}, {"scale", 100},
+                             {"up", "y"}, {"collision", "parts"}, {"place", true}});
+    Info("objimport-import", imported.dump().substr(0, 3000));
+    if (!imported.value("ok", false)) { Fail("objimport-import", imported.value("error", std::string())); return; }
+    const auto& r = imported.at("result");
+    const auto& part = r.at("parts").at(0);
+    Check(r.at("parts").size() == 1 && part.at("path").get<std::string>().find(".ObjTest.SmokeCrate") != std::string::npos, "objimport-mesh", part.at("path").dump());
+    Check(part.at("hullTriangles") == 36 && part.at("hullNodes").get<int>() > 0 && part.at("hullNodes").get<int>() < 32767, "objimport-hulls-in-editor",
+          "hull triangles " + part.at("hullTriangles").dump() + " nodes " + part.at("hullNodes").dump());
+    bool boundsWarning = false;
+    for (const auto& w : r.at("warnings")) boundsWarning = boundsWarning || w.get<std::string>().find("bounds") != std::string::npos;
+    const auto& b = part.at("bounds");
+    Check(!boundsWarning && std::abs(b[0].get<double>()) < 0.5 && std::abs(b[3].get<double>() - 100) < 0.5 && std::abs(b[5].get<double>() - 120) < 0.5,
+          "objimport-bounds-hulls-on-the-mesh", b.dump());
+    const auto& mats = part.at("materials");
+    // The engine keeps the case a name was first seen with (a Textures group may read textures).
+    auto material = [&](size_t i) { auto m = mats[i].at("material").get<std::string>(); for (auto& c : m) c = static_cast<char>(tolower(static_cast<unsigned char>(c))); return m; };
+    Check(mats.size() == 3 && material(0).find("textures.cratewood") != std::string::npos && material(1).find("textures.cratemetal") != std::string::npos &&
+          material(2).find("defaulttexture") != std::string::npos, "objimport-materials", mats.dump());
+    const auto after = Undo();
+    Check(r.contains("placed") && r.at("placed").size() == 1 && after.count == before.count + 1, "objimport-placed-one-undo",
+          "undo " + std::to_string(before.count) + " -> " + std::to_string(after.count) + " '" + after.current + "'");
+    if (r.contains("placed") && !r.at("placed").empty())
+    {
+        const auto path = r.at("placed")[0].at("path").get<std::string>();
+        auto actor = ActorNamed(path.substr(path.rfind('.') + 1));
+        const auto at = actor ? ReadVector(actor, "Location") : Vec{};
+        std::string mesh;
+        if (actor)
+            if (auto prop = FindProperty(actor, "StaticMesh")) mesh = ObjectName(*reinterpret_cast<unsigned char**>(actor + *reinterpret_cast<unsigned*>(prop + 0x3C)));
+        Check(actor && std::abs(at.x - 128) < 0.01 && std::abs(at.y + 256) < 0.01 && std::abs(at.z - 64) < 0.01 && mesh == "SmokeCrate", "objimport-actor",
+              path + " at " + Fixed(at.x) + "," + Fixed(at.y) + "," + Fixed(at.z) + " mesh " + mesh);
+    }
+    auto again = Request({{"op", "objimport.import"}, {"file", crateFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokeCrate"}, {"scale", 100}});
+    Check(!again.value("ok", true) && again.value("error", std::string()).find("exists already") != std::string::npos, "objimport-name-taken", again.dump());
+
+    // Per polygon and no collision.
+    auto poly = Request({{"op", "objimport.import"}, {"file", crateFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokePoly"}, {"scale", 100},
+                         {"collision", "polygons"}});
+    Info("objimport-polygons", poly.dump().substr(0, 1500));
+    if (poly.value("ok", false))
+    {
+        const auto& q = poly.at("result").at("parts").at(0);
+        Check(q.at("hullTriangles") == 0 && q.at("polygonCollision").get<int>() > 0, "objimport-per-polygon",
+              "hull " + q.at("hullTriangles").dump() + " polygon " + q.at("polygonCollision").dump());
+    }
+    else Fail("objimport-per-polygon", poly.value("error", std::string()));
+    auto none = Request({{"op", "objimport.import"}, {"file", crateFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokeNone"}, {"scale", 100},
+                         {"collision", "none"}});
+    Info("objimport-none", none.dump().substr(0, 1500));
+    if (none.value("ok", false))
+    {
+        const auto& q = none.at("result").at("parts").at(0);
+        bool off = !q.at("materials").empty();
+        for (const auto& m : q.at("materials")) off = off && m.contains("collision") && !m.at("collision").get<bool>();
+        Check(q.at("hullTriangles") == 0 && q.at("polygonCollision") == 0 && off, "objimport-no-collision",
+              "hull " + q.at("hullTriangles").dump() + " polygon " + q.at("polygonCollision").dump() + " " + q.at("materials").dump());
+    }
+    else Fail("objimport-no-collision", none.value("error", std::string()));
+
+    // Over the limit: split into parts, placed together, one Undo step.
+    const auto beforeWall = Undo();
+    auto wall = Request({{"op", "objimport.import"}, {"file", wallFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokeWall"}, {"scale", 100},
+                         {"collision", "polygons"}, {"split", true}, {"place", true}});
+    Info("objimport-split", wall.dump().substr(0, 3000));
+    if (wall.value("ok", false))
+    {
+        const auto& w = wall.at("result");
+        bool within = true;
+        size_t sum = 0;
+        for (const auto& q : w.at("parts"))
+        {
+            within = within && q.at("triangles").get<size_t>() <= 5512 && q.at("polygonCollision").get<int>() <= 5512 && q.at("polygonNodes").get<int>() < 32767;
+            sum += q.at("triangles").get<size_t>();
+        }
+        const auto afterWall = Undo();
+        Check(w.at("parts").size() == 3 && within && sum == 12000 && w.at("placed").size() == 3 && afterWall.count == beforeWall.count + 1, "objimport-split-placed",
+              std::to_string(w.at("parts").size()) + " parts, " + std::to_string(sum) + " triangles, placed " + std::to_string(w.at("placed").size()) + ", undo " +
+              std::to_string(beforeWall.count) + " -> " + std::to_string(afterWall.count));
+    }
+    else Fail("objimport-split-placed", wall.value("error", std::string()));
+    auto refused = Request({{"op", "objimport.preview"}, {"file", wallFile}, {"name", "SmokeWall2"}, {"collision", "polygons"}, {"split", false}});
+    Check(refused.value("ok", false) && refused.at("result").at("error").get<std::string>().find("crashes the game") != std::string::npos, "objimport-limit-without-split",
+          refused.dump().substr(0, 400));
+
+    // The window, from File > Import OBJ Mesh...: the file typed in, its summary read, a picture taken.
+    Check(MenuHas(frameWindow, 41640), "objimport-file-menu");
+    std::string summary, status;
+    int ticks = 0;
+    bool opened = false;
+    dialogHandler = [&](HWND w, const std::string& title) {
+        if (title != "Import OBJ") return false;
+        opened = true;
+        ++ticks;
+        if (ticks == 2)
+        {
+            SetDlgItemTextA(w, 200, std::string(crate.begin(), crate.end()).c_str());
+            SetDlgItemTextA(w, 205, "100");
+        }
+        if (ticks == 12)
+        {
+            char text[4096] = {};
+            GetDlgItemTextA(w, 210, text, sizeof(text));
+            summary = text;
+            CaptureWindows(w, nullptr, directory / "objimport-1.bmp");
+            // Import from the window too, under another name and not placed.
+            SetDlgItemTextA(w, 204, "SmokeDialog");
+            CheckDlgButton(w, 209, BST_UNCHECKED);
+            PostMessage(w, WM_COMMAND, IDOK, 0);
+        }
+        if (ticks == 20)
+        {
+            char text[4096] = {};
+            GetDlgItemTextA(w, 211, text, sizeof(text));
+            status = text;
+            CaptureWindows(w, nullptr, directory / "objimport-2.bmp");
+        }
+        if (ticks == 21) PostMessage(w, WM_COMMAND, IDCANCEL, 0);
+        return true;
+    };
+    Command(41640);
+    dialogHandler = nullptr;
+    Check(opened && summary.find("26 triangles") != std::string::npos && summary.find("CrateWood: loaded") != std::string::npos, "objimport-window-summary", summary);
+    Check(status.find(".SmokeDialog (26 triangles") != std::string::npos, "objimport-window-import", status);
+
+    // The Static Mesh Browser's File menu has it too, and opens the same window.
+    Command(40468);
+    Pump(800);
+    HWND browser = MenuOwner(41640);
+    Check(browser != nullptr, "objimport-browser-menu", browser ? WindowText(browser) : "no window with the command");
+    if (browser)
+    {
+        CaptureWindows(browser, nullptr, directory / "objimport-3.bmp");
+        opened = false;
+        dialogHandler = [&](HWND w, const std::string& title) {
+            if (title != "Import OBJ") return false;
+            opened = true;
+            PostMessage(w, WM_COMMAND, IDCANCEL, 0);
+            return true;
+        };
+        Command(41640, browser);
+        dialogHandler = nullptr;
+        Check(opened, "objimport-browser-opens-window");
+    }
 }
 
 void RunSuites(const std::string& list)
@@ -1233,6 +1550,7 @@ void RunSuites(const std::string& list)
         else if (name == "prefabs") PrefabsSuite();
         else if (name == "lightshadow") LightShadowSuite();
         else if (name == "objexport") ObjExportSuite();
+        else if (name == "objimport") ObjImportSuite();
         else Fail("suite", "no suite called " + name);
     }
 }

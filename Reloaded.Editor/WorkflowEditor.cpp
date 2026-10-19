@@ -29,6 +29,9 @@
 #include "StairSmoothModel.h"
 #include "MapOptimiseModel.h"
 #include "PrefabModel.h"
+#include "ObjImportModel.h"
+#include "ObjImportWindow.h"
+#include "StaticMeshBrowserFavorites.h"
 #include "UnsavedChangesModel.h"
 #include "LightmapFix.h"
 #include "logger.h"
@@ -1565,4 +1568,5 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "MapOptimiseNative.inl"
 #include "PrefabNative.inl"
 #include "ObjExportNative.inl"
+#include "ObjImportNative.inl"
 }

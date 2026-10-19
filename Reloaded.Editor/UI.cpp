@@ -12,6 +12,7 @@
 #include "MinimapWindow.h"
 #include "WorkflowTools.h"
 #include "CharacterSkinsWindow.h"
+#include "ObjImportWindow.h"
 #include "CharacterSkinPresetsWindow.h"
 #include "EmitterLibraryWindow.h"
 #include "StoreyFilter.h"
@@ -256,6 +257,11 @@ static void InjectReloadedMenuItems(HWND frame)
                         "Convert &Legacy Recovered Map...");
         MapRecovery::InstallMenu(file);
         ObjExportWindow::InstallMenu(file); // File > Export > Map..., Map to OBJ...
+
+        // After the stock Import... (40074).
+        const int importPos = MenuPosByCommand(file, 40074);
+        if (MenuPosByCommand(file, ObjImportWindow::Command) < 0)
+            InsertMenuA(file, importPos >= 0 ? importPos + 1 : -1, MF_BYPOSITION | MF_STRING, ObjImportWindow::Command, "Import O&BJ Mesh...");
     }
 
     HMENU lightingBuild = SubMenuWithCommand(bar, 40038);

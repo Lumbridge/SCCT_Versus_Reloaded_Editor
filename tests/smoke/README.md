@@ -103,3 +103,12 @@ The suites save the map, so give each run fresh copies of the maps.
   pictures of the editor and the settings window (the hidden editor is shown,
   without taking the focus, while they are taken). Any map with lights works.
 - `objexport` (ShipD): File > Export holds the stock Export... and Map to OBJ...; an export of the whole map writes an OBJ whose every face corner points at a vertex, texture coordinate and normal it wrote, an MTL that defines every material used and names only PNGs that exist; Selection only with three static mesh actors selected writes just those three objects; a scale that is no number is refused in the status line; the folder is offered again after the window is closed. With `shot = <file.bmp>` it saves the editor with the window over it (PrintWindow).
+- `objimport`: Import OBJ, on a copy of ShipD. It writes a small OBJ (a crate, a lid and a sign) with
+  an MTL, a 100 x 60 BMP and a 64 x 64 TGA into `System\objimport test`; the preview counts 26 triangles and
+  3 hulls of 36 triangles and plans both images; the import with hulls makes the mesh, the editor keeps 36
+  hull triangles, its bounds are the file's (the hulls land on the mesh), the slots take the imported
+  textures and the default texture, and the placed actor stands at the click point in one Undo step; the
+  same name again is refused; per-polygon collision has no hull and no collision has neither; a wall of
+  12000 triangles is split into three parts placed together in one Undo step, and is refused unsplit;
+  File > Import OBJ Mesh... opens the window, which shows the summary and imports; the Static Mesh
+  Browser's File menu has Import OBJ... and opens it too. Pictures of the window are left in `System`.

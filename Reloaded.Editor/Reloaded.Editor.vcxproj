@@ -218,6 +218,9 @@
     <ClInclude Include="ObjectivePlayersModel.h" />
     <ClInclude Include="ObjectivePlayersNative.inl" />
     <ClInclude Include="ConveyorNative.inl" />
+    <ClInclude Include="ObjImportModel.h" />
+    <ClInclude Include="ObjImportNative.inl" />
+    <ClInclude Include="ObjImportWindow.h" />
     <ClInclude Include="CharacterSkinsWindow.h" />
     <ClInclude Include="CharacterSkinPresetsModel.h" />
     <ClInclude Include="CharacterSkinPresetsWindow.h" />
@@ -356,6 +359,7 @@
     <ClCompile Include="CharacterPreview.cpp" />
     <ClCompile Include="EmitterPreview.cpp" />
     <ClCompile Include="CharacterSkinsWindow.cpp" />
+    <ClCompile Include="ObjImportWindow.cpp" />
     <ClCompile Include="CharacterSkinPresetsWindow.cpp" />
     <ClCompile Include="EmitterLibraryWindow.cpp" />
     <ClCompile Include="MapAuthoringDialog.cpp" />
