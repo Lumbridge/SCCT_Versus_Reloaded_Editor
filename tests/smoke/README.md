@@ -81,8 +81,14 @@ The suites save the map, so give each run fresh copies of the maps.
   Static Mesh Browser and an Actor Properties window (`<file>.png`), RE+ Options
   open (`-options`), a message box (`-box`), the File menu open (`-menu`), and
   Map Check, Render Budget, Emitter Library and Gameplay Connections
-  (`-tools`). Each window is captured on its own and drawn where it sits, so
-  nothing else on the desktop is in them. Set `[Appearance] Theme=Classic`,
+  (`-tools`), and Undo History, Lighting Budget, Find Usages, Working Views,
+  SMagicEvent Workbench and Storeys (`-tools2`). Each window is captured on
+  its own and drawn where it sits, without the invisible resize border Windows
+  10 and 11 give it (PrintWindow draws that border black), so nothing else on
+  the desktop is in them. With `screen = '1'` the pictures are copied from the
+  screen instead: the editor's windows are made topmost for a moment and only
+  the frame's visible rectangle is copied, in screen pixels, which shows
+  exactly what the user sees. Set `[Appearance] Theme=Classic`,
   `ModernLight` or `ModernDark` in the test install's `Reloaded_Editor.ini`
   first.
 - `meshcost`: Render Budget's lower list switches to Meshes by cost; the rows

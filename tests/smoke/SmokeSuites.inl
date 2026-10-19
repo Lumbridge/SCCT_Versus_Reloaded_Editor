@@ -569,18 +569,89 @@ bool SavePng(HBITMAP bitmap, const std::wstring& path)
     Gdiplus::GdiplusShutdown(token);
     return ok;
 }
-bool CaptureEditor(const std::wstring& path)
+// Windows 10 and 11 give a resizable window an invisible border (about 7 pixels left, right and below)
+// that PrintWindow draws black; the visible part is DWM's extended frame bounds. Those are in screen
+// pixels while this DPI-unaware editor works in scaled ones, so the border widths are converted.
+using SetAwarenessFn = DPI_AWARENESS_CONTEXT(WINAPI*)(DPI_AWARENESS_CONTEXT);
+SetAwarenessFn SetAwareness()
 {
-    RECT frame{};
-    GetWindowRect(frameWindow, &frame);
-    const int width = frame.right - frame.left, height = frame.bottom - frame.top;
-    std::vector<HWND> windows; // top first
+    return reinterpret_cast<SetAwarenessFn>(GetProcAddress(GetModuleHandleA("user32.dll"), "SetThreadDpiAwarenessContext"));
+}
+bool FrameBounds(HWND window, RECT& bounds)
+{
+    using GetAttribute = HRESULT(WINAPI*)(HWND, DWORD, PVOID, DWORD);
+    static auto get = reinterpret_cast<GetAttribute>(GetProcAddress(LoadLibraryA("dwmapi.dll"), "DwmGetWindowAttribute"));
+    return get && SUCCEEDED(get(window, 9 /* DWMWA_EXTENDED_FRAME_BOUNDS */, &bounds, sizeof(bounds)));
+}
+RECT VisibleRect(HWND window)
+{
+    RECT logical{};
+    GetWindowRect(window, &logical);
+    auto setAwareness = SetAwareness();
+    if (!setAwareness) return logical;
+    DPI_AWARENESS_CONTEXT previous = setAwareness(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    RECT physical{}, visible{};
+    GetWindowRect(window, &physical);
+    const bool known = FrameBounds(window, visible);
+    if (previous) setAwareness(previous);
+    if (!known || physical.right <= physical.left || physical.bottom <= physical.top) return logical;
+    const double sx = double(logical.right - logical.left) / (physical.right - physical.left);
+    const double sy = double(logical.bottom - logical.top) / (physical.bottom - physical.top);
+    RECT r = logical;
+    r.left += static_cast<LONG>(std::lround((visible.left - physical.left) * sx));
+    r.top += static_cast<LONG>(std::lround((visible.top - physical.top) * sy));
+    r.right -= static_cast<LONG>(std::lround((physical.right - visible.right) * sx));
+    r.bottom -= static_cast<LONG>(std::lround((physical.bottom - visible.bottom) * sy));
+    return r.right > r.left && r.bottom > r.top ? r : logical;
+}
+std::vector<HWND> EditorWindows() // visible top-level windows of the editor, top first
+{
+    std::vector<HWND> windows;
     EnumWindows([](HWND w, LPARAM p) -> BOOL {
         DWORD process = 0;
         GetWindowThreadProcessId(w, &process);
         if (process == GetCurrentProcessId() && IsWindowVisible(w) && !IsIconic(w)) reinterpret_cast<std::vector<HWND>*>(p)->push_back(w);
         return TRUE;
     }, reinterpret_cast<LPARAM>(&windows));
+    return windows;
+}
+// What is really on screen (smoke.ini screen=1): the editor's windows brought to the top for a moment,
+// in their own order, and only the frame's visible rectangle copied, in screen pixels.
+bool CaptureScreen(const std::wstring& path)
+{
+    const auto windows = EditorWindows();
+    for (auto it = windows.rbegin(); it != windows.rend(); ++it)
+        SetWindowPos(*it, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    RedrawWindow(frameWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    Pump(600);
+    auto setAwareness = SetAwareness();
+    DPI_AWARENESS_CONTEXT previous = setAwareness ? setAwareness(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) : nullptr;
+    RECT frame{};
+    if (!FrameBounds(frameWindow, frame)) GetWindowRect(frameWindow, &frame);
+    const int width = frame.right - frame.left, height = frame.bottom - frame.top;
+    HDC screen = GetDC(nullptr);
+    HDC canvas = CreateCompatibleDC(screen);
+    HBITMAP picture = CreateCompatibleBitmap(screen, width, height);
+    HGDIOBJ old = SelectObject(canvas, picture);
+    BitBlt(canvas, 0, 0, width, height, screen, frame.left, frame.top, SRCCOPY | CAPTUREBLT);
+    if (setAwareness && previous) setAwareness(previous);
+    for (HWND w : windows)
+        if (IsWindow(w)) SetWindowPos(w, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    SelectObject(canvas, old);
+    const bool ok = SavePng(picture, path);
+    DeleteObject(picture);
+    DeleteDC(canvas);
+    ReleaseDC(nullptr, screen);
+    return ok;
+}
+// Every window of the editor captured on its own (PrintWindow) and drawn where it sits, without its
+// invisible border, onto a canvas the size of the frame's visible rectangle.
+bool CaptureEditor(const std::wstring& path)
+{
+    if (Ini("screen") == "1") return CaptureScreen(path);
+    const RECT frame = VisibleRect(frameWindow);
+    const int width = frame.right - frame.left, height = frame.bottom - frame.top;
+    const auto windows = EditorWindows();
     HDC screen = GetDC(nullptr);
     HDC canvas = CreateCompatibleDC(screen);
     HBITMAP picture = CreateCompatibleBitmap(screen, width, height);
@@ -591,14 +662,16 @@ bool CaptureEditor(const std::wstring& path)
     {
         RECT r{};
         GetWindowRect(*it, &r);
+        const RECT visible = VisibleRect(*it);
         RECT overlap{};
-        if (!IntersectRect(&overlap, &r, &frame)) continue;
+        if (!IntersectRect(&overlap, &visible, &frame)) continue;
         const int w = r.right - r.left, h = r.bottom - r.top;
         HDC one = CreateCompatibleDC(screen);
         HBITMAP shot = CreateCompatibleBitmap(screen, w, h);
         HGDIOBJ previous = SelectObject(one, shot);
         PrintWindow(*it, one, PW_RENDERFULLCONTENT);
-        BitBlt(canvas, r.left - frame.left, r.top - frame.top, w, h, one, 0, 0, SRCCOPY);
+        BitBlt(canvas, visible.left - frame.left, visible.top - frame.top, visible.right - visible.left, visible.bottom - visible.top,
+               one, visible.left - r.left, visible.top - r.top, SRCCOPY);
         SelectObject(one, previous);
         DeleteObject(shot);
         DeleteDC(one);
@@ -762,6 +835,34 @@ void AppearanceSuite()
     auto toolsShot = std::filesystem::path(shot);
     toolsShot.replace_filename(toolsShot.stem().string() + "-tools.png");
     Check(opened.size() == std::size(tools) && CaptureEditor(toolsShot.wstring()), "appearance-tools-shot", std::to_string(opened.size()) + " windows");
+    for (HWND w : opened) if (IsWindow(w)) CloseWindowAndWait(w);
+
+    // More of them: Undo History, Lighting Budget, Find Usages, Working Views, SMagicEvent Workbench
+    // and Storeys, three across and two down.
+    struct More { UINT command; const char* title; HWND (*open)(); };
+    const More more[] = {
+        {41105, "Undo History", nullptr}, {41150, "Lighting Budget", nullptr}, {0, "Asset Find and Replace", OpenFindUsages},
+        {40921, "Working Views", nullptr}, {40927, "SMagicEvent Workbench", nullptr}, {40966, "Storeys", nullptr},
+    };
+    SelectOnly(FreeMeshes(1));
+    opened.clear();
+    int slot = 0;
+    for (auto& tool : more)
+    {
+        HWND w = nullptr;
+        if (tool.open) w = tool.open();
+        else { Command(tool.command); Pump(800); w = OpenedWindow(tool.title); }
+        const int x = 20 + (slot % 3) * 520, y = 90 + (slot / 3) * 450;
+        ++slot;
+        if (!w) { Info("appearance-tool-missing", tool.title); continue; }
+        const bool resizable = (GetWindowLongA(w, GWL_STYLE) & WS_THICKFRAME) != 0;
+        SetWindowPos(w, HWND_TOP, x, y, 510, 440, SWP_NOACTIVATE | (resizable ? 0 : SWP_NOSIZE));
+        opened.push_back(w);
+    }
+    Pump(1500);
+    auto moreShot = std::filesystem::path(shot);
+    moreShot.replace_filename(moreShot.stem().string() + "-tools2.png");
+    Check(opened.size() == std::size(more) && CaptureEditor(moreShot.wstring()), "appearance-tools2-shot", std::to_string(opened.size()) + " windows");
     for (HWND w : opened) if (IsWindow(w)) CloseWindowAndWait(w);
 }
 
