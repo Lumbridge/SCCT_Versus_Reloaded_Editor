@@ -8,6 +8,7 @@
 #include "MagicEventModel.h"
 #include "PropertyPasteModel.h"
 #include "MapAuthoringModel.h"
+#include "CompareBackupModel.h"
 #include "CameraNetworkModel.h"
 #include "MapDesignModel.h"
 #include "SecurityModel.h"
@@ -177,7 +178,10 @@ namespace
         Observe(e);
         return e;
     }
-    Address Level() { return Read<Address>(Engine()+0x130); }
+    // Compare with Backup reads a loaded copy's level through the same code as the open one
+    // (CompareBackupNative.inl); only reads run while it is set.
+    Address levelOverride=0;
+    Address Level() { auto level=Read<Address>(Engine()+0x130); return levelOverride?levelOverride:level; }
     std::string String(Address a,size_t cap=2048)
     {
         if(!a) return {};
@@ -1575,4 +1579,5 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "ObjImportNative.inl"
 #include "ReachabilityNative.inl"
 #include "MapOutlinerNative.inl"
+#include "CompareBackupNative.inl"
 }

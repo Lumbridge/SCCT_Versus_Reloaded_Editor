@@ -218,6 +218,9 @@
     <ClInclude Include="EmitterPreview.h" />
     <ClInclude Include="CharacterSkinsImage.h" />
     <ClInclude Include="CharacterSkinsModel.h" />
+    <ClInclude Include="CompareBackup.h" />
+    <ClInclude Include="CompareBackupModel.h" />
+    <ClInclude Include="CompareBackupNative.inl" />
     <ClInclude Include="ConveyorModel.h" />
     <ClInclude Include="ObjectivePlayersModel.h" />
     <ClInclude Include="ObjectivePlayersNative.inl" />
@@ -373,6 +376,7 @@
     <ClCompile Include="ObjImportWindow.cpp" />
     <ClCompile Include="CharacterSkinPresetsWindow.cpp" />
     <ClCompile Include="EmitterLibraryWindow.cpp" />
+    <ClCompile Include="CompareBackup.cpp" />
     <ClCompile Include="MapAuthoringDialog.cpp" />
     <ClCompile Include="MagicEventWorkbench.cpp" />
     <ClCompile Include="CameraNetworkPanel.cpp" />

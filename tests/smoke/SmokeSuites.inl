@@ -2144,6 +2144,231 @@ void ScatterSuite()
         CloseWindowAndWait(again);
     }
     else Fail("scatter-reopen", "did not open again");
+// ---- Compare with Backup: File > Save keeps a backup; then a mesh is moved, another deleted and a light's
+// brightness changed. The comparison lists all three, with the backup's value beside the map's; one ticked row
+// (the deleted mesh) comes back as one Undo step and Undo takes it away again; then Tick All brings back the
+// rest too.
+constexpr UINT CompareBackupCommand = 41600; // File > Compare with Backup...
+// With shot=<file.bmp> in -Extra: the editor frame with a tool window drawn over it where it is, both by
+// PrintWindow (never the screen).
+void SaveShot(HWND tool, const std::string& file)
+{
+    RECT frameRect{}, toolRect{};
+    GetWindowRect(frameWindow, &frameRect);
+    GetWindowRect(tool, &toolRect);
+    const int w = frameRect.right - frameRect.left, h = frameRect.bottom - frameRect.top;
+    HDC screen = GetDC(nullptr);
+    HDC canvas = CreateCompatibleDC(screen), part = CreateCompatibleDC(screen);
+    HBITMAP image = CreateCompatibleBitmap(screen, w, h);
+    HBITMAP toolImage = CreateCompatibleBitmap(screen, toolRect.right - toolRect.left, toolRect.bottom - toolRect.top);
+    auto oldCanvas = SelectObject(canvas, image);
+    auto oldPart = SelectObject(part, toolImage);
+    PrintWindow(frameWindow, canvas, 2);
+    PrintWindow(tool, part, 2);
+    BitBlt(canvas, toolRect.left - frameRect.left, toolRect.top - frameRect.top, toolRect.right - toolRect.left, toolRect.bottom - toolRect.top, part, 0, 0, SRCCOPY);
+    SelectObject(part, oldPart);
+    SelectObject(canvas, oldCanvas);
+    BITMAPINFOHEADER header{sizeof(header), w, -h, 1, 24, BI_RGB};
+    const int stride = (w * 3 + 3) & ~3;
+    std::vector<unsigned char> pixels(static_cast<size_t>(stride) * h);
+    GetDIBits(canvas, image, 0, h, pixels.data(), reinterpret_cast<BITMAPINFO*>(&header), DIB_RGB_COLORS);
+    BITMAPFILEHEADER fileHeader{0x4D42, static_cast<DWORD>(sizeof(BITMAPFILEHEADER) + sizeof(header) + pixels.size()), 0, 0, sizeof(BITMAPFILEHEADER) + sizeof(header)};
+    std::ofstream out(file, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(&fileHeader), sizeof(fileHeader));
+    out.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    out.write(reinterpret_cast<const char*>(pixels.data()), pixels.size());
+    DeleteObject(image);
+    DeleteObject(toolImage);
+    DeleteDC(canvas);
+    DeleteDC(part);
+    ReleaseDC(nullptr, screen);
+    Info("shot", file);
+}
+std::filesystem::path NewestBackup(const std::filesystem::path& folder)
+{
+    std::filesystem::path newest;
+    std::filesystem::file_time_type when{};
+    std::error_code e;
+    for (auto& f : std::filesystem::directory_iterator(folder, e))
+        if (f.is_regular_file() && f.path().extension() == ".sdc" && (newest.empty() || f.last_write_time() >= when)) { newest = f.path(); when = f.last_write_time(); }
+    return newest;
+}
+struct CompareRun { bool listed = false; std::vector<std::string> rows; std::string status; int ticked = -1; };
+// Opens File > Compare with Backup on this file; tick(rows, list) ticks rows in the list and returns whether to bring back.
+CompareRun RunCompare(const std::filesystem::path& backup, const std::function<bool(const std::vector<std::string>&, HWND)>& tick)
+{
+    CompareRun run;
+    int fileTicks = 0, windowTicks = 0;
+    bool bring = false, busy = false;
+    dialogHandler = [&](HWND w, const std::string& title) {
+        if (busy) return true; // tick() pumps messages; the timer comes back in meanwhile.
+        if (title == "Choose a Backup to Compare") return AnswerFile(w, backup.wstring(), fileTicks);
+        char cls[64] = {};
+        GetClassNameA(w, cls, sizeof(cls));
+        if (title != "Compare with Backup" || strcmp(cls, "ReloadedMapAuthoringPreview")) return false;
+        ++windowTicks;
+        HWND list = GetDlgItem(w, 11);
+        if (windowTicks == 3)
+        {
+            run.listed = true;
+            run.rows = ListRows(list);
+            busy = true;
+            bring = tick(run.rows, list);
+            busy = false;
+            Pump(200);
+            run.status = WindowText(GetDlgItem(w, 12));
+        }
+        if (windowTicks == 6) PostMessage(w, WM_COMMAND, bring ? IDOK : IDCANCEL, 0);
+        return true;
+    };
+    Command(CompareBackupCommand);
+    dialogHandler = nullptr;
+    return run;
+}
+void TickRow(HWND list, int row)
+{
+    LVITEMA item{};
+    item.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+    item.state = LVIS_SELECTED | LVIS_FOCUSED;
+    SendMessageA(list, LVM_SETITEMSTATE, row, reinterpret_cast<LPARAM>(&item));
+    Pump(100);
+    SendMessageA(list, WM_KEYDOWN, VK_SPACE, 0);
+    SendMessageA(list, WM_KEYUP, VK_SPACE, 0);
+}
+int RowIndex(const std::vector<std::string>& rows, const std::string& change, const std::string& target, const std::string& property = "")
+{
+    for (size_t i = 0; i < rows.size(); ++i)
+    {
+        const auto cells = Cells(rows[i]);
+        if (cells.size() >= 5 && cells[0] == change && cells[1] == target && (property.empty() || cells[2].rfind(property, 0) == 0)) return static_cast<int>(i);
+    }
+    return -1;
+}
+void CompareSuite()
+{
+    const auto mapName = std::filesystem::path(Ini("map")).stem().string();
+    const auto folder = directory / "ReloadedEditor" / "Backups" / mapName;
+    Command(40007);
+    Pump(500);
+    const auto backup = NewestBackup(folder);
+    Check(!backup.empty(), "compare-backup-kept", backup.string() + " boxes=" + std::to_string(boxes.size()));
+    if (backup.empty()) return;
+
+    auto meshes = OfClass("StaticMeshActor", 50);
+    auto lights = OfClass("Light", 5);
+    if (meshes.size() < 2 || lights.empty()) { Fail("compare-fixture", "needs two static meshes and a light"); return; }
+    unsigned char* mover = meshes[0];
+    const std::string moverName = Name(mover), goneName = Name(meshes[1]), lightName = Name(lights[0]);
+    const Vec moverAt = ReadVector(mover, "Location"), goneAt = ReadVector(meshes[1], "Location");
+    const float brightness = ReadFloat(lights[0], "LightBrightness");
+    WriteVector(mover, "Location", {moverAt.x + 256, moverAt.y, moverAt.z});
+    if (auto p = FindProperty(lights[0], "LightBrightness")) *reinterpret_cast<float*>(lights[0] + *reinterpret_cast<unsigned*>(p + 0x3C)) = brightness + 7;
+    for (auto a : Actors()) SetSelected(a, false);
+    SetSelected(meshes[1], true);
+    Exec("ACTOR DELETE");
+    Pump(300);
+    const size_t actorsEdited = Actors().size();
+    Check(!ActorNamed(goneName), "compare-edits", "moved " + moverName + ", deleted " + goneName + ", light " + lightName + " " + Fixed(brightness) + "->" + Fixed(brightness + 7));
+
+    // One row: the deleted mesh.
+    auto before = Undo();
+    auto run = RunCompare(backup, [&](const std::vector<std::string>& rows, HWND list) {
+        const int gone = RowIndex(rows, "Deleted", goneName);
+        if (gone >= 0) TickRow(list, gone);
+        return gone >= 0;
+    });
+    for (size_t i = 0; i < run.rows.size() && i < 12; ++i) Info("compare-row", run.rows[i]);
+    const int movedRow = RowIndex(run.rows, "Moved", moverName, "Location"), lightRow = RowIndex(run.rows, "Changed", lightName, "LightBrightness");
+    Check(run.listed && RowIndex(run.rows, "Deleted", goneName) >= 0 && movedRow >= 0 && lightRow >= 0 && run.rows.size() == 3, "compare-lists-differences",
+          std::to_string(run.rows.size()) + " rows; status '" + run.status + "' boxes=" + std::to_string(boxes.size()));
+    if (lightRow >= 0) Info("compare-light-row", run.rows[lightRow]);
+    Check(run.status.find("1 row(s) ticked") != std::string::npos, "compare-tick-one", run.status);
+    // The copy the comparison loaded is unloaded and its file removed.
+    Check(CountFiles(directory / "ReloadedEditor" / "compare") == 0, "compare-copy-removed");
+    auto after = Undo();
+    auto back = ActorNamed(goneName);
+    if (!back) back = ActorNamed(goneName + "_2");
+    const Vec backAt = back ? ReadVector(back, "Location") : Vec{};
+    std::string text;
+    for (auto& b : boxes) text += b + " ";
+    Check(back && std::fabs(backAt.x - goneAt.x) < 0.01f && std::fabs(backAt.y - goneAt.y) < 0.01f && Actors().size() == actorsEdited + 1
+              && std::fabs(ReadVector(mover, "Location").x - (moverAt.x + 256)) < 0.01f && after.count == before.count + 1 && after.current == "Bring back from backup",
+          "compare-bring-back-one", "back=" + (back ? Name(back) : std::string("none")) + " actors " + std::to_string(actorsEdited) + "->" + std::to_string(Actors().size())
+              + " undo '" + after.current + "' " + text);
+    Exec("TRANSACTION UNDO");
+    Pump(500);
+    Check(!ActorNamed(goneName) && !ActorNamed(goneName + "_2") && Actors().size() == actorsEdited, "compare-undo", "actors=" + std::to_string(Actors().size()) + " undo '" + Undo().current + "'");
+
+    // More to bring back: an emitter with its particle components deleted, and a copy of a mesh added.
+    unsigned char* emitter = nullptr;
+    int emitterParts = 0;
+    for (auto a : Actors())
+        if (auto p = FindProperty(a, "Emitters"); p && !(Flags(a) & 0x10))
+            if (const int n = *reinterpret_cast<int*>(a + *reinterpret_cast<unsigned*>(p + 0x3C) + 4); n > 0) { emitter = a; emitterParts = n; break; }
+    const std::string emitterName = emitter ? Name(emitter) : std::string();
+    if (emitter)
+        if (auto p = FindProperty(emitter, "Emitters"))
+            Info("compare-emitter-component", ObjectPath(**reinterpret_cast<unsigned char***>(emitter + *reinterpret_cast<unsigned*>(p + 0x3C))));
+    for (auto a : Actors()) SetSelected(a, false);
+    if (emitter) { SetSelected(emitter, true); Exec("ACTOR DELETE"); Pump(300); }
+    std::string copyName;
+    if (meshes.size() > 2)
+    {
+        for (auto a : Actors()) SetSelected(a, false);
+        SetSelected(meshes[2], true);
+        std::set<std::string> names;
+        for (auto a : Actors()) names.insert(Name(a));
+        Exec("ACTOR DUPLICATE");
+        Pump(300);
+        for (auto a : Actors()) if (!names.count(Name(a))) copyName = Name(a);
+    }
+    Info("compare-more-edits", "deleted emitter " + emitterName + " (" + std::to_string(emitterParts) + " components), added copy " + copyName);
+
+    // Everything: Tick All.
+    run = RunCompare(backup, [&](const std::vector<std::string>& rows, HWND list) {
+        SendMessageA(GetParent(list), WM_COMMAND, 13, 0);
+        if (const auto shot = Ini("shot"); !shot.empty())
+        {
+            // The moved mesh's row clicked, so the picture shows it selected in the viewports.
+            if (const int moved = RowIndex(rows, "Moved", moverName); moved >= 0)
+            {
+                LVITEMA item{};
+                item.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+                item.state = LVIS_SELECTED | LVIS_FOCUSED;
+                SendMessageA(list, LVM_SETITEMSTATE, moved, reinterpret_cast<LPARAM>(&item));
+            }
+            Pump(1500);
+            SaveShot(GetParent(list), shot);
+        }
+        return true;
+    });
+    for (size_t i = 0; i < run.rows.size() && i < 12; ++i) Info("compare-row", run.rows[i]);
+    unsigned char* emitterBack = nullptr;
+    for (auto a : Actors()) if (!emitterName.empty() && (Name(a) == emitterName || Name(a).rfind(emitterName + "_", 0) == 0)) emitterBack = a;
+    int partsBack = 0;
+    if (emitterBack)
+        if (auto p = FindProperty(emitterBack, "Emitters")) partsBack = *reinterpret_cast<int*>(emitterBack + *reinterpret_cast<unsigned*>(p + 0x3C) + 4);
+    Check((emitterName.empty() || (emitterBack && partsBack == emitterParts)) && (copyName.empty() || !ActorNamed(copyName)), "compare-bring-back-emitter-and-delete-copy",
+          "emitter back=" + (emitterBack ? Name(emitterBack) : std::string("none")) + " components " + std::to_string(partsBack) + "/" + std::to_string(emitterParts)
+              + " copy " + copyName + (ActorNamed(copyName) ? " still there" : " gone"));
+    auto light = ActorNamed(lightName);
+    mover = reinterpret_cast<unsigned char*>(ActorNamed(moverName));
+    // Brought back again, it is named _3: _2 is kept for Undo too.
+    back = nullptr;
+    for (auto a : Actors()) if (Name(a) == goneName || Name(a).rfind(goneName + "_", 0) == 0) back = a;
+    text.clear();
+    for (auto& b : boxes) text += b + " ";
+    Check(back && light && std::fabs(ReadFloat(light, "LightBrightness") - brightness) < 0.01f
+              && mover && std::fabs(ReadVector(mover, "Location").x - moverAt.x) < 0.01f,
+          "compare-bring-back-all", "status '" + run.status + "' back=" + (back ? Name(back) : std::string("none")) + " brightness=" + (light ? Fixed(ReadFloat(light, "LightBrightness")) : "-")
+              + " undo '" + Undo().current + "' " + text);
+    // Compared again, nothing differs.
+    run = RunCompare(backup, [&](const std::vector<std::string>&, HWND) { return false; });
+    for (const auto& row : run.rows) Info("compare-left", row);
+    Check(!run.listed && BoxContains("match"), "compare-nothing-left", "rows=" + std::to_string(run.rows.size()) + " boxes=" + (boxes.empty() ? std::string("none") : boxes[0]));
+    Exec("TRANSACTION UNDO");
+    Pump(500);
+    Check(ActorNamed(lightName) && std::fabs(ReadFloat(ActorNamed(lightName), "LightBrightness") - (brightness + 7)) < 0.01f, "compare-undo-all", "undo '" + Undo().current + "'");
 }
 
 void RunSuites(const std::string& list)
@@ -2164,6 +2389,7 @@ void RunSuites(const std::string& list)
         else if (name == "reach") ReachSuite();
         else if (name == "outliner") OutlinerSuite();
         else if (name == "scatter") ScatterSuite();
+        else if (name == "compare") CompareSuite();
         else Fail("suite", "no suite called " + name);
     }
 }

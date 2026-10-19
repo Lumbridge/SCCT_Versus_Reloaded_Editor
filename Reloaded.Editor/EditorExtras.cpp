@@ -11,6 +11,7 @@
 #include "PropertyPaste.h"
 #include "SaveBackupModel.h"
 #include "SaveBackups.h"
+#include "CompareBackup.h"
 #include "UnsavedChangesModel.h"
 #include "LightmapFix.h"
 #include "SelfUpdater.h"
@@ -251,6 +252,15 @@ namespace
             while (position < GetMenuItemCount(file) && GetMenuItemID(file, position) != EditorExtras::kOpenLatestAutosave) ++position;
             InsertMenuA(file, position + 1, MF_BYPOSITION | MF_STRING, EditorExtras::kOpenMapBackup, "Open Map &Backup...");
         }
+        if (file && GetMenuState(file, EditorExtras::kOpenMapBackup, MF_BYCOMMAND) != UINT(-1)
+            && GetMenuState(file, CompareBackup::kCompare, MF_BYCOMMAND) == UINT(-1))
+        {
+            changed = true;
+            // Right after Open Map Backup.
+            int position = 0;
+            while (position < GetMenuItemCount(file) && GetMenuItemID(file, position) != EditorExtras::kOpenMapBackup) ++position;
+            InsertMenuA(file, position + 1, MF_BYPOSITION | MF_STRING, CompareBackup::kCompare, "Compare &with Backup...");
+        }
         if (HMENU build = MenuWithCommand(bar, 40038); build && GetMenuState(build, EditorExtras::kPlayFromCameraSpy, MF_BYCOMMAND) == UINT(-1))
         {
             changed = true;
@@ -279,6 +289,7 @@ namespace
         return file && recentMenu && HasSubMenu(file, recentMenu)
             && GetMenuState(file, EditorExtras::kOpenLatestAutosave, MF_BYCOMMAND) != UINT(-1)
             && GetMenuState(file, EditorExtras::kOpenMapBackup, MF_BYCOMMAND) != UINT(-1)
+            && GetMenuState(file, CompareBackup::kCompare, MF_BYCOMMAND) != UINT(-1)
             && build && GetMenuState(build, EditorExtras::kPlayFromCameraSpy, MF_BYCOMMAND) != UINT(-1)
             && help && GetMenuState(help, EditorExtras::kShortcuts, MF_BYCOMMAND) != UINT(-1)
             && GetMenuState(help, SelfUpdater::kCheckNow, MF_BYCOMMAND) != UINT(-1);
@@ -410,6 +421,8 @@ namespace
                "Editor.EditorEngine: AutoSave, AutoSaveTimeMinutes) writes Auto0 to Auto9.sdc into MapsEd;\r\n"
                "File: Open Latest Autosave opens the newest of them. After a crash, the next start offers that session's autosave.\r\n"
                "File: Open Map Backup opens one of the last saved versions RE+ keeps of each map (System\\ReloadedEditor\\Backups); Save As over the map to restore it.\r\n"
+               "File: Compare with Backup lists what differs from a backup, an autosave or any .sdc (actors added, deleted, moved,\r\n"
+               "changed); click a row to select the actor; tick rows and Bring Back Selected restores the backup's version in one Undo step.\r\n"
                "Build: Play From Camera as Spy / Merc starts a playtest at the perspective viewport's camera.\r\n"
                "Build: Set Level Snapshot from Viewport / Image File puts the picture the game shows in map selection\r\n"
                "into the map's <Map>-i package (Packages\\Textures), backing up the old one under ReloadedEditor.\r\n"

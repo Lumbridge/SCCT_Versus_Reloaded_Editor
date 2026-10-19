@@ -143,3 +143,10 @@ starting up when the probe asks to run is asked again.
   `hold = '<ms>'` also points the viewport cameras at the busiest player start
   and leaves the editor running that long after the report with the preview
   up, then places the props, for a picture.
+- `compare`: File > Save keeps a backup; a mesh is moved, another deleted and a light's
+  brightness changed. File > Compare with Backup lists exactly those three, with the backup's
+  value beside the map's; the loaded copy is unloaded and its file removed. Ticking the deleted
+  mesh and Bring Back Selected adds it again in one Undo step (and Undo takes it away). After an
+  emitter is deleted and a mesh duplicated, Tick All brings everything back (the emitter with
+  its particle components, the copy deleted) and a second comparison finds nothing. With
+  `shot = '<file>.bmp'` it saves a picture of the editor with the comparison over it (ShipD).
