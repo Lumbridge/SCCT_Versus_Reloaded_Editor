@@ -6,6 +6,8 @@
 namespace MapCheck { struct Scene; struct Settings; struct FloorScan; }
 
 namespace LightShadow { struct Scene; struct Settings; }
+namespace LightShadow { struct Scene; }
+namespace Reach { struct Scene; class World; }
 namespace Minimap { struct Camera; struct Scene; }
 namespace UnsavedChanges { struct Opened; }
 
@@ -167,6 +169,15 @@ namespace Workflow::Editor
     struct LightShadowSceneStats { size_t bspFloors=0, meshFloors=0, meshTriangles=0; };
     LightShadowSceneStats LightShadowScene(LightShadow::Scene& scene, const LightShadow::Settings& settings);
     void LightShadowForget();
+    // spheres, and the BSP planes for line of sight.
+    void LightShadowScene(LightShadow::Scene& scene);
+    // Reachability (ReachabilityModel.h): the player starts with their teams,
+    // the objectives and pickups, the BSP's bounds and the pawn sizes of the
+    // loaded spy and merc classes; and the engine's collision queries on the
+    // open level (a swept box and the spawn test), which throw once another
+    // map is opened.
+    Reach::Scene ReachabilityScene();
+    std::unique_ptr<Reach::World> ReachabilityWorld();
     // Player count rules (ObjectivePlayersModel.h): the map's SPlayerCountRules actor
     // (or a version 1 SObjectivePlayers one, moved over on the next change). Rules:
     // {placed, legacy, extra, compiled, actor, playLevel (the count an editor Play Level

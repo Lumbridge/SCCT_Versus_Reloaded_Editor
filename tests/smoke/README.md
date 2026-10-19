@@ -112,3 +112,15 @@ The suites save the map, so give each run fresh copies of the maps.
   12000 triangles is split into three parts placed together in one Undo step, and is refused unsplit;
   File > Import OBJ Mesh... opens the window, which shows the summary and imports; the Static Mesh
   Browser's File menu has Import OBJ... and opens it too. Pictures of the window are left in `System`.
+- `reach`: Map Check opened on BankD says reachability is being worked out
+  and refreshes with its rows when the run ends (both teams reach cells);
+  Build > Reachability Map is checked and unchecked, and on again shows the
+  same result at once. With `map2` (ShipD): turning it on starts a run there,
+  turning it off cancels it (Map Check says so), on again works it out, and
+  Map Design's Tools > Show reachability map shows it in its status line.
+
+`shot=<folder>` saves pictures (BMP) of the windows a suite captures, and
+`hold=<seconds>` gives the editor its own message loop back for that long at
+the end (so the viewports repaint) before the frame and the open tool windows
+are saved as `hold-*.bmp` and the editor ends. A frame that is still busy
+starting up when the probe asks to run is asked again.

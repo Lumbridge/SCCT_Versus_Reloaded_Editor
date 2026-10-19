@@ -9,6 +9,7 @@
 #include "MapCheck.h"
 #include "LightShadowMap.h"
 #include "RenderBudget.h"
+#include "Reachability.h"
 #include "MinimapWindow.h"
 #include "WorkflowTools.h"
 #include "CharacterSkinsWindow.h"
@@ -278,6 +279,8 @@ static void InjectReloadedMenuItems(HWND frame)
         AppendMenuA(lightingBuild, MF_STRING, LightingBudget::kOpenCommand, "Lighting B&udget...");
     if (lightingBuild && MenuPosByCommand(lightingBuild, MapCheck::kOpenCommand) < 0)
         AppendMenuA(lightingBuild, MF_STRING, MapCheck::kOpenCommand, "&Map Check...");
+    if (lightingBuild && MenuPosByCommand(lightingBuild, Reachability::kToggle) < 0)
+        AppendMenuA(lightingBuild, MF_STRING, Reachability::kToggle, "Reac&hability Map");
     if (lightingBuild && MenuPosByCommand(lightingBuild, RenderBudget::kOpenCommand) < 0)
         AppendMenuA(lightingBuild, MF_STRING, RenderBudget::kOpenCommand, "Re&nder Budget...");
     if (lightingBuild && MenuPosByCommand(lightingBuild, MinimapWindow::Command) < 0)

@@ -5,6 +5,8 @@
 #include "WindowPlacement.h"
 #include "MapCheckModel.h"
 #include "MeasureTool.h"
+#include "Reachability.h"
+#include "ReachabilityModel.h"
 #include "WorkflowEditor.h"
 #include "logger.h"
 #include <commctrl.h>
@@ -90,6 +92,18 @@ Snapshot Measure()
     auto scene = Workflow::Editor::MapCheckScene(settings);
     if (settings.floatMaxGap > 0 && scene.bsp.Built()) scene.floors = Workflow::Editor::MapCheckFloorGaps(settings.floatMaxGap);
     snapshot.report = Analyse(scene, settings);
+    // Where each team can walk (Reachability.h), from its last run on the map as it is.
+    for (const auto& row : Reachability::MapCheckRows())
+    {
+        Problem p;
+        p.severity = row.severity == 0 ? Severity::Error : row.severity == 1 ? Severity::Warning : Severity::Note;
+        p.group = "Reachability";
+        p.check = row.check;
+        p.message = row.message;
+        p.actors = row.actors;
+        snapshot.report.problems.push_back(std::move(p));
+    }
+    std::stable_sort(snapshot.report.problems.begin(), snapshot.report.problems.end(), [](const Problem& a, const Problem& b) { return a.severity < b.severity; });
     snapshot.generation = Workflow::Editor::MapGeneration();
     snapshot.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     const auto& report = snapshot.report;
@@ -130,7 +144,8 @@ void Row(HWND list, int row, LPARAM data, const std::vector<std::string>& cells)
 const char kIntroText[] =
     "Checks the map as last built: actors in the void (solid space, outside every zone), far outside the geometry or with their "
     "collision cut into BSP or a static mesh; zones that leak into each other or to the outside; zone portals that seal nothing; "
-    "static meshes floating a little above the floor; and the editor's own Check Map for Errors. Build geometry first. "
+    "static meshes floating a little above the floor; objectives and pickups a team cannot walk to (Build > Reachability Map); "
+    "and the editor's own Check Map for Errors. Build geometry first. "
     "Click a row to select what it is about, double-click to frame it; a leak path is drawn in the viewports. "
     "Settings: Reloaded_Editor.ini [MapCheck].";
 
@@ -268,7 +283,7 @@ void Layout(HWND window)
     RECT r{};
     GetClientRect(window, &r);
     const int w = r.right - 24, h = r.bottom;
-    const int top = 66;
+    const int top = 74;
     MoveWindow(GetDlgItem(window, kIntro), 12, 8, w, top - 12, TRUE);
     MoveWindow(GetDlgItem(window, kList), 12, top, w, h - top - 82, TRUE);
     MoveWindow(GetDlgItem(window, kStatus), 12, h - 76, w, 34, TRUE);
@@ -391,6 +406,19 @@ void Open(HWND owner)
 {
     Refresh();
     Show(owner);
+}
+
+void ReachabilityChanged()
+{
+    if (!IsWindow(check.window)) return;
+    try
+    {
+        Refresh();
+    }
+    catch (const std::exception& e)
+    {
+        SetStatus(e.what());
+    }
 }
 
 bool HandleCommand(UINT command)

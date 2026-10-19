@@ -185,6 +185,8 @@
     <ClInclude Include="MapCheckModel.h" />
     <ClInclude Include="LightShadowMap.h" />
     <ClInclude Include="LightShadowModel.h" />
+    <ClInclude Include="Reachability.h" />
+    <ClInclude Include="ReachabilityModel.h" />
     <ClInclude Include="WindowPlacement.h" />
     <ClInclude Include="WindowPlacementModel.h" />
     <ClInclude Include="BudgetWindow.h" />
@@ -256,6 +258,7 @@
     <ClInclude Include="LightingBudgetNative.inl" />
     <ClInclude Include="MapCheckNative.inl" />
     <ClInclude Include="LightShadowNative.inl" />
+    <ClInclude Include="ReachabilityNative.inl" />
     <ClInclude Include="RenderBudgetNative.inl" />
     <ClInclude Include="MinimapNative.inl" />
     <ClInclude Include="StagePanel.inl" />
@@ -345,6 +348,7 @@
     <ClCompile Include="LightingBudget.cpp" />
     <ClCompile Include="MapCheck.cpp" />
     <ClCompile Include="LightShadowMap.cpp" />
+    <ClCompile Include="Reachability.cpp" />
     <ClCompile Include="WindowPlacement.cpp" />
     <ClCompile Include="RenderBudget.cpp" />
     <ClCompile Include="CommandPalette.cpp" />

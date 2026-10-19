@@ -290,6 +290,18 @@ void RunAll()
     Line("DONE", "failures", std::to_string(failures));
     if (report) fclose(report);
     report = nullptr;
+    // hold=<seconds> in -Extra: give the editor back its own loop for a while, so the viewports
+    // repaint, then save pictures of the frame and the tool windows (shot=<folder>) and end.
+    if (const int hold = atoi(Ini("hold").c_str()); hold > 0)
+    {
+        SetTimer(nullptr, 0, static_cast<UINT>(hold) * 1000, [](HWND, UINT, UINT_PTR, DWORD) {
+            SaveShot(frameWindow, "hold-frame");
+            if (HWND w = OpenedWindow("Map Check")) SaveShot(w, "hold-mapcheck");
+            if (HWND w = OpenedWindow("Map Design")) SaveShot(w, "hold-design");
+            TerminateProcess(GetCurrentProcess(), failures ? 3 : 0);
+        });
+        return;
+    }
     TerminateProcess(GetCurrentProcess(), failures ? 3 : 0);
 }
 

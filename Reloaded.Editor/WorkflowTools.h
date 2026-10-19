@@ -47,6 +47,9 @@ namespace WorkflowTools
     bool AppendObjectiveMenu(HMENU menu,const Workflow::Json& actor);
     void RunObjectiveCommand(UINT command,const Workflow::Json& snapshot);
     void Initialize();
+    // The open map's Movement limits as Map Design saved them (Design::Movement),
+    // or null when the map has none saved.
+    Workflow::Json MapMovementLimits();
     void FindUsages(HWND owner, void* asset, bool mesh);
     // Find Usages in All Maps for the browser's current material or mesh.
     void FindUsagesInAllMaps(HWND owner, bool mesh);
