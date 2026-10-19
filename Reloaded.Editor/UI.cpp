@@ -10,6 +10,7 @@
 #include "LightShadowMap.h"
 #include "RenderBudget.h"
 #include "Reachability.h"
+#include "MapOutliner.h"
 #include "MinimapWindow.h"
 #include "WorkflowTools.h"
 #include "CharacterSkinsWindow.h"
@@ -150,6 +151,7 @@ static void InjectReloadedMenuItems(HWND frame)
         reTools = CreatePopupMenu();
         AppendMenuA(reTools, MF_STRING, 40948, "&Map Design...");
         AppendMenuA(reTools, MF_STRING, WorkflowTools::kBrushVisibility, "&Brush Visibility...");
+        AppendMenuA(reTools, MF_STRING, MapOutliner::kOpenCommand, "Map &Outliner...");
         AppendMenuA(reTools, MF_STRING, StoreyFilter::kOpen, "S&toreys (one floor at a time)...");
         AppendMenuA(reTools, MF_STRING, LightShadowMap::kToggle, "Li&ght and Shadow Map");
         AppendMenuA(reTools, MF_STRING, LightShadowMap::kSettings, "Light and Shadow Settings...");
@@ -227,6 +229,10 @@ static void InjectReloadedMenuItems(HWND frame)
             InsertMenuA(view, pos + 1, MF_BYPOSITION | MF_STRING,
                         WindowDriftFix::kResetPropertyWindowsCommandId,
                         "Reset &Property Window Positions");
+
+        pos = MenuPosByCommand(view, 19004);     // after "Show Actor Class Browser"
+        if (MenuPosByCommand(view, MapOutliner::kOpenCommand) < 0)
+            InsertMenuA(view, pos >= 0 ? pos + 1 : -1, MF_BYPOSITION | MF_STRING, MapOutliner::kOpenCommand, "Map &Outliner...");
     }
     FavoritesWindow::InstallMenu(bar); // View > Favorites, after the browsers
 

@@ -403,6 +403,8 @@ namespace
                "MENUS\r\n"
                "Edit: Undo History lists every undo step, oldest first, with redo steps greyed below the current one;\r\n"
                "double-click a step (or select it and press Enter) to undo or redo to it. Ctrl+Z / Ctrl+Y step there too.\r\n"
+               "View: Map Outliner lists every actor (search, group by class or Group, sort by a column); click selects, Ctrl/Shift add,\r\n"
+               "double-click / Enter / F frames, H hides, Delete deletes (asks first, one Undo step), Ctrl+A all, Left/Right fold a group.\r\n"
                "File: Optimise Map Assets makes a release copy carrying only the assets it uses from big packs.\r\n"
                "File: Open Recent lists the last ten maps. The editor's own autosave (View > Advanced Options,\r\n"
                "Editor.EditorEngine: AutoSave, AutoSaveTimeMinutes) writes Auto0 to Auto9.sdc into MapsEd;\r\n"

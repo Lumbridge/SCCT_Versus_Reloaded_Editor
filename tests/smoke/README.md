@@ -124,3 +124,12 @@ The suites save the map, so give each run fresh copies of the maps.
 the end (so the viewports repaint) before the frame and the open tool windows
 are saved as `hold-*.bmp` and the editor ends. A frame that is still busy
 starting up when the probe asks to run is asked again.
+- `outliner`: the Map Outliner lists every actor but the viewport cameras in
+  a virtual list; grouped by class the headers' counts add up and a header
+  folds and opens; a search keeps rows with every word; clicking rows selects
+  those actors and the list follows a selection made in the editor; a
+  double-click frames; Hide and Show are one Undo step each and a hidden row is
+  never selected; Delete asks (No keeps them), deletes two actors in one Undo
+  step that Edit > Undo brings back, and refuses the level info; reading the
+  map again takes milliseconds; the window reopens where it was left. With
+  `shot = '1'` it stays open for 15 seconds at the end, for a picture.

@@ -10,6 +10,7 @@ namespace LightShadow { struct Scene; }
 namespace Reach { struct Scene; class World; }
 namespace Minimap { struct Camera; struct Scene; }
 namespace UnsavedChanges { struct Opened; }
+namespace Outliner { struct Row; }
 
 namespace Workflow::Editor
 {
@@ -284,6 +285,27 @@ namespace Workflow::Editor
     // Selects exactly the live actors with these paths, one pass over the
     // level; focus frames them in the viewports. Returns how many were found.
     size_t SelectActorPaths(const std::vector<std::string>& paths, bool focus);
+    // Map Outliner (MapOutlinerModel.h). OutlinerRows reads every actor but the
+    // viewport cameras in one pass, in the level's order: name, path, class,
+    // Tag, Event, Group, location, hidden, selected and bLockLocation, with
+    // the class's property offsets found once per class. The key changes
+    // whenever the rows may be stale: a map opened, an edit, the actor list
+    // grown or moved, a stock Undo or Redo. With the key unchanged the row
+    // handles are live, and OutlinerFlags re-reads only the hidden and
+    // selected bits (1 when a selection bit changed, 2 a hidden one). OutlinerSelect selects exactly
+    // those actors (focus frames them) and returns how many it found;
+    // OutlinerDelete deletes them, never the level info, the builder brush or
+    // a camera, in one Undo step, and returns how many went.
+    struct OutlinerKey
+    {
+        unsigned generation = 0, content = 0; int actors = 0; uintptr_t data = 0; int undoPosition = 0;
+        bool operator==(const OutlinerKey&) const = default;
+    };
+    void OutlinerRows(std::vector<Outliner::Row>& rows);
+    OutlinerKey OutlinerChangeKey();
+    unsigned OutlinerFlags(std::vector<Outliner::Row>& rows);
+    size_t OutlinerSelect(const std::vector<uintptr_t>& actors, bool focus);
+    size_t OutlinerDelete(const std::vector<uintptr_t>& actors);
     // Lighting Budget fixes, one undoable transaction: fix 0 makes the lights
     // static, 1 turns them off (LightingBudget::Applied). Returns how many of
     // the paths were found and changed.

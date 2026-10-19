@@ -33,6 +33,7 @@
 #include "ObjImportModel.h"
 #include "ObjImportWindow.h"
 #include "StaticMeshBrowserFavorites.h"
+#include "MapOutlinerModel.h"
 #include "UnsavedChangesModel.h"
 #include "LightmapFix.h"
 #include "logger.h"
@@ -1571,4 +1572,5 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "ObjExportNative.inl"
 #include "ObjImportNative.inl"
 #include "ReachabilityNative.inl"
+#include "MapOutlinerNative.inl"
 }

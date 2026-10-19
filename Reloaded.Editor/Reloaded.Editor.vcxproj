@@ -193,6 +193,8 @@
     <ClInclude Include="RenderBudget.h" />
     <ClInclude Include="CommandPalette.h" />
     <ClInclude Include="CommandPaletteModel.h" />
+    <ClInclude Include="MapOutliner.h" />
+    <ClInclude Include="MapOutlinerModel.h" />
     <ClInclude Include="RenderBudgetModel.h" />
     <ClInclude Include="LevelSnapshot.h" />
     <ClInclude Include="PlayLevelPlayers.h" />
@@ -260,6 +262,7 @@
     <ClInclude Include="LightShadowNative.inl" />
     <ClInclude Include="ReachabilityNative.inl" />
     <ClInclude Include="RenderBudgetNative.inl" />
+    <ClInclude Include="MapOutlinerNative.inl" />
     <ClInclude Include="MinimapNative.inl" />
     <ClInclude Include="StagePanel.inl" />
     <ClInclude Include="LightingPanel.inl" />
@@ -352,6 +355,7 @@
     <ClCompile Include="WindowPlacement.cpp" />
     <ClCompile Include="RenderBudget.cpp" />
     <ClCompile Include="CommandPalette.cpp" />
+    <ClCompile Include="MapOutliner.cpp" />
     <ClCompile Include="MinimapWindow.cpp" />
     <ClCompile Include="LevelSnapshot.cpp" />
     <ClCompile Include="PlayLevelPlayers.cpp" />
