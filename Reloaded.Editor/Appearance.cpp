@@ -25,8 +25,13 @@ extern HINSTANCE g_hReloadedDll;
 //  - a CBT hook on each thread that makes windows subclasses them: list and tree views get the
 //    Explorer look, and in Modern Dark every window gets dark colours: title bars (DWM), scroll
 //    bars, lists, trees and edits (the system dark themes), WM_CTLCOLOR* answers, the menu bar
-//    (the undocumented UAH menu messages), popup menus (uxtheme's app mode), tabs and toolbars,
-//    and GetSysColor / GetSysColorBrush / class backgrounds for the stock editor's own painting.
+//    (the undocumented UAH menu messages), popup menus (uxtheme's app mode), tabs and toolbars;
+//  - version 6 buttons notify their parent as they paint, which the stock windows would take for a
+//    click (they answer any WM_NOTIFY with OnCommand), so those notifications stop at the parent;
+//  - Modern Dark also maps the colours the stock editor and RE+ paint with: system colours
+//    (GetSysColor, GetSysColorBrush, class backgrounds, FillRect with a colour index, DrawEdge),
+//    fixed light greys used to fill and dark greys used for text, and the grey squares behind the
+//    editorres button pictures.
 // Engine-rendered viewports are left alone.
 
 namespace
@@ -552,6 +557,55 @@ namespace
         DrawTextW(item->um.hdc, text, -1, &item->dis.rcItem, flags);
     }
 
+    // A popup menu item (the frame's menus and the stock right-click menus are drawn by their owner
+    // once it answers the UAH messages): check mark, text, shortcut and submenu arrow.
+    void DrawPopupItem(UAHDRAWMENUITEM* item)
+    {
+        const auto p = Appearance::DarkPalette();
+        HDC dc = item->um.hdc;
+        RECT r = item->dis.rcItem;
+        wchar_t text[512] = {};
+        MENUITEMINFOW info{sizeof(info)};
+        info.fMask = MIIM_STRING | MIIM_FTYPE | MIIM_STATE | MIIM_SUBMENU;
+        info.dwTypeData = text;
+        info.cch = 511;
+        GetMenuItemInfoW(item->um.hmenu, item->umi.iPosition, TRUE, &info);
+        const UINT state = item->dis.itemState;
+        const bool hot = (state & (ODS_HOTLIGHT | ODS_SELECTED)) != 0;
+        const bool grey = (state & (ODS_GRAYED | ODS_DISABLED)) != 0;
+        real.FillRect(dc, &r, BrushFor(hot && !grey ? p.hot : p.face));
+        if (info.fType & MFT_SEPARATOR)
+        {
+            RECT line{r.left + 4, (r.top + r.bottom) / 2, r.right - 4, (r.top + r.bottom) / 2 + 1};
+            real.FillRect(dc, &line, BrushFor(p.border));
+            return;
+        }
+        SetBkMode(dc, TRANSPARENT);
+        real.SetTextColor(dc, grey ? p.grayText : p.text);
+        const int height = r.bottom - r.top;
+        if (info.fState & MFS_CHECKED)
+        {
+            RECT mark{r.left, r.top, r.left + height + 4, r.bottom};
+            DrawTextW(dc, L"\x2713", 1, &mark, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+        std::wstring label = text, shortcut;
+        if (const size_t tab = label.find(L'\t'); tab != std::wstring::npos)
+        {
+            shortcut = label.substr(tab + 1);
+            label.resize(tab);
+        }
+        const UINT prefix = (state & ODS_NOACCEL) ? DT_HIDEPREFIX : 0;
+        RECT left{r.left + height + 8, r.top, r.right - 8, r.bottom};
+        DrawTextW(dc, label.c_str(), -1, &left, DT_LEFT | DT_VCENTER | DT_SINGLELINE | prefix);
+        RECT right{r.left, r.top, r.right - height, r.bottom};
+        if (!shortcut.empty()) DrawTextW(dc, shortcut.c_str(), -1, &right, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        if (info.hSubMenu)
+        {
+            RECT arrow{r.right - height, r.top, r.right - 4, r.bottom};
+            DrawTextW(dc, L"\x203A", 1, &arrow, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+    }
+
     void PaintTabs(HWND tab)
     {
         const auto p = Appearance::DarkPalette();
@@ -701,13 +755,18 @@ namespace
         case WM_UAHDRAWMENU:
         {
             auto menu = reinterpret_cast<UAHMENU*>(lParam);
+            if (!menu || menu->hmenu != GetMenu(window)) break; // only the bar: popups are themed
             RECT r = MenuBarRect(window);
             FillRect(menu->hdc, &r, BrushFor(Appearance::DarkPalette().menuBar));
             return 0;
         }
         case WM_UAHDRAWMENUITEM:
-            DrawMenuItem(reinterpret_cast<UAHDRAWMENUITEM*>(lParam));
+        {
+            auto item = reinterpret_cast<UAHDRAWMENUITEM*>(lParam);
+            if (!item) break;
+            if (item->um.hmenu == GetMenu(window)) DrawMenuItem(item); else DrawPopupItem(item);
             return 0;
+        }
         case WM_NCPAINT:
         case WM_NCACTIVATE:
         {
@@ -742,12 +801,23 @@ namespace
             break;
         case WM_NOTIFY:
         {
-            // Toolbar button text, and list view group headers, in the dark text colour.
+            // Toolbar button text and list view column titles in the dark text colour.
             auto header = reinterpret_cast<NMHDR*>(lParam);
             if (header && header->code == NM_CUSTOMDRAW)
             {
                 wchar_t cls[64] = {};
                 GetClassNameW(header->hwndFrom, cls, 63);
+                if (Has(cls, L"SysHeader32"))
+                {
+                    auto draw = reinterpret_cast<NMCUSTOMDRAW*>(lParam);
+                    if (draw->dwDrawStage == CDDS_PREPAINT) return defSubclass(window, message, wParam, lParam) | CDRF_NOTIFYITEMDRAW;
+                    if (draw->dwDrawStage == CDDS_ITEMPREPAINT)
+                    {
+                        const LRESULT result = defSubclass(window, message, wParam, lParam);
+                        SetTextColor(draw->hdc, Appearance::DarkPalette().text);
+                        return result;
+                    }
+                }
                 if (Has(cls, L"ToolbarWindow32"))
                 {
                     auto draw = reinterpret_cast<NMTBCUSTOMDRAW*>(lParam);

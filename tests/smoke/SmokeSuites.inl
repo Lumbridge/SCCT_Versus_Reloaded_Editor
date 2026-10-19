@@ -716,6 +716,53 @@ void AppearanceSuite()
     Exec("SELECT NONE");
     Command(40958);
     dialogHandler = nullptr;
+
+    // The frame's File menu, open, captured from a timer inside the menu's loop and then closed.
+    static std::wstring menuShot;
+    auto menuPath = std::filesystem::path(shot);
+    menuPath.replace_filename(menuPath.stem().string() + "-menu.png");
+    menuShot = menuPath.wstring();
+    static bool menuCaptured;
+    menuCaptured = false;
+    UINT_PTR menuTimer = SetTimer(nullptr, 0, 2000, [](HWND, UINT, UINT_PTR, DWORD) {
+        if (menuCaptured) return;
+        menuCaptured = true;
+        Check(CaptureEditor(menuShot), "appearance-menu-shot");
+        EndMenu();
+    });
+    if (HMENU bar = GetMenu(frameWindow))
+    {
+        RECT item{};
+        GetMenuItemRect(frameWindow, bar, 0, &item);
+        TrackPopupMenu(GetSubMenu(bar, 0), TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, item.left, item.bottom, 0, frameWindow, nullptr);
+    }
+    KillTimer(nullptr, menuTimer);
+
+    // RE+'s own tool windows: Map Check, Render Budget, Emitter Library and Gameplay Connections.
+    struct Tool { UINT command; const char* title; RECT place; };
+    const Tool tools[] = {
+        {41220, "Map Check", {20, 90, 790, 520}},
+        {41280, "Render Budget", {800, 90, 1580, 520}},
+        {40967, "Emitter Library", {20, 530, 790, 980}},
+        {40920, "Gameplay Connections", {800, 530, 1580, 980}},
+    };
+    std::vector<HWND> opened;
+    for (auto& tool : tools)
+    {
+        Command(tool.command);
+        Pump(800);
+        if (HWND w = OpenedWindow(tool.title))
+        {
+            SetWindowPos(w, HWND_TOP, tool.place.left, tool.place.top, tool.place.right - tool.place.left, tool.place.bottom - tool.place.top, SWP_NOACTIVATE);
+            opened.push_back(w);
+        }
+        else Info("appearance-tool-missing", tool.title);
+    }
+    Pump(1500);
+    auto toolsShot = std::filesystem::path(shot);
+    toolsShot.replace_filename(toolsShot.stem().string() + "-tools.png");
+    Check(opened.size() == std::size(tools) && CaptureEditor(toolsShot.wstring()), "appearance-tools-shot", std::to_string(opened.size()) + " windows");
+    for (HWND w : opened) if (IsWindow(w)) CloseWindowAndWait(w);
 }
 
 void RunSuites(const std::string& list)
