@@ -1049,6 +1049,174 @@ void LightShadowSuite()
              + std::to_string(frame.top) + "," + std::to_string(frame.right) + "," + std::to_string(frame.bottom));
         CloseWindowAndWait(settings);
     }
+// ---- Map to OBJ: File > Export holds the stock Export... and Map to OBJ...; an export writes an OBJ
+// whose faces all point at vertices it wrote, materials the MTL defines and textures that are PNGs on
+// disk; Selection only keeps to the selected static mesh actors; the folder is offered again.
+struct ObjFile
+{
+    size_t v = 0, vt = 0, vn = 0, f = 0, badCorners = 0;
+    std::vector<std::string> objects;
+    std::set<std::string> used;
+};
+ObjFile ReadObj(const std::filesystem::path& path)
+{
+    ObjFile o;
+    std::ifstream in(path);
+    for (std::string line; std::getline(in, line);)
+    {
+        if (line.rfind("v ", 0) == 0) ++o.v;
+        else if (line.rfind("vt ", 0) == 0) ++o.vt;
+        else if (line.rfind("vn ", 0) == 0) ++o.vn;
+        else if (line.rfind("o ", 0) == 0) o.objects.push_back(line.substr(2));
+        else if (line.rfind("usemtl ", 0) == 0) o.used.insert(line.substr(7));
+        else if (line.rfind("f ", 0) == 0)
+        {
+            ++o.f;
+            std::istringstream corners(line.substr(2));
+            int n = 0;
+            for (std::string c; corners >> c; ++n)
+            {
+                long long a = 0, b = 0, d = 0;
+                if (sscanf_s(c.c_str(), "%lld/%lld/%lld", &a, &b, &d) != 3 || a < 1 || a > (long long)o.v || b < 1 || b > (long long)o.vt || d < 1 || d > (long long)o.vn) ++o.badCorners;
+            }
+            if (n < 3) ++o.badCorners;
+        }
+    }
+    return o;
+}
+// The frame with a tool window drawn over it where it sits, as a 24-bit BMP (PrintWindow, so only these
+// two windows are captured, never the desktop).
+void SaveWindowShot(HWND tool, const std::string& file)
+{
+    RECT frame{}, over{};
+    GetWindowRect(frameWindow, &frame);
+    GetWindowRect(tool, &over);
+    const int w = frame.right - frame.left, h = frame.bottom - frame.top;
+    HDC screen = GetDC(nullptr), dc = CreateCompatibleDC(screen), toolDc = CreateCompatibleDC(screen);
+    HBITMAP bitmap = CreateCompatibleBitmap(screen, w, h), toolBitmap = CreateCompatibleBitmap(screen, over.right - over.left, over.bottom - over.top);
+    auto old = SelectObject(dc, bitmap);
+    auto oldTool = SelectObject(toolDc, toolBitmap);
+    PrintWindow(frameWindow, dc, PW_RENDERFULLCONTENT);
+    PrintWindow(tool, toolDc, PW_RENDERFULLCONTENT);
+    BitBlt(dc, over.left - frame.left, over.top - frame.top, over.right - over.left, over.bottom - over.top, toolDc, 0, 0, SRCCOPY);
+    BITMAPINFOHEADER info{sizeof(info), w, h, 1, 24, BI_RGB};
+    const int stride = ((w * 3 + 3) / 4) * 4;
+    std::vector<char> pixels(static_cast<size_t>(stride) * h);
+    SelectObject(dc, old);
+    GetDIBits(dc, bitmap, 0, h, pixels.data(), reinterpret_cast<BITMAPINFO*>(&info), DIB_RGB_COLORS);
+    BITMAPFILEHEADER header{0x4D42, static_cast<DWORD>(sizeof(BITMAPFILEHEADER) + sizeof(info) + pixels.size()), 0, 0, sizeof(BITMAPFILEHEADER) + sizeof(info)};
+    std::ofstream out(file, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    out.write(reinterpret_cast<const char*>(&info), sizeof(info));
+    out.write(pixels.data(), static_cast<std::streamsize>(pixels.size()));
+    SelectObject(toolDc, oldTool);
+    DeleteObject(bitmap);
+    DeleteObject(toolBitmap);
+    DeleteDC(dc);
+    DeleteDC(toolDc);
+    ReleaseDC(nullptr, screen);
+}
+void ObjExportSuite()
+{
+    // The menu.
+    HMENU file = GetSubMenu(GetMenu(frameWindow), 0);
+    HMENU exportMenu = nullptr;
+    for (int i = 0; file && i < GetMenuItemCount(file); ++i)
+        if (HMENU sub = GetSubMenu(file, i))
+            if (GetMenuState(sub, 41660, MF_BYCOMMAND) != UINT(-1)) exportMenu = sub;
+    Check(exportMenu && GetMenuState(exportMenu, 40017, MF_BYCOMMAND) != UINT(-1) && GetMenuState(file, 40017, MF_BYCOMMAND) != UINT(-1),
+          "objexport-menu", exportMenu ? "File > Export holds Map... and Map to OBJ..." : "no File > Export submenu");
+
+    Command(41660);
+    Pump(300);
+    HWND w = OpenedWindow("Export Map to OBJ");
+    if (!w) { Fail("objexport-open", "the window did not open; boxes=" + std::to_string(boxes.size())); return; }
+    const auto root = directory.parent_path() / "ObjExportTest";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    auto run = [&](const std::filesystem::path& folder, bool selection) {
+        SetDlgItemTextA(w, 301, folder.string().c_str());
+        CheckDlgButton(w, 303, BST_CHECKED);
+        CheckDlgButton(w, 304, BST_CHECKED);
+        CheckDlgButton(w, 305, selection ? BST_CHECKED : BST_UNCHECKED);
+        SetDlgItemTextA(w, 306, "1");
+        const double ms = Command(307, w);
+        const auto status = WindowText(GetDlgItem(w, 309));
+        Info("objexport-status", status + " (" + Fixed(ms / 1000.0) + " s)");
+        return status;
+    };
+    const auto map = std::filesystem::path(Ini("map")).stem().string();
+    const auto full = root / "full";
+    const auto status = run(full, false);
+    const auto obj = ReadObj(full / (map + ".obj"));
+    Check(status.rfind("Wrote", 0) == 0 && obj.f > 1000 && obj.badCorners == 0, "objexport-obj",
+          std::to_string(obj.v) + " v, " + std::to_string(obj.vt) + " vt, " + std::to_string(obj.vn) + " vn, " + std::to_string(obj.f) + " faces, "
+          + std::to_string(obj.objects.size()) + " objects, bad corners " + std::to_string(obj.badCorners));
+    Check(!obj.objects.empty() && obj.objects[0] == "BSP" && obj.objects.size() > 10, "objexport-objects", obj.objects.empty() ? "none" : obj.objects[0]);
+    if (const auto shot = Ini("shot"); !shot.empty()) { SaveWindowShot(w, shot); Info("objexport-shot", shot); }
+
+    // Every material used is defined, every texture named is a PNG.
+    std::set<std::string> defined;
+    size_t maps = 0, missing = 0, notPng = 0;
+    {
+        std::ifstream in(full / (map + ".mtl"));
+        for (std::string line; std::getline(in, line);)
+        {
+            if (line.rfind("newmtl ", 0) == 0) defined.insert(line.substr(7));
+            if (line.rfind("map_Kd ", 0) == 0)
+            {
+                ++maps;
+                std::ifstream png(full / line.substr(7), std::ios::binary);
+                char signature[8] = {};
+                if (!png) ++missing;
+                else if (!png.read(signature, 8) || memcmp(signature, "\x89PNG\r\n\x1a\n", 8)) ++notPng;
+            }
+        }
+    }
+    size_t undefined = 0;
+    for (const auto& m : obj.used) if (!defined.count(m)) ++undefined;
+    Check(undefined == 0 && maps > 10 && missing == 0 && notPng == 0, "objexport-mtl",
+          std::to_string(obj.used.size()) + " used, " + std::to_string(defined.size()) + " defined, undefined " + std::to_string(undefined) + ", "
+          + std::to_string(maps) + " textures, missing " + std::to_string(missing) + ", not PNG " + std::to_string(notPng));
+
+    // Selection only: three visible static mesh actors, no surfaces.
+    Exec("SELECT NONE");
+    Exec("POLY SELECT NONE");
+    std::vector<unsigned char*> picked;
+    for (auto a : OfClass("StaticMeshActor"))
+    {
+        auto hidden = FindProperty(a, "bHidden");
+        auto mesh = FindProperty(a, "StaticMesh");
+        if (!hidden || !mesh) continue;
+        if (*reinterpret_cast<unsigned*>(a + *reinterpret_cast<unsigned*>(hidden + 0x3C)) & *reinterpret_cast<unsigned*>(hidden + 0x64)) continue;
+        if (!*reinterpret_cast<void**>(a + *reinterpret_cast<unsigned*>(mesh + 0x3C))) continue;
+        SetSelected(a, true);
+        picked.push_back(a);
+        if (picked.size() == 3) break;
+    }
+    const auto some = root / "selection";
+    const auto selected = run(some, true);
+    const auto part = ReadObj(some / (map + ".obj"));
+    bool bsp = false;
+    for (const auto& o : part.objects) if (o.rfind("BSP", 0) == 0) bsp = true;
+    Check(picked.size() == 3 && part.objects.size() == 3 && !bsp && part.badCorners == 0, "objexport-selection-only",
+          std::to_string(part.objects.size()) + " objects, " + std::to_string(part.f) + " faces: " + selected);
+    for (auto a : picked) SetSelected(a, false);
+
+    // A scale that is no number is refused in the status line.
+    SetDlgItemTextA(w, 306, "abc");
+    Command(307, w);
+    Check(WindowText(GetDlgItem(w, 309)).find("scale") != std::string::npos, "objexport-bad-scale", WindowText(GetDlgItem(w, 309)));
+    SetDlgItemTextA(w, 306, "1");
+
+    // Closed and opened again: the last folder is offered.
+    SetDlgItemTextA(w, 301, full.string().c_str());
+    CloseWindowAndWait(w);
+    Command(41660);
+    Pump(300);
+    w = OpenedWindow("Export Map to OBJ");
+    Check(w && WindowText(GetDlgItem(w, 301)) == full.string(), "objexport-folder-remembered", w ? WindowText(GetDlgItem(w, 301)) : "not open");
+    if (w) CloseWindowAndWait(w);
 }
 
 void RunSuites(const std::string& list)
@@ -1064,6 +1232,7 @@ void RunSuites(const std::string& list)
         else if (name == "palette") PaletteSuite();
         else if (name == "prefabs") PrefabsSuite();
         else if (name == "lightshadow") LightShadowSuite();
+        else if (name == "objexport") ObjExportSuite();
         else Fail("suite", "no suite called " + name);
     }
 }

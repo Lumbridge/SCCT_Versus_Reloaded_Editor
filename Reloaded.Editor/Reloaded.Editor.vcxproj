@@ -170,6 +170,9 @@
     <ClInclude Include="MapOptimiseDialog.h" />
     <ClInclude Include="MapOptimiseModel.h" />
     <ClInclude Include="MapOptimiseNative.inl" />
+    <ClInclude Include="ObjExportModel.h" />
+    <ClInclude Include="ObjExportNative.inl" />
+    <ClInclude Include="ObjExportWindow.h" />
     <ClInclude Include="MapUsages.h" />
     <ClInclude Include="MapUsagesModel.h" />
     <ClInclude Include="UsageMarksModel.h" />
@@ -333,6 +336,7 @@
     <ClCompile Include="MapPackage.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="MapPackageDialog.cpp" />
     <ClCompile Include="MapOptimiseDialog.cpp" />
+    <ClCompile Include="ObjExportWindow.cpp" />
     <ClCompile Include="MapUsages.cpp"><PrecompiledHeader>NotUsing</PrecompiledHeader></ClCompile>
     <ClCompile Include="MapUsagesWindow.cpp" />
     <ClCompile Include="LightingBudget.cpp" />

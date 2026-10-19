@@ -222,6 +222,9 @@ if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\CommandPaletteModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\CommandPaletteModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\CommandPaletteModelTests.exe"
+cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\ObjExportModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\ObjExportModelTests.exe"
+if errorlevel 1 goto failed
+"%TEMP%\ObjExportModelTests.exe"
 if errorlevel 1 goto failed
 popd
 exit /b 0

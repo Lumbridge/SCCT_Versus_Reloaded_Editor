@@ -25,6 +25,9 @@
     <ClInclude Include="MapOptimiseDialog.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapOptimiseModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapOptimiseNative.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="ObjExportModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="ObjExportNative.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="ObjExportWindow.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapUsages.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapUsagesModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="UsageMarksModel.h"><Filter>Header Files</Filter></ClInclude>
@@ -496,6 +499,7 @@
     <ClCompile Include="MapPackage.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MapPackageDialog.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MapOptimiseDialog.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="ObjExportWindow.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MapUsages.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MapUsagesWindow.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="LightingBudget.cpp"><Filter>Source Files</Filter></ClCompile>

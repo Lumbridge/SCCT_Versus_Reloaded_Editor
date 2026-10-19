@@ -102,3 +102,4 @@ The suites save the map, so give each run fresh copies of the maps.
   is saved to `[LightShadowMap]`; `System\lightshadow-1.bmp` and `-2.bmp` are
   pictures of the editor and the settings window (the hidden editor is shown,
   without taking the focus, while they are taken). Any map with lights works.
+- `objexport` (ShipD): File > Export holds the stock Export... and Map to OBJ...; an export of the whole map writes an OBJ whose every face corner points at a vertex, texture coordinate and normal it wrote, an MTL that defines every material used and names only PNGs that exist; Selection only with three static mesh actors selected writes just those three objects; a scale that is no number is refused in the status line; the folder is offered again after the window is closed. With `shot = <file.bmp>` it saves the editor with the window over it (PrintWindow).

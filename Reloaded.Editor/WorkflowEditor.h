@@ -256,6 +256,12 @@ namespace Workflow::Editor
     // unused:[Floor textures past the new count, left from an earlier run]}.
     Minimap::Scene MinimapScene();
     Json ApplyMinimap(const Minimap::Camera& camera, const std::vector<std::pair<double, std::filesystem::path>>& images);
+    // File > Export > Map to OBJ (ObjExportModel.h). Options: folder, meshes,
+    // textures, selectedOnly (bools) and centimetres (per Unreal unit).
+    // Writes <Map>.obj, <Map>.mtl and textures/*.png into the folder and
+    // returns what it wrote: obj, mtl, polygons, actors, meshes, faces,
+    // vertices, objects, materials, textures, texturesFailed, seconds.
+    Json ExportMapObj(const Json& options);
     // Selects exactly the live actors with these paths, one pass over the
     // level; focus frames them in the viewports. Returns how many were found.
     size_t SelectActorPaths(const std::vector<std::string>& paths, bool focus);
