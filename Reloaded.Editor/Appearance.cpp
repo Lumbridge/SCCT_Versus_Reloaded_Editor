@@ -687,7 +687,20 @@ namespace
             break;
         }
         case Kind::Edit: SetDarkTheme(window, L"DarkMode_CFD"); break;
-        case Kind::ComboBox: SetDarkTheme(window, L"DarkMode_CFD"); break;
+        case Kind::ComboBox:
+        {
+            SetDarkTheme(window, L"DarkMode_CFD");
+            // Theming the combo re-themes its drop-down list (light scroll bar); themed again after it.
+            COMBOBOXINFO info{sizeof(info)};
+            if (GetComboBoxInfo(window, &info) && info.hwndList) SetWindowTheme(info.hwndList, L"DarkMode_Explorer", nullptr);
+            break;
+        }
+        case Kind::ComboList:
+        case Kind::ListBox:
+            // Dark scroll bars from the theme alone: a list box allowed dark mode paints its selected
+            // row white, so the row's white text cannot be read.
+            SetWindowTheme(window, L"DarkMode_Explorer", nullptr);
+            break;
         case Kind::ListView:
             SetDarkTheme(window, L"DarkMode_Explorer");
             ListView_SetBkColor(window, p.window);

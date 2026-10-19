@@ -80,7 +80,9 @@ The suites save the map, so give each run fresh copies of the maps.
 - `appearance`: pictures of the whole editor for comparing the RE+ Options
   Appearance settings: with `shot = '<file>.png'` in `-Extra`, the frame with the
   Static Mesh Browser and an Actor Properties window (`<file>.png`), RE+ Options
-  open (`-options`), a message box (`-box`), the File menu open (`-menu`), and
+  open (`-options`) and with its Appearance list dropped (`-options-list`; the
+  current look's row must have readable text: 2.8.0's Modern Dark painted it
+  white under white text), a message box (`-box`), the File menu open (`-menu`), and
   Map Check, Render Budget, Emitter Library and Gameplay Connections
   (`-tools`), and Undo History, Lighting Budget, Find Usages, Working Views,
   SMagicEvent Workbench and Storeys (`-tools2`), Light and Shadow Map with
@@ -95,7 +97,8 @@ The suites save the map, so give each run fresh copies of the maps.
   Map's legend in the viewports (`-new6`, taken once the suite has returned, so
   the viewports have repainted). Run it on ShipD (it has movers); it saves the
   map and adds an assembly to the library each run. `part = 'new'` takes only
-  the 2.8 pictures. Each window is captured on
+  the 2.8 pictures, `part = 'options'` only the two RE+ Options ones (any map;
+  nothing is saved). Each window is captured on
   its own and drawn where it sits, without the invisible resize border Windows
   10 and 11 give it (PrintWindow draws that border black), so nothing else on
   the desktop is in them. With `screen = '1'` the pictures are copied from the

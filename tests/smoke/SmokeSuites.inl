@@ -2962,6 +2962,78 @@ void AppearanceNewWindows(const std::string& shot)
         afterRun = [] { Check(CaptureEditor(lastShot), "appearance-new6-shot", "Map Check and Reachability Map"); };
     }
 }
+// How many pixels of a list box's selected row stand well apart from the row's own background: its
+// text, or none when the row is painted in its text colour.
+int SelectedRowContrast(HWND list)
+{
+    const int index = static_cast<int>(SendMessageA(list, LB_GETCURSEL, 0, 0));
+    RECT row{}, client{};
+    if (index < 0 || SendMessageA(list, LB_GETITEMRECT, index, reinterpret_cast<LPARAM>(&row)) == LB_ERR) return -1;
+    GetClientRect(list, &client);
+    IntersectRect(&row, &row, &client);
+    const int width = client.right, height = client.bottom;
+    if (row.right <= row.left || row.bottom <= row.top) return -1;
+    HDC screen = GetDC(nullptr);
+    HDC dc = CreateCompatibleDC(screen);
+    HBITMAP image = CreateCompatibleBitmap(screen, width, height);
+    HGDIOBJ old = SelectObject(dc, image);
+    PrintWindow(list, dc, PW_CLIENTONLY | PW_RENDERFULLCONTENT);
+    SelectObject(dc, old);
+    BITMAPINFO info{};
+    info.bmiHeader = {sizeof(BITMAPINFOHEADER), width, -height, 1, 32, BI_RGB};
+    std::vector<uint32_t> pixels(static_cast<size_t>(width) * height);
+    GetDIBits(dc, image, 0, height, pixels.data(), &info, DIB_RGB_COLORS);
+    DeleteObject(image);
+    DeleteDC(dc);
+    ReleaseDC(nullptr, screen);
+    auto light = [](uint32_t c) { return (int((c >> 16) & 0xFF) * 299 + int((c >> 8) & 0xFF) * 587 + int(c & 0xFF) * 114) / 1000; };
+    std::map<uint32_t, int> counts;
+    for (int y = row.top; y < row.bottom; ++y)
+        for (int x = row.left; x < row.right; ++x) ++counts[pixels[static_cast<size_t>(y) * width + x] & 0xFFFFFF];
+    uint32_t background = 0;
+    int most = 0;
+    for (auto& [colour, n] : counts)
+        if (n > most) { most = n; background = colour; }
+    int text = 0;
+    for (auto& [colour, n] : counts)
+        if (std::abs(light(colour) - light(background)) > 96) text += n;
+    return text;
+}
+// RE+ Options over the editor (`-options`), then with its Appearance list dropped (`-options-list`):
+// the current look's row must be readable (2.8.0's Modern Dark painted it white, under white text).
+void AppearanceOptions(const std::string& shot)
+{
+    auto optionsShot = std::filesystem::path(shot), listShot = optionsShot;
+    optionsShot.replace_filename(optionsShot.stem().string() + "-options.png");
+    listShot.replace_filename(listShot.stem().string() + "-options-list.png");
+    bool captured = false;
+    dialogHandler = [&](HWND w, const std::string& title) {
+        if (title != "RE+ Options") return false;
+        if (!captured)
+        {
+            captured = true;
+            SetWindowPos(w, HWND_TOP, 560, 300, 0, 0, SWP_NOSIZE);
+            UpdateWindow(w);
+            Check(CaptureEditor(optionsShot.wstring()), "appearance-options-shot", optionsShot.string());
+            HWND combo = GetDlgItem(w, 1012); // IDC_COMBO_APPEARANCE
+            SendMessageA(combo, CB_SHOWDROPDOWN, TRUE, 0);
+            COMBOBOXINFO info{sizeof(info)};
+            if (GetComboBoxInfo(combo, &info) && info.hwndList && IsWindowVisible(info.hwndList))
+            {
+                UpdateWindow(info.hwndList);
+                Check(CaptureEditor(listShot.wstring()), "appearance-options-list-shot", listShot.string());
+                const int text = SelectedRowContrast(info.hwndList);
+                Check(text >= 20, "appearance-options-list-row", std::to_string(text) + " text pixels in the selected row");
+            }
+            else Fail("appearance-options-list-row", "the Appearance list did not open");
+            SendMessageA(combo, CB_SHOWDROPDOWN, FALSE, 0);
+            PostMessage(w, WM_COMMAND, IDCANCEL, 0);
+        }
+        return true;
+    };
+    Command(40066);
+    dialogHandler = nullptr;
+}
 void AppearanceSuite()
 {
     ShowWindow(frameWindow, SW_RESTORE);
@@ -3018,28 +3090,13 @@ void AppearanceSuite()
     const auto shot = Ini("shot");
     if (shot.empty()) return;
     if (Ini("part") == "new") { AppearanceNewWindows(shot); return; } // only the 2.8 windows
+    if (Ini("part") == "options") { AppearanceOptions(shot); return; } // only RE+ Options
     Check(CaptureEditor(std::filesystem::path(shot).wstring()), "appearance-shot", shot);
-    // RE+ Options over the editor, captured while it is open, then cancelled.
-    auto optionsShot = std::filesystem::path(shot);
-    optionsShot.replace_filename(optionsShot.stem().string() + "-options.png");
-    bool captured = false;
-    dialogHandler = [&](HWND w, const std::string& title) {
-        if (title != "RE+ Options") return false;
-        if (!captured)
-        {
-            captured = true;
-            SetWindowPos(w, HWND_TOP, 560, 300, 0, 0, SWP_NOSIZE);
-            UpdateWindow(w);
-            Check(CaptureEditor(optionsShot.wstring()), "appearance-options-shot", optionsShot.string());
-            PostMessage(w, WM_COMMAND, IDCANCEL, 0);
-        }
-        return true;
-    };
-    Command(40066);
+    AppearanceOptions(shot);
     // A message box (Isolate with nothing selected refuses), captured the same way, then answered.
     auto boxShot = std::filesystem::path(shot);
     boxShot.replace_filename(boxShot.stem().string() + "-box.png");
-    captured = false;
+    bool captured = false;
     dialogHandler = [&](HWND w, const std::string&) {
         char cls[64] = {};
         GetClassNameA(w, cls, sizeof(cls));
