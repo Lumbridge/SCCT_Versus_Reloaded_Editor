@@ -525,6 +525,35 @@ void MeshCostSuite()
     CloseWindowAndWait(budget);
 }
 
+// ---- RE+'s JSON bridge (ReloadedWorkflowRequest), on the UI thread like the windows call it.
+nlohmann::json Workflow(const nlohmann::json& request)
+{
+    using Fn = int(__cdecl*)(const char*, char*, unsigned);
+    static Fn call = reinterpret_cast<Fn>(GetProcAddress(GetModuleHandleA("Reloaded.Editor.dll"), "ReloadedWorkflowRequest"));
+    if (!call) return {{"ok", false}, {"error", "no bridge"}};
+    std::vector<char> out(64u << 20);
+    const auto text = request.dump();
+    const int r = call(text.c_str(), out.data(), static_cast<unsigned>(out.size()));
+    if (r < 0) return {{"ok", false}, {"error", "reply too large"}};
+    try { return nlohmann::json::parse(out.data()); }
+    catch (const std::exception& e) { return {{"ok", false}, {"error", e.what()}}; }
+}
+std::string ObjectPathOf(void* object)
+{
+    std::string path;
+    for (auto o = static_cast<unsigned char*>(object); o; o = *reinterpret_cast<unsigned char**>(o + 0x18))
+        path = std::string(ObjectName(o)) + (path.empty() ? "" : "." + path);
+    return path;
+}
+bool IsKindOf(unsigned char* object, const char* cls)
+{
+    for (auto c = *reinterpret_cast<unsigned char**>(object + 0x24); c; c = *reinterpret_cast<unsigned char**>(c + 0x28))
+        if (!strcmp(ObjectName(c), cls)) return true;
+    return false;
+}
+
+#include "SmokeMover.inl"
+
 void RunSuites(const std::string& list)
 {
     std::stringstream names(list);
@@ -535,6 +564,7 @@ void RunSuites(const std::string& list)
         else if (name == "unsaved") UnsavedSuite();
         else if (name == "placement") PlacementSuite();
         else if (name == "meshcost") MeshCostSuite();
+        else if (name == "mover") MoverSuite();
         else Fail("suite", "no suite called " + name);
     }
 }

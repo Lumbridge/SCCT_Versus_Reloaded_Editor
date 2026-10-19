@@ -398,6 +398,25 @@ namespace Workflow::Movers
         path.current = std::clamp(static_cast<int>(ParseNumber(values.at("KeyNum"))), 0, count - 1);
         return path;
     }
+    // The path between the window and the editor: {base, baseRotation,
+    // keys:[{position, rotation}], current, capacity}.
+    inline Json PathJson(const Path& path)
+    {
+        Json keys = Json::array();
+        for (const auto& key : path.keys) keys.push_back({ { "position", key.position }, { "rotation", key.rotation } });
+        return { { "base", path.base }, { "baseRotation", path.baseRotation }, { "keys", keys }, { "current", path.current }, { "capacity", path.capacity } };
+    }
+    inline Path PathFrom(const Json& json)
+    {
+        Path path;
+        path.base = json.at("base").get<Vector>();
+        path.baseRotation = json.at("baseRotation").get<Rotation>();
+        for (const auto& key : json.at("keys")) path.keys.push_back({ key.at("position").get<Vector>(), key.at("rotation").get<Rotation>() });
+        path.current = json.at("current").get<int>();
+        path.capacity = json.at("capacity").get<int>();
+        CheckPath(path);
+        return path;
+    }
     // A time field as typed: seconds, 0 to 600.
     inline double Seconds(const std::string& text, const char* what)
     {

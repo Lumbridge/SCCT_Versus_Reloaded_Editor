@@ -258,6 +258,15 @@ void Arrays()
     Check(FromValues(values, {}, {}).current == 1, "a KeyNum past the keys reads as the last key");
     values["KeyRot"].erase(0);
     Reject([&] { FromValues(values, {}, {}); });
+    // Between the window and the editor.
+    auto round = PathFrom(PathJson(three));
+    Check(round == three, "the path survives JSON");
+    auto bad = PathJson(three);
+    bad["current"] = 3;
+    Reject([&] { PathFrom(bad); });
+    bad = PathJson(three);
+    bad["keys"] = Json::array();
+    Reject([&] { PathFrom(bad); });
 }
 
 int main()
