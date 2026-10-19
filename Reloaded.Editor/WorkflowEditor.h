@@ -5,7 +5,7 @@
 
 namespace MapCheck { struct Scene; struct Settings; struct FloorScan; }
 
-namespace LightShadow { struct Scene; }
+namespace LightShadow { struct Scene; struct Settings; }
 namespace Minimap { struct Camera; struct Scene; }
 namespace UnsavedChanges { struct Opened; }
 
@@ -149,8 +149,12 @@ namespace Workflow::Editor
     size_t SelectMapCheckRow(const std::vector<std::string>& actors, const std::vector<int>& surfaces, bool frame);
     // Light and Shadow map (LightShadowModel.h): walkable BSP floor triangles
     // with their lightmap UVs and atlases, the in-game lights at their render
-    // spheres, and the BSP planes for line of sight.
-    void LightShadowScene(LightShadow::Scene& scene);
+    // spheres, the BSP planes for line of sight, and (as the settings ask) the
+    // static meshes as blockers and floors. Atlases and mesh shapes are kept
+    // between calls while they stay the same; LightShadowForget drops the atlases.
+    struct LightShadowSceneStats { size_t bspFloors=0, meshFloors=0, meshTriangles=0; };
+    LightShadowSceneStats LightShadowScene(LightShadow::Scene& scene, const LightShadow::Settings& settings);
+    void LightShadowForget();
     // Player count rules (ObjectivePlayersModel.h): the map's SPlayerCountRules actor
     // (or a version 1 SObjectivePlayers one, moved over on the next change). Rules:
     // {placed, legacy, extra, compiled, actor, playLevel (the count an editor Play Level

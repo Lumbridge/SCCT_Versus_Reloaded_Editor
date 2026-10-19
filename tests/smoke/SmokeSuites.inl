@@ -525,6 +525,178 @@ void MeshCostSuite()
     CloseWindowAndWait(budget);
 }
 
+// ---- Light and Shadow Map: sampling with static meshes, kept work after edits, the settings
+// switches, and a picture of the map and its settings window for the report.
+std::uintmax_t LogSize()
+{
+    std::error_code ignored;
+    return std::filesystem::file_size(directory / "Reloaded.Editor.dll.log", ignored);
+}
+// The last "LightShadowMap: ... patches" line the editor wrote after a point in its log.
+std::string LastShadowLine(std::uintmax_t from)
+{
+    std::ifstream log(directory / "Reloaded.Editor.dll.log", std::ios::binary);
+    log.seekg(static_cast<std::streamoff>(from));
+    std::string line, last;
+    while (std::getline(log, line))
+        if (line.find("LightShadowMap: ") != std::string::npos && line.find(" patches") != std::string::npos) last = line;
+    return last;
+}
+long long NumberBefore(const std::string& text, const std::string& word)
+{
+    const auto at = text.find(word);
+    if (at == std::string::npos) return -1;
+    size_t start = at;
+    while (start > 0 && isdigit(static_cast<unsigned char>(text[start - 1]))) --start;
+    return start < at ? std::stoll(text.substr(start, at - start)) : -1;
+}
+// The window as drawn (viewports included), as a 24-bit BMP.
+bool SaveWindowPicture(HWND w, const std::filesystem::path& file)
+{
+    RECT r{};
+    GetWindowRect(w, &r);
+    const int width = r.right - r.left, height = r.bottom - r.top;
+    if (width <= 0 || height <= 0) return false;
+    HDC screen = GetDC(nullptr);
+    HDC dc = CreateCompatibleDC(screen);
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(info.bmiHeader);
+    info.bmiHeader.biWidth = width;
+    info.bmiHeader.biHeight = height;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 24;
+    void* bits = nullptr;
+    HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    HGDIOBJ old = SelectObject(dc, bitmap);
+    BOOL printed = PrintWindow(w, dc, 2 /* PW_RENDERFULLCONTENT */);
+    GdiFlush();
+    const DWORD stride = (DWORD(width) * 3 + 3) & ~3u, size = stride * DWORD(height);
+    // Some windows print nothing; then copy what the window itself shows.
+    bool blank = true;
+    for (DWORD i = 0; i < size && blank; i += 97) blank = static_cast<const unsigned char*>(bits)[i] == 0;
+    if (blank)
+    {
+        HDC own = GetWindowDC(w);
+        printed = BitBlt(dc, 0, 0, width, height, own, 0, 0, SRCCOPY);
+        ReleaseDC(w, own);
+        GdiFlush();
+    }
+    BITMAPFILEHEADER header{};
+    header.bfType = 0x4D42;
+    header.bfOffBits = sizeof(header) + sizeof(info.bmiHeader);
+    header.bfSize = header.bfOffBits + size;
+    std::ofstream out(file, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    out.write(reinterpret_cast<const char*>(&info.bmiHeader), sizeof(info.bmiHeader));
+    out.write(static_cast<const char*>(bits), size);
+    SelectObject(dc, old);
+    DeleteObject(bitmap);
+    DeleteDC(dc);
+    ReleaseDC(nullptr, screen);
+    return printed && out.good();
+}
+void LightShadowSuite()
+{
+    // On: sampled from nothing.
+    auto from = LogSize();
+    const double onMs = Command(41200);
+    Pump(500);
+    auto line = LastShadowLine(from);
+    Info("light-shadow-on", "command ms=" + Fixed(onMs, 0) + " | " + line);
+    Check(NumberBefore(line, " patches") > 0, "light-shadow-sampled", std::to_string(NumberBefore(line, " patches")) + " patches");
+    Check(NumberBefore(line, " on static meshes") > 0, "light-shadow-mesh-floors", std::to_string(NumberBefore(line, " on static meshes")) + " patches on static meshes");
+
+    // An in-game light moved: sampled again a moment later, keeping the other lights.
+    // One with a static mesh near it, for the step after.
+    unsigned char *light = nullptr, *mesh = nullptr;
+    const auto meshes = OfClass("StaticMeshActor");
+    for (auto a : Actors())
+    {
+        auto type = FindProperty(a, "LightType");
+        if (!type || !a[*reinterpret_cast<unsigned*>(type + 0x3C)]) continue;
+        const unsigned flagsA = *reinterpret_cast<unsigned*>(a + 0x2e8), flagsB = *reinterpret_cast<unsigned*>(a + 0x2ec);
+        if (!(flagsB & 0x800000) && !(flagsA & 0x20000)) continue;
+        if (!light) light = a;
+        const auto lamp = ReadVector(a, "Location");
+        for (auto m : meshes)
+        {
+            const auto at = ReadVector(m, "Location");
+            const double dx = at.x - lamp.x, dy = at.y - lamp.y, dz = at.z - lamp.z;
+            if (dx * dx + dy * dy + dz * dz < 600.0 * 600.0) { light = a; mesh = m; break; }
+        }
+        if (mesh) break;
+    }
+    if (light)
+    {
+        auto at = ReadVector(light, "Location");
+        at.x += 48;
+        WriteVector(light, "Location", at);
+        *reinterpret_cast<unsigned*>(light + 0x2e8) |= 0x100; // bLightChanged: its render data follows
+        from = LogSize();
+        Exec("TRANSACTION REDO"); // nothing to redo: only marks the map changed
+        Pump(4000);
+        line = LastShadowLine(from);
+        Info("light-shadow-light-moved", Name(light) + " | " + line);
+        Check(line.find(" kept ") != std::string::npos, "light-shadow-keeps-other-lights", line.substr(line.find(" in ") == std::string::npos ? 0 : line.find(" in ")));
+    }
+    else Info("light-shadow-light-moved", "no in-game light in this map");
+
+    // A static mesh near a light moved: only the lights it is near are worked out again.
+    if (mesh)
+    {
+        auto at = ReadVector(mesh, "Location");
+        at.x += 40;
+        WriteVector(mesh, "Location", at);
+        from = LogSize();
+        Exec("TRANSACTION REDO");
+        Pump(4000);
+        line = LastShadowLine(from);
+        Info("light-shadow-mesh-moved", Name(mesh) + " | " + line);
+        Check(line.find(" kept ") != std::string::npos || line.find("from nothing") == std::string::npos, "light-shadow-mesh-move-incremental", line.substr(line.find(" in ") == std::string::npos ? 0 : line.find(" in ")));
+    }
+
+    // Settings: static mesh floors off leaves only BSP patches; on again brings them back.
+    Command(41201);
+    Pump(500);
+    HWND settings = OpenedWindow("Light and Shadow");
+    Check(settings != nullptr, "light-shadow-settings-open");
+    if (settings)
+    {
+        Check(IsDlgButtonChecked(settings, 111) == BST_CHECKED && IsDlgButtonChecked(settings, 112) == BST_CHECKED && IsDlgButtonChecked(settings, 113) == BST_CHECKED,
+              "light-shadow-switches-on");
+        CheckDlgButton(settings, 112, BST_UNCHECKED);
+        SendMessageA(settings, WM_COMMAND, 106, 0); // Apply
+        Pump(300);
+        const auto off = WindowText(GetDlgItem(settings, 109));
+        CheckDlgButton(settings, 112, BST_CHECKED);
+        SendMessageA(settings, WM_COMMAND, 106, 0);
+        Pump(300);
+        const auto on = WindowText(GetDlgItem(settings, 109));
+        Check(off.find("on static meshes") == std::string::npos && on.find("on static meshes") != std::string::npos, "light-shadow-mesh-floors-switch",
+              off.substr(0, off.find('\r')) + " / " + on.substr(0, on.find('\r')));
+        char ini[64] = {};
+        GetPrivateProfileStringA("LightShadowMap", "MeshFloors", "", ini, sizeof(ini), (directory / "Reloaded_Editor.ini").string().c_str());
+        Check(std::string(ini) == "1", "light-shadow-switch-saved", std::string("MeshFloors=") + ini);
+        // Pictures: the editor with the map on, and the settings window. The disposable editor
+        // starts hidden; it is shown (without taking the focus) only while they are taken.
+        const bool wasVisible = IsWindowVisible(frameWindow) != 0, wasIconic = IsIconic(frameWindow) != 0;
+        ShowWindow(frameWindow, wasIconic ? SW_SHOWNOACTIVATE : SW_SHOWNA);
+        if (IsIconic(frameWindow)) ShowWindow(frameWindow, SW_RESTORE);
+        RECT frame{};
+        GetWindowRect(frameWindow, &frame);
+        SetWindowPos(settings, HWND_TOP, frame.right - 520, frame.top + 80, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+        RedrawWindow(frameWindow, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+        Pump(2500);
+        const bool first = SaveWindowPicture(frameWindow, directory / "lightshadow-1.bmp");
+        const bool second = SaveWindowPicture(settings, directory / "lightshadow-2.bmp");
+        if (!wasVisible) ShowWindow(frameWindow, SW_HIDE);
+        Info("light-shadow-pictures", (directory / "lightshadow-1.bmp").string() + " printed " + std::to_string(first) + std::to_string(second)
+             + " visible " + std::to_string(wasVisible) + " iconic " + std::to_string(wasIconic) + " rect " + std::to_string(frame.left) + ","
+             + std::to_string(frame.top) + "," + std::to_string(frame.right) + "," + std::to_string(frame.bottom));
+        CloseWindowAndWait(settings);
+    }
+}
+
 void RunSuites(const std::string& list)
 {
     std::stringstream names(list);
@@ -535,6 +707,7 @@ void RunSuites(const std::string& list)
         else if (name == "unsaved") UnsavedSuite();
         else if (name == "placement") PlacementSuite();
         else if (name == "meshcost") MeshCostSuite();
+        else if (name == "lightshadow") LightShadowSuite();
         else Fail("suite", "no suite called " + name);
     }
 }

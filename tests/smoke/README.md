@@ -81,3 +81,10 @@ The suites save the map, so give each run fresh copies of the maps.
   selects every copy of that mesh and a double-click frames them; a zone row
   narrows the list to that zone's meshes and the Whole map row widens it again;
   the list switches back to the hotspots.
+- `lightshadow`: the Light and Shadow Map turned on has patches, some on static
+  meshes; after an in-game light and then a static mesh near it are moved, the
+  next sample keeps the other lights (the log line says how many); switching
+  static mesh floors off and on in its settings window changes the summary and
+  is saved to `[LightShadowMap]`; `System\lightshadow-1.bmp` and `-2.bmp` are
+  pictures of the editor and the settings window (the hidden editor is shown,
+  without taking the focus, while they are taken). Any map with lights works.
