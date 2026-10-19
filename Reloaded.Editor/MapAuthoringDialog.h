@@ -17,6 +17,7 @@ namespace MapAuthoringDialog
     {
         std::wstring title,heading,hint,apply,cancel=L"Cancel";
         const wchar_t* columns[5]={L"Change",L"Actor",L"Property",L"Before",L"After"};
+        int widths[5]={60,180,130,250,250};
         bool checkboxes=false;
         const char* placement=nullptr; // WindowPlacement key, or none
         std::vector<ReviewRow> rows;

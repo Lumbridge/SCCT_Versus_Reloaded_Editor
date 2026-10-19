@@ -156,6 +156,7 @@ namespace Workflow::Compare
                 else if(old.value("brush",false)){action.clear();note="a brush's shape is not kept in the comparison, so it cannot be brought back";}
                 else if(!old.value("creatable",false)){action.clear();note="Map JSON cannot create this class";}
                 deleted.push_back(Row("Deleted",key,nullptr,"class",old.at("actor").at("class").get<std::string>()+Where(old),{},action,{},key,note));
+                deleted.back()["part"]=!owner.empty();
                 continue;
             }
             const auto& now=current[partner[i]];const auto nowKey=now.at("key").get<std::string>();
@@ -164,16 +165,16 @@ namespace Workflow::Compare
             for(const auto& name:names)
             {
                 const bool had=before.contains(name),has=after.contains(name);
-                if(had && has && before.at(name)==after.at(name))continue;
+                // Both are of one class: a property only one side has is one Map JSON could not read on the other
+                // (an array over its limits, say), not a change.
+                if(!had || !has || before.at(name)==after.at(name))continue;
                 const auto change=Change(name);
-                // Brought back through the same Map JSON update; a property only one side has cannot be.
-                // A component the map's package holds (not its emitter) is listed by the emitter, and Map JSON
-                // reaches only owned ones; it selects its emitter.
+                // Brought back through the same Map JSON update. A component the map's package holds (not its
+                // emitter) is listed by the emitter, and Map JSON reaches only owned ones; it selects its emitter.
                 const bool shared=old.value("shared",false) || now.value("shared",false);
-                const auto note=!(had && has)?std::string("only one of the two maps has this property"):shared?std::string("a particle component the emitter does not own cannot be set back"):std::string{};
-                const auto select=SelectFor(now,current);
-                auto row=Row(change,nowKey,select,name,had?Magic::Text(before.at(name)):std::string{},has?Magic::Text(after.at(name)):std::string{},
-                             had && has && !shared?"update":"",nowKey,key,note);
+                auto row=Row(change,nowKey,SelectFor(now,current),name,Magic::Text(before.at(name)),Magic::Text(after.at(name)),shared?"":"update",nowKey,key,
+                             shared?"a particle component the emitter does not own cannot be set back":"");
+                row["part"]=!now.value("owner",std::string{}).empty();
                 (change=="Moved"?moved:changed).push_back(std::move(row));
             }
         }
@@ -183,6 +184,7 @@ namespace Workflow::Compare
             const bool component=!now.value("owner",std::string{}).empty();
             added.push_back(Row("Added",key,SelectFor(now,current),"class",{},now.at("actor").at("class").get<std::string>()+Where(now),component?"":"delete",key,{},
                                 component?"a particle component on its own is not deleted":"bringing the backup back deletes it"));
+            added.back()["part"]=component;
         }
         auto byTarget=[](const Json& a,const Json& b){return Fold(a.at("target").get<std::string>())<Fold(b.at("target").get<std::string>());};
         Json rows=Json::array();
@@ -197,7 +199,8 @@ namespace Workflow::Compare
     inline std::string Tally(const Json& rows)
     {
         std::map<std::string,std::set<std::string>> seen;
-        for(const auto& row:rows)seen[row.at("change").get<std::string>()].insert(Fold(row.at("target").get<std::string>()));
+        // Particle components count with their emitters.
+        for(const auto& row:rows)if(!row.value("part",false))seen[row.at("change").get<std::string>()].insert(Fold(row.at("target").get<std::string>()));
         std::string text;
         for(const char* change:{"Deleted","Added","Moved","Changed"})
             if(auto n=seen[change].size())

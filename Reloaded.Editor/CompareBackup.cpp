@@ -10,6 +10,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <algorithm>
+#include <iterator>
 
 namespace fs = std::filesystem;
 
@@ -50,7 +52,7 @@ namespace
         choose.hwndOwner = frame;
         choose.lpstrFile = path;
         choose.nMaxFile = 32768;
-        choose.lpstrFilter = L"Maps (*.sdc)\0*.sdc\0All files (*.*)\0*.*\0";
+        choose.lpstrFilter = L"Maps (*.sdc)\0*.sdc\0";
         choose.lpstrInitialDir = initial.empty() ? nullptr : initial.c_str();
         choose.lpstrTitle = L"Choose a Backup to Compare";
         // The engine's relative paths depend on the current directory staying System.
@@ -61,6 +63,9 @@ namespace
             return false;
         }
         chosen = path;
+        // Only maps: the copy is loaded as a package, and a script or asset package loaded under another name is
+        // nothing to compare.
+        if (_wcsicmp(chosen.extension().c_str(), L".sdc") != 0) throw std::runtime_error("Choose a map (.sdc) to compare with.");
         return true;
     }
 
@@ -109,6 +114,8 @@ void CompareBackup::Open(HWND frame)
     review.columns[3] = L"In backup";
     review.columns[4] = L"In open map";
     review.checkboxes = true;
+    const int widths[] = { 80, 170, 230, 220, 220 };
+    std::copy(std::begin(widths), std::end(widths), review.widths);
     review.placement = "CompareWithBackup";
     for (const auto& row : rows)
     {

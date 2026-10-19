@@ -81,3 +81,10 @@ The suites save the map, so give each run fresh copies of the maps.
   selects every copy of that mesh and a double-click frames them; a zone row
   narrows the list to that zone's meshes and the Whole map row widens it again;
   the list switches back to the hotspots.
+- `compare`: File > Save keeps a backup; a mesh is moved, another deleted and a light's
+  brightness changed. File > Compare with Backup lists exactly those three, with the backup's
+  value beside the map's; the loaded copy is unloaded and its file removed. Ticking the deleted
+  mesh and Bring Back Selected adds it again in one Undo step (and Undo takes it away). After an
+  emitter is deleted and a mesh duplicated, Tick All brings everything back (the emitter with
+  its particle components, the copy deleted) and a second comparison finds nothing. With
+  `shot = '<file>.bmp'` it saves a picture of the editor with the comparison over it (ShipD).

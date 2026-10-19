@@ -530,6 +530,41 @@ void MeshCostSuite()
 // (the deleted mesh) comes back as one Undo step and Undo takes it away again; then Tick All brings back the
 // rest too.
 constexpr UINT CompareBackupCommand = 41600; // File > Compare with Backup...
+// With shot=<file.bmp> in -Extra: the editor frame with a tool window drawn over it where it is, both by
+// PrintWindow (never the screen).
+void SaveShot(HWND tool, const std::string& file)
+{
+    RECT frameRect{}, toolRect{};
+    GetWindowRect(frameWindow, &frameRect);
+    GetWindowRect(tool, &toolRect);
+    const int w = frameRect.right - frameRect.left, h = frameRect.bottom - frameRect.top;
+    HDC screen = GetDC(nullptr);
+    HDC canvas = CreateCompatibleDC(screen), part = CreateCompatibleDC(screen);
+    HBITMAP image = CreateCompatibleBitmap(screen, w, h);
+    HBITMAP toolImage = CreateCompatibleBitmap(screen, toolRect.right - toolRect.left, toolRect.bottom - toolRect.top);
+    auto oldCanvas = SelectObject(canvas, image);
+    auto oldPart = SelectObject(part, toolImage);
+    PrintWindow(frameWindow, canvas, 2);
+    PrintWindow(tool, part, 2);
+    BitBlt(canvas, toolRect.left - frameRect.left, toolRect.top - frameRect.top, toolRect.right - toolRect.left, toolRect.bottom - toolRect.top, part, 0, 0, SRCCOPY);
+    SelectObject(part, oldPart);
+    SelectObject(canvas, oldCanvas);
+    BITMAPINFOHEADER header{sizeof(header), w, -h, 1, 24, BI_RGB};
+    const int stride = (w * 3 + 3) & ~3;
+    std::vector<unsigned char> pixels(static_cast<size_t>(stride) * h);
+    GetDIBits(canvas, image, 0, h, pixels.data(), reinterpret_cast<BITMAPINFO*>(&header), DIB_RGB_COLORS);
+    BITMAPFILEHEADER fileHeader{0x4D42, static_cast<DWORD>(sizeof(BITMAPFILEHEADER) + sizeof(header) + pixels.size()), 0, 0, sizeof(BITMAPFILEHEADER) + sizeof(header)};
+    std::ofstream out(file, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(&fileHeader), sizeof(fileHeader));
+    out.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    out.write(reinterpret_cast<const char*>(pixels.data()), pixels.size());
+    DeleteObject(image);
+    DeleteObject(toolImage);
+    DeleteDC(canvas);
+    DeleteDC(part);
+    ReleaseDC(nullptr, screen);
+    Info("shot", file);
+}
 std::filesystem::path NewestBackup(const std::filesystem::path& folder)
 {
     std::filesystem::path newest;
@@ -545,8 +580,9 @@ CompareRun RunCompare(const std::filesystem::path& backup, const std::function<b
 {
     CompareRun run;
     int fileTicks = 0, windowTicks = 0;
-    bool bring = false;
+    bool bring = false, busy = false;
     dialogHandler = [&](HWND w, const std::string& title) {
+        if (busy) return true; // tick() pumps messages; the timer comes back in meanwhile.
         if (title == "Choose a Backup to Compare") return AnswerFile(w, backup.wstring(), fileTicks);
         char cls[64] = {};
         GetClassNameA(w, cls, sizeof(cls));
@@ -557,7 +593,9 @@ CompareRun RunCompare(const std::filesystem::path& backup, const std::function<b
         {
             run.listed = true;
             run.rows = ListRows(list);
+            busy = true;
             bring = tick(run.rows, list);
+            busy = false;
             Pump(200);
             run.status = WindowText(GetDlgItem(w, 12));
         }
@@ -668,8 +706,21 @@ void CompareSuite()
     Info("compare-more-edits", "deleted emitter " + emitterName + " (" + std::to_string(emitterParts) + " components), added copy " + copyName);
 
     // Everything: Tick All.
-    run = RunCompare(backup, [&](const std::vector<std::string>&, HWND list) {
+    run = RunCompare(backup, [&](const std::vector<std::string>& rows, HWND list) {
         SendMessageA(GetParent(list), WM_COMMAND, 13, 0);
+        if (const auto shot = Ini("shot"); !shot.empty())
+        {
+            // The moved mesh's row clicked, so the picture shows it selected in the viewports.
+            if (const int moved = RowIndex(rows, "Moved", moverName); moved >= 0)
+            {
+                LVITEMA item{};
+                item.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+                item.state = LVIS_SELECTED | LVIS_FOCUSED;
+                SendMessageA(list, LVM_SETITEMSTATE, moved, reinterpret_cast<LPARAM>(&item));
+            }
+            Pump(1500);
+            SaveShot(GetParent(list), shot);
+        }
         return true;
     });
     for (size_t i = 0; i < run.rows.size() && i < 12; ++i) Info("compare-row", run.rows[i]);
@@ -694,6 +745,7 @@ void CompareSuite()
               + " undo '" + Undo().current + "' " + text);
     // Compared again, nothing differs.
     run = RunCompare(backup, [&](const std::vector<std::string>&, HWND) { return false; });
+    for (const auto& row : run.rows) Info("compare-left", row);
     Check(!run.listed && BoxContains("match"), "compare-nothing-left", "rows=" + std::to_string(run.rows.size()) + " boxes=" + (boxes.empty() ? std::string("none") : boxes[0]));
     Exec("TRANSACTION UNDO");
     Pump(500);

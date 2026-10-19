@@ -75,8 +75,7 @@ namespace
             ListView_SetExtendedListViewStyle(list,LVS_EX_FULLROWSELECT|LVS_EX_GRIDLINES|LVS_EX_LABELTIP|(review.checkboxes?LVS_EX_CHECKBOXES:0));
             // A virtual list keeps no item state: the tick boxes come from the rows, asked for row by row.
             if(review.checkboxes)ListView_SetCallbackMask(list,LVIS_STATEIMAGEMASK);
-            const int widths[]={review.checkboxes?80:60,180,130,250,250};
-            for(int i=0;i<5;++i){LVCOLUMNW column{};column.mask=LVCF_TEXT|LVCF_WIDTH;column.pszText=const_cast<wchar_t*>(review.columns[i]);column.cx=widths[i];ListView_InsertColumn(list,i,&column);}
+            for(int i=0;i<5;++i){LVCOLUMNW column{};column.mask=LVCF_TEXT|LVCF_WIDTH;column.pszText=const_cast<wchar_t*>(review.columns[i]);column.cx=review.widths[i];ListView_InsertColumn(list,i,&column);}
             ListView_SetItemCountEx(list,static_cast<int>(review.rows.size()),0);
             CreateWindowW(L"STATIC",review.hint.c_str(),WS_CHILD|WS_VISIBLE|SS_LEFTNOWORDWRAP,0,0,0,0,window,reinterpret_cast<HMENU>(kStatus),nullptr,nullptr);
             CreateWindowW(L"BUTTON",review.apply.c_str(),WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,0,0,0,0,window,reinterpret_cast<HMENU>(IDOK),nullptr,nullptr);

@@ -86,8 +86,12 @@ int main()
         Check(bright && bright->at("before") == "64.0" && bright->at("after") == "80.0", "a property: old and new");
         Check(RowFor(rows, "Moved", "Wall", "Location") != nullptr, "a brush is compared by its properties");
         Check(RowFor(rows, "Changed", "Pointer", "Target") != nullptr && !RowFor(rows, "Changed", "Pointer", "Other"), "a reference");
-        Check(Compare::Tally(rows) == "4 deleted, 1 added, 2 moved, 3 changed", "the tally counts actors");
+        Check(Compare::Tally(rows) == "3 deleted, 1 added, 2 moved, 3 changed", "the tally counts actors, particle components with their emitters");
         Check(Compare::Tally(Json::array()) == "No differences", "an empty tally");
+
+        // A property only one side could read (one class, so both have it) is not a change.
+        Check(Compare::Diff(Json::array({Entry("P", "Engine.SpriteEmitter", {{"MaxParticles", "1"}, {"SizeScale", "()"}})}),
+                            Json::array({Entry("P", "Engine.SpriteEmitter", {{"MaxParticles", "1"}})})).empty(), "a property one side could not read");
 
         // A deleted brush cannot come back.
         Json brushGone = Json::array({Entry("Wall", "Engine.Brush", {{"Location", Vec("0", "0", "0")}}, {{"brush", true}, {"creatable", true}})});
