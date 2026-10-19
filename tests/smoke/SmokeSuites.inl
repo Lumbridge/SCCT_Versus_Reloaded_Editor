@@ -729,8 +729,23 @@ void ScatterSuite()
         finishAfter = static_cast<DWORD>(std::stoul(hold));
         return;
     }
+    // Closed and opened again: where it was left, with its mesh list, and no preview left behind.
+    SetWindowPos(w, nullptr, 180, 140, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+    RECT was{};
+    GetWindowRect(w, &was);
     CloseWindowAndWait(w);
     Check(!IsWindow(w), "scatter-close");
+    Command(41500);
+    Pump(500);
+    if (HWND again = OpenedWindow("Scatter Props"))
+    {
+        RECT now{};
+        GetWindowRect(again, &now);
+        Check(now.left == was.left && now.top == was.top && SendMessageA(GetDlgItem(again, kList), LVM_GETITEMCOUNT, 0, 0) == 1, "scatter-reopen",
+              std::to_string(now.left) + "," + std::to_string(now.top) + " was " + std::to_string(was.left) + "," + std::to_string(was.top));
+        CloseWindowAndWait(again);
+    }
+    else Fail("scatter-reopen", "did not open again");
 }
 
 void RunSuites(const std::string& list)

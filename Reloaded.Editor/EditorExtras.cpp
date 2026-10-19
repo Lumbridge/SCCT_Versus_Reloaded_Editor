@@ -411,7 +411,9 @@ namespace
                "What's New in RE+ shows this version's release notes (also shown once after an update); Roll Back puts the version\r\n"
                "an update replaced back in place (and the newer one stays kept, to switch again); About RE+ shows the version.\r\n"
                "RE+ Tools: Map Design (its own Keys... window lists the plan's shortcuts), Brush Visibility, Placement,\r\n"
-               "Gameplay Connections, SMagicEvent Workbench, SCamNetwork Manager, Working Views, Assemblies, JSON.\r\n";
+               "Gameplay Connections, SMagicEvent Workbench, SCamNetwork Manager, Working Views, Assemblies,\r\n"
+               "Scatter Props (fill the builder brush or a circle round the last click with weighted static meshes,\r\n"
+               "previewed in the viewports, placed as one Undo step), JSON.\r\n";
     }
     LRESULT CALLBACK ShortcutsProc(HWND window, UINT message, WPARAM w, LPARAM l)
     {
