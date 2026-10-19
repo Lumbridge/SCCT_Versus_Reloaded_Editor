@@ -634,6 +634,16 @@ bool CaptureScreen(const std::wstring& path)
     HBITMAP picture = CreateCompatibleBitmap(screen, width, height);
     HGDIOBJ old = SelectObject(canvas, picture);
     BitBlt(canvas, 0, 0, width, height, screen, frame.left, frame.top, SRCCOPY | CAPTUREBLT);
+    // Another topmost window (another editor, say) over the frame would be in the picture: say so.
+    int covered = 0;
+    for (int gx = 1; gx < 10; ++gx)
+        for (int gy = 1; gy < 10; ++gy)
+        {
+            DWORD process = 0;
+            GetWindowThreadProcessId(WindowFromPhysicalPoint({frame.left + width * gx / 10, frame.top + height * gy / 10}), &process);
+            if (process != GetCurrentProcessId()) ++covered;
+        }
+    if (covered) Info("screen-covered", std::to_string(covered) + " of 81 points show another program's window");
     if (setAwareness && previous) setAwareness(previous);
     for (HWND w : windows)
         if (IsWindow(w)) SetWindowPos(w, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -864,6 +874,79 @@ void AppearanceSuite()
     moreShot.replace_filename(moreShot.stem().string() + "-tools2.png");
     Check(opened.size() == std::size(more) && CaptureEditor(moreShot.wstring()), "appearance-tools2-shot", std::to_string(opened.size()) + " windows");
     for (HWND w : opened) if (IsWindow(w)) CloseWindowAndWait(w);
+
+    // Light and Shadow Settings, with File > Optimise Map Assets (modal) open beside it.
+    Command(41201);
+    Pump(800);
+    HWND lightShadow = OpenedWindow("Light and Shadow");
+    if (lightShadow) SetWindowPos(lightShadow, HWND_TOP, 20, 90, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+    else Info("appearance-tool-missing", "Light and Shadow");
+    auto thirdShot = std::filesystem::path(shot);
+    thirdShot.replace_filename(thirdShot.stem().string() + "-tools3.png");
+    bool optimiseShown = false;
+    dialogHandler = [&](HWND w, const std::string& title) {
+        if (title != "Optimise Map Assets") return false;
+        if (!optimiseShown)
+        {
+            optimiseShown = true;
+            SetWindowPos(w, HWND_TOP, 560, 90, 0, 0, SWP_NOSIZE);
+            UpdateWindow(w);
+            Pump(300);
+            Check(CaptureEditor(thirdShot.wstring()), "appearance-tools3-shot", lightShadow ? "with Light and Shadow" : "");
+            PostMessage(w, WM_COMMAND, IDCANCEL, 0);
+        }
+        return true;
+    };
+    Command(41390);
+    Pump(500);
+    dialogHandler = nullptr;
+    if (!optimiseShown) Info("appearance-tool-missing", "Optimise Map Assets");
+    if (lightShadow && IsWindow(lightShadow)) CloseWindowAndWait(lightShadow);
+
+    // Map Design, Brush Visibility, SCamNetwork Manager and Actor Assemblies (-tools4) with Character
+    // Skins open over them, then Character Skin Presets on its own (-tools5); both of those are modal.
+    struct Free { UINT command; const char* title; };
+    const Free others[] = {{40948, "Map Design"}, {40953, "Brush Visibility"}, {40932, "SCamNetwork Manager"}, {40922, "Actor Assemblies"}};
+    opened.clear();
+    slot = 0;
+    for (auto& tool : others)
+    {
+        Command(tool.command);
+        Pump(800);
+        const int x = 20 + (slot % 2) * 780, y = 90 + (slot / 2) * 450;
+        ++slot;
+        HWND w = OpenedWindow(tool.title);
+        if (!w) { Info("appearance-tool-missing", tool.title); continue; }
+        const bool resizable = (GetWindowLongA(w, GWL_STYLE) & WS_THICKFRAME) != 0;
+        SetWindowPos(w, HWND_TOP, x, y, 770, 440, SWP_NOACTIVATE | (resizable ? 0 : SWP_NOSIZE));
+        opened.push_back(w);
+    }
+    Pump(1000);
+    for (const auto& [command, suffix] : {std::pair<UINT, const char*>{41180, "-tools4.png"}, {41181, "-tools5.png"}})
+    {
+        auto modalShot = std::filesystem::path(shot);
+        modalShot.replace_filename(modalShot.stem().string() + suffix);
+        bool shown = false;
+        dialogHandler = [&](HWND w, const std::string& title) {
+            if (title.rfind("Character Skin", 0) != 0) return false;
+            if (!shown)
+            {
+                shown = true;
+                SetWindowPos(w, HWND_TOP, 400, 200, 0, 0, SWP_NOSIZE);
+                UpdateWindow(w);
+                Pump(300);
+                Check(CaptureEditor(modalShot.wstring()), std::string("appearance") + suffix, title);
+                PostMessage(w, WM_COMMAND, IDCANCEL, 0);
+            }
+            return true;
+        };
+        Command(command);
+        Pump(500);
+        dialogHandler = nullptr;
+        if (!shown) Info("appearance-tool-missing", std::to_string(command));
+        for (HWND w : opened) if (IsWindow(w)) CloseWindowAndWait(w);
+        opened.clear();
+    }
 }
 
 void RunSuites(const std::string& list)
