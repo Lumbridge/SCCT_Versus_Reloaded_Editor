@@ -18,4 +18,9 @@ namespace Appearance
     // For RE+'s own painting in Modern Dark (COLORREFs).
     Palette Colors();
     HBRUSH Brush(COLORREF color); // kept for the session; never delete it
+
+    // The height a multi-line static (an intro or status block) needs to show all its text, wrapped
+    // at `width`, in its own font, and never less than `fixed`. Classic keeps `fixed` (the larger
+    // modern font is what makes the stock heights too small); `most` caps it.
+    int FitHeight(HWND text, int width, int fixed, int most = 100000);
 }

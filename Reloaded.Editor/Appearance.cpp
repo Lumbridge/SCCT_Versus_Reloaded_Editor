@@ -723,6 +723,37 @@ namespace
         return reinterpret_cast<LRESULT>(BrushFor(background));
     }
 
+    // A disabled text static: the system draws its text embossed in the light theme's colours (a
+    // white copy one pixel off), which smears on a dark background. Plain grey text instead.
+    bool PaintDisabledStatic(HWND window)
+    {
+        const DWORD style = GetWindowLongW(window, GWL_STYLE);
+        const DWORD type = style & SS_TYPEMASK;
+        if (type != SS_LEFT && type != SS_CENTER && type != SS_RIGHT && type != SS_LEFTNOWORDWRAP && type != SS_SIMPLE) return false;
+        const auto p = Appearance::DarkPalette();
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(window, &ps);
+        RECT client{};
+        GetClientRect(window, &client);
+        HBRUSH brush = reinterpret_cast<HBRUSH>(SendMessageW(GetParent(window), WM_CTLCOLORSTATIC, reinterpret_cast<WPARAM>(dc), reinterpret_cast<LPARAM>(window)));
+        real.FillRect(dc, &client, brush ? brush : BrushFor(p.face));
+        const int length = GetWindowTextLengthW(window);
+        std::wstring text(static_cast<size_t>(length) + 1, L'\0');
+        GetWindowTextW(window, text.data(), length + 1);
+        HGDIOBJ old = SelectObject(dc, reinterpret_cast<HFONT>(SendMessageW(window, WM_GETFONT, 0, 0)));
+        SetBkMode(dc, TRANSPARENT);
+        real.SetTextColor(dc, p.grayText);
+        UINT flags = DT_EXPANDTABS | ((style & SS_NOPREFIX) ? DT_NOPREFIX : 0);
+        if (type == SS_CENTER) flags |= DT_CENTER | DT_WORDBREAK;
+        else if (type == SS_RIGHT) flags |= DT_RIGHT | DT_WORDBREAK;
+        else if (type == SS_LEFT) flags |= DT_WORDBREAK;
+        else flags |= DT_SINGLELINE;
+        DrawTextW(dc, text.c_str(), length, &client, flags);
+        SelectObject(dc, old);
+        EndPaint(window, &ps);
+        return true;
+    }
+
     LRESULT CALLBACK Subclass(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR data)
     {
         const Kind kind = static_cast<Kind>(data);
@@ -786,6 +817,7 @@ namespace
             break;
         case WM_PAINT:
             if (kind == Kind::Tab) { PaintTabs(window); return 0; }
+            if (kind == Kind::Static && !IsWindowEnabled(window) && PaintDisabledStatic(window)) return 0;
             if (kind == Kind::MessageBox)
             {
                 // The system paints a light band behind the buttons; the icon and text are child
@@ -1038,6 +1070,23 @@ Appearance::Theme Appearance::Current() { return current; }
 Appearance::Palette Appearance::Colors() { return DarkPalette(); }
 
 HBRUSH Appearance::Brush(COLORREF color) { return BrushFor(color); }
+
+int Appearance::FitHeight(HWND text, int width, int fixed, int most)
+{
+    if (current == Theme::Classic || !text || width <= 0) return fixed;
+    const int length = GetWindowTextLengthW(text);
+    if (length <= 0) return fixed;
+    std::wstring value(static_cast<size_t>(length) + 1, L'\0');
+    GetWindowTextW(text, value.data(), length + 1);
+    value.resize(static_cast<size_t>(length));
+    HDC dc = GetDC(text);
+    HGDIOBJ old = SelectObject(dc, reinterpret_cast<HFONT>(SendMessageW(text, WM_GETFONT, 0, 0)));
+    RECT r{0, 0, width, 0};
+    DrawTextW(dc, value.c_str(), length, &r, DT_CALCRECT | DT_WORDBREAK | DT_EXPANDTABS | DT_NOPREFIX);
+    SelectObject(dc, old);
+    ReleaseDC(text, dc);
+    return (std::max)(fixed, (std::min)(most, static_cast<int>(r.bottom) + 2));
+}
 
 void Appearance::Initialize()
 {
