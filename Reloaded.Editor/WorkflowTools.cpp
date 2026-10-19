@@ -35,6 +35,7 @@
 #include "CharacterPreview.h"
 #include "MeasureTool.h"
 #include "PlacementTools.h"
+#include "ScatterTool.h"
 #include "PropertyPaste.h"
 #include "LightShadowMap.h"
 #include "LightShadowModel.h"
@@ -1462,6 +1463,7 @@ bool HandleCommand(UINT command)
     }
     if(MeasureTool::HandleCommand(command))return true;
     if(PlacementTools::HandleCommand(command))return true;
+    if(ScatterTool::HandleCommand(command))return true;
     if(PropertyPaste::HandleCommand(command))return true;
     if(LightShadowMap::HandleCommand(command))return true;
     if(LightingBudget::HandleCommand(command))return true;
