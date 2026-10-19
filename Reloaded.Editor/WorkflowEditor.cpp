@@ -540,14 +540,17 @@ std::string MapKey()
     if(path.is_relative()) path=Directory().parent_path().parent_path()/"Packages"/"MapsEd"/path;
     return Fold(std::filesystem::weakly_canonical(path).string());
 }
+// UTF-8, as String gives the frame's name: read as UTF-8 too, so a name with
+// letters outside ASCII is the file itself, not its text read as ANSI.
 std::string MapFile()
 {
     auto window=Read<Address>(0x1165e80c); std::string file=window?String(window+0x58,1024):"";
     if(file.empty()) return {};
-    std::filesystem::path path(file);
+    std::filesystem::path path(std::u8string(file.begin(),file.end()));
     if(path.is_relative()) path=Directory().parent_path().parent_path()/"Packages"/"MapsEd"/path;
     std::error_code error; const auto canonical=std::filesystem::weakly_canonical(path,error);
-    return (error?path:canonical).string();
+    const auto text=(error?path:canonical).u8string();
+    return std::string(text.begin(),text.end());
 }
 void SetMapFile(const std::string& path)
 {

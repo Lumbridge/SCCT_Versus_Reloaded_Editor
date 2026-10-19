@@ -108,7 +108,7 @@ std::string Intro(const Guidelines& g)
            "Camera repaints the perspective viewport: View marks the camera's zone, the zones Visible through the portals "
            "and those no portal shows where the engine still Drew an actor. Click a row to select its actors; "
            "double-click to frame them too. Below, Meshes by cost lists each static mesh with its copies and triangles, "
-           "for the whole map or the zone clicked last.";
+           "for the whole map, the camera's view or the zone clicked last.";
 }
 
 std::string Status(const ZoneReport& zone)
@@ -252,6 +252,14 @@ void Fill()
         Budget::Row(hotspots, static_cast<int>(i), static_cast<LPARAM>(i), {HotspotLabel(hotspot), zone, HotspotText(hotspot), what});
     }
     FillMeshes();
+    // The zone Meshes by cost counts stays highlighted; the buttons keep the row they had.
+    if (budget.meshScope != kMapRow)
+    {
+        const int lastList = budget.lastList, lastRow = budget.lastRow;
+        Budget::SelectRowByData(zones, budget.meshScope);
+        budget.lastList = lastList;
+        budget.lastRow = lastRow;
+    }
     ShowLowerView();
     SetDlgItemTextA(budget.window, kIntro, Intro(report.guidelines).c_str());
     SetStatus(snapshot.hasView ? ViewStatus() : ReportStatus());
@@ -262,6 +270,9 @@ void Refresh()
     budget.snapshot = Measure(LoadGuidelines());
     budget.measured = true;
     budget.lastRow = -1;
+    // Zones are rows by index, which a new measure (another map, a BSP rebuild)
+    // can give to another zone: Meshes by cost counts the whole map again.
+    budget.meshScope = kMapRow;
     if (IsWindow(budget.window)) Fill();
 }
 
@@ -390,6 +401,9 @@ void Choose(int list, int row, bool frame)
     const auto found = Workflow::Editor::SelectActorPaths(paths, frame);
     std::string text = "Selected " + std::to_string(found) + " actor(s) in " + what + (frame && found ? ", framed in the viewports." : ".");
     if (found < paths.size()) text += " " + std::to_string(paths.size() - found) + " no longer exist; Refresh.";
+    // The rows are as measured: a mesh changed or an actor added since is not in them.
+    else if (budget.snapshot.revision != Workflow::Editor::ContentRevision())
+        text += " The map has changed since it was measured; Refresh to count it again.";
     SetStatus(text);
 }
 
@@ -519,7 +533,7 @@ void Show(HWND owner)
 {
     if (IsWindow(budget.window))
     {
-        ShowWindow(budget.window, SW_RESTORE);
+        ShowWindow(budget.window, IsIconic(budget.window) ? SW_RESTORE : SW_SHOW);
         SetForegroundWindow(budget.window);
         Fill();
         return;

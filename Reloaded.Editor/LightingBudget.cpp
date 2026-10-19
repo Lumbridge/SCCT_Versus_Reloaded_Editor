@@ -500,7 +500,7 @@ void Show(HWND owner)
 {
     if (IsWindow(budget.window))
     {
-        ShowWindow(budget.window, SW_RESTORE);
+        ShowWindow(budget.window, IsIconic(budget.window) ? SW_RESTORE : SW_SHOW);
         SetForegroundWindow(budget.window);
         Fill();
         return;

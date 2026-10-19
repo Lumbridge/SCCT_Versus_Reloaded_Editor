@@ -393,7 +393,7 @@ void Show(HWND owner)
 {
     if (IsWindow(check.window))
     {
-        ShowWindow(check.window, SW_RESTORE);
+        ShowWindow(check.window, IsIconic(check.window) ? SW_RESTORE : SW_SHOW);
         SetForegroundWindow(check.window);
         Fill();
         return;

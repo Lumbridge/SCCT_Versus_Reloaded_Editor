@@ -107,6 +107,7 @@ namespace
 
     // The file a save wrote, in full: the engine opens a relative name from
     // the current directory (System), the frame's own map name from MapsEd.
+    // The engine's name is ANSI; the result is UTF-8, as Editor::MapFile's is.
     std::string SavedFile(const char* path)
     {
         namespace fs = std::filesystem;
@@ -118,7 +119,8 @@ namespace
             file = !error && fs::is_regular_file(here, error) ? here : Editor::Directory().parent_path().parent_path() / "Packages" / "MapsEd" / file;
         }
         const auto canonical = fs::weakly_canonical(file, error);
-        return (error ? file : canonical).string();
+        const auto text = (error ? file : canonical).u8string();
+        return std::string(text.begin(), text.end());
     }
     // After every save the engine finished (LightmapFix::SetSavedSink): a save
     // of the open map's own file makes it clean, whichever route it took.
