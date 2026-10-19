@@ -642,11 +642,45 @@ void CompareSuite()
     Pump(500);
     Check(!ActorNamed(goneName) && !ActorNamed(goneName + "_2") && Actors().size() == actorsEdited, "compare-undo", "actors=" + std::to_string(Actors().size()) + " undo '" + Undo().current + "'");
 
+    // More to bring back: an emitter with its particle components deleted, and a copy of a mesh added.
+    unsigned char* emitter = nullptr;
+    int emitterParts = 0;
+    for (auto a : Actors())
+        if (auto p = FindProperty(a, "Emitters"); p && !(Flags(a) & 0x10))
+            if (const int n = *reinterpret_cast<int*>(a + *reinterpret_cast<unsigned*>(p + 0x3C) + 4); n > 0) { emitter = a; emitterParts = n; break; }
+    const std::string emitterName = emitter ? Name(emitter) : std::string();
+    if (emitter)
+        if (auto p = FindProperty(emitter, "Emitters"))
+            Info("compare-emitter-component", ObjectPath(**reinterpret_cast<unsigned char***>(emitter + *reinterpret_cast<unsigned*>(p + 0x3C))));
+    for (auto a : Actors()) SetSelected(a, false);
+    if (emitter) { SetSelected(emitter, true); Exec("ACTOR DELETE"); Pump(300); }
+    std::string copyName;
+    if (meshes.size() > 2)
+    {
+        for (auto a : Actors()) SetSelected(a, false);
+        SetSelected(meshes[2], true);
+        std::set<std::string> names;
+        for (auto a : Actors()) names.insert(Name(a));
+        Exec("ACTOR DUPLICATE");
+        Pump(300);
+        for (auto a : Actors()) if (!names.count(Name(a))) copyName = Name(a);
+    }
+    Info("compare-more-edits", "deleted emitter " + emitterName + " (" + std::to_string(emitterParts) + " components), added copy " + copyName);
+
     // Everything: Tick All.
     run = RunCompare(backup, [&](const std::vector<std::string>&, HWND list) {
         SendMessageA(GetParent(list), WM_COMMAND, 13, 0);
         return true;
     });
+    for (size_t i = 0; i < run.rows.size() && i < 12; ++i) Info("compare-row", run.rows[i]);
+    unsigned char* emitterBack = nullptr;
+    for (auto a : Actors()) if (!emitterName.empty() && (Name(a) == emitterName || Name(a).rfind(emitterName + "_", 0) == 0)) emitterBack = a;
+    int partsBack = 0;
+    if (emitterBack)
+        if (auto p = FindProperty(emitterBack, "Emitters")) partsBack = *reinterpret_cast<int*>(emitterBack + *reinterpret_cast<unsigned*>(p + 0x3C) + 4);
+    Check((emitterName.empty() || (emitterBack && partsBack == emitterParts)) && (copyName.empty() || !ActorNamed(copyName)), "compare-bring-back-emitter-and-delete-copy",
+          "emitter back=" + (emitterBack ? Name(emitterBack) : std::string("none")) + " components " + std::to_string(partsBack) + "/" + std::to_string(emitterParts)
+              + " copy " + copyName + (ActorNamed(copyName) ? " still there" : " gone"));
     auto light = ActorNamed(lightName);
     mover = reinterpret_cast<unsigned char*>(ActorNamed(moverName));
     // Brought back again, it is named _3: _2 is kept for Undo too.
@@ -654,7 +688,7 @@ void CompareSuite()
     for (auto a : Actors()) if (Name(a) == goneName || Name(a).rfind(goneName + "_", 0) == 0) back = a;
     text.clear();
     for (auto& b : boxes) text += b + " ";
-    Check(run.status.find("3 row(s) ticked") != std::string::npos && back && light && std::fabs(ReadFloat(light, "LightBrightness") - brightness) < 0.01f
+    Check(back && light && std::fabs(ReadFloat(light, "LightBrightness") - brightness) < 0.01f
               && mover && std::fabs(ReadVector(mover, "Location").x - moverAt.x) < 0.01f,
           "compare-bring-back-all", "status '" + run.status + "' back=" + (back ? Name(back) : std::string("none")) + " brightness=" + (light ? Fixed(ReadFloat(light, "LightBrightness")) : "-")
               + " undo '" + Undo().current + "' " + text);

@@ -81,6 +81,14 @@ namespace Workflow::Compare
         return name.find_first_not_of("0123456789",key.size()+1)==std::string::npos?key:std::string{};
     }
 
+    // What a row click selects: the actor, or a particle component's emitter.
+    inline Json SelectFor(const Json& entry,const Json& current)
+    {
+        const auto owner=Fold(entry.value("owner",std::string{}));
+        if(owner.empty())return entry.at("actor");
+        for(const auto& e:current)if(Fold(e.at("key").get<std::string>())==owner)return e.at("actor");
+        return nullptr;
+    }
     // References to renamed objects (folded old path -> new path) rewritten to the new path.
     inline Json Follow(const Json& value,const std::map<std::string,std::string>& renamed)
     {
@@ -159,8 +167,13 @@ namespace Workflow::Compare
                 if(had && has && before.at(name)==after.at(name))continue;
                 const auto change=Change(name);
                 // Brought back through the same Map JSON update; a property only one side has cannot be.
-                auto row=Row(change,nowKey,now.at("actor"),name,had?Magic::Text(before.at(name)):std::string{},has?Magic::Text(after.at(name)):std::string{},
-                             had && has?"update":"",nowKey,key,had && has?std::string{}:"only one of the two maps has this property");
+                // A component the map's package holds (not its emitter) is listed by the emitter, and Map JSON
+                // reaches only owned ones; it selects its emitter.
+                const bool shared=old.value("shared",false) || now.value("shared",false);
+                const auto note=!(had && has)?std::string("only one of the two maps has this property"):shared?std::string("a particle component the emitter does not own cannot be set back"):std::string{};
+                const auto select=SelectFor(now,current);
+                auto row=Row(change,nowKey,select,name,had?Magic::Text(before.at(name)):std::string{},has?Magic::Text(after.at(name)):std::string{},
+                             had && has && !shared?"update":"",nowKey,key,note);
                 (change=="Moved"?moved:changed).push_back(std::move(row));
             }
         }
@@ -168,7 +181,7 @@ namespace Workflow::Compare
         {
             const auto& now=current[j];const auto key=now.at("key").get<std::string>();
             const bool component=!now.value("owner",std::string{}).empty();
-            added.push_back(Row("Added",key,now.at("actor"),"class",{},now.at("actor").at("class").get<std::string>()+Where(now),component?"":"delete",key,{},
+            added.push_back(Row("Added",key,SelectFor(now,current),"class",{},now.at("actor").at("class").get<std::string>()+Where(now),component?"":"delete",key,{},
                                 component?"a particle component on its own is not deleted":"bringing the backup back deletes it"));
         }
         auto byTarget=[](const Json& a,const Json& b){return Fold(a.at("target").get<std::string>())<Fold(b.at("target").get<std::string>());};

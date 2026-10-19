@@ -107,6 +107,13 @@ int main()
         Check(!RowFor(emitterRows, "Deleted", "Smoke") && !RowFor(emitterRows, "Deleted", "Smoke.SpriteEmitter0") && !RowFor(emitterRows, "Added", "Smoke_2.SpriteEmitter4")
                   && !RowFor(emitterRows, "Changed", "Smoke_2", "Emitters"),
               "its components match by class under the new owner, and its list by what it names");
+        // A stock emitter's component belongs to the map's package: listed, it selects the emitter, and is not set back alone.
+        Json sharedNow = Json::array({Entry("Fire", "Engine.Emitter", {{"Location", Vec("0", "0", "0")}}),
+                                      Entry("SpriteEmitter9", "Engine.SpriteEmitter", {{"MaxParticles", "20"}}, {{"owner", "Fire"}, {"shared", true}})});
+        Json sharedOld = Json::array({Entry("Fire", "Engine.Emitter", {{"Location", Vec("0", "0", "0")}}, {{"creatable", true}}),
+                                      Entry("SpriteEmitter9", "Engine.SpriteEmitter", {{"MaxParticles", "10"}}, {{"owner", "Fire"}, {"shared", true}, {"creatable", true}})});
+        auto sharedRows = Compare::Diff(sharedNow, sharedOld);
+        Check(sharedRows.size() == 1 && sharedRows[0].at("action") == "" && sharedRows[0].at("select")["path"] == "MyLevel.Fire", "a shared component");
         Check(Compare::Restored("Gone", "Gone_12") == "Gone" && Compare::Restored("Gone", "Gone_x").empty() && Compare::Restored("Gone", "Gonex_2").empty(), "the restored name rule");
 
         // Bringing back.

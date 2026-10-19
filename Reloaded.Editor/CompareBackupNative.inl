@@ -35,11 +35,13 @@ namespace
         return entry;
     }
     // Every actor Map JSON export lists (not the LevelInfo, the builder brush or cameras) and the particle
-    // components an emitter owns, of whichever level Level() is.
+    // components of each emitter, of whichever level Level() is. The stock maps' emitters list components that
+    // belong to the map's package rather than to the emitter (MyLevel.SpriteEmitter12): they are read too, marked
+    // shared, as Map JSON cannot set one back on its own.
     Json CompareEntries()
     {
-        const auto package=LevelPath();Json out=Json::array();
-        const auto live=LiveActors();
+        const auto package=LevelPath();const auto packageObject=Read<Address>(Level()+0x18);Json out=Json::array();
+        const auto live=LiveActors();std::set<Address> seen;
         for(size_t i=0;i<live.size();++i)
         {
             const auto a=live[i];
@@ -49,10 +51,13 @@ namespace
             catch(const std::exception& e){Logger::log("Compare with Backup: left out "+Path(a)+": "+e.what());continue;}
             const auto key=entry.at("key").get<std::string>();out.push_back(std::move(entry));
             if(!IsA(a,"Emitter"))continue;
-            std::set<Address> seen;
             for(const auto& ref:ReferencesOf(a,false))
-                if(ref.target && Read<Address>(ref.target+0x18)==a && IsA(ref.target,"ParticleEmitter") && seen.insert(ref.target).second)
-                    try{out.push_back(CompareEntry(ref.target,package,key));}catch(const std::exception&){}
+            {
+                if(!ref.target || !IsA(ref.target,"ParticleEmitter"))continue;
+                const auto outer=Read<Address>(ref.target+0x18);
+                if((outer!=a && outer!=packageObject) || !seen.insert(ref.target).second)continue;
+                try{auto part=CompareEntry(ref.target,package,key);if(outer!=a)part["shared"]=true;out.push_back(std::move(part));}catch(const std::exception&){}
+            }
         }
         return out;
     }
