@@ -585,7 +585,7 @@ LRESULT CALLBACK WindowProc(HWND w,UINT message,WPARAM wp,LPARAM lp)
 }
 void Open(HWND owner,const std::string& actorPath)
 {
-    if(workbench){auto s=reinterpret_cast<State*>(GetWindowLongPtr(workbench,GWLP_USERDATA));if(!actorPath.empty())LoadEvent(*s,actorPath);ShowWindow(workbench,SW_RESTORE);SetForegroundWindow(workbench);return;}
+    if(workbench){auto s=reinterpret_cast<State*>(GetWindowLongPtr(workbench,GWLP_USERDATA));if(!actorPath.empty())LoadEvent(*s,actorPath);ShowWindow(workbench,IsIconic(workbench)?SW_RESTORE:SW_SHOW);SetForegroundWindow(workbench);return;}
     INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_TREEVIEW_CLASSES|ICC_STANDARD_CLASSES};InitCommonControlsEx(&controls);
     WNDCLASSA wc{};wc.lpfnWndProc=WindowProc;wc.hInstance=GetModuleHandle(nullptr);wc.lpszClassName="ReloadedMagicWorkbench";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);RegisterClassA(&wc);
     auto s=new State;s->eventPath=actorPath;s->inspectedPath=actorPath;

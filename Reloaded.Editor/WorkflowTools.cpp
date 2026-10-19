@@ -1209,12 +1209,15 @@ namespace
     }
     HWND Open(Kind kind,HWND owner,std::string source={},bool mesh=false)
     {
-        for(auto s:windows) if(s->kind==kind && (kind!=Kind::Assets || s->source==source)) {ShowWindow(s->window,SW_RESTORE);SetForegroundWindow(s->window);return s->window;}
+        for(auto s:windows) if(s->kind==kind && (kind!=Kind::Assets || s->source==source)) {ShowWindow(s->window,IsIconic(s->window)?SW_RESTORE:SW_SHOW);SetForegroundWindow(s->window);return s->window;}
+        // Another Find Usages window open (one per asset) has the place: this one
+        // opens where Windows puts it, not exactly over it.
+        const bool another=std::any_of(windows.begin(),windows.end(),[&](const State* o){return o->kind==kind;});
         Sync(); WNDCLASSA wc{}; wc.lpfnWndProc=WindowProc; wc.hInstance=GetModuleHandle(nullptr);wc.lpszClassName="ReloadedWorkflowTools";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hbrBackground=reinterpret_cast<HBRUSH>(COLOR_BTNFACE+1);RegisterClassA(&wc);
         auto s=new State{kind}; s->source=std::move(source);s->mesh=mesh; windows.push_back(s);
         const char* title=kind==Kind::Assets?"Asset Find and Replace":kind==Kind::Connections?"Gameplay Connections":kind==Kind::Views?"Working Views":"Actor Assemblies";
         HWND window=CreateWindowExA(WS_EX_CONTROLPARENT,wc.lpszClassName,title,WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,1000,650,owner,nullptr,wc.hInstance,s);
-        if(window) {WindowPlacement::Restore(window,PlacementKey(kind));ShowWindow(window,SW_SHOW);} return window;
+        if(window) {if(another)WindowPlacement::Track(window);else WindowPlacement::Restore(window,PlacementKey(kind));ShowWindow(window,SW_SHOW);} return window;
     }
     void __fastcall VertexClickHook(void* self,void*,void* cause,void* hit)
     {
@@ -1563,7 +1566,8 @@ bool HandleCommand(UINT command)
             if(belt.is_null())throw std::runtime_error("Select one conveyor belt first.");
             Json spec={{"after",belt.at("path")}};
             if(command!=kAddNextConveyorBelt)spec["turn"]=command==kAddNextConveyorBeltLeft?"left":"right";
-            Editor::AddConveyorBelt(spec);
+            const auto added=Editor::AddConveyorBelt(spec);
+            if(added.contains("warning"))MessageBoxA(GetActiveWindow(),added.at("warning").get<std::string>().c_str(),"Conveyor Belt",MB_OK|MB_ICONINFORMATION);
         }
         catch(const std::exception& e) { MessageBoxA(GetActiveWindow(),e.what(),"Conveyor Belt",MB_OK|MB_ICONINFORMATION); }
         return true;

@@ -43,7 +43,8 @@ second one (ShipD):
 - File > Save twice keeps two backups; Open Map Backup can be cancelled.
 - The Static Mesh Browser search box filters the list.
 - Map JSON export, then an import whose preview row was clicked still applies.
-- With `conveyor = '1'` in `-Extra`, Add Conveyor Belt (on a build that has it).
+- With `conveyor = '1'` and `map2` in `-Extra`, on the second map after the Map
+  JSON round trip: Add Conveyor Belt at the viewport's last click, then Undo.
 
 ## Suites
 

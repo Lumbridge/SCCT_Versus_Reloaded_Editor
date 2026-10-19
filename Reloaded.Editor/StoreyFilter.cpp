@@ -329,7 +329,7 @@ void Open()
 {
     if (window)
     {
-        ShowWindow(window, SW_RESTORE);
+        ShowWindow(window, IsIconic(window) ? SW_RESTORE : SW_SHOW);
         SetForegroundWindow(window);
         Refresh(true);
         return;
