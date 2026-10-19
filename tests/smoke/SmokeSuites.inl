@@ -704,6 +704,8 @@ void PaletteSuite()
     Check(palette && IsWindowVisible(palette), "palette-hotkey-opens");
     PressCtrlShiftP();
     Check(!TopOfClass("ReloadedCommandPalette"), "palette-hotkey-closes");
+}
+
 // ---- Linked prefabs: two meshes (one Tagged, the other's Event pointing at it) saved as an
 // assembly, placed linked twice; one instance edited and the prefab updated from it rebuilds the
 // other where it stands, in one Undo step that Undo takes back; the link survives save and reopen;
@@ -746,33 +748,6 @@ std::string TagOf(const std::string& path, const char* key)
 }
 // The editor frame and a tool window over it, for the report (PrintWindow of each, never the desktop).
 void SaveWindowBitmap(HWND w, const std::filesystem::path& file)
-// ---- Light and Shadow Map: sampling with static meshes, kept work after edits, the settings
-// switches, and a picture of the map and its settings window for the report.
-std::uintmax_t LogSize()
-{
-    std::error_code ignored;
-    return std::filesystem::file_size(directory / "Reloaded.Editor.dll.log", ignored);
-}
-// The last "LightShadowMap: ... patches" line the editor wrote after a point in its log.
-std::string LastShadowLine(std::uintmax_t from)
-{
-    std::ifstream log(directory / "Reloaded.Editor.dll.log", std::ios::binary);
-    log.seekg(static_cast<std::streamoff>(from));
-    std::string line, last;
-    while (std::getline(log, line))
-        if (line.find("LightShadowMap: ") != std::string::npos && line.find(" patches") != std::string::npos) last = line;
-    return last;
-}
-long long NumberBefore(const std::string& text, const std::string& word)
-{
-    const auto at = text.find(word);
-    if (at == std::string::npos) return -1;
-    size_t start = at;
-    while (start > 0 && isdigit(static_cast<unsigned char>(text[start - 1]))) --start;
-    return start < at ? std::stoll(text.substr(start, at - start)) : -1;
-}
-// The window as drawn (viewports included), as a 24-bit BMP.
-bool SaveWindowPicture(HWND w, const std::filesystem::path& file)
 {
     RECT r{};
     GetWindowRect(w, &r);
@@ -790,165 +765,6 @@ bool SaveWindowPicture(HWND w, const std::filesystem::path& file)
     out.write(reinterpret_cast<const char*>(&header), sizeof(header));
     out.write(reinterpret_cast<const char*>(&info.bmiHeader), sizeof(BITMAPINFOHEADER));
     out.write(static_cast<const char*>(bits), static_cast<std::streamsize>(width) * height * 4);
-    if (width <= 0 || height <= 0) return false;
-    HDC screen = GetDC(nullptr);
-    HDC dc = CreateCompatibleDC(screen);
-    BITMAPINFO info{};
-    info.bmiHeader.biSize = sizeof(info.bmiHeader);
-    info.bmiHeader.biWidth = width;
-    info.bmiHeader.biHeight = height;
-    info.bmiHeader.biPlanes = 1;
-    info.bmiHeader.biBitCount = 24;
-    void* bits = nullptr;
-    HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
-    HGDIOBJ old = SelectObject(dc, bitmap);
-    BOOL printed = PrintWindow(w, dc, 2 /* PW_RENDERFULLCONTENT */);
-    GdiFlush();
-    const DWORD stride = (DWORD(width) * 3 + 3) & ~3u, size = stride * DWORD(height);
-    // Some windows print nothing; then copy what the window itself shows.
-    bool blank = true;
-    for (DWORD i = 0; i < size && blank; i += 97) blank = static_cast<const unsigned char*>(bits)[i] == 0;
-    if (blank)
-    {
-        HDC own = GetWindowDC(w);
-        printed = BitBlt(dc, 0, 0, width, height, own, 0, 0, SRCCOPY);
-        ReleaseDC(w, own);
-        GdiFlush();
-    }
-    BITMAPFILEHEADER header{};
-    header.bfType = 0x4D42;
-    header.bfOffBits = sizeof(header) + sizeof(info.bmiHeader);
-    header.bfSize = header.bfOffBits + size;
-    std::ofstream out(file, std::ios::binary);
-    out.write(reinterpret_cast<const char*>(&header), sizeof(header));
-    out.write(reinterpret_cast<const char*>(&info.bmiHeader), sizeof(info.bmiHeader));
-    out.write(static_cast<const char*>(bits), size);
-// ---- Import OBJ: a small OBJ with an MTL, a BMP that is not a power of two and a TGA that is, imported with
-// hulls and placed; per-polygon and no collision; a mesh over the game's limit split into parts placed together;
-// the window from File and from the Static Mesh Browser.
-nlohmann::json Request(const nlohmann::json& request)
-{
-    using Fn = int(__cdecl*)(const char*, char*, unsigned);
-    static Fn fn = reinterpret_cast<Fn>(GetProcAddress(GetModuleHandleA("Reloaded.Editor.dll"), "ReloadedWorkflowRequest"));
-    if (!fn) return {{"ok", false}, {"error", "no ReloadedWorkflowRequest"}};
-    std::vector<char> out(1 << 20);
-    const int r = fn(request.dump().c_str(), out.data(), static_cast<unsigned>(out.size()));
-    if (r < 0) { out.resize(static_cast<size_t>(-r)); fn(request.dump().c_str(), out.data(), static_cast<unsigned>(out.size())); }
-    return nlohmann::json::parse(out.data());
-}
-void WriteFile(const std::filesystem::path& file, const std::string& bytes)
-{
-    std::ofstream out(file, std::ios::binary);
-    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-}
-// A box's OBJ faces (counter-clockwise from outside), its corners from vertex `base` + 1.
-std::string ObjBox(double x0, double y0, double z0, double x1, double y1, double z1, int base)
-{
-    std::ostringstream o;
-    for (int i = 0; i < 8; ++i) o << "v " << ((i & 1) ? x1 : x0) << " " << ((i & 2) ? y1 : y0) << " " << ((i & 4) ? z1 : z0) << "\n";
-    const int quads[6][4] = {{0, 2, 3, 1}, {4, 5, 7, 6}, {0, 1, 5, 4}, {2, 6, 7, 3}, {0, 4, 6, 2}, {1, 3, 7, 5}};
-    for (const auto& q : quads)
-        o << "f " << q[0] + 1 + base << "/1 " << q[1] + 1 + base << "/2 " << q[2] + 1 + base << "/3 " << q[3] + 1 + base << "/4\n";
-    return o.str();
-}
-std::string Bmp24(int w, int h)
-{
-    const int row = (w * 3 + 3) & ~3;
-    std::string b(54 + static_cast<size_t>(row) * h, '\0');
-    auto u32 = [&](size_t at, uint32_t v) { for (int k = 0; k < 4; ++k) b[at + k] = static_cast<char>((v >> (8 * k)) & 0xff); };
-    b[0] = 'B'; b[1] = 'M';
-    u32(2, static_cast<uint32_t>(b.size())); u32(10, 54); u32(14, 40); u32(18, static_cast<uint32_t>(w)); u32(22, static_cast<uint32_t>(h));
-    b[26] = 1; b[28] = 24;
-    for (int y = 0; y < h; ++y)
-        for (int x = 0; x < w; ++x)
-        {
-            char* p = &b[54 + static_cast<size_t>(y) * row + static_cast<size_t>(x) * 3];
-            p[0] = static_cast<char>(40); p[1] = static_cast<char>(90 + (x * 7 % 60)); p[2] = static_cast<char>(140 + (y * 5 % 80));
-        }
-    return b;
-}
-std::string Tga32(int w, int h)
-{
-    std::string t = {0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, static_cast<char>(w & 0xff), static_cast<char>(w >> 8), static_cast<char>(h & 0xff), static_cast<char>(h >> 8), 32, 0x28};
-    for (int i = 0; i < w * h; ++i) { t += static_cast<char>(150); t += static_cast<char>(150); t += static_cast<char>(160); t += static_cast<char>(255); }
-    return t;
-}
-// The window's picture (PrintWindow), with `over` drawn on top where it sits, as a 24-bit BMP.
-void CaptureWindows(HWND base, HWND over, const std::filesystem::path& file)
-{
-    RECT b{}, o{};
-    GetWindowRect(base, &b);
-    const int w = b.right - b.left, h = b.bottom - b.top;
-    HDC screen = GetDC(nullptr);
-    HDC dc = CreateCompatibleDC(screen);
-    BITMAPINFO info{};
-    info.bmiHeader = {sizeof(BITMAPINFOHEADER), w, -h, 1, 24, BI_RGB};
-    void* bits = nullptr;
-    HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
-    auto old = SelectObject(dc, bitmap);
-    {
-        // PrintWindow draws into a screen-compatible bitmap, not straight into a DIB section.
-        HDC bdc = CreateCompatibleDC(screen);
-        HBITMAP bb = CreateCompatibleBitmap(screen, w, h);
-        auto bold = SelectObject(bdc, bb);
-        PrintWindow(base, bdc, 2);
-        BitBlt(dc, 0, 0, w, h, bdc, 0, 0, SRCCOPY);
-        SelectObject(bdc, bold);
-        DeleteObject(bb);
-        DeleteDC(bdc);
-    }
-    if (over)
-    {
-        GetWindowRect(over, &o);
-        HDC odc = CreateCompatibleDC(screen);
-        HBITMAP ob = CreateCompatibleBitmap(screen, o.right - o.left, o.bottom - o.top);
-        auto oold = SelectObject(odc, ob);
-        PrintWindow(over, odc, 2);
-        BitBlt(dc, o.left - b.left, o.top - b.top, o.right - o.left, o.bottom - o.top, odc, 0, 0, SRCCOPY);
-        SelectObject(odc, oold);
-        DeleteObject(ob);
-        DeleteDC(odc);
-    }
-    GdiFlush();
-    const int row = (w * 3 + 3) & ~3;
-    std::string out(54, '\0');
-    auto u32 = [&](size_t at, uint32_t v) { for (int k = 0; k < 4; ++k) out[at + k] = static_cast<char>((v >> (8 * k)) & 0xff); };
-    out[0] = 'B'; out[1] = 'M';
-    u32(2, static_cast<uint32_t>(54 + row * h)); u32(10, 54); u32(14, 40); u32(18, static_cast<uint32_t>(w)); u32(22, static_cast<uint32_t>(-h));
-    out[26] = 1; out[28] = 24;
-    out.append(static_cast<const char*>(bits), static_cast<size_t>(row) * h);
-    WriteFile(file, out);
-// ---- Reachability: Build > Reachability Map works out where each team walks, a few steps at a
-// time; Map Check shows that it is being worked out and refreshes with its rows when it ends; the
-// menu item cancels a run going on.
-// A window as it is drawn, saved as a 24-bit BMP (shot=<folder> in -Extra).
-void SaveShot(HWND w, const std::string& name)
-{
-    const auto folder = Ini("shot");
-    if (folder.empty() || !w) return;
-    RECT r{};
-    GetWindowRect(w, &r);
-    const int width = r.right - r.left, height = r.bottom - r.top;
-    HDC screen = GetDC(nullptr), dc = CreateCompatibleDC(screen);
-    BITMAPINFO info{};
-    info.bmiHeader = {sizeof(BITMAPINFOHEADER), width, height, 1, 24, BI_RGB};
-    void* bits = nullptr;
-    HBITMAP bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
-    auto old = SelectObject(dc, bitmap);
-    // The full content first (the Direct3D viewports); a plain print when that comes back black.
-    const DWORD stride = (static_cast<DWORD>(width) * 3 + 3) & ~3u, size = stride * static_cast<DWORD>(height);
-    auto black = [&] { GdiFlush(); for (DWORD i = 0; i < size; i += 97) if (static_cast<unsigned char*>(bits)[i]) return false; return true; };
-    if (!PrintWindow(w, dc, 2) || black()) PrintWindow(w, dc, 0);
-    Info("shot", name + (black() ? " black" : " ok"));
-    BITMAPFILEHEADER file{0x4D42, static_cast<DWORD>(sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + size), 0, 0, sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER)};
-    FILE* f = nullptr;
-    if (!fopen_s(&f, (folder + "\\" + name + ".bmp").c_str(), "wb") && f)
-    {
-        fwrite(&file, sizeof(file), 1, f);
-        fwrite(&info.bmiHeader, sizeof(info.bmiHeader), 1, f);
-        fwrite(bits, 1, size, f);
-        fclose(f);
-    }
     SelectObject(dc, old);
     DeleteObject(bitmap);
     DeleteDC(dc);
@@ -1073,6 +889,77 @@ void PrefabsSuite()
         SelectOnly({lamp});
         Command(41542);
         Check(BoxContains("Select an actor of a linked prefab"), "prefab-unlinked-refuses-update");
+    }
+}
+
+// ---- Light and Shadow Map: sampling with static meshes, kept work after edits, the settings
+// switches, and a picture of the map and its settings window for the report.
+std::uintmax_t LogSize()
+{
+    std::error_code ignored;
+    return std::filesystem::file_size(directory / "Reloaded.Editor.dll.log", ignored);
+}
+// The last "LightShadowMap: ... patches" line the editor wrote after a point in its log.
+std::string LastShadowLine(std::uintmax_t from)
+{
+    std::ifstream log(directory / "Reloaded.Editor.dll.log", std::ios::binary);
+    log.seekg(static_cast<std::streamoff>(from));
+    std::string line, last;
+    while (std::getline(log, line))
+        if (line.find("LightShadowMap: ") != std::string::npos && line.find(" patches") != std::string::npos) last = line;
+    return last;
+}
+long long NumberBefore(const std::string& text, const std::string& word)
+{
+    const auto at = text.find(word);
+    if (at == std::string::npos) return -1;
+    size_t start = at;
+    while (start > 0 && isdigit(static_cast<unsigned char>(text[start - 1]))) --start;
+    return start < at ? std::stoll(text.substr(start, at - start)) : -1;
+}
+// The window as drawn (viewports included), as a 24-bit BMP.
+bool SaveWindowPicture(HWND w, const std::filesystem::path& file)
+{
+    RECT r{};
+    GetWindowRect(w, &r);
+    const int width = r.right - r.left, height = r.bottom - r.top;
+    if (width <= 0 || height <= 0) return false;
+    HDC screen = GetDC(nullptr);
+    HDC dc = CreateCompatibleDC(screen);
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(info.bmiHeader);
+    info.bmiHeader.biWidth = width;
+    info.bmiHeader.biHeight = height;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 24;
+    void* bits = nullptr;
+    HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    HGDIOBJ old = SelectObject(dc, bitmap);
+    BOOL printed = PrintWindow(w, dc, 2 /* PW_RENDERFULLCONTENT */);
+    GdiFlush();
+    const DWORD stride = (DWORD(width) * 3 + 3) & ~3u, size = stride * DWORD(height);
+    // Some windows print nothing; then copy what the window itself shows.
+    bool blank = true;
+    for (DWORD i = 0; i < size && blank; i += 97) blank = static_cast<const unsigned char*>(bits)[i] == 0;
+    if (blank)
+    {
+        HDC own = GetWindowDC(w);
+        printed = BitBlt(dc, 0, 0, width, height, own, 0, 0, SRCCOPY);
+        ReleaseDC(w, own);
+        GdiFlush();
+    }
+    BITMAPFILEHEADER header{};
+    header.bfType = 0x4D42;
+    header.bfOffBits = sizeof(header) + sizeof(info.bmiHeader);
+    header.bfSize = header.bfOffBits + size;
+    std::ofstream out(file, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    out.write(reinterpret_cast<const char*>(&info.bmiHeader), sizeof(info.bmiHeader));
+    out.write(static_cast<const char*>(bits), size);
+    SelectObject(dc, old);
+    DeleteObject(bitmap);
+    DeleteDC(dc);
+    ReleaseDC(nullptr, screen);
     return printed && out.good();
 }
 void LightShadowSuite()
@@ -1175,6 +1062,8 @@ void LightShadowSuite()
              + std::to_string(frame.top) + "," + std::to_string(frame.right) + "," + std::to_string(frame.bottom));
         CloseWindowAndWait(settings);
     }
+}
+
 // ---- Map to OBJ: File > Export holds the stock Export... and Map to OBJ...; an export writes an OBJ
 // whose faces all point at vertices it wrote, materials the MTL defines and textures that are PNGs on
 // disk; Selection only keeps to the selected static mesh actors; the folder is offered again.
@@ -1343,6 +1232,108 @@ void ObjExportSuite()
     w = OpenedWindow("Export Map to OBJ");
     Check(w && WindowText(GetDlgItem(w, 301)) == full.string(), "objexport-folder-remembered", w ? WindowText(GetDlgItem(w, 301)) : "not open");
     if (w) CloseWindowAndWait(w);
+}
+
+// ---- Import OBJ: a small OBJ with an MTL, a BMP that is not a power of two and a TGA that is, imported with
+// hulls and placed; per-polygon and no collision; a mesh over the game's limit split into parts placed together;
+// the window from File and from the Static Mesh Browser.
+nlohmann::json ImportRequest(const nlohmann::json& request)
+{
+    using Fn = int(__cdecl*)(const char*, char*, unsigned);
+    static Fn fn = reinterpret_cast<Fn>(GetProcAddress(GetModuleHandleA("Reloaded.Editor.dll"), "ReloadedWorkflowRequest"));
+    if (!fn) return {{"ok", false}, {"error", "no ReloadedWorkflowRequest"}};
+    std::vector<char> out(1 << 20);
+    const int r = fn(request.dump().c_str(), out.data(), static_cast<unsigned>(out.size()));
+    if (r < 0) { out.resize(static_cast<size_t>(-r)); fn(request.dump().c_str(), out.data(), static_cast<unsigned>(out.size())); }
+    return nlohmann::json::parse(out.data());
+}
+void WriteFile(const std::filesystem::path& file, const std::string& bytes)
+{
+    std::ofstream out(file, std::ios::binary);
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+}
+// A box's OBJ faces (counter-clockwise from outside), its corners from vertex `base` + 1.
+std::string ObjBox(double x0, double y0, double z0, double x1, double y1, double z1, int base)
+{
+    std::ostringstream o;
+    for (int i = 0; i < 8; ++i) o << "v " << ((i & 1) ? x1 : x0) << " " << ((i & 2) ? y1 : y0) << " " << ((i & 4) ? z1 : z0) << "\n";
+    const int quads[6][4] = {{0, 2, 3, 1}, {4, 5, 7, 6}, {0, 1, 5, 4}, {2, 6, 7, 3}, {0, 4, 6, 2}, {1, 3, 7, 5}};
+    for (const auto& q : quads)
+        o << "f " << q[0] + 1 + base << "/1 " << q[1] + 1 + base << "/2 " << q[2] + 1 + base << "/3 " << q[3] + 1 + base << "/4\n";
+    return o.str();
+}
+std::string Bmp24(int w, int h)
+{
+    const int row = (w * 3 + 3) & ~3;
+    std::string b(54 + static_cast<size_t>(row) * h, '\0');
+    auto u32 = [&](size_t at, uint32_t v) { for (int k = 0; k < 4; ++k) b[at + k] = static_cast<char>((v >> (8 * k)) & 0xff); };
+    b[0] = 'B'; b[1] = 'M';
+    u32(2, static_cast<uint32_t>(b.size())); u32(10, 54); u32(14, 40); u32(18, static_cast<uint32_t>(w)); u32(22, static_cast<uint32_t>(h));
+    b[26] = 1; b[28] = 24;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+        {
+            char* p = &b[54 + static_cast<size_t>(y) * row + static_cast<size_t>(x) * 3];
+            p[0] = static_cast<char>(40); p[1] = static_cast<char>(90 + (x * 7 % 60)); p[2] = static_cast<char>(140 + (y * 5 % 80));
+        }
+    return b;
+}
+std::string Tga32(int w, int h)
+{
+    std::string t = {0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, static_cast<char>(w & 0xff), static_cast<char>(w >> 8), static_cast<char>(h & 0xff), static_cast<char>(h >> 8), 32, 0x28};
+    for (int i = 0; i < w * h; ++i) { t += static_cast<char>(150); t += static_cast<char>(150); t += static_cast<char>(160); t += static_cast<char>(255); }
+    return t;
+}
+// The window's picture (PrintWindow), with `over` drawn on top where it sits, as a 24-bit BMP.
+void CaptureWindows(HWND base, HWND over, const std::filesystem::path& file)
+{
+    RECT b{}, o{};
+    GetWindowRect(base, &b);
+    const int w = b.right - b.left, h = b.bottom - b.top;
+    HDC screen = GetDC(nullptr);
+    HDC dc = CreateCompatibleDC(screen);
+    BITMAPINFO info{};
+    info.bmiHeader = {sizeof(BITMAPINFOHEADER), w, -h, 1, 24, BI_RGB};
+    void* bits = nullptr;
+    HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    auto old = SelectObject(dc, bitmap);
+    {
+        // PrintWindow draws into a screen-compatible bitmap, not straight into a DIB section.
+        HDC bdc = CreateCompatibleDC(screen);
+        HBITMAP bb = CreateCompatibleBitmap(screen, w, h);
+        auto bold = SelectObject(bdc, bb);
+        PrintWindow(base, bdc, 2);
+        BitBlt(dc, 0, 0, w, h, bdc, 0, 0, SRCCOPY);
+        SelectObject(bdc, bold);
+        DeleteObject(bb);
+        DeleteDC(bdc);
+    }
+    if (over)
+    {
+        GetWindowRect(over, &o);
+        HDC odc = CreateCompatibleDC(screen);
+        HBITMAP ob = CreateCompatibleBitmap(screen, o.right - o.left, o.bottom - o.top);
+        auto oold = SelectObject(odc, ob);
+        PrintWindow(over, odc, 2);
+        BitBlt(dc, o.left - b.left, o.top - b.top, o.right - o.left, o.bottom - o.top, odc, 0, 0, SRCCOPY);
+        SelectObject(odc, oold);
+        DeleteObject(ob);
+        DeleteDC(odc);
+    }
+    GdiFlush();
+    const int row = (w * 3 + 3) & ~3;
+    std::string out(54, '\0');
+    auto u32 = [&](size_t at, uint32_t v) { for (int k = 0; k < 4; ++k) out[at + k] = static_cast<char>((v >> (8 * k)) & 0xff); };
+    out[0] = 'B'; out[1] = 'M';
+    u32(2, static_cast<uint32_t>(54 + row * h)); u32(10, 54); u32(14, 40); u32(18, static_cast<uint32_t>(w)); u32(22, static_cast<uint32_t>(-h));
+    out[26] = 1; out[28] = 24;
+    out.append(static_cast<const char*>(bits), static_cast<size_t>(row) * h);
+    WriteFile(file, out);
+    SelectObject(dc, old);
+    DeleteObject(bitmap);
+    DeleteDC(dc);
+    ReleaseDC(nullptr, screen);
+}
 // The window whose menu bar (or one of its popups) holds the command.
 HWND MenuOwner(UINT command)
 {
@@ -1358,99 +1349,6 @@ HWND MenuOwner(UINT command)
             return false;
         };
         if (IsWindowVisible(w) && has(GetMenu(w)) && w != frameWindow) { s->r = w; return FALSE; }
-// ---- Appearance: a picture of the whole editor (frame, browsers, a property window), for comparing the
-// Classic / Modern Light / Modern Dark settings. Every window of the editor is captured on its own
-// (PrintWindow) and drawn where it sits on screen, onto a canvas the size of the frame: nothing else on
-// the desktop is in the picture.
-void MenuItems(HMENU menu, const std::string& path, std::vector<std::pair<std::string, UINT>>& out)
-{
-    for (int i = 0, n = GetMenuItemCount(menu); i < n; ++i)
-    {
-        char text[256] = {};
-        GetMenuStringA(menu, i, text, sizeof(text), MF_BYPOSITION);
-        std::string label;
-        for (const char* c = text; *c; ++c) if (*c != '&') label += *c;
-        if (HMENU sub = GetSubMenu(menu, i)) MenuItems(sub, path + label + " > ", out);
-        else if (const UINT id = GetMenuItemID(menu, i); id && id != UINT(-1)) out.push_back({path + label, id});
-    }
-}
-UINT MenuCommand(const char* text)
-{
-    std::vector<std::pair<std::string, UINT>> items;
-    if (HMENU bar = GetMenu(frameWindow)) MenuItems(bar, "", items);
-    for (auto& [label, id] : items)
-        if (label.find(text) != std::string::npos) return id;
-    return 0;
-}
-bool SavePng(HBITMAP bitmap, const std::wstring& path)
-{
-    Gdiplus::GdiplusStartupInput input;
-    ULONG_PTR token = 0;
-    if (Gdiplus::GdiplusStartup(&token, &input, nullptr) != Gdiplus::Ok) return false;
-    bool ok = false;
-    {
-        Gdiplus::Bitmap image(bitmap, nullptr);
-        UINT count = 0, size = 0;
-        Gdiplus::GetImageEncodersSize(&count, &size);
-        std::vector<unsigned char> buffer(size);
-        auto encoders = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buffer.data());
-        Gdiplus::GetImageEncoders(count, size, encoders);
-        for (UINT i = 0; i < count; ++i)
-            if (!wcscmp(encoders[i].MimeType, L"image/png"))
-                ok = image.Save(path.c_str(), &encoders[i].Clsid, nullptr) == Gdiplus::Ok;
-    }
-    Gdiplus::GdiplusShutdown(token);
-    return ok;
-}
-bool CaptureEditor(const std::wstring& path)
-{
-    RECT frame{};
-    GetWindowRect(frameWindow, &frame);
-    const int width = frame.right - frame.left, height = frame.bottom - frame.top;
-    std::vector<HWND> windows; // top first
-    EnumWindows([](HWND w, LPARAM p) -> BOOL {
-        DWORD process = 0;
-        GetWindowThreadProcessId(w, &process);
-        if (process == GetCurrentProcessId() && IsWindowVisible(w) && !IsIconic(w)) reinterpret_cast<std::vector<HWND>*>(p)->push_back(w);
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&windows));
-    HDC screen = GetDC(nullptr);
-    HDC canvas = CreateCompatibleDC(screen);
-    HBITMAP picture = CreateCompatibleBitmap(screen, width, height);
-    HGDIOBJ old = SelectObject(canvas, picture);
-    RECT all{0, 0, width, height};
-    FillRect(canvas, &all, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
-    for (auto it = windows.rbegin(); it != windows.rend(); ++it)
-    {
-        RECT r{};
-        GetWindowRect(*it, &r);
-        RECT overlap{};
-        if (!IntersectRect(&overlap, &r, &frame)) continue;
-        const int w = r.right - r.left, h = r.bottom - r.top;
-        HDC one = CreateCompatibleDC(screen);
-        HBITMAP shot = CreateCompatibleBitmap(screen, w, h);
-        HGDIOBJ previous = SelectObject(one, shot);
-        PrintWindow(*it, one, PW_RENDERFULLCONTENT);
-        BitBlt(canvas, r.left - frame.left, r.top - frame.top, w, h, one, 0, 0, SRCCOPY);
-        SelectObject(one, previous);
-        DeleteObject(shot);
-        DeleteDC(one);
-    }
-    SelectObject(canvas, old);
-    const bool ok = SavePng(picture, path);
-    DeleteObject(picture);
-    DeleteDC(canvas);
-    ReleaseDC(nullptr, screen);
-    return ok;
-}
-HWND TopWithClassPart(const char* part)
-{
-    struct S { const char* p; HWND r; } s{part, nullptr};
-    EnumThreadWindows(GetCurrentThreadId(), [](HWND w, LPARAM p) -> BOOL {
-        auto s = reinterpret_cast<S*>(p);
-        char c[128] = {};
-        GetClassNameA(w, c, sizeof(c));
-        if (IsWindowVisible(w) && strstr(c, s->p)) { s->r = w; return FALSE; }
         return TRUE;
     }, reinterpret_cast<LPARAM>(&s));
     return s.r;
@@ -1500,7 +1398,7 @@ void ObjImportSuite()
     const std::string wallFile(wallPath.begin(), wallPath.end());
 
     // What it will make.
-    auto preview = Request({{"op", "objimport.preview"}, {"file", crateFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokeCrate"}, {"scale", 100},
+    auto preview = ImportRequest({{"op", "objimport.preview"}, {"file", crateFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokeCrate"}, {"scale", 100},
                             {"up", "y"}, {"collision", "parts"}});
     Info("objimport-preview", preview.dump().substr(0, 1500));
     if (!preview.value("ok", false)) { Fail("objimport-preview", preview.value("error", std::string())); return; }
@@ -1514,7 +1412,7 @@ void ObjImportSuite()
     auto unrealEd = *reinterpret_cast<unsigned char**>(0x117a59b0);
     if (unrealEd) { auto click = reinterpret_cast<float*>(unrealEd + 0x1bc); click[0] = 128; click[1] = -256; click[2] = 64; }
     const auto before = Undo();
-    auto imported = Request({{"op", "objimport.import"}, {"file", crateFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokeCrate"}, {"scale", 100},
+    auto imported = ImportRequest({{"op", "objimport.import"}, {"file", crateFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokeCrate"}, {"scale", 100},
                              {"up", "y"}, {"collision", "parts"}, {"place", true}});
     Info("objimport-import", imported.dump().substr(0, 3000));
     if (!imported.value("ok", false)) { Fail("objimport-import", imported.value("error", std::string())); return; }
@@ -1547,11 +1445,11 @@ void ObjImportSuite()
         Check(actor && std::abs(at.x - 128) < 0.01 && std::abs(at.y + 256) < 0.01 && std::abs(at.z - 64) < 0.01 && mesh == "SmokeCrate", "objimport-actor",
               path + " at " + Fixed(at.x) + "," + Fixed(at.y) + "," + Fixed(at.z) + " mesh " + mesh);
     }
-    auto again = Request({{"op", "objimport.import"}, {"file", crateFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokeCrate"}, {"scale", 100}});
+    auto again = ImportRequest({{"op", "objimport.import"}, {"file", crateFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokeCrate"}, {"scale", 100}});
     Check(!again.value("ok", true) && again.value("error", std::string()).find("exists already") != std::string::npos, "objimport-name-taken", again.dump());
 
     // Per polygon and no collision.
-    auto poly = Request({{"op", "objimport.import"}, {"file", crateFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokePoly"}, {"scale", 100},
+    auto poly = ImportRequest({{"op", "objimport.import"}, {"file", crateFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokePoly"}, {"scale", 100},
                          {"collision", "polygons"}});
     Info("objimport-polygons", poly.dump().substr(0, 1500));
     if (poly.value("ok", false))
@@ -1561,7 +1459,7 @@ void ObjImportSuite()
               "hull " + q.at("hullTriangles").dump() + " polygon " + q.at("polygonCollision").dump());
     }
     else Fail("objimport-per-polygon", poly.value("error", std::string()));
-    auto none = Request({{"op", "objimport.import"}, {"file", crateFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokeNone"}, {"scale", 100},
+    auto none = ImportRequest({{"op", "objimport.import"}, {"file", crateFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokeNone"}, {"scale", 100},
                          {"collision", "none"}});
     Info("objimport-none", none.dump().substr(0, 1500));
     if (none.value("ok", false))
@@ -1576,7 +1474,7 @@ void ObjImportSuite()
 
     // Over the limit: split into parts, placed together, one Undo step.
     const auto beforeWall = Undo();
-    auto wall = Request({{"op", "objimport.import"}, {"file", wallFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokeWall"}, {"scale", 100},
+    auto wall = ImportRequest({{"op", "objimport.import"}, {"file", wallFile}, {"package", "MyLevel"}, {"group", "ObjTest"}, {"name", "SmokeWall"}, {"scale", 100},
                          {"collision", "polygons"}, {"split", true}, {"place", true}});
     Info("objimport-split", wall.dump().substr(0, 3000));
     if (wall.value("ok", false))
@@ -1595,7 +1493,7 @@ void ObjImportSuite()
               std::to_string(beforeWall.count) + " -> " + std::to_string(afterWall.count));
     }
     else Fail("objimport-split-placed", wall.value("error", std::string()));
-    auto refused = Request({{"op", "objimport.preview"}, {"file", wallFile}, {"name", "SmokeWall2"}, {"collision", "polygons"}, {"split", false}});
+    auto refused = ImportRequest({{"op", "objimport.preview"}, {"file", wallFile}, {"name", "SmokeWall2"}, {"collision", "polygons"}, {"split", false}});
     Check(refused.value("ok", false) && refused.at("result").at("error").get<std::string>().find("crashes the game") != std::string::npos, "objimport-limit-without-split",
           refused.dump().substr(0, 400));
 
@@ -1658,6 +1556,44 @@ void ObjImportSuite()
         dialogHandler = nullptr;
         Check(opened, "objimport-browser-opens-window");
     }
+}
+
+// ---- Reachability: Build > Reachability Map works out where each team walks, a few steps at a
+// time; Map Check shows that it is being worked out and refreshes with its rows when it ends; the
+// menu item cancels a run going on.
+// A window as it is drawn, saved as a 24-bit BMP (shot=<folder> in -Extra).
+void SaveShot(HWND w, const std::string& name)
+{
+    const auto folder = Ini("shot");
+    if (folder.empty() || !w) return;
+    RECT r{};
+    GetWindowRect(w, &r);
+    const int width = r.right - r.left, height = r.bottom - r.top;
+    HDC screen = GetDC(nullptr), dc = CreateCompatibleDC(screen);
+    BITMAPINFO info{};
+    info.bmiHeader = {sizeof(BITMAPINFOHEADER), width, height, 1, 24, BI_RGB};
+    void* bits = nullptr;
+    HBITMAP bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    auto old = SelectObject(dc, bitmap);
+    // The full content first (the Direct3D viewports); a plain print when that comes back black.
+    const DWORD stride = (static_cast<DWORD>(width) * 3 + 3) & ~3u, size = stride * static_cast<DWORD>(height);
+    auto black = [&] { GdiFlush(); for (DWORD i = 0; i < size; i += 97) if (static_cast<unsigned char*>(bits)[i]) return false; return true; };
+    if (!PrintWindow(w, dc, 2) || black()) PrintWindow(w, dc, 0);
+    Info("shot", name + (black() ? " black" : " ok"));
+    BITMAPFILEHEADER file{0x4D42, static_cast<DWORD>(sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + size), 0, 0, sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER)};
+    FILE* f = nullptr;
+    if (!fopen_s(&f, (folder + "\\" + name + ".bmp").c_str(), "wb") && f)
+    {
+        fwrite(&file, sizeof(file), 1, f);
+        fwrite(&info.bmiHeader, sizeof(info.bmiHeader), 1, f);
+        fwrite(bits, 1, size, f);
+        fclose(f);
+    }
+    SelectObject(dc, old);
+    DeleteObject(bitmap);
+    DeleteDC(dc);
+    ReleaseDC(nullptr, screen);
+}
 std::vector<std::string> ReachRows(HWND check)
 {
     std::vector<std::string> rows;
@@ -1763,6 +1699,8 @@ void ReachSuite()
     }
     else Fail("reach-map-design-layer", "Map Design did not open");
     CloseWindowAndWait(check);
+}
+
 // ---- Map Outliner: every actor listed in a virtual list, a search over all columns, grouping, a
 // click selecting in the editor and the list following the editor's selection, Hide / Show in one
 // Undo step each, Delete asking first and deleting in one Undo step that Undo brings back, and the
@@ -2016,6 +1954,8 @@ void OutlinerSuite()
         Pump(15000);
     }
     if (again) CloseWindowAndWait(again);
+}
+
 // ---- Scatter Props: a circle round a player start and the builder brush's footprint are filled with a small
 // mesh from the map, placed as one Undo step in the Scatter group, and one Undo takes them all away again.
 namespace scatter
@@ -2237,6 +2177,8 @@ void ScatterSuite()
         CloseWindowAndWait(again);
     }
     else Fail("scatter-reopen", "did not open again");
+}
+
 // ---- Compare with Backup: File > Save keeps a backup; then a mesh is moved, another deleted and a light's
 // brightness changed. The comparison lists all three, with the backup's value beside the map's; one ticked row
 // (the deleted mesh) comes back as one Undo step and Undo takes it away again; then Tick All brings back the
@@ -2244,7 +2186,7 @@ void ScatterSuite()
 constexpr UINT CompareBackupCommand = 41600; // File > Compare with Backup...
 // With shot=<file.bmp> in -Extra: the editor frame with a tool window drawn over it where it is, both by
 // PrintWindow (never the screen).
-void SaveShot(HWND tool, const std::string& file)
+void SaveFrameShot(HWND tool, const std::string& file)
 {
     RECT frameRect{}, toolRect{};
     GetWindowRect(frameWindow, &frameRect);
@@ -2431,7 +2373,7 @@ void CompareSuite()
                 SendMessageA(list, LVM_SETITEMSTATE, moved, reinterpret_cast<LPARAM>(&item));
             }
             Pump(1500);
-            SaveShot(GetParent(list), shot);
+            SaveFrameShot(GetParent(list), shot);
         }
         return true;
     });
@@ -2462,6 +2404,8 @@ void CompareSuite()
     Exec("TRANSACTION UNDO");
     Pump(500);
     Check(ActorNamed(lightName) && std::fabs(ReadFloat(ActorNamed(lightName), "LightBrightness") - (brightness + 7)) < 0.01f, "compare-undo-all", "undo '" + Undo().current + "'");
+}
+
 // ---- Map Check, static mesh collision: the rows match the meshes' own counts read here, and a row
 // selects every actor using its mesh (a double-click frames them). Run it on a map with heavy meshes.
 struct MeshCounts { int poly = 0, polyNodes = 0, hull = 0, hullNodes = 0; std::vector<unsigned char*> users; };
@@ -2587,6 +2531,7 @@ void CollisionSuite()
     }
     if (check && Ini("keepopen") != "1") CloseWindowAndWait(check);
 }
+
 // ---- RE+'s JSON bridge (ReloadedWorkflowRequest), on the UI thread like the windows call it.
 nlohmann::json Workflow(const nlohmann::json& request)
 {
@@ -2616,6 +2561,103 @@ bool IsKindOf(unsigned char* object, const char* cls)
 
 #include "SmokeMover.inl"
 
+// ---- Appearance: a picture of the whole editor (frame, browsers, a property window), for comparing the
+// Classic / Modern Light / Modern Dark settings. Every window of the editor is captured on its own
+// (PrintWindow) and drawn where it sits on screen, onto a canvas the size of the frame: nothing else on
+// the desktop is in the picture.
+void MenuItems(HMENU menu, const std::string& path, std::vector<std::pair<std::string, UINT>>& out)
+{
+    for (int i = 0, n = GetMenuItemCount(menu); i < n; ++i)
+    {
+        char text[256] = {};
+        GetMenuStringA(menu, i, text, sizeof(text), MF_BYPOSITION);
+        std::string label;
+        for (const char* c = text; *c; ++c) if (*c != '&') label += *c;
+        if (HMENU sub = GetSubMenu(menu, i)) MenuItems(sub, path + label + " > ", out);
+        else if (const UINT id = GetMenuItemID(menu, i); id && id != UINT(-1)) out.push_back({path + label, id});
+    }
+}
+UINT MenuCommand(const char* text)
+{
+    std::vector<std::pair<std::string, UINT>> items;
+    if (HMENU bar = GetMenu(frameWindow)) MenuItems(bar, "", items);
+    for (auto& [label, id] : items)
+        if (label.find(text) != std::string::npos) return id;
+    return 0;
+}
+bool SavePng(HBITMAP bitmap, const std::wstring& path)
+{
+    Gdiplus::GdiplusStartupInput input;
+    ULONG_PTR token = 0;
+    if (Gdiplus::GdiplusStartup(&token, &input, nullptr) != Gdiplus::Ok) return false;
+    bool ok = false;
+    {
+        Gdiplus::Bitmap image(bitmap, nullptr);
+        UINT count = 0, size = 0;
+        Gdiplus::GetImageEncodersSize(&count, &size);
+        std::vector<unsigned char> buffer(size);
+        auto encoders = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buffer.data());
+        Gdiplus::GetImageEncoders(count, size, encoders);
+        for (UINT i = 0; i < count; ++i)
+            if (!wcscmp(encoders[i].MimeType, L"image/png"))
+                ok = image.Save(path.c_str(), &encoders[i].Clsid, nullptr) == Gdiplus::Ok;
+    }
+    Gdiplus::GdiplusShutdown(token);
+    return ok;
+}
+bool CaptureEditor(const std::wstring& path)
+{
+    RECT frame{};
+    GetWindowRect(frameWindow, &frame);
+    const int width = frame.right - frame.left, height = frame.bottom - frame.top;
+    std::vector<HWND> windows; // top first
+    EnumWindows([](HWND w, LPARAM p) -> BOOL {
+        DWORD process = 0;
+        GetWindowThreadProcessId(w, &process);
+        if (process == GetCurrentProcessId() && IsWindowVisible(w) && !IsIconic(w)) reinterpret_cast<std::vector<HWND>*>(p)->push_back(w);
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&windows));
+    HDC screen = GetDC(nullptr);
+    HDC canvas = CreateCompatibleDC(screen);
+    HBITMAP picture = CreateCompatibleBitmap(screen, width, height);
+    HGDIOBJ old = SelectObject(canvas, picture);
+    RECT all{0, 0, width, height};
+    FillRect(canvas, &all, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+    for (auto it = windows.rbegin(); it != windows.rend(); ++it)
+    {
+        RECT r{};
+        GetWindowRect(*it, &r);
+        RECT overlap{};
+        if (!IntersectRect(&overlap, &r, &frame)) continue;
+        const int w = r.right - r.left, h = r.bottom - r.top;
+        HDC one = CreateCompatibleDC(screen);
+        HBITMAP shot = CreateCompatibleBitmap(screen, w, h);
+        HGDIOBJ previous = SelectObject(one, shot);
+        PrintWindow(*it, one, PW_RENDERFULLCONTENT);
+        BitBlt(canvas, r.left - frame.left, r.top - frame.top, w, h, one, 0, 0, SRCCOPY);
+        SelectObject(one, previous);
+        DeleteObject(shot);
+        DeleteDC(one);
+    }
+    SelectObject(canvas, old);
+    const bool ok = SavePng(picture, path);
+    DeleteObject(picture);
+    DeleteDC(canvas);
+    ReleaseDC(nullptr, screen);
+    return ok;
+}
+HWND TopWithClassPart(const char* part)
+{
+    struct S { const char* p; HWND r; } s{part, nullptr};
+    EnumThreadWindows(GetCurrentThreadId(), [](HWND w, LPARAM p) -> BOOL {
+        auto s = reinterpret_cast<S*>(p);
+        char c[128] = {};
+        GetClassNameA(w, c, sizeof(c));
+        if (IsWindowVisible(w) && strstr(c, s->p)) { s->r = w; return FALSE; }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&s));
+    return s.r;
+}
 void AppearanceSuite()
 {
     ShowWindow(frameWindow, SW_RESTORE);

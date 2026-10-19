@@ -233,27 +233,27 @@ if errorlevel 1 goto failed
 if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\SoftBodyStepModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\SoftBodyStepModelTests.exe"
 if errorlevel 1 goto failed
+"%TEMP%\SoftBodyStepModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\MapOutlinerModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MapOutlinerModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\MapOutlinerModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\AppearanceModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\AppearanceModelTests.exe" /link user32.lib gdi32.lib
 if errorlevel 1 goto failed
 "%TEMP%\AppearanceModelTests.exe"
 if errorlevel 1 goto failed
-"%TEMP%\SoftBodyStepModelTests.exe"
-if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\CommandPaletteModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\CommandPaletteModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\CommandPaletteModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\ObjExportModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\ObjExportModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\ObjExportModelTests.exe"
+if errorlevel 1 goto failed
 cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\ObjImportModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\ObjImportModelTests.exe"
 if errorlevel 1 goto failed
 "%TEMP%\ObjImportModelTests.exe"
-cl /nologo /std:c++20 /W4 /WX /EHsc /MT /O2 tests\MapOutlinerModelTests.cpp /Fo"%TEMP%\\" /Fe"%TEMP%\MapOutlinerModelTests.exe"
-if errorlevel 1 goto failed
-"%TEMP%\MapOutlinerModelTests.exe"
 if errorlevel 1 goto failed
 popd
 exit /b 0

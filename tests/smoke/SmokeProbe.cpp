@@ -17,7 +17,6 @@
 #include <vector>
 #include <cmath>
 #include <dlgs.h>
-#include <set>
 #include <share.h>
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -312,6 +311,13 @@ void RunAll()
     Line("DONE", "failures", std::to_string(failures));
     if (report) fclose(report);
     report = nullptr;
+    // A suite that asked for it leaves the editor running that long first: its viewports only draw from the
+    // editor's own loop, which this one keeps waiting, so a picture of them is taken then.
+    if (finishAfter)
+    {
+        SetTimer(nullptr, 0, finishAfter, [](HWND, UINT, UINT_PTR, DWORD) { TerminateProcess(GetCurrentProcess(), failures ? 3 : 0); });
+        return;
+    }
     // hold=<seconds> in -Extra: give the editor back its own loop for a while, so the viewports
     // repaint, then save pictures of the frame and the tool windows (shot=<folder>) and end.
     if (const int hold = atoi(Ini("hold").c_str()); hold > 0)
@@ -373,9 +379,11 @@ DWORD WINAPI WaitUntilReady(void*)
             DWORD_PTR result = 0;
             // A UI thread still busy starting up counts as hung and the message is not sent;
             // with several editors starting at once that can last a while, so try again.
-            for (int tries = 0; hook && tries < 40; ++tries)
+            for (int tries = 0; hook && tries < 60; ++tries)
             {
                 if (SendMessageTimeoutA(frameWindow, kRun, 0, 0, SMTO_ABORTIFHUNG, 1800000, &result)) return 0;
+                if (!hook) return 0; // the run started, and unhooked itself
+                Info("startup-retry", "error " + std::to_string(GetLastError()));
                 Sleep(3000);
             }
             Fail("startup", "could not run on the UI thread (error " + std::to_string(GetLastError()) + ")");
