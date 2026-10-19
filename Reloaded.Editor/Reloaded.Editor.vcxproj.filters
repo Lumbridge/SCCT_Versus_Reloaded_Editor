@@ -75,6 +75,9 @@
     <ClInclude Include="EmitterPreview.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CharacterSkinsImage.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CharacterSkinsModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="CompareBackup.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="CompareBackupModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="CompareBackupNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="ConveyorModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="ObjectivePlayersModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="ObjectivePlayersNative.inl"><Filter>Header Files</Filter></ClInclude>
@@ -514,6 +517,7 @@
     <ClCompile Include="CharacterSkinsWindow.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="CharacterSkinPresetsWindow.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="EmitterLibraryWindow.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="CompareBackup.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MapAuthoringDialog.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MagicEventWorkbench.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="CameraNetworkPanel.cpp"><Filter>Source Files</Filter></ClCompile>

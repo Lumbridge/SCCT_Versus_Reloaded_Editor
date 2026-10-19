@@ -11,6 +11,7 @@
 #include "PropertySearch.h"
 #include "UndoHistory.h"
 #include "FavoritesWindow.h"
+#include "CompareBackup.h"
 #include "LightingBudget.h"
 #include "MapCheck.h"
 #include "RenderBudget.h"
@@ -1458,6 +1459,11 @@ bool HandleCommand(UINT command)
     if(command==FavoritesWindow::kOpen)
     {
         try{FavoritesWindow::Open();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Favorites",MB_OK|MB_ICONERROR);}
+        return true;
+    }
+    if(command==CompareBackup::kCompare)
+    {
+        try{CompareBackup::Open(Editor::MainWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Compare with Backup",MB_OK|MB_ICONERROR);}
         return true;
     }
     if(MeasureTool::HandleCommand(command))return true;

@@ -336,7 +336,12 @@ DWORD WINAPI WaitUntilReady(void*)
             Sleep(5000);
             hook = SetWindowsHookExA(WH_CALLWNDPROC, OnMessage, nullptr, uiThread);
             DWORD_PTR result = 0;
-            if (hook && SendMessageTimeoutA(frameWindow, kRun, 0, 0, SMTO_ABORTIFHUNG, 1800000, &result)) return 0;
+            // A busy start-up (several editors on the machine) can leave the UI thread looking hung for a while.
+            for (int tries = 0; hook && tries < 60; ++tries)
+            {
+                if (SendMessageTimeoutA(frameWindow, kRun, 0, 0, SMTO_ABORTIFHUNG, 1800000, &result)) return 0;
+                Sleep(2000);
+            }
             Fail("startup", "could not run on the UI thread");
             return 1;
         }

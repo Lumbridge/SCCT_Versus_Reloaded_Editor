@@ -82,7 +82,14 @@ namespace Workflow::Editor
     // mutations reject stale snapshots and use one native transaction.
     Json ExportMapAuthoring();
     Json PreviewMapAuthoring(const Json& document);
-    Json ApplyMapAuthoring(const Json& document);
+    Json ApplyMapAuthoring(const Json& document, const char* label = "Import map JSON changes");
+    // File > Compare with Backup (CompareBackupModel.h). Loads a map file beside the open map under a package
+    // name of its own, reads both levels' actors the way Map JSON export does, unloads the copy and returns
+    // {rows, tally, current, backup, ...}: what differs, the backup's values as "before".
+    Json CompareWithMapFile(const std::filesystem::path& file);
+    // Brings back the given rows of that comparison through the Map JSON import, as one Undo step. Refuses
+    // when the map changed since the comparison.
+    Json BringBackFromComparison(const Json& comparison, const std::vector<size_t>& rows);
     Json EventClasses();
     Json CameraNetworks();
     void OrderCameras(const Json& snapshot,const Json& paths,bool loop,const std::string& detach = "");
