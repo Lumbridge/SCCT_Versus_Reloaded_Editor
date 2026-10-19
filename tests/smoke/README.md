@@ -81,3 +81,10 @@ The suites save the map, so give each run fresh copies of the maps.
   selects every copy of that mesh and a double-click frames them; a zone row
   narrows the list to that zone's meshes and the Whole map row widens it again;
   the list switches back to the hotspots.
+- `prefabs`: two meshes (one Tagged, the other's Event on that Tag) saved as an
+  assembly and placed linked twice, one turned: one Undo step each, fresh Tags
+  per copy, 2 linked instances in the Actor Assemblies list; Select Instance
+  and Select All Instances; the second copy moved, a mesh of the first lifted
+  and Update Prefab from This Instance rebuilds the second where it stands in
+  one Undo step, which Undo takes back; both copies are still linked after
+  File > Save and Open Recent; Break Link drops one, and Update then refuses.

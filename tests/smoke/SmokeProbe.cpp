@@ -336,8 +336,14 @@ DWORD WINAPI WaitUntilReady(void*)
             Sleep(5000);
             hook = SetWindowsHookExA(WH_CALLWNDPROC, OnMessage, nullptr, uiThread);
             DWORD_PTR result = 0;
-            if (hook && SendMessageTimeoutA(frameWindow, kRun, 0, 0, SMTO_ABORTIFHUNG, 1800000, &result)) return 0;
-            Fail("startup", "could not run on the UI thread");
+            // A UI thread still busy starting up counts as hung and the message is not sent;
+            // with several editors starting at once that can last a while, so try again.
+            for (int tries = 0; hook && tries < 40; ++tries)
+            {
+                if (SendMessageTimeoutA(frameWindow, kRun, 0, 0, SMTO_ABORTIFHUNG, 1800000, &result)) return 0;
+                Sleep(3000);
+            }
+            Fail("startup", "could not run on the UI thread (error " + std::to_string(GetLastError()) + ")");
             return 1;
         }
         Sleep(250);

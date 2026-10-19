@@ -778,7 +778,7 @@ namespace
     }
     std::string SelectInstance()
     {
-        const auto record=SelectedInstance(); const auto& members=MembersOf(PrefabMembers(),record);
+        const auto record=SelectedInstance(); const auto all=PrefabMembers(); const auto& members=MembersOf(all,record);
         Editor::Select(Identities(members),false);
         const auto* entry=AssemblyEntry(Prefab::AssemblyOf(record));
         return "Selected the "+std::to_string(members.size())+" actors of this instance of '"+(entry?entry->at("name").get<std::string>():std::string("a deleted assembly"))+"' ("+record.at("group").get<std::string>()+").";
@@ -858,7 +858,7 @@ namespace
     // Break Link: the instance's actors leave its Group (one Undo step) and the record goes.
     std::string BreakLink()
     {
-        const auto record=SelectedInstance(); const auto& own=MembersOf(PrefabMembers(),record);
+        const auto record=SelectedInstance(); const auto all=PrefabMembers(); const auto& own=MembersOf(all,record);
         const auto group=record.at("group").get<std::string>();
         if(!own.empty()) Editor::DesignGroupMembers(Identities(own),group,"remove");
         Json next=document; MapInstances(next)=Prefab::WithoutRecord(MapInstances(next),record.at("id"));
