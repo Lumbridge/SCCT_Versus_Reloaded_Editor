@@ -4,6 +4,7 @@
 #include "WorkflowTools.h"
 #include "WindowPlacement.h"
 #include "CharacterSkinsWindow.h"
+#include "ObjImportWindow.h"
 #include "CharacterSkinPresetsWindow.h"
 #include "EmitterLibraryWindow.h"
 #include "EditorExtras.h"
@@ -1590,6 +1591,7 @@ bool HandleCommand(UINT command)
     if(command==MapAuthoringDialog::Export || command==MapAuthoringDialog::Import){MapAuthoringDialog::Open(GetActiveWindow(),command==MapAuthoringDialog::Export);return true;}
     if(command==MagicEventWorkbench::Command){try{MagicEventWorkbench::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"SMagicEvent Workbench",MB_OK|MB_ICONERROR);}return true;}
     if(command==CameraNetworkPanel::Command){try{CameraNetworkPanel::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"SCamNetwork Manager",MB_OK|MB_ICONERROR);}return true;}
+    if(command==ObjImportWindow::Command){try{ObjImportWindow::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Import OBJ",MB_OK|MB_ICONERROR);}return true;}
     if(command==CharacterSkinsWindow::Command){try{CharacterSkinsWindow::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Character Skins",MB_OK|MB_ICONERROR);}return true;}
     if(command==CharacterSkinPresetsWindow::Command){try{CharacterSkinPresetsWindow::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Character Skin Presets",MB_OK|MB_ICONERROR);}return true;}
     if(command==EmitterLibraryWindow::Command){try{EmitterLibraryWindow::Open(GetActiveWindow());}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Emitter Library",MB_OK|MB_ICONERROR);}return true;}
@@ -1653,6 +1655,8 @@ void Initialize()
 static Workflow::Json MoreWorkflowRequests(const std::string& op,const Workflow::Json& q)
 {
     using namespace Workflow;
+    if(op=="objimport.preview") return Editor::ObjImportPreview(q);
+    if(op=="objimport.import") return Editor::ImportObjMesh(q);
     if(op=="objectiveplayers.state") return Editor::ObjectivePlayerRules();
     if(op=="conveyor.state") return Editor::ConveyorState();
     if(op=="conveyor.prepare") {Editor::PrepareConveyors();return Editor::ConveyorState();}

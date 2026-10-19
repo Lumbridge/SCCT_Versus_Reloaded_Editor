@@ -79,6 +79,9 @@
     <ClInclude Include="ObjectivePlayersModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="ObjectivePlayersNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="ConveyorNative.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="ObjImportModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="ObjImportNative.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="ObjImportWindow.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CharacterSkinsWindow.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CharacterSkinPresetsModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="CharacterSkinPresetsWindow.h"><Filter>Header Files</Filter></ClInclude>
@@ -512,6 +515,7 @@
     <ClCompile Include="CharacterPreview.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="EmitterPreview.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="CharacterSkinsWindow.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="ObjImportWindow.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="CharacterSkinPresetsWindow.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="EmitterLibraryWindow.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MapAuthoringDialog.cpp"><Filter>Source Files</Filter></ClCompile>

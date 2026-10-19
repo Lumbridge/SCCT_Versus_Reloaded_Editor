@@ -81,3 +81,12 @@ The suites save the map, so give each run fresh copies of the maps.
   selects every copy of that mesh and a double-click frames them; a zone row
   narrows the list to that zone's meshes and the Whole map row widens it again;
   the list switches back to the hotspots.
+- `objimport`: Import OBJ, on a copy of ShipD. It writes a small OBJ (a crate, a lid and a sign) with
+  an MTL, a 100 x 60 BMP and a 64 x 64 TGA into `System\objimport test`; the preview counts 26 triangles and
+  3 hulls of 36 triangles and plans both images; the import with hulls makes the mesh, the editor keeps 36
+  hull triangles, its bounds are the file's (the hulls land on the mesh), the slots take the imported
+  textures and the default texture, and the placed actor stands at the click point in one Undo step; the
+  same name again is refused; per-polygon collision has no hull and no collision has neither; a wall of
+  12000 triangles is split into three parts placed together in one Undo step, and is refused unsplit;
+  File > Import OBJ Mesh... opens the window, which shows the summary and imports; the Static Mesh
+  Browser's File menu has Import OBJ... and opens it too. Pictures of the window are left in `System`.

@@ -184,6 +184,14 @@ namespace Workflow::Editor
     // The one selected actor when it is a conveyor belt (an identity), else null.
     Json SelectedConveyorBelt();
     size_t SyncConveyorBelts();
+    // Import OBJ (ObjImportModel.h, ObjImportNative.inl). spec: file, package (MyLevel is
+    // the open map), group, name, scale, up ("y"/"z"), collision (none, box, polygons,
+    // groups, parts, file), split, partTriangles, place. Preview reads the files and says
+    // what the import would make (triangles, hulls, parts, each material's source) without
+    // changing anything; Import makes the meshes and, with place, puts them where the
+    // viewport was last clicked in one Undo step.
+    Json ObjImportPreview(const Json& spec);
+    Json ImportObjMesh(const Json& spec);
     // Character Skins (CharacterSkinsModel.h): the map's Character Skins actor.
     // Settings: {placed, legacy, extra, compiled, slots:{SpyBody,...: material path or ""},
     // models:{SpyModel,...: skeletal mesh path or ""}, goggles:{SpyGoggleOffset,...: [x,y,z]}}.

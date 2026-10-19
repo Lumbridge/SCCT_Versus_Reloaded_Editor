@@ -853,6 +853,8 @@ inline Hull MakeHull(const std::vector<Vec3>& points, const Vec3& facing, double
     }
 }
 
+inline std::string Counted(size_t n, const char* one, const char* many) { return std::to_string(n) + " " + (n == 1 ? one : many); }
+
 // ---- building the mesh -----------------------------------------------------------------------
 struct Built
 {
@@ -947,7 +949,7 @@ inline Built Build(const File& file, const Options& options, const std::string& 
     }
     built.collisionObjects = fileHulls.size();
     if (built.mesh.triangles.empty()) throw std::runtime_error("The file has no faces to draw.");
-    if (built.degenerate) built.warnings.push_back(std::to_string(built.degenerate) + " triangles with no area were left out.");
+    if (built.degenerate) built.warnings.push_back(Counted(built.degenerate, "triangle", "triangles") + " with no area left out.");
 
     std::vector<std::pair<std::vector<Vec3>, Vec3>> sets;
     auto collision = options.collision;
@@ -1001,11 +1003,11 @@ inline Built Build(const File& file, const Options& options, const std::string& 
     else if (collision == Collision::File)
         for (auto& [group, points] : fileHulls) sets.push_back({points, fileFacing[group]});
     AddHulls(built, sets);
-    if (built.flatParts) built.warnings.push_back(std::to_string(built.flatParts) + " flat parts were given hulls 2 units thick behind them.");
-    if (built.hullFallbacks) built.warnings.push_back(std::to_string(built.hullFallbacks) + " hulls could not be made clean and became boxes.");
+    if (built.flatParts) built.warnings.push_back(Counted(built.flatParts, "flat part", "flat parts") + " (a sign, a floor) given a hull 2 units thick behind it.");
+    if (built.hullFallbacks) built.warnings.push_back(Counted(built.hullFallbacks, "hull", "hulls") + " that could not be made clean became a box.");
     if (built.simplifiedHulls)
-        built.warnings.push_back(std::to_string(built.simplifiedHulls) + " hulls had more than " + std::to_string(kHullCorners) + " corners and were simplified.");
-    if (built.skippedHulls) built.warnings.push_back(std::to_string(built.skippedHulls) + " parts lie on a line and have no hull.");
+        built.warnings.push_back(Counted(built.simplifiedHulls, "hull", "hulls") + " of more than " + std::to_string(kHullCorners) + " corners simplified to " + std::to_string(kHullCorners) + ".");
+    if (built.skippedHulls) built.warnings.push_back(Counted(built.skippedHulls, "part", "parts") + " on a line, with no hull.");
     if ((collision == Collision::Groups || collision == Collision::Parts || collision == Collision::File) && built.mesh.hulls.empty())
         built.warnings.push_back("No hull could be made, so players will collide with the mesh's own triangles.");
     return built;
@@ -1086,7 +1088,7 @@ inline std::vector<Mesh> Split(const Mesh& mesh, size_t limit = kCollisionTriang
             Vec3 c{0, 0, 0};
             for (const auto& p : mesh.hulls[h].corners) c = Add(c, p);
             c = Mul(c, 1.0 / static_cast<double>(std::max<size_t>(1, mesh.hulls[h].corners.size())));
-            std::vector<std::pair<double, size_t>> near;
+            std::vector<std::pair<double, size_t>> nearest;
             for (size_t g = 0; g < groups.size(); ++g)
             {
                 double d = 0;
@@ -1095,11 +1097,11 @@ inline std::vector<Mesh> Split(const Mesh& mesh, size_t limit = kCollisionTriang
                     const double gap = std::max({boxes[g][a] - c[a], 0.0, c[a] - boxes[g][a + 3]});
                     d += gap * gap;
                 }
-                near.push_back({d, g});
+                nearest.push_back({d, g});
             }
-            std::sort(near.begin(), near.end());
+            std::sort(nearest.begin(), nearest.end());
             bool done = false;
-            for (const auto& [d, g] : near)
+            for (const auto& [d, g] : nearest)
                 if (load[g] + mesh.hulls[h].triangles.size() <= limit)
                 {
                     load[g] += mesh.hulls[h].triangles.size();

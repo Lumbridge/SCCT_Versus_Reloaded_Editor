@@ -336,7 +336,14 @@ DWORD WINAPI WaitUntilReady(void*)
             Sleep(5000);
             hook = SetWindowsHookExA(WH_CALLWNDPROC, OnMessage, nullptr, uiThread);
             DWORD_PTR result = 0;
-            if (hook && SendMessageTimeoutA(frameWindow, kRun, 0, 0, SMTO_ABORTIFHUNG, 1800000, &result)) return 0;
+            // A frame still busy loading counts as hung and the send returns at once: try again
+            // for a while (the hook stays until RunAll takes it off).
+            for (int tries = 0; hook && tries < 60; ++tries)
+            {
+                if (SendMessageTimeoutA(frameWindow, kRun, 0, 0, SMTO_ABORTIFHUNG, 1800000, &result)) return 0;
+                if (!hook) return 0;
+                Sleep(2000);
+            }
             Fail("startup", "could not run on the UI thread");
             return 1;
         }
