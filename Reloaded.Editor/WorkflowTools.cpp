@@ -34,6 +34,7 @@
 #include "EmitterPreview.h"
 #include "CharacterPreview.h"
 #include "MeasureTool.h"
+#include "CommandPalette.h"
 #include "PlacementTools.h"
 #include "PropertyPaste.h"
 #include "LightShadowMap.h"
@@ -1460,6 +1461,7 @@ bool HandleCommand(UINT command)
         try{FavoritesWindow::Open();}catch(const std::exception& e){MessageBoxA(GetActiveWindow(),e.what(),"Favorites",MB_OK|MB_ICONERROR);}
         return true;
     }
+    if(CommandPalette::HandleCommand(command))return true;
     if(MeasureTool::HandleCommand(command))return true;
     if(PlacementTools::HandleCommand(command))return true;
     if(PropertyPaste::HandleCommand(command))return true;

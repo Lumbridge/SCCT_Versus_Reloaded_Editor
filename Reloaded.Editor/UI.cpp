@@ -21,6 +21,7 @@
 #include "MapOptimiseDialog.h"
 #include "EditorExtras.h"
 #include "PlacementTools.h"
+#include "CommandPalette.h"
 
 #include "Version.h"
 
@@ -292,6 +293,12 @@ static void InjectReloadedMenuItems(HWND frame)
         AppendMenuA(help, MF_SEPARATOR, 0, nullptr);
         AppendMenuA(help, MF_STRING, 40900, RE_PLUS_NAME " on &GitHub");
         AppendMenuA(help, MF_STRING, 40901, "&Reloaded Editor Wiki (AllyPal)");
+    }
+    // At the top of Help: the search over every menu command (CommandPalette.cpp).
+    if (help && MenuPosByCommand(help, CommandPalette::kOpen) < 0)
+    {
+        InsertMenuA(help, 0, MF_BYPOSITION | MF_STRING, CommandPalette::kOpen, "&Command Palette...\tCtrl+Shift+P");
+        InsertMenuA(help, 1, MF_BYPOSITION | MF_SEPARATOR, 0, nullptr);
     }
 
     DrawMenuBar(frame);

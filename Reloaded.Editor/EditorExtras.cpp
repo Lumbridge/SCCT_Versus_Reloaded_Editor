@@ -14,6 +14,7 @@
 #include "UnsavedChangesModel.h"
 #include "LightmapFix.h"
 #include "SelfUpdater.h"
+#include "CommandPalette.h"
 #include "Version.h"
 #include "logger.h"
 #include <commctrl.h>
@@ -298,6 +299,8 @@ namespace
             LevelSnapshot::Attach(frameWindow);
             installStep = "PlayLevelPlayers::Attach";
             PlayLevelPlayers::Attach(frameWindow); // retried on the tick if the bar is not there yet
+            installStep = "CommandPalette::Attach";
+            CommandPalette::Attach(frameWindow); // its key hook lives on this, the frame's, thread
             installStep = "SetWindowSubclass";
             if (!SetWindowSubclass(frameWindow, FrameProc, 1, 0)) { error = "SetWindowSubclass failed"; return false; }
             installStep = "SetTimer";
@@ -366,6 +369,7 @@ namespace
                "M in a viewport: measure from the last measured point to the mouse (in the 3D view, across the floor at its height).\r\n"
                "End in a viewport: drop the selection to the floor.   Shift+End: and turn meshes flat on the surface.   Ctrl+End: to the ceiling.\r\n"
                "F12: RE+ Options.   F7: disabled (the stock script compiler would crash).\r\n"
+               "Ctrl+Shift+P: Command Palette (Help > Command Palette): type part of any menu command's name, Enter runs it.\r\n"
                "1 to 9 in a viewport: jump to camera bookmark N.   Ctrl+1 to Ctrl+9: store the viewport cameras as bookmark N (RE+ Tools > Camera Bookmarks).\r\n"
                "\r\n"
                "PROPERTIES WINDOWS (F4 Actor Properties, F6 Level Properties)\r\n"
