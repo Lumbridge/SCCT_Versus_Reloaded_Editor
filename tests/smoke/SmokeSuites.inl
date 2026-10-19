@@ -1358,6 +1358,99 @@ HWND MenuOwner(UINT command)
             return false;
         };
         if (IsWindowVisible(w) && has(GetMenu(w)) && w != frameWindow) { s->r = w; return FALSE; }
+// ---- Appearance: a picture of the whole editor (frame, browsers, a property window), for comparing the
+// Classic / Modern Light / Modern Dark settings. Every window of the editor is captured on its own
+// (PrintWindow) and drawn where it sits on screen, onto a canvas the size of the frame: nothing else on
+// the desktop is in the picture.
+void MenuItems(HMENU menu, const std::string& path, std::vector<std::pair<std::string, UINT>>& out)
+{
+    for (int i = 0, n = GetMenuItemCount(menu); i < n; ++i)
+    {
+        char text[256] = {};
+        GetMenuStringA(menu, i, text, sizeof(text), MF_BYPOSITION);
+        std::string label;
+        for (const char* c = text; *c; ++c) if (*c != '&') label += *c;
+        if (HMENU sub = GetSubMenu(menu, i)) MenuItems(sub, path + label + " > ", out);
+        else if (const UINT id = GetMenuItemID(menu, i); id && id != UINT(-1)) out.push_back({path + label, id});
+    }
+}
+UINT MenuCommand(const char* text)
+{
+    std::vector<std::pair<std::string, UINT>> items;
+    if (HMENU bar = GetMenu(frameWindow)) MenuItems(bar, "", items);
+    for (auto& [label, id] : items)
+        if (label.find(text) != std::string::npos) return id;
+    return 0;
+}
+bool SavePng(HBITMAP bitmap, const std::wstring& path)
+{
+    Gdiplus::GdiplusStartupInput input;
+    ULONG_PTR token = 0;
+    if (Gdiplus::GdiplusStartup(&token, &input, nullptr) != Gdiplus::Ok) return false;
+    bool ok = false;
+    {
+        Gdiplus::Bitmap image(bitmap, nullptr);
+        UINT count = 0, size = 0;
+        Gdiplus::GetImageEncodersSize(&count, &size);
+        std::vector<unsigned char> buffer(size);
+        auto encoders = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buffer.data());
+        Gdiplus::GetImageEncoders(count, size, encoders);
+        for (UINT i = 0; i < count; ++i)
+            if (!wcscmp(encoders[i].MimeType, L"image/png"))
+                ok = image.Save(path.c_str(), &encoders[i].Clsid, nullptr) == Gdiplus::Ok;
+    }
+    Gdiplus::GdiplusShutdown(token);
+    return ok;
+}
+bool CaptureEditor(const std::wstring& path)
+{
+    RECT frame{};
+    GetWindowRect(frameWindow, &frame);
+    const int width = frame.right - frame.left, height = frame.bottom - frame.top;
+    std::vector<HWND> windows; // top first
+    EnumWindows([](HWND w, LPARAM p) -> BOOL {
+        DWORD process = 0;
+        GetWindowThreadProcessId(w, &process);
+        if (process == GetCurrentProcessId() && IsWindowVisible(w) && !IsIconic(w)) reinterpret_cast<std::vector<HWND>*>(p)->push_back(w);
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&windows));
+    HDC screen = GetDC(nullptr);
+    HDC canvas = CreateCompatibleDC(screen);
+    HBITMAP picture = CreateCompatibleBitmap(screen, width, height);
+    HGDIOBJ old = SelectObject(canvas, picture);
+    RECT all{0, 0, width, height};
+    FillRect(canvas, &all, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+    for (auto it = windows.rbegin(); it != windows.rend(); ++it)
+    {
+        RECT r{};
+        GetWindowRect(*it, &r);
+        RECT overlap{};
+        if (!IntersectRect(&overlap, &r, &frame)) continue;
+        const int w = r.right - r.left, h = r.bottom - r.top;
+        HDC one = CreateCompatibleDC(screen);
+        HBITMAP shot = CreateCompatibleBitmap(screen, w, h);
+        HGDIOBJ previous = SelectObject(one, shot);
+        PrintWindow(*it, one, PW_RENDERFULLCONTENT);
+        BitBlt(canvas, r.left - frame.left, r.top - frame.top, w, h, one, 0, 0, SRCCOPY);
+        SelectObject(one, previous);
+        DeleteObject(shot);
+        DeleteDC(one);
+    }
+    SelectObject(canvas, old);
+    const bool ok = SavePng(picture, path);
+    DeleteObject(picture);
+    DeleteDC(canvas);
+    ReleaseDC(nullptr, screen);
+    return ok;
+}
+HWND TopWithClassPart(const char* part)
+{
+    struct S { const char* p; HWND r; } s{part, nullptr};
+    EnumThreadWindows(GetCurrentThreadId(), [](HWND w, LPARAM p) -> BOOL {
+        auto s = reinterpret_cast<S*>(p);
+        char c[128] = {};
+        GetClassNameA(w, c, sizeof(c));
+        if (IsWindowVisible(w) && strstr(c, s->p)) { s->r = w; return FALSE; }
         return TRUE;
     }, reinterpret_cast<LPARAM>(&s));
     return s.r;
@@ -2523,6 +2616,149 @@ bool IsKindOf(unsigned char* object, const char* cls)
 
 #include "SmokeMover.inl"
 
+void AppearanceSuite()
+{
+    ShowWindow(frameWindow, SW_RESTORE);
+    SetWindowPos(frameWindow, nullptr, 0, 0, 1600, 1000, SWP_NOZORDER | SWP_NOACTIVATE);
+    Pump(500);
+    for (const char* name : {"View > Show Texture Browser", "View > Show Static Mesh Browser"})
+    {
+        const UINT id = MenuCommand(name);
+        Check(id != 0, "appearance-menu", name);
+        if (id) { Command(id); Pump(1000); }
+    }
+    SelectOnly(FreeMeshes(1));
+    const UINT properties = MenuCommand("Actor Properties");
+    if (properties) { Command(properties); Pump(1000); }
+    HWND browser = TopWithClassPart("WBrowserMaster"), props = TopWithClassPart("WObjectProperties");
+    Check(browser && props, "appearance-windows", std::string(browser ? "browser " : "") + (props ? "properties" : ""));
+    if (HWND log = TopWithClassPart("WLog")) ShowWindow(log, SW_HIDE);
+    if (browser) SetWindowPos(browser, HWND_TOP, 1010, 150, 570, 830, SWP_NOACTIVATE);
+    if (props) SetWindowPos(props, HWND_TOP, 30, 330, 380, 650, SWP_NOACTIVATE);
+    // Open a category or two of the property list.
+    Pump(1500);
+    // Every window, its class and its font, for the report.
+    EnumThreadWindows(GetCurrentThreadId(), [](HWND w, LPARAM) -> BOOL {
+        if (!IsWindowVisible(w)) return TRUE;
+        char cls[128] = {};
+        GetClassNameA(w, cls, sizeof(cls));
+        std::string children;
+        EnumChildWindows(w, [](HWND c, LPARAM p) -> BOOL {
+            char k[64] = {};
+            GetClassNameA(c, k, sizeof(k));
+            LOGFONTA font{};
+            if (HFONT f = reinterpret_cast<HFONT>(SendMessageA(c, WM_GETFONT, 0, 0))) GetObjectA(f, sizeof(font), &font);
+            auto& out = *reinterpret_cast<std::string*>(p);
+            if (out.size() < 1500) out += std::string(k) + "(" + font.lfFaceName + " " + std::to_string(font.lfHeight) + ") ";
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&children));
+        Info("window", std::string(cls) + " '" + WindowText(w) + "': " + children);
+        return TRUE;
+    }, 0);
+    if (Ini("dump") == "1")
+    {
+        // Every child of the frame, browser and property window: class, place and size.
+        for (HWND top : {frameWindow, browser, props})
+            EnumChildWindows(top, [](HWND c, LPARAM) -> BOOL {
+                char k[96] = {};
+                GetClassNameA(c, k, sizeof(k));
+                RECT r{};
+                GetWindowRect(c, &r);
+                if (IsWindowVisible(c))
+                    Info("child", std::string(k) + " id=" + std::to_string(GetDlgCtrlID(c)) + " " + std::to_string(r.left) + "," + std::to_string(r.top) + " " + std::to_string(r.right - r.left) + "x" + std::to_string(r.bottom - r.top) + " style=" + std::to_string(GetWindowLongA(c, GWL_STYLE)) + " '" + WindowText(c).substr(0, 30) + "'");
+                return TRUE;
+            }, 0);
+    }
+    const auto shot = Ini("shot");
+    if (shot.empty()) return;
+    Check(CaptureEditor(std::filesystem::path(shot).wstring()), "appearance-shot", shot);
+    // RE+ Options over the editor, captured while it is open, then cancelled.
+    auto optionsShot = std::filesystem::path(shot);
+    optionsShot.replace_filename(optionsShot.stem().string() + "-options.png");
+    bool captured = false;
+    dialogHandler = [&](HWND w, const std::string& title) {
+        if (title != "RE+ Options") return false;
+        if (!captured)
+        {
+            captured = true;
+            SetWindowPos(w, HWND_TOP, 560, 300, 0, 0, SWP_NOSIZE);
+            UpdateWindow(w);
+            Check(CaptureEditor(optionsShot.wstring()), "appearance-options-shot", optionsShot.string());
+            PostMessage(w, WM_COMMAND, IDCANCEL, 0);
+        }
+        return true;
+    };
+    Command(40066);
+    // A message box (Isolate with nothing selected refuses), captured the same way, then answered.
+    auto boxShot = std::filesystem::path(shot);
+    boxShot.replace_filename(boxShot.stem().string() + "-box.png");
+    captured = false;
+    dialogHandler = [&](HWND w, const std::string&) {
+        char cls[64] = {};
+        GetClassNameA(w, cls, sizeof(cls));
+        if (strcmp(cls, "#32770") || !IsMessageBox(w)) return false;
+        if (!captured)
+        {
+            captured = true;
+            SetWindowPos(w, nullptr, 560, 400, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            UpdateWindow(w);
+            Check(CaptureEditor(boxShot.wstring()), "appearance-box-shot", DialogText(w));
+        }
+        else PostMessage(w, WM_COMMAND, GetDlgItem(w, IDOK) ? IDOK : IDCANCEL, 0); // a lone OK button is IDCANCEL
+        return true;
+    };
+    Exec("SELECT NONE");
+    Command(40958);
+    dialogHandler = nullptr;
+
+    // The frame's File menu, open, captured from a timer inside the menu's loop and then closed.
+    static std::wstring menuShot;
+    auto menuPath = std::filesystem::path(shot);
+    menuPath.replace_filename(menuPath.stem().string() + "-menu.png");
+    menuShot = menuPath.wstring();
+    static bool menuCaptured;
+    menuCaptured = false;
+    UINT_PTR menuTimer = SetTimer(nullptr, 0, 2000, [](HWND, UINT, UINT_PTR, DWORD) {
+        if (menuCaptured) return;
+        menuCaptured = true;
+        Check(CaptureEditor(menuShot), "appearance-menu-shot");
+        EndMenu();
+    });
+    if (HMENU bar = GetMenu(frameWindow))
+    {
+        RECT item{};
+        GetMenuItemRect(frameWindow, bar, 0, &item);
+        TrackPopupMenu(GetSubMenu(bar, 0), TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, item.left, item.bottom, 0, frameWindow, nullptr);
+    }
+    KillTimer(nullptr, menuTimer);
+
+    // RE+'s own tool windows: Map Check, Render Budget, Emitter Library and Gameplay Connections.
+    struct Tool { UINT command; const char* title; RECT place; };
+    const Tool tools[] = {
+        {41220, "Map Check", {20, 90, 790, 520}},
+        {41280, "Render Budget", {800, 90, 1580, 520}},
+        {40967, "Emitter Library", {20, 530, 790, 980}},
+        {40920, "Gameplay Connections", {800, 530, 1580, 980}},
+    };
+    std::vector<HWND> opened;
+    for (auto& tool : tools)
+    {
+        Command(tool.command);
+        Pump(800);
+        if (HWND w = OpenedWindow(tool.title))
+        {
+            SetWindowPos(w, HWND_TOP, tool.place.left, tool.place.top, tool.place.right - tool.place.left, tool.place.bottom - tool.place.top, SWP_NOACTIVATE);
+            opened.push_back(w);
+        }
+        else Info("appearance-tool-missing", tool.title);
+    }
+    Pump(1500);
+    auto toolsShot = std::filesystem::path(shot);
+    toolsShot.replace_filename(toolsShot.stem().string() + "-tools.png");
+    Check(opened.size() == std::size(tools) && CaptureEditor(toolsShot.wstring()), "appearance-tools-shot", std::to_string(opened.size()) + " windows");
+    for (HWND w : opened) if (IsWindow(w)) CloseWindowAndWait(w);
+}
+
 void RunSuites(const std::string& list)
 {
     std::stringstream names(list);
@@ -2544,6 +2780,7 @@ void RunSuites(const std::string& list)
         else if (name == "compare") CompareSuite();
         else if (name == "collision") CollisionSuite();
         else if (name == "mover") MoverSuite();
+        else if (name == "appearance") AppearanceSuite();
         else Fail("suite", "no suite called " + name);
     }
 }

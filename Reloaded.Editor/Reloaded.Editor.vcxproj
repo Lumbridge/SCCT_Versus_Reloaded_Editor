@@ -316,6 +316,8 @@
     <ClInclude Include="UndoHistory.h" />
     <ClInclude Include="UndoHistoryModel.h" />
     <ClInclude Include="StaticMeshBrowserFavorites.h" />
+    <ClInclude Include="Appearance.h" />
+    <ClInclude Include="AppearanceModel.h" />
     <ClInclude Include="AssetNameGloss.h" />
     <ClInclude Include="AssetNameGlossModel.h" />
     <ClInclude Include="AssetNameDictionary.gen.h" />
@@ -442,6 +444,7 @@
     <ClCompile Include="StoreyFilter.cpp" />
     <ClCompile Include="UndoHistory.cpp" />
     <ClCompile Include="StaticMeshBrowserFavorites.cpp" />
+    <ClCompile Include="Appearance.cpp" />
     <ClCompile Include="AssetNameGloss.cpp" />
     <ClCompile Include="DdsImportFix.cpp" />
     <ClCompile Include="LightCullFix.cpp" />
@@ -464,9 +467,11 @@
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Reloaded.Editor.rc" />
+    <ResourceCompile Include="Appearance.rc" />
   </ItemGroup>
   <ItemGroup>
     <None Include="cpp.hint" />
+    <None Include="Appearance.manifest" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

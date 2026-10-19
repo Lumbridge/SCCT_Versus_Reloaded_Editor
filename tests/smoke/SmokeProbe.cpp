@@ -20,6 +20,11 @@
 #include <set>
 #include <share.h>
 #include <nlohmann/json.hpp>
+#include <algorithm>
+#include <objidl.h>
+namespace Gdiplus { using std::min; using std::max; }
+#include <gdiplus.h>
+#pragma comment(lib, "gdiplus.lib")
 
 namespace {
 HHOOK hook;

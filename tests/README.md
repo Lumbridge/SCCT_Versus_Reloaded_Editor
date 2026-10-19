@@ -112,6 +112,14 @@ or foreign files rejected). The editor side imports the BMP with `TEXTURE
 IMPORT` into the loaded `<Map>-i` package and saves it with the stock
 `SAVEMAPPROP`, so it is exercised in the editor rather than here.
 
+`AppearanceModelTests.cpp` covers the Appearance setting's pure parts: the
+theme names read from and written to `Reloaded_Editor.ini`, which font faces
+and sizes become Segoe UI 9 pt, rewriting a dialog template's font (plain and
+extended templates, items with text, ordinal titles and creation data), checked
+by making the template into a real hidden dialog and comparing its controls,
+and the Modern Dark palette. Hooking the editor's window calls is checked in
+the editor with the smoke probe's `appearance` suite.
+
 `MinimapModelTests.cpp` covers Generate Minimap's pure parts: the game's
 world-to-picture transform through `LevelInfo.SnapshotCamera` (checked with
 AquaD's own camera: the centre, both corners, +X right and +Y down, a turned

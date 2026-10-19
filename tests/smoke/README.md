@@ -76,6 +76,15 @@ The suites save the map, so give each run fresh copies of the maps.
   and opened again at the same place and size; Map Check comes back maximised;
   a `[WindowPlacement]` entry off every monitor or that cannot be read is
   ignored.
+- `appearance`: pictures of the whole editor for comparing the RE+ Options
+  Appearance settings: with `shot = '<file>.png'` in `-Extra`, the frame with the
+  Static Mesh Browser and an Actor Properties window (`<file>.png`), RE+ Options
+  open (`-options`), a message box (`-box`), the File menu open (`-menu`), and
+  Map Check, Render Budget, Emitter Library and Gameplay Connections
+  (`-tools`). Each window is captured on its own and drawn where it sits, so
+  nothing else on the desktop is in them. Set `[Appearance] Theme=Classic`,
+  `ModernLight` or `ModernDark` in the test install's `Reloaded_Editor.ini`
+  first.
 - `meshcost`: Render Budget's lower list switches to Meshes by cost; the rows
   are heaviest first and add up to the Whole map row's mesh triangles; a click
   selects every copy of that mesh and a double-click frames them; a zone row
