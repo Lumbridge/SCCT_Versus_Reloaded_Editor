@@ -525,6 +525,261 @@ void MeshCostSuite()
     CloseWindowAndWait(budget);
 }
 
+// ---- Map Outliner: every actor listed in a virtual list, a search over all columns, grouping, a
+// click selecting in the editor and the list following the editor's selection, Hide / Show in one
+// Undo step each, Delete asking first and deleting in one Undo step that Undo brings back, and the
+// window reopening where it was.
+namespace OutlinerIds { enum : int { kSearch = 101, kGroupBy = 103, kFollow = 104, kList = 105, kStatus = 106, kHide = 110, kShow, kShowAll, kDelete, kFrame, kRefresh }; }
+int ListCount(HWND list) { return static_cast<int>(SendMessageA(list, LVM_GETITEMCOUNT, 0, 0)); }
+std::vector<int> ListSelection(HWND list)
+{
+    std::vector<int> rows;
+    for (int i = static_cast<int>(SendMessageA(list, LVM_GETNEXTITEM, static_cast<WPARAM>(-1), LVNI_SELECTED)); i >= 0;
+         i = static_cast<int>(SendMessageA(list, LVM_GETNEXTITEM, static_cast<WPARAM>(i), LVNI_SELECTED)))
+        rows.push_back(i);
+    return rows;
+}
+void SelectListRows(HWND list, const std::vector<int>& rows)
+{
+    LVITEMA clear{};
+    clear.stateMask = LVIS_SELECTED;
+    SendMessageA(list, LVM_SETITEMSTATE, static_cast<WPARAM>(-1), reinterpret_cast<LPARAM>(&clear));
+    for (int row : rows)
+    {
+        LVITEMA item{};
+        item.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+        item.state = LVIS_SELECTED | LVIS_FOCUSED;
+        SendMessageA(list, LVM_SETITEMSTATE, static_cast<WPARAM>(row), reinterpret_cast<LPARAM>(&item));
+    }
+    Pump(400);
+}
+// The list row whose Name column is exactly this, or -1.
+int RowNamed(const std::vector<std::string>& rows, const std::string& name)
+{
+    for (size_t i = 0; i < rows.size(); ++i)
+    {
+        auto cell = Cells(rows[i])[0];
+        cell.erase(0, cell.find_first_not_of(' '));
+        if (cell == name) return static_cast<int>(i);
+    }
+    return -1;
+}
+void Search(HWND outliner, const std::string& text)
+{
+    HWND edit = GetDlgItem(outliner, OutlinerIds::kSearch);
+    SetWindowTextA(edit, text.c_str());
+    SendMessageA(outliner, WM_COMMAND, MAKEWPARAM(OutlinerIds::kSearch, EN_CHANGE), reinterpret_cast<LPARAM>(edit));
+    Pump(200);
+}
+void GroupOutliner(HWND outliner, int by)
+{
+    HWND combo = GetDlgItem(outliner, OutlinerIds::kGroupBy);
+    SendMessageA(combo, CB_SETCURSEL, by, 0);
+    SendMessageA(outliner, WM_COMMAND, MAKEWPARAM(OutlinerIds::kGroupBy, CBN_SELCHANGE), reinterpret_cast<LPARAM>(combo));
+    Pump(200);
+}
+std::string Lowered(std::string text)
+{
+    for (auto& c : text) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    return text;
+}
+
+void OutlinerSuite()
+{
+    // On the View menu and RE+ Tools.
+    std::string menus;
+    HMENU bar = GetMenu(frameWindow);
+    for (int i = 0; bar && i < GetMenuItemCount(bar); ++i)
+        if (HMENU sub = GetSubMenu(bar, i); sub && GetMenuState(sub, 41560, MF_BYCOMMAND) != UINT(-1))
+        {
+            char text[64] = {};
+            GetMenuStringA(bar, i, text, sizeof(text), MF_BYPOSITION);
+            menus += std::string(menus.empty() ? "" : ", ") + text;
+        }
+    Check(menus.find("View") != std::string::npos && menus.find("RE+") != std::string::npos, "outliner-menus", menus);
+    Exec("SELECT NONE");
+    Pump(200);
+    LARGE_INTEGER f, a, b;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&a);
+    Command(41560);
+    Pump(500);
+    QueryPerformanceCounter(&b);
+    HWND outliner = OpenedWindow("Map Outliner");
+    if (!outliner) { Fail("outliner-open", "did not open; boxes=" + std::to_string(boxes.size())); return; }
+    HWND list = GetDlgItem(outliner, OutlinerIds::kList);
+    const bool virtualList = (GetWindowLongA(list, GWL_STYLE) & LVS_OWNERDATA) != 0;
+    int cameras = 0;
+    for (auto actor : Actors()) cameras += ClassName(actor) == "Camera";
+    const int actors = static_cast<int>(Actors().size()) - cameras;
+    Info("outliner-open", "ms=" + Fixed(1000.0 * double(b.QuadPart - a.QuadPart) / double(f.QuadPart)) + " actors=" + std::to_string(actors)
+         + " status '" + WindowText(GetDlgItem(outliner, OutlinerIds::kStatus)) + "'");
+
+    // Grouped by nothing: one line per actor, the viewport cameras left out.
+    GroupOutliner(outliner, 0);
+    auto rows = ListRows(list);
+    Check(virtualList && static_cast<int>(rows.size()) == actors, "outliner-lists-every-actor",
+          std::to_string(rows.size()) + " rows for " + std::to_string(actors) + " actors (" + std::to_string(cameras) + " cameras) virtual=" + std::to_string(virtualList));
+    for (size_t i = 0; i < rows.size() && i < 4; ++i) Info("outliner-row", rows[i]);
+
+    // Grouped by class: a header per class with its count, the rows under it.
+    GroupOutliner(outliner, 1);
+    auto grouped = ListRows(list);
+    size_t headers = 0;
+    long long counted = 0;
+    for (const auto& row : grouped)
+        if (row.rfind("[-] ", 0) == 0) { ++headers; counted += Number(row.substr(row.rfind('('))); }
+    Check(headers > 1 && static_cast<int>(grouped.size()) == actors + static_cast<int>(headers) && counted == actors, "outliner-group-by-class",
+          std::to_string(headers) + " classes, " + std::to_string(counted) + " counted, " + std::to_string(grouped.size()) + " lines");
+    // Collapsing a class (double-click its header) keeps the header and hides its rows.
+    ClickRow(outliner, OutlinerIds::kList, 0, true);
+    const int collapsed = ListCount(list);
+    const auto firstHeader = ListRows(list).empty() ? std::string() : ListRows(list)[0];
+    Check(firstHeader.rfind("[+] ", 0) == 0 && collapsed < static_cast<int>(grouped.size()), "outliner-collapse", firstHeader + " lines " + std::to_string(collapsed));
+    ClickRow(outliner, OutlinerIds::kList, 0, true);
+    Check(ListCount(list) == static_cast<int>(grouped.size()), "outliner-expand", std::to_string(ListCount(list)));
+    GroupOutliner(outliner, 0);
+
+    // Search: every word must appear in some column.
+    auto meshes = FreeMeshes(6, 30);
+    if (meshes.size() < 6) { Fail("outliner-meshes", "the map needs six free static meshes"); CloseWindowAndWait(outliner); return; }
+    Search(outliner, "staticmeshactor");
+    rows = ListRows(list);
+    bool all = !rows.empty();
+    for (const auto& row : rows) all = all && Lowered(row).find("staticmeshactor") != std::string::npos;
+    Check(all && static_cast<int>(rows.size()) < actors, "outliner-search", std::to_string(rows.size()) + " rows");
+    const std::string named = Name(meshes[0]);
+    Search(outliner, "  StaticMeshActor   " + named + " ");
+    rows = ListRows(list);
+    all = RowNamed(rows, named) >= 0;
+    for (const auto& row : rows) all = all && row.find(named) != std::string::npos;
+    Check(all, "outliner-search-words-narrow", named + ": " + std::to_string(rows.size()) + " rows");
+    Search(outliner, "");
+    rows = ListRows(list);
+    Check(static_cast<int>(rows.size()) == actors, "outliner-search-cleared", std::to_string(rows.size()));
+
+    // A click on three rows selects those three actors in the editor.
+    std::vector<int> three;
+    for (int i = 0; i < 3; ++i) three.push_back(RowNamed(rows, Name(meshes[i])));
+    SelectListRows(list, three);
+    int on = 0;
+    for (int i = 0; i < 3; ++i) on += (Flags(meshes[i]) & 0x40) != 0;
+    Check(on == 3 && Selected() == 3, "outliner-click-selects", "selected " + std::to_string(Selected()) + " of them " + std::to_string(on)
+          + " status '" + WindowText(GetDlgItem(outliner, OutlinerIds::kStatus)) + "'");
+
+    // Follow selection: a mesh selected in the editor becomes the list's selection.
+    Exec("SELECT NONE");
+    SetSelected(meshes[3], true);
+    Pump(800);
+    auto chosen = ListSelection(list);
+    Check(chosen.size() == 1 && chosen[0] == RowNamed(rows, Name(meshes[3])), "outliner-follows-selection", std::to_string(chosen.size()) + " row(s)");
+
+    // Double-click frames.
+    ClickRow(outliner, OutlinerIds::kList, RowNamed(rows, Name(meshes[4])), true);
+    const auto framed = WindowText(GetDlgItem(outliner, OutlinerIds::kStatus));
+    Check(framed.find("framed") != std::string::npos && (Flags(meshes[4]) & 0x40), "outliner-double-click-frames", framed);
+
+    // Hide two, one Undo step; the rows say Hidden; Show brings them back.
+    SelectListRows(list, {RowNamed(rows, Name(meshes[0])), RowNamed(rows, Name(meshes[1]))});
+    auto before = Undo();
+    Command(OutlinerIds::kHide, outliner);
+    Pump(500);
+    auto after = Undo();
+    rows = ListRows(list);
+    const int hiddenRow = RowNamed(rows, Name(meshes[0]));
+    const bool marked = hiddenRow >= 0 && rows[hiddenRow].find("Hidden") != std::string::npos;
+    Check((Flags(meshes[0]) & 0x10) && (Flags(meshes[1]) & 0x10) && after.count == before.count + 1 && marked, "outliner-hide",
+          "undo '" + after.current + "' row '" + (hiddenRow >= 0 ? rows[hiddenRow] : std::string()) + "'");
+    // A hidden row is never selected in the editor.
+    SelectListRows(list, {RowNamed(rows, Name(meshes[0]))});
+    Check(!(Flags(meshes[0]) & 0x40), "outliner-hidden-not-selected", WindowText(GetDlgItem(outliner, OutlinerIds::kStatus)));
+    SelectListRows(list, {RowNamed(rows, Name(meshes[0])), RowNamed(rows, Name(meshes[1]))});
+    before = Undo();
+    Command(OutlinerIds::kShow, outliner);
+    Pump(500);
+    after = Undo();
+    Check(!(Flags(meshes[0]) & 0x10) && !(Flags(meshes[1]) & 0x10) && after.count == before.count + 1, "outliner-show", "undo '" + after.current + "'");
+
+    // Delete: answered No, nothing goes; through the list's Delete key.
+    const std::string gone0 = Name(meshes[0]), gone1 = Name(meshes[1]);
+    rows = ListRows(list);
+    SelectListRows(list, {RowNamed(rows, gone0), RowNamed(rows, gone1)});
+    const size_t actorsBefore = Actors().size();
+    before = Undo();
+    boxAnswer = IDNO;
+    boxes.clear();
+    {
+        const UINT_PTR answering = SetTimer(nullptr, 0, 100, AnswerBoxes);
+        NMLVKEYDOWN key{};
+        key.hdr.hwndFrom = list;
+        key.hdr.idFrom = OutlinerIds::kList;
+        key.hdr.code = LVN_KEYDOWN;
+        key.wVKey = VK_DELETE;
+        SendMessageA(outliner, WM_NOTIFY, OutlinerIds::kList, reinterpret_cast<LPARAM>(&key));
+        KillTimer(nullptr, answering);
+    }
+    boxAnswer = IDOK;
+    Pump(300);
+    Check(BoxContains("Delete these 2 actors?") && Actors().size() == actorsBefore && Undo().count == before.count, "outliner-delete-asks",
+          "boxes=" + std::to_string(boxes.size()) + (boxes.empty() ? "" : " " + boxes[0]));
+    // Answered Yes: both go in one Undo step, and Undo brings them back.
+    boxAnswer = IDYES;
+    Command(OutlinerIds::kDelete, outliner);
+    boxAnswer = IDOK;
+    Pump(500);
+    after = Undo();
+    rows = ListRows(list);
+    Check(!ActorNamed(gone0) && !ActorNamed(gone1) && Actors().size() == actorsBefore - 2 && after.count == before.count + 1
+              && RowNamed(rows, gone0) < 0 && static_cast<int>(rows.size()) == actors - 2,
+          "outliner-delete-one-step", "undo '" + after.current + "' actors " + std::to_string(actorsBefore) + "->" + std::to_string(Actors().size())
+          + " rows " + std::to_string(rows.size()) + " boxes=" + std::to_string(boxes.size()));
+    Command(40019); // Edit > Undo
+    Pump(800);
+    rows = ListRows(list);
+    Check(ActorNamed(gone0) && ActorNamed(gone1) && Actors().size() == actorsBefore && RowNamed(rows, gone0) >= 0, "outliner-delete-undo",
+          "actors " + std::to_string(Actors().size()) + " rows " + std::to_string(rows.size()));
+
+    // The level info cannot be deleted.
+    GroupOutliner(outliner, 0);
+    Search(outliner, "levelinfo");
+    rows = ListRows(list);
+    if (!rows.empty())
+    {
+        SelectListRows(list, {0});
+        Command(OutlinerIds::kDelete, outliner);
+        Pump(200);
+        Check(boxes.empty() && WindowText(GetDlgItem(outliner, OutlinerIds::kStatus)).find("cannot be deleted") != std::string::npos, "outliner-keeps-level-info",
+              WindowText(GetDlgItem(outliner, OutlinerIds::kStatus)));
+    }
+    Search(outliner, "");
+
+    // Reading the whole map again is quick.
+    const double ms = Command(OutlinerIds::kRefresh, outliner);
+    Check(ms < 2000, "outliner-refresh-fast", "ms=" + Fixed(ms) + " for " + std::to_string(actors) + " actors");
+
+    // It reopens where it was left.
+    MONITORINFO main{sizeof(main)};
+    GetMonitorInfoA(MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY), &main);
+    SetWindowPos(outliner, nullptr, main.rcWork.left + 97, main.rcWork.top + 61, 811, 533, SWP_NOZORDER | SWP_NOACTIVATE);
+    Pump(150);
+    const RECT moved = NormalRect(outliner);
+    CloseWindowAndWait(outliner);
+    Command(41560);
+    Pump(300);
+    HWND again = OpenedWindow("Map Outliner");
+    Check(again && SameRect(NormalRect(again), moved), "outliner-placement", "moved " + RectText(moved) + " back " + (again ? RectText(NormalRect(again)) : std::string("none")));
+    // shot=1 in -Extra: grouped by class and left open for a while, for a picture taken from outside.
+    if (again && Ini("shot") == "1")
+    {
+        GroupOutliner(again, 1);
+        Exec("SELECT NONE");
+        for (int i = 2; i < 6; ++i) SetSelected(meshes[i], true);
+        Info("outliner-shot", "window " + std::to_string(reinterpret_cast<uintptr_t>(again)));
+        Pump(15000);
+    }
+    if (again) CloseWindowAndWait(again);
+}
+
 void RunSuites(const std::string& list)
 {
     std::stringstream names(list);
@@ -535,6 +790,7 @@ void RunSuites(const std::string& list)
         else if (name == "unsaved") UnsavedSuite();
         else if (name == "placement") PlacementSuite();
         else if (name == "meshcost") MeshCostSuite();
+        else if (name == "outliner") OutlinerSuite();
         else Fail("suite", "no suite called " + name);
     }
 }

@@ -81,3 +81,12 @@ The suites save the map, so give each run fresh copies of the maps.
   selects every copy of that mesh and a double-click frames them; a zone row
   narrows the list to that zone's meshes and the Whole map row widens it again;
   the list switches back to the hotspots.
+- `outliner`: the Map Outliner lists every actor but the viewport cameras in
+  a virtual list; grouped by class the headers' counts add up and a header
+  folds and opens; a search keeps rows with every word; clicking rows selects
+  those actors and the list follows a selection made in the editor; a
+  double-click frames; Hide and Show are one Undo step each and a hidden row is
+  never selected; Delete asks (No keeps them), deletes two actors in one Undo
+  step that Edit > Undo brings back, and refuses the level info; reading the
+  map again takes milliseconds; the window reopens where it was left. With
+  `shot = '1'` it stays open for 15 seconds at the end, for a picture.

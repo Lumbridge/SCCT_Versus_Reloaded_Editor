@@ -27,6 +27,7 @@
 #include "MinimapModel.h"
 #include "StairSmoothModel.h"
 #include "MapOptimiseModel.h"
+#include "MapOutlinerModel.h"
 #include "UnsavedChangesModel.h"
 #include "LightmapFix.h"
 #include "logger.h"
@@ -1619,4 +1620,5 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "MapRecoveryNative.inl"
 #include "StairSmoothNative.inl"
 #include "MapOptimiseNative.inl"
+#include "MapOutlinerNative.inl"
 }

@@ -392,6 +392,23 @@ in the selection along so they leave it too; Isolate needing a visible selection
 and hiding only the visible rest; Unhide all; and the messages when there is
 nothing to act on.
 
+## Map Outliner
+
+`tools/test_workflow_tools.cmd` runs `MapOutlinerModelTests.cpp`: the cells
+(the short class name, None shown blank, the location in whole units, Hidden
+and Locked as words, a broken location read as 0), Group fields split into
+names (trimmed, once each whatever their case, None left out), the search
+(every word must appear in some column, Tag, Event, the full class name,
+location and the Hidden / Locked words searched, a word never spanning two
+columns, None not a value), sorting by each kind of column (names with
+numbers in order, blanks last, descending), grouping by class and by group (an
+actor in two groups under both, ungrouped actors last, a collapsed group
+keeping its header and count, groups with no match left out), what selected
+lines stand for (a header for all its rows, each row once), Follow Selection's
+lines, hidden rows never selected, Delete keeping the level info and builder
+brush and its question, the footer, and 20,000 rows. The `outliner` smoke suite
+(tests/smoke/README.md) covers the window in a real editor.
+
 ## Copy and paste properties
 
 `tools/test_workflow_tools.cmd` runs `PropertyPasteModelTests.cpp`: which copied

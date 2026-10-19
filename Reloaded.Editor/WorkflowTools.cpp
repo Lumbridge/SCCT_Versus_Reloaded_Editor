@@ -14,6 +14,7 @@
 #include "LightingBudget.h"
 #include "MapCheck.h"
 #include "RenderBudget.h"
+#include "MapOutliner.h"
 #include "MinimapWindow.h"
 #include "WorkflowEditor.h"
 #include "EmitterLibraryModel.h"
@@ -1467,6 +1468,7 @@ bool HandleCommand(UINT command)
     if(LightingBudget::HandleCommand(command))return true;
     if(MapCheck::HandleCommand(command))return true;
     if(RenderBudget::HandleCommand(command))return true;
+    if(MapOutliner::HandleCommand(command))return true;
     if(MinimapWindow::HandleCommand(command))return true;
     if(MapRecovery::HandleCommand(command))return true;
     if(command==StoreyFilter::kOpen)
