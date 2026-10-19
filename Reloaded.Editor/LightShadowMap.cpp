@@ -3,6 +3,7 @@
 #undef max
 #include "LightShadowMap.h"
 #include "WindowPlacement.h"
+#include "Appearance.h"
 #include "LightShadowModel.h"
 #include "MeasureModel.h"
 #include "WorkflowEditor.h"
@@ -476,29 +477,39 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM w, LPARAM l)
         {
         case WM_CREATE:
         {
-            Control(window, "STATIC", kIntroText, 0, kIntro, 12, 10, 456, 128);
-            Control(window, "BUTTON", "&Show in the viewports", BS_AUTOCHECKBOX | WS_TABSTOP, kShowCheck, 12, 146, 220, 22);
+            // The intro keeps all its lines in the larger modern font; everything below moves down.
+            auto intro = Control(window, "STATIC", kIntroText, 0, kIntro, 12, 10, 456, 128);
+            const int introHeight = Appearance::FitHeight(intro, 456, 128);
+            const int dy = introHeight - 128;
+            if (dy) MoveWindow(intro, 12, 10, 456, introHeight, FALSE);
+            Control(window, "BUTTON", "&Show in the viewports", BS_AUTOCHECKBOX | WS_TABSTOP, kShowCheck, 12, 146 + dy, 220, 22);
             const std::pair<int, const char*> fields[] = {
                 { kHiddenEdit, "Hidden below" }, { kExposedEdit, "Exposed from" },
                 { kPatchEdit, "Patch size (units)" }, { kChestEdit, "Lights measured at height" } };
             for (int i = 0; i < 4; ++i)
             {
-                const int x = 12 + (i % 2) * 236, y = 176 + (i / 2) * 28;
+                const int x = 12 + (i % 2) * 236, y = 176 + dy + (i / 2) * 28;
                 Control(window, "STATIC", fields[i].second, 0, 0, x, y + 3, 140, 20);
                 Control(window, "EDIT", "", ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP, fields[i].first, x + 144, y, 70, 22);
             }
-            Control(window, "STATIC", "Brightness from", 0, 0, 12, 235, 140, 20);
-            auto combo = Control(window, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, kSourceCombo, 156, 232, 312, 120);
+            Control(window, "STATIC", "Brightness from", 0, 0, 12, 235 + dy, 140, 20);
+            auto combo = Control(window, "COMBOBOX", "", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, kSourceCombo, 156, 232 + dy, 312, 120);
             for (auto source : { Source::Combined, Source::Lights, Source::Baked })
                 SendMessageA(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(LightShadow::SourceName(source)));
-            Control(window, "BUTTON", "Static &meshes block light", BS_AUTOCHECKBOX | WS_TABSTOP, kMeshShadowsCheck, 12, 262, 166, 22);
-            Control(window, "BUTTON", "Static mesh &floors", BS_AUTOCHECKBOX | WS_TABSTOP, kMeshFloorsCheck, 184, 262, 130, 22);
-            Control(window, "BUTTON", "Spotlight &cones", BS_AUTOCHECKBOX | WS_TABSTOP, kSpotConesCheck, 320, 262, 148, 22);
-            Control(window, "STATIC", "", 0, kSummary, 12, 292, 456, 84);
-            Control(window, "STATIC", "", 0, kStatusText, 12, 378, 456, 34);
-            Control(window, "BUTTON", "&Apply", BS_DEFPUSHBUTTON | WS_TABSTOP, kApply, 12, 418, 90, 26);
-            Control(window, "BUTTON", "&Refresh", WS_TABSTOP, kRefreshButton, 110, 418, 90, 26);
-            Control(window, "BUTTON", "Close", WS_TABSTOP, IDCANCEL, 378, 418, 90, 26);
+            Control(window, "BUTTON", "Static &meshes block light", BS_AUTOCHECKBOX | WS_TABSTOP, kMeshShadowsCheck, 12, 262 + dy, 166, 22);
+            Control(window, "BUTTON", "Static mesh &floors", BS_AUTOCHECKBOX | WS_TABSTOP, kMeshFloorsCheck, 184, 262 + dy, 130, 22);
+            Control(window, "BUTTON", "Spotlight &cones", BS_AUTOCHECKBOX | WS_TABSTOP, kSpotConesCheck, 320, 262 + dy, 148, 22);
+            Control(window, "STATIC", "", 0, kSummary, 12, 292 + dy, 456, 84);
+            Control(window, "STATIC", "", 0, kStatusText, 12, 378 + dy, 456, 34);
+            Control(window, "BUTTON", "&Apply", BS_DEFPUSHBUTTON | WS_TABSTOP, kApply, 12, 418 + dy, 90, 26);
+            Control(window, "BUTTON", "&Refresh", WS_TABSTOP, kRefreshButton, 110, 418 + dy, 90, 26);
+            Control(window, "BUTTON", "Close", WS_TABSTOP, IDCANCEL, 378, 418 + dy, 90, 26);
+            if (dy)
+            {
+                RECT frame{};
+                GetWindowRect(window, &frame);
+                SetWindowPos(window, nullptr, 0, 0, frame.right - frame.left, frame.bottom - frame.top + dy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            }
             return 0;
         }
         case WM_COMMAND:

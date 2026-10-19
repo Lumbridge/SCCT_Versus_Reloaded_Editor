@@ -3,6 +3,7 @@
 #undef max
 #include "MapCheck.h"
 #include "WindowPlacement.h"
+#include "Appearance.h"
 #include "MapCheckModel.h"
 #include "MeasureTool.h"
 #include "Reachability.h"
@@ -297,8 +298,10 @@ void Layout(HWND window)
     RECT r{};
     GetClientRect(window, &r);
     const int w = r.right - 24, h = r.bottom;
-    const int top = 74;
-    MoveWindow(GetDlgItem(window, kIntro), 12, 8, w, top - 12, TRUE);
+    // The intro keeps all its lines in the larger modern font (up to a third of the window).
+    const int intro = Appearance::FitHeight(GetDlgItem(window, kIntro), w, 62, h / 3);
+    const int top = intro + 12;
+    MoveWindow(GetDlgItem(window, kIntro), 12, 8, w, intro, TRUE);
     MoveWindow(GetDlgItem(window, kList), 12, top, w, h - top - 82, TRUE);
     MoveWindow(GetDlgItem(window, kStatus), 12, h - 76, w, 34, TRUE);
     MoveWindow(GetDlgItem(window, kRefresh), 12, h - 36, 90, 26, TRUE);

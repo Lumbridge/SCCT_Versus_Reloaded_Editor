@@ -28,6 +28,7 @@
 #include "PlacementTools.h"
 #include "CommandPalette.h"
 #include "ScatterTool.h"
+#include "Appearance.h"
 
 #include "Version.h"
 
@@ -358,6 +359,11 @@ static DWORD WINAPI MenuInjectThread(LPVOID)
         if (g_reloadedFrame)
         {
             InjectReloadedMenuItems(g_reloadedFrame);
+            // The menus were changed from this thread while the frame's own thread may be drawing
+            // its menu bar. The modern looks draw the bar themselves (Modern Dark item by item), so
+            // have the frame's thread measure and draw it again now that every menu is in.
+            if (Appearance::Current() != Appearance::Theme::Classic)
+                SetWindowPos(g_reloadedFrame, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
             EditorExtras::Attach(g_reloadedFrame);
             return 0;
         }

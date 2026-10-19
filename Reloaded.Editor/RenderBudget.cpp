@@ -3,6 +3,7 @@
 #undef max
 #include "RenderBudget.h"
 #include "WindowPlacement.h"
+#include "Appearance.h"
 #include "RenderBudgetModel.h"
 #include "BudgetWindow.h"
 #include "WorkflowEditor.h"
@@ -218,6 +219,8 @@ void ShowLowerView()
     if (budget.lastList != kZoneList) { budget.lastList = meshes ? kMeshList : kHotspotList; budget.lastRow = -1; }
 }
 
+void Layout(HWND window);
+
 void Fill()
 {
     auto zones = GetDlgItem(budget.window, kZoneList), hotspots = GetDlgItem(budget.window, kHotspotList);
@@ -262,6 +265,7 @@ void Fill()
     }
     ShowLowerView();
     SetDlgItemTextA(budget.window, kIntro, Intro(report.guidelines).c_str());
+    Layout(budget.window); // the intro's height follows its text
     SetStatus(snapshot.hasView ? ViewStatus() : ReportStatus());
 }
 
@@ -412,9 +416,11 @@ void Layout(HWND window)
     RECT r{};
     GetClientRect(window, &r);
     const int w = r.right - 24, h = r.bottom;
-    const int top = 96, listsHeight = h - top - 48 - 34;
+    // The intro keeps all its lines in the larger modern font (up to a third of the window).
+    const int intro = Appearance::FitHeight(GetDlgItem(window, kIntro), w, 84, h / 3);
+    const int top = intro + 12, listsHeight = h - top - 48 - 34;
     const int zonesHeight = listsHeight * 3 / 5, hotspotTop = top + zonesHeight + 30;
-    MoveWindow(GetDlgItem(window, kIntro), 12, 8, w, top - 12, TRUE);
+    MoveWindow(GetDlgItem(window, kIntro), 12, 8, w, intro, TRUE);
     MoveWindow(GetDlgItem(window, kZoneList), 12, top, w, zonesHeight, TRUE);
     MoveWindow(GetDlgItem(window, kLowerView), 12, top + zonesHeight + 4, 440, 200, TRUE);
     MoveWindow(GetDlgItem(window, kMeshScope), 462, top + zonesHeight + 8, std::max(40, w - 450), 18, TRUE);
