@@ -67,6 +67,18 @@ namespace Workflow::Editor
     Pose BuilderPose();
     Json CaptureAssembly(const Json& members, const Pose& frame);
     Json PlaceAssembly(const Json& definition, const Pose& frame, const std::map<std::string,std::string>& bindings);
+    // The same, one Undo step, with every placed actor also filed in `group`
+    // (a linked prefab instance's Group, PrefabModel.h) when it is not empty.
+    Json PlaceAssembly(const Json& definition, const Pose& frame, const std::map<std::string,std::string>& bindings, const std::string& group);
+    // Linked prefabs: every live actor whose Group names an instance, as
+    // {path,class,name,groups,selected,position,rotation}.
+    Json PrefabActors();
+    // The Group field of each selected actor.
+    std::vector<std::string> SelectedGroups();
+    // Deletes each job's members ({members,group,position,rotation}) and
+    // places `definition` in their place, filed in the job's group, all in one
+    // Undo step. Returns per job {members,names,tags,position,rotation,removed}.
+    Json RebuildPrefabInstances(const Json& definition, const Json& jobs);
     bool Compatible(const std::string& actorPath, const std::string& type);
     bool Exec(const std::string& command);
     void Redraw();

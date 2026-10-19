@@ -88,3 +88,10 @@ The suites save the map, so give each run fresh copies of the maps.
   closes; Ctrl+Shift+P opens and closes it (when the editor is in front).
   `shot=<file.bmp>` (and `shotquery=<text>`) saves a picture of it over the editor.
   Any map will do (ShipD was used).
+- `prefabs`: two meshes (one Tagged, the other's Event on that Tag) saved as an
+  assembly and placed linked twice, one turned: one Undo step each, fresh Tags
+  per copy, 2 linked instances in the Actor Assemblies list; Select Instance
+  and Select All Instances; the second copy moved, a mesh of the first lifted
+  and Update Prefab from This Instance rebuilds the second where it stands in
+  one Undo step, which Undo takes back; both copies are still linked after
+  File > Save and Open Recent; Break Link drops one, and Update then refuses.

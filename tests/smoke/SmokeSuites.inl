@@ -704,6 +704,190 @@ void PaletteSuite()
     Check(palette && IsWindowVisible(palette), "palette-hotkey-opens");
     PressCtrlShiftP();
     Check(!TopOfClass("ReloadedCommandPalette"), "palette-hotkey-closes");
+// ---- Linked prefabs: two meshes (one Tagged, the other's Event pointing at it) saved as an
+// assembly, placed linked twice; one instance edited and the prefab updated from it rebuilds the
+// other where it stands, in one Undo step that Undo takes back; the link survives save and reopen;
+// Break Link drops an instance.
+using Json = nlohmann::json;
+Json Request(const Json& request)
+{
+    using Fn = int(__cdecl*)(const char*, char*, unsigned);
+    static Fn call = reinterpret_cast<Fn>(GetProcAddress(GetModuleHandleA("Reloaded.Editor.dll"), "ReloadedWorkflowRequest"));
+    if (!call) throw std::runtime_error("no workflow bridge");
+    std::vector<char> out(16 * 1024 * 1024);
+    const auto text = request.dump();
+    call(text.c_str(), out.data(), static_cast<unsigned>(out.size()));
+    auto reply = Json::parse(out.data());
+    if (!reply.value("ok", false)) throw std::runtime_error(request.value("op", std::string()) + ": " + reply.value("error", std::string()));
+    return reply.at("result");
+}
+unsigned char* ActorByPath(const std::string& path)
+{
+    const auto name = path.substr(path.find_last_of('.') + 1);
+    for (auto a : Actors()) if (!_stricmp(Name(a).c_str(), name.c_str())) return a;
+    return nullptr;
+}
+Json Instances() { return Request({{"op", "prefab.instances"}}); }
+Json LiveOf(const Json& instances, size_t i) { return i < instances.size() ? instances[i].at("live") : Json::array(); }
+// The member of a live list whose name ends in `stem` (the placement prefix differs per copy).
+unsigned char* MemberNamed(const Json& live, const std::string& stem)
+{
+    for (const auto& m : live)
+    {
+        const auto path = m.at("path").get<std::string>();
+        if (path.size() >= stem.size() && !_stricmp(path.substr(path.size() - stem.size()).c_str(), stem.c_str())) return ActorByPath(path);
+    }
+    return nullptr;
+}
+std::string TagOf(const std::string& path, const char* key)
+{
+    for (const auto& a : Request({{"op", "actors"}})) if (a.at("path") == path) return a.value(key, std::string());
+    return {};
+}
+// The editor frame and a tool window over it, for the report (PrintWindow of each, never the desktop).
+void SaveWindowBitmap(HWND w, const std::filesystem::path& file)
+{
+    RECT r{};
+    GetWindowRect(w, &r);
+    const int width = r.right - r.left, height = r.bottom - r.top;
+    if (width <= 0 || height <= 0) return;
+    HDC screen = GetDC(nullptr), dc = CreateCompatibleDC(screen);
+    BITMAPINFO info{};
+    info.bmiHeader = {sizeof(BITMAPINFOHEADER), width, -height, 1, 32, BI_RGB};
+    void* bits = nullptr;
+    HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    auto old = SelectObject(dc, bitmap);
+    PrintWindow(w, dc, 2);
+    BITMAPFILEHEADER header{0x4d42, static_cast<DWORD>(sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + width * height * 4), 0, 0, sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER)};
+    std::ofstream out(file, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    out.write(reinterpret_cast<const char*>(&info.bmiHeader), sizeof(BITMAPINFOHEADER));
+    out.write(static_cast<const char*>(bits), static_cast<std::streamsize>(width) * height * 4);
+    SelectObject(dc, old);
+    DeleteObject(bitmap);
+    DeleteDC(dc);
+    ReleaseDC(nullptr, screen);
+}
+void PrefabsSuite()
+{
+    auto pair = FreeMeshes(2, 5);
+    if (pair.size() < 2) { Fail("prefab-meshes", "fewer than two free meshes"); return; }
+    const std::string level = Request({{"op", "map"}}).at("level");
+    const std::string nameA = Name(pair[0]), nameB = Name(pair[1]);
+    const Json idA = {{"path", level + "." + nameA}, {"class", "Engine.StaticMeshActor"}}, idB = {{"path", level + "." + nameB}, {"class", "Engine.StaticMeshActor"}};
+    Request({{"op", "light.set"}, {"actor", idA}, {"properties", {{"Tag", "PfSmokeLamp"}}}});
+    Request({{"op", "light.set"}, {"actor", idB}, {"properties", {{"Event", "PfSmokeLamp"}}}});
+    SelectOnly(pair);
+    const auto entry = Request({{"op", "prefab.save"}, {"name", "Smoke Prefab"}});
+    Check(entry.at("actors").size() == 2 && entry.at("bindings").empty(), "prefab-saved", "actors=" + std::to_string(entry.at("actors").size()) + " bindings=" + std::to_string(entry.at("bindings").size()));
+    const auto id = entry.at("id").get<std::string>();
+    const auto a = ReadVector(pair[0], "Location");
+
+    // Two linked copies, the second turned a quarter, one Undo step each.
+    auto before = Undo();
+    Request({{"op", "prefab.place"}, {"assembly", id}, {"position", {a.x, a.y + 2048, a.z}}, {"rotation", {0, 0, 0}}});
+    auto after = Undo();
+    Check(after.count == before.count + 1 && after.current == "Place linked prefab", "prefab-place-one-step", "undo '" + after.current + "'");
+    Request({{"op", "prefab.place"}, {"assembly", id}, {"position", {a.x + 2048, a.y + 2048, a.z}}, {"rotation", {0, 16384, 0}}});
+    auto instances = Instances();
+    Check(instances.size() == 2 && LiveOf(instances, 0).size() == 2 && LiveOf(instances, 1).size() == 2, "prefab-two-instances", instances.dump().substr(0, 300));
+    if (instances.size() != 2) return;
+    const auto counts = Request({{"op", "prefab.counts"}});
+    Check(counts.value(id, 0) == 2, "prefab-count", counts.dump());
+
+    // Tags are fresh per copy, and each copy's Event follows its own Tag.
+    auto lamp1 = MemberNamed(LiveOf(instances, 0), nameA), lamp2 = MemberNamed(LiveOf(instances, 1), nameA);
+    auto switch1 = MemberNamed(LiveOf(instances, 0), nameB), switch2 = MemberNamed(LiveOf(instances, 1), nameB);
+    if (!lamp1 || !lamp2 || !switch1 || !switch2) { Fail("prefab-members", "members not found"); return; }
+    const auto tag1 = TagOf(level + "." + Name(lamp1), "tag"), tag2 = TagOf(level + "." + Name(lamp2), "tag");
+    const auto event1 = TagOf(level + "." + Name(switch1), "event"), event2 = TagOf(level + "." + Name(switch2), "event");
+    Check(tag1 != tag2 && !_stricmp(tag1.c_str(), event1.c_str()) && !_stricmp(tag2.c_str(), event2.c_str()) && tag1.find("PfSmokeLamp") != std::string::npos,
+          "prefab-fresh-tags", tag1 + "/" + event1 + " " + tag2 + "/" + event2);
+
+    // Select Instance and Select All Instances, from the frame menu.
+    SelectOnly({lamp1});
+    Command(41540);
+    Check(Selected() == 2, "prefab-select-instance", "selected=" + std::to_string(Selected()));
+    SelectOnly({lamp1});
+    Command(41541);
+    Check(Selected() == 4, "prefab-select-all", "selected=" + std::to_string(Selected()));
+
+    // Edit the first copy: its lamp up 64 (an Undo step of its own), then update from it.
+    Request({{"op", "design.translate"}, {"members", Json::array({{{"path", level + "." + Name(lamp1)}, {"class", "Engine.StaticMeshActor"}}})}, {"delta", {0, 0, 64}}});
+    // The second copy moved as a whole: it is rebuilt where it now stands.
+    Request({{"op", "design.translate"}, {"members", Json::array({{{"path", level + "." + Name(lamp2)}, {"class", "Engine.StaticMeshActor"}},
+                                                                  {{"path", level + "." + Name(switch2)}, {"class", "Engine.StaticMeshActor"}}})}, {"delta", {128, -64, 0}}});
+    const auto lamp2Before = ReadVector(lamp2, "Location"), switch2Before = ReadVector(switch2, "Location");
+    const std::string oldLamp2 = Name(lamp2), oldSwitch2 = Name(switch2);
+    SelectOnly({switch1});
+    before = Undo();
+    Command(41542);
+    after = Undo();
+    Check(after.count == before.count + 1 && after.current == "Update linked prefab" && BoxContains("Update the prefab"), "prefab-update-one-step",
+          "undo '" + after.current + "' boxes=" + std::to_string(boxes.size()));
+    instances = Instances();
+    auto newLamp2 = MemberNamed(LiveOf(instances, 1), nameA), newSwitch2 = MemberNamed(LiveOf(instances, 1), nameB);
+    if (!newLamp2 || !newSwitch2) { Fail("prefab-rebuilt", "rebuilt members not found " + instances.dump().substr(0, 300)); return; }
+    const auto lampNow = ReadVector(newLamp2, "Location"), switchNow = ReadVector(newSwitch2, "Location");
+    Check(Name(newLamp2) != oldLamp2 && std::fabs(lampNow.z - lamp2Before.z - 64) < 0.5f && std::fabs(lampNow.x - lamp2Before.x) < 0.5f && std::fabs(lampNow.y - lamp2Before.y) < 0.5f
+          && std::fabs(switchNow.x - switch2Before.x) + std::fabs(switchNow.y - switch2Before.y) + std::fabs(switchNow.z - switch2Before.z) < 0.5f && !ActorByPath(oldLamp2), "prefab-rebuilt-in-place",
+          VecText(lamp2Before) + "->" + VecText(lampNow) + " switch " + VecText(switch2Before) + "->" + VecText(switchNow));
+    const auto tagNew = TagOf(level + "." + Name(newLamp2), "tag"), eventNew = TagOf(level + "." + Name(newSwitch2), "event");
+    Check(tagNew != tag1 && tagNew != tag2 && !_stricmp(tagNew.c_str(), eventNew.c_str()), "prefab-rebuilt-fresh-tags", tagNew + "/" + eventNew);
+
+    // Undo puts the old copy back: its own actors, where they were.
+    const std::string newLampName = Name(newLamp2);
+    before = Undo();
+    Command(40019);
+    Pump(500);
+    after = Undo();
+    instances = Instances();
+    auto back = ActorByPath(oldLamp2);
+    std::string live;
+    for (const auto& m : LiveOf(instances, 1)) live += m.at("path").get<std::string>() + " ";
+    Check(back && Same(ReadVector(back, "Location"), lamp2Before) && !ActorByPath(newLampName) && LiveOf(instances, 1).size() == 2, "prefab-undo-restores",
+          "undid '" + before.current + "' now '" + after.current + "' back=" + (back ? VecText(ReadVector(back, "Location")) : std::string("none")) + " new still there=" + (ActorByPath(newLampName) ? "yes" : "no") + " live=" + live);
+
+    // Actor Assemblies shows the count; a picture for the report.
+    Command(40922);
+    Pump(800);
+    if (HWND assemblies = OpenedWindow("Actor Assemblies"))
+    {
+        HWND list = FindWindowExA(assemblies, nullptr, WC_LISTVIEWA, nullptr);
+        bool shown = false;
+        for (const auto& row : ListRows(list)) if (row.find("Smoke Prefab") != std::string::npos && row.find("2 linked instances in this map") != std::string::npos) shown = true;
+        Check(shown, "prefab-list-count");
+        SelectOnly({switch1});
+        Command(41541);
+        Exec("CAMERA ALIGN");
+        Pump(800);
+        SaveWindowBitmap(frameWindow, directory / "prefabs-frame.bmp");
+        SaveWindowBitmap(assemblies, directory / "prefabs-window.bmp");
+        CloseWindowAndWait(assemblies);
+    }
+    else Fail("prefab-list-count", "Actor Assemblies did not open");
+
+    // The link is in the map: saved and opened again, both copies are still instances.
+    Command(40007);
+    Pump(500);
+    ReopenRecent(IDYES);
+    instances = Instances();
+    Check(instances.size() == 2 && LiveOf(instances, 0).size() == 2 && LiveOf(instances, 1).size() == 2, "prefab-survives-reopen", instances.dump().substr(0, 300));
+
+    // Break Link: the copy's actors stay, unlinked.
+    if (auto lamp = MemberNamed(LiveOf(instances, 1), nameA))
+    {
+        SelectOnly({lamp});
+        before = Undo();
+        Command(41543);
+        after = Undo();
+        instances = Instances();
+        Check(instances.size() == 1 && ActorByPath(level + "." + Name(lamp)) && after.count == before.count + 1, "prefab-break-link",
+              "instances=" + std::to_string(instances.size()) + " undo '" + after.current + "' " + std::to_string(before.count) + "->" + std::to_string(after.count));
+        SelectOnly({lamp});
+        Command(41542);
+        Check(BoxContains("Select an actor of a linked prefab"), "prefab-unlinked-refuses-update");
+    }
 }
 
 void RunSuites(const std::string& list)
@@ -717,6 +901,7 @@ void RunSuites(const std::string& list)
         else if (name == "placement") PlacementSuite();
         else if (name == "meshcost") MeshCostSuite();
         else if (name == "palette") PaletteSuite();
+        else if (name == "prefabs") PrefabsSuite();
         else Fail("suite", "no suite called " + name);
     }
 }

@@ -175,6 +175,14 @@ static void InjectReloadedMenuItems(HWND frame)
         }
         AppendMenuA(reTools, MF_STRING, WorkflowTools::kAssemblies, "Actor &Assemblies...");
         AppendMenuA(reTools, MF_STRING, WorkflowTools::kSaveAssembly, "&Save Selection as Assembly...");
+        if (HMENU prefabs = CreatePopupMenu())
+        {
+            AppendMenuA(prefabs, MF_STRING, WorkflowTools::kPrefabSelectInstance, "Select &Instance");
+            AppendMenuA(prefabs, MF_STRING, WorkflowTools::kPrefabSelectAll, "Select &All Instances");
+            AppendMenuA(prefabs, MF_STRING, WorkflowTools::kPrefabUpdate, "&Update Prefab from This Instance...");
+            AppendMenuA(prefabs, MF_STRING, WorkflowTools::kPrefabBreakLink, "&Break Link");
+            AppendMenuA(reTools, MF_POPUP, reinterpret_cast<UINT_PTR>(prefabs), "Linked Pre&fabs");
+        }
         AppendMenuA(reTools, MF_STRING, EmitterLibraryWindow::Command, "Emitter &Library...");
         AppendMenuA(reTools, MF_STRING, WorkflowTools::kSaveToEmitterLibrary, "Save Selected Emitters to Emitter L&ibrary...");
         AppendMenuA(reTools, MF_STRING, CharacterSkinsWindow::Command, "C&haracter Skins...");
