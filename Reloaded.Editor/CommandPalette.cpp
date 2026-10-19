@@ -395,22 +395,26 @@ void CALLBACK OpenFromKey(HWND, UINT, UINT_PTR timer, DWORD)
 }
 
 // Ctrl+Shift+P on the frame's thread, whichever of its windows has the keys:
-// taken before the window (and the stock accelerators) see it.
-LRESULT CALLBACK KeyProc(int code, WPARAM key, LPARAM flags)
+// taken as the message leaves the queue, before the window (and the stock
+// accelerators) see it. The P's key-up goes with it.
+LRESULT CALLBACK KeyProc(int code, WPARAM removal, LPARAM parameter)
 {
-    if (code == HC_ACTION && key == 'P')
+    auto* message = reinterpret_cast<MSG*>(parameter);
+    if (code == HC_ACTION && removal == PM_REMOVE && message && message->wParam == 'P'
+        && (message->message == WM_KEYDOWN || message->message == WM_KEYUP))
     {
-        const bool release = (flags & 0x80000000) != 0, repeat = (flags & 0x40000000) != 0;
-        if (release && swallowP) { swallowP = false; return 1; }
-        if (!release && GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_SHIFT) < 0 && GetKeyState(VK_MENU) >= 0 && (swallowP || CanOpenFromKey()))
+        const bool release = message->message == WM_KEYUP, repeat = (message->lParam & 0x40000000) != 0;
+        if (release && swallowP) { swallowP = false; message->message = WM_NULL; }
+        else if (!release && GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_SHIFT) < 0 && GetKeyState(VK_MENU) >= 0
+                 && (swallowP || CanOpenFromKey()))
         {
             swallowP = true;
+            message->message = WM_NULL;
             // Opened from a timer, outside the hook.
             if (!repeat) SetTimer(nullptr, 0, 0, OpenFromKey);
-            return 1;
         }
     }
-    return CallNextHookEx(keyHook, code, key, flags);
+    return CallNextHookEx(keyHook, code, removal, parameter);
 }
 } // namespace
 
@@ -418,7 +422,7 @@ void Attach(HWND frame)
 {
     g.frame = frame;
     if (keyHook) return;
-    keyHook = SetWindowsHookExA(WH_KEYBOARD, KeyProc, nullptr, GetCurrentThreadId());
+    keyHook = SetWindowsHookExA(WH_GETMESSAGE, KeyProc, nullptr, GetCurrentThreadId());
     Logger::log(keyHook ? "Command Palette: Ctrl+Shift+P installed" : "Command Palette: the Ctrl+Shift+P hook failed");
 }
 

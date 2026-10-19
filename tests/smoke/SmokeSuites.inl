@@ -525,6 +525,187 @@ void MeshCostSuite()
     CloseWindowAndWait(budget);
 }
 
+// ---- Command Palette: Help > Command Palette lists the menu bar's commands; typing finds one, Enter or a
+// click runs it, and the command run last is listed first the next time. Ctrl+Shift+P opens and closes it.
+constexpr UINT kPalette = 41580;
+std::vector<std::string> PaletteRows(HWND palette)
+{
+    std::vector<std::string> rows;
+    HWND list = GetDlgItem(palette, 101);
+    const auto count = SendMessageA(list, LB_GETCOUNT, 0, 0);
+    for (LRESULT i = 0; i < count; ++i)
+    {
+        std::string text(static_cast<size_t>(SendMessageA(list, LB_GETTEXTLEN, i, 0)) + 1, '\0');
+        SendMessageA(list, LB_GETTEXT, i, reinterpret_cast<LPARAM>(text.data()));
+        text.resize(strlen(text.c_str()));
+        rows.push_back(text);
+    }
+    return rows;
+}
+HWND OpenPalette()
+{
+    Command(kPalette);
+    Pump(300);
+    HWND palette = TopOfClass("ReloadedCommandPalette");
+    return palette && IsWindowVisible(palette) ? palette : nullptr;
+}
+void TypeInPalette(HWND palette, const char* text)
+{
+    SetWindowTextA(GetDlgItem(palette, 100), text);
+    Pump(100);
+}
+// Pump with the message box answerer running: a command the palette posted runs inside the pump.
+void PumpAnswering(DWORD ms)
+{
+    boxes.clear();
+    UINT_PTR timer = SetTimer(nullptr, 0, 100, AnswerBoxes);
+    Pump(ms);
+    KillTimer(nullptr, timer);
+}
+bool HasRow(const std::vector<std::string>& rows, const std::string& start)
+{
+    for (const auto& row : rows) if (row.rfind(start, 0) == 0) return true;
+    return false;
+}
+// The editor frame with the palette drawn over it, as a 24-bit BMP (window contents only).
+void SavePaletteShot(HWND palette, const std::string& file)
+{
+    RECT frame{}, popup{};
+    GetWindowRect(frameWindow, &frame);
+    GetWindowRect(palette, &popup);
+    const int w = frame.right - frame.left, h = frame.bottom - frame.top;
+    HDC screen = GetDC(nullptr);
+    HDC dc = CreateCompatibleDC(screen), part = CreateCompatibleDC(screen);
+    HBITMAP image = CreateCompatibleBitmap(screen, w, h);
+    HBITMAP piece = CreateCompatibleBitmap(screen, popup.right - popup.left, popup.bottom - popup.top);
+    HGDIOBJ old = SelectObject(dc, image), oldPart = SelectObject(part, piece);
+    PrintWindow(frameWindow, dc, 2 /* PW_RENDERFULLCONTENT */);
+    PrintWindow(palette, part, 2);
+    BitBlt(dc, popup.left - frame.left, popup.top - frame.top, popup.right - popup.left, popup.bottom - popup.top, part, 0, 0, SRCCOPY);
+    BITMAPINFOHEADER header{sizeof(header), w, h, 1, 24, BI_RGB};
+    const int stride = (w * 3 + 3) & ~3;
+    std::vector<char> pixels(static_cast<size_t>(stride) * h);
+    GetDIBits(dc, image, 0, h, pixels.data(), reinterpret_cast<BITMAPINFO*>(&header), DIB_RGB_COLORS);
+    BITMAPFILEHEADER fileHeader{0x4D42, static_cast<DWORD>(sizeof(BITMAPFILEHEADER) + sizeof(header) + pixels.size()), 0, 0,
+                                sizeof(BITMAPFILEHEADER) + sizeof(header)};
+    std::ofstream out(file, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(&fileHeader), sizeof(fileHeader));
+    out.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    out.write(pixels.data(), static_cast<std::streamsize>(pixels.size()));
+    SelectObject(dc, old);
+    SelectObject(part, oldPart);
+    DeleteObject(image);
+    DeleteObject(piece);
+    DeleteDC(dc);
+    DeleteDC(part);
+    ReleaseDC(nullptr, screen);
+    Info("palette-shot", file);
+}
+// Ctrl+Shift+P as the keyboard would deliver it to the frame's thread: the key state says Ctrl and Shift
+// are down while the P press and release are fetched from the queue.
+void PressCtrlShiftP()
+{
+    BYTE keys[256] = {}, held[256] = {};
+    GetKeyboardState(keys);
+    memcpy(held, keys, sizeof(held));
+    held[VK_CONTROL] = held[VK_LCONTROL] = held[VK_SHIFT] = held[VK_LSHIFT] = 0x80;
+    SetKeyboardState(held);
+    PostMessageA(frameWindow, WM_KEYDOWN, 'P', 0x00190001);
+    Pump(150);
+    PostMessageA(frameWindow, WM_KEYUP, 'P', 0xC0190001);
+    Pump(150);
+    SetKeyboardState(keys);
+    Pump(200);
+}
+void PaletteSuite()
+{
+    std::error_code ignored;
+    std::filesystem::remove(directory / "ReloadedEditor" / "command_palette_recent.json", ignored);
+
+    HWND palette = OpenPalette();
+    Check(palette != nullptr, "palette-open", "boxes=" + std::to_string(boxes.size()));
+    if (!palette) return;
+    auto rows = PaletteRows(palette);
+    int withKeys = 0;
+    for (const auto& row : rows) if (row.find('\t') != std::string::npos) ++withKeys;
+    for (size_t i = 0; i < rows.size() && i < 4; ++i) Info("palette-row", rows[i]);
+    // Stock commands, RE+ ones and a submenu's, each with its menu path; the palette itself is not listed.
+    Check(rows.size() > 100 && HasRow(rows, "File > ") && HasRow(rows, "Build > Map Check...") && HasRow(rows, "Help > RE+ Shortcuts...")
+              && HasRow(rows, "RE+ Tools > Camera Bookmarks > Go to Bookmark 1\t1") && !HasRow(rows, "Help > Command Palette"),
+          "palette-lists-menus", std::to_string(rows.size()) + " commands, " + std::to_string(withKeys) + " with a shortcut");
+    Check(withKeys > 10, "palette-shows-shortcuts", std::to_string(withKeys));
+    const auto hint = WindowText(GetDlgItem(palette, 102));
+    Check(hint.find(std::to_string(rows.size()) + " of " + std::to_string(rows.size())) == 0, "palette-count", hint);
+
+    TypeInPalette(palette, "rendr budg");
+    rows = PaletteRows(palette);
+    Check(!rows.empty() && rows[0].rfind("Build > Render Budget...", 0) == 0, "palette-fuzzy-first",
+          std::to_string(rows.size()) + " rows, first '" + (rows.empty() ? std::string() : rows[0]) + "'");
+    TypeInPalette(palette, "zzqqxx");
+    Check(PaletteRows(palette).empty(), "palette-no-match", WindowText(GetDlgItem(palette, 102)));
+    // shot=<file.bmp> and shotquery=<typed text> in -Extra: a picture of the palette over the editor.
+    if (const auto shot = Ini("shot"); !shot.empty())
+    {
+        TypeInPalette(palette, Ini("shotquery", "light").c_str());
+        Pump(300);
+        SavePaletteShot(palette, shot);
+    }
+    TypeInPalette(palette, "map check");
+    rows = PaletteRows(palette);
+    Check(!rows.empty() && rows[0].rfind("Build > Map Check...", 0) == 0, "palette-words-first", rows.empty() ? "" : rows[0]);
+
+    // Enter runs the selected row: the palette goes and Map Check opens.
+    SendMessageA(GetDlgItem(palette, 100), WM_KEYDOWN, VK_RETURN, 0);
+    PumpAnswering(1500);
+    HWND check = OpenedWindow("Map Check");
+    Check(!IsWindow(palette) && check != nullptr, "palette-enter-runs", "palette open=" + std::to_string(IsWindow(palette) != 0) + " boxes=" + std::to_string(boxes.size()));
+    if (check) CloseWindowAndWait(check);
+
+    // A click runs a row too.
+    palette = OpenPalette();
+    if (!palette) { Fail("palette-reopen"); return; }
+    rows = PaletteRows(palette);
+    Check(!rows.empty() && rows[0].rfind("Build > Map Check...", 0) == 0, "palette-recent-first", rows.empty() ? "" : rows[0]);
+    TypeInPalette(palette, "render budget");
+    HWND list = GetDlgItem(palette, 101);
+    RECT item{};
+    SendMessageA(list, LB_GETITEMRECT, 0, reinterpret_cast<LPARAM>(&item));
+    const LPARAM at = MAKELPARAM((item.left + item.right) / 2, (item.top + item.bottom) / 2);
+    SendMessageA(list, WM_LBUTTONDOWN, MK_LBUTTON, at);
+    SendMessageA(list, WM_LBUTTONUP, 0, at);
+    PumpAnswering(1500);
+    HWND budget = OpenedWindow("Render Budget");
+    Check(!IsWindow(palette) && budget != nullptr, "palette-click-runs", "boxes=" + std::to_string(boxes.size()));
+    if (budget) CloseWindowAndWait(budget);
+
+    // Most recent first, then the one before; the arrows move; Esc closes.
+    palette = OpenPalette();
+    if (!palette) { Fail("palette-reopen"); return; }
+    rows = PaletteRows(palette);
+    Check(rows.size() > 2 && rows[0].rfind("Build > Render Budget...", 0) == 0 && rows[1].rfind("Build > Map Check...", 0) == 0,
+          "palette-recent-order", rows.size() > 1 ? rows[0] + " | " + rows[1] : "");
+    std::ifstream saved(directory / "ReloadedEditor" / "command_palette_recent.json");
+    Check(saved.good(), "palette-recent-saved");
+    HWND edit = GetDlgItem(palette, 100);
+    SendMessageA(edit, WM_KEYDOWN, VK_DOWN, 0);
+    SendMessageA(edit, WM_KEYDOWN, VK_DOWN, 0);
+    SendMessageA(edit, WM_KEYDOWN, VK_UP, 0);
+    Check(SendMessageA(GetDlgItem(palette, 101), LB_GETCURSEL, 0, 0) == 1, "palette-arrows");
+    SendMessageA(edit, WM_KEYDOWN, VK_ESCAPE, 0);
+    Pump(200);
+    Check(!IsWindow(palette) && !OpenedWindow("Render Budget"), "palette-escape-closes");
+
+    // Ctrl+Shift+P: only while the editor is the foreground application.
+    DWORD process = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &process);
+    if (process != GetCurrentProcessId()) { Info("palette-hotkey", "skipped: the editor is not in front"); return; }
+    PressCtrlShiftP();
+    palette = TopOfClass("ReloadedCommandPalette");
+    Check(palette && IsWindowVisible(palette), "palette-hotkey-opens");
+    PressCtrlShiftP();
+    Check(!TopOfClass("ReloadedCommandPalette"), "palette-hotkey-closes");
+}
+
 void RunSuites(const std::string& list)
 {
     std::stringstream names(list);
@@ -535,6 +716,7 @@ void RunSuites(const std::string& list)
         else if (name == "unsaved") UnsavedSuite();
         else if (name == "placement") PlacementSuite();
         else if (name == "meshcost") MeshCostSuite();
+        else if (name == "palette") PaletteSuite();
         else Fail("suite", "no suite called " + name);
     }
 }

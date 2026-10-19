@@ -81,3 +81,10 @@ The suites save the map, so give each run fresh copies of the maps.
   selects every copy of that mesh and a double-click frames them; a zone row
   narrows the list to that zone's meshes and the Whole map row widens it again;
   the list switches back to the hotspots.
+- `palette`: Help > Command Palette lists the menu bar's commands (stock, RE+ and
+  submenus, with their shortcuts, but not itself); typing finds Render Budget from
+  scattered letters and Map Check from its words; Enter and a click each run the
+  first row; the command run last is listed first; the arrows move and Esc
+  closes; Ctrl+Shift+P opens and closes it (when the editor is in front).
+  `shot=<file.bmp>` (and `shotquery=<text>`) saves a picture of it over the editor.
+  Any map will do (ShipD was used).
