@@ -69,7 +69,7 @@ namespace
     constexpr size_t kMeshPolyTriangles=0x104,kMeshPolyNodes=0x114,kMeshHullVertices=0x128,kMeshHullTriangles=0x148,kMeshHullNodes=0x150;
     constexpr size_t kHullVertexStride=24,kHullTriangleStride=8,kCollisionNodeStride=12;
     // The render index buffer count and RawTriangles' count, as Render Budget reads them.
-    constexpr size_t kMeshIndices=0xc8,kMeshRawTriangleCount=0x194;
+    constexpr size_t kCheckMeshIndexCount=0xc8,kMeshRawTriangleCount=0x194;
     constexpr int kMeshArrayMost=4000000;
 
     template<class T> std::vector<T> MeshBlock(Address mesh,size_t offset,size_t stride,int& count)
@@ -106,7 +106,7 @@ namespace
     {
         MapCheck::MeshCollision out;
         out.path=Path(mesh);out.name=NameOf(mesh);
-        const int indices=Read<int>(mesh+kMeshIndices),raw=Read<int>(mesh+kMeshRawTriangleCount);
+        const int indices=Read<int>(mesh+kCheckMeshIndexCount),raw=Read<int>(mesh+kMeshRawTriangleCount);
         out.drawnTriangles=std::max(indices>0 && indices<30000000?indices/3:0,raw>0 && raw<10000000?raw:0);
         out.polyTriangles=MeshArrayCount(mesh,kMeshPolyTriangles);
         out.polyInTree=TrianglesInTree(mesh,kMeshPolyNodes,out.polyTriangles,out.polyNodes);

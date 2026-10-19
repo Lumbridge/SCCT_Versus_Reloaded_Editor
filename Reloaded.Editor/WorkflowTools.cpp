@@ -1870,6 +1870,7 @@ Json PrefabRequest(const std::string& op,const Json& q)
     else throw std::runtime_error("Unknown prefab request.");
     RefreshAssemblyWindows();
     return result;
+}
 Json MapMovementLimits()
 {
     Sync();
