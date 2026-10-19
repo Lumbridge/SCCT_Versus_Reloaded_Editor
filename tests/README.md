@@ -518,13 +518,33 @@ actors and portal surfaces.
 `tools/test_workflow_tools.cmd` includes `LightShadowModelTests.cpp`: threshold
 clamping and banding (NaN counts as dark), lightmap luminance in the stored
 B,G,R,A order with bilinear sampling and the 2x display scale, light colour
-shares from hue and saturation, the squared falloff to a light's reach,
-walkable floors in either winding, grid sampling with no duplicates on shared
-edges and one patch per stacked storey, lights adding up to the 255 cap, BSP
-line of sight (a light behind a solid slab is blocked; one embedded a little in
-its fitting is not), the three brightness sources, summaries, legend and
-readout text, the drawn outline per band, the readout lookup, and the patch cap
-keeping small floors before vast ones.
+shares from hue and saturation, the engine's falloff (2 at the light,
+2(1 - 3x^2 + 2x^3) at a share x of the reach, the light's angle on a surface)
+and its NonIncidence, QuadraticNonIncidence, Cylinder and Sunlight variants,
+spotlight cones (inside, at the edge, behind, narrow and closed cones, the
+switch), the LE_ESpotShadow frustum widening from NearPlaneRatio to
+SpotWidth by SpotHeight at EchelonRange (and the box at 0.99), transforms and
+their inverse, segments against boxes and triangles, the bounding volume
+hierarchy checked against every box, a static mesh box blocking a light but
+not beside or over it, a lamp's small fitting not putting it out while a big
+hall around it still blocks, static mesh floors on the top face only (mirrored
+too) with their vertex baked lighting, walkable floors in either winding, grid
+sampling with no duplicates on shared edges and one patch per stacked storey,
+lights adding up to the 255 cap, BSP line of sight (a light behind a solid
+slab is blocked; one embedded a little in its fitting is not), the work kept
+between samples (an unchanged map reuses every light, a moved light or a mesh
+moved within a light's reach is worked out again, new patches are added, a
+setting or BSP change starts again, each matching a sample from nothing), the
+three brightness sources, summaries, legend and readout text, the drawn
+outline per band, the readout lookup, and the patch cap keeping small floors
+before vast ones.
+
+The smoke suite `lightshadow` (`tests/smoke/SmokeSuites.inl`) turns the map on
+in a disposable editor, checks there are patches and some on static meshes,
+moves an in-game light and then a static mesh near it and checks the next
+sample keeps the other lights, switches static mesh floors off and on in the
+settings window (Apply, the summary and `[LightShadowMap] MeshFloors`), and
+saves pictures of the editor and the settings window.
 
 Checked by hand in a disposable install on ShipD and BankD (not covered by the
 native suite): the menu toggle and its check mark, sampling and the log line,

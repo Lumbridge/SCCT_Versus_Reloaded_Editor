@@ -95,3 +95,10 @@ The suites save the map, so give each run fresh copies of the maps.
   and Update Prefab from This Instance rebuilds the second where it stands in
   one Undo step, which Undo takes back; both copies are still linked after
   File > Save and Open Recent; Break Link drops one, and Update then refuses.
+- `lightshadow`: the Light and Shadow Map turned on has patches, some on static
+  meshes; after an in-game light and then a static mesh near it are moved, the
+  next sample keeps the other lights (the log line says how many); switching
+  static mesh floors off and on in its settings window changes the summary and
+  is saved to `[LightShadowMap]`; `System\lightshadow-1.bmp` and `-2.bmp` are
+  pictures of the editor and the settings window (the hidden editor is shown,
+  without taking the focus, while they are taken). Any map with lights works.
