@@ -56,6 +56,8 @@
     <ClInclude Include="UndoHistory.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="UndoHistoryModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="AnimImportOptionsModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="Appearance.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="AppearanceModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="AssetNameGloss.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="AssetNameGlossModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="AssetNameDictionary.gen.h"><Filter>Header Files</Filter></ClInclude>
@@ -427,6 +429,9 @@
     <ClCompile Include="StaticMeshBrowserFavorites.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Appearance.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="AssetNameGloss.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -537,9 +542,15 @@
     <ResourceCompile Include="Reloaded.Editor.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
+    <ResourceCompile Include="Appearance.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="cpp.hint" />
+    <None Include="Appearance.manifest">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="GridSizeShortcut.h">
