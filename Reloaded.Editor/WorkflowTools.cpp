@@ -38,6 +38,8 @@
 #include "PropertyPaste.h"
 #include "LightShadowMap.h"
 #include "LightShadowModel.h"
+#include "Reachability.h"
+#include "ReachabilityModel.h"
 #include "EntryThumbnailModel.h"
 #include "ViewBookmarkModel.h"
 #include "UsageMarksModel.h"
@@ -1464,6 +1466,7 @@ bool HandleCommand(UINT command)
     if(PlacementTools::HandleCommand(command))return true;
     if(PropertyPaste::HandleCommand(command))return true;
     if(LightShadowMap::HandleCommand(command))return true;
+    if(Reachability::HandleCommand(command))return true;
     if(LightingBudget::HandleCommand(command))return true;
     if(MapCheck::HandleCommand(command))return true;
     if(RenderBudget::HandleCommand(command))return true;
@@ -1603,6 +1606,17 @@ bool HandleCommand(UINT command)
     }
     catch(const std::exception& e) {MessageBoxA(GetActiveWindow(),e.what(),"RE+ Tools",MB_OK|MB_ICONERROR);}
     return true;
+}
+Json MapMovementLimits()
+{
+    Sync();
+    const auto maps=document.find("maps");
+    if(maps==document.end() || !maps->is_object())return nullptr;
+    const auto map=maps->find(mapKey);
+    if(map==maps->end() || !map->is_object())return nullptr;
+    const auto design=map->find("design");
+    if(design==map->end() || !design->is_object() || !design->contains("movement"))return nullptr;
+    return Design::Movement(*design);
 }
 void FindUsages(HWND owner,void*,bool mesh)
 {

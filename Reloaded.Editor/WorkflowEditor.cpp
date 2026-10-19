@@ -17,6 +17,7 @@
 #include "MapCheckModel.h"
 #include "MapCheckLog.h"
 #include "LightShadowModel.h"
+#include "ReachabilityModel.h"
 #include "LevelSnapshot.h"
 #include "CharacterSkinsModel.h"
 #include "ConveyorModel.h"
@@ -1619,4 +1620,5 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "MapRecoveryNative.inl"
 #include "StairSmoothNative.inl"
 #include "MapOptimiseNative.inl"
+#include "ReachabilityNative.inl"
 }
