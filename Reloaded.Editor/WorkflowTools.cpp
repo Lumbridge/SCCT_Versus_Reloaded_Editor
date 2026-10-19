@@ -24,6 +24,7 @@
 #include "MapAuthoringModel.h"
 #include "MapPackageDialog.h"
 #include "MapOptimiseDialog.h"
+#include "ObjExportWindow.h"
 #include "MapUsagesWindow.h"
 #include "MapRecovery.h"
 #include "MemoryWriter.h"
@@ -1468,6 +1469,7 @@ bool HandleCommand(UINT command)
     if(MapCheck::HandleCommand(command))return true;
     if(RenderBudget::HandleCommand(command))return true;
     if(MinimapWindow::HandleCommand(command))return true;
+    if(ObjExportWindow::HandleCommand(command))return true;
     if(MapRecovery::HandleCommand(command))return true;
     if(command==StoreyFilter::kOpen)
     {

@@ -25,6 +25,7 @@
 #include "PlacementModel.h"
 #include "CharacterSkinPresetsModel.h"
 #include "MinimapModel.h"
+#include "ObjExportModel.h"
 #include "StairSmoothModel.h"
 #include "MapOptimiseModel.h"
 #include "UnsavedChangesModel.h"
@@ -35,9 +36,13 @@
 #include "MemoryWriter.h"
 #include "General.h"
 #include "resource.h"
+#include "Version.h"
 #include <zlib.h>
 #include <algorithm>
 #include <chrono>
+#include <deque>
+#include <future>
+#include <thread>
 #include <fstream>
 #include <cmath>
 #include <fstream>
@@ -1619,4 +1624,5 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "MapRecoveryNative.inl"
 #include "StairSmoothNative.inl"
 #include "MapOptimiseNative.inl"
+#include "ObjExportNative.inl"
 }

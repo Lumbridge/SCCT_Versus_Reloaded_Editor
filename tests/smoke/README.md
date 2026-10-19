@@ -81,3 +81,4 @@ The suites save the map, so give each run fresh copies of the maps.
   selects every copy of that mesh and a double-click frames them; a zone row
   narrows the list to that zone's meshes and the Whole map row widens it again;
   the list switches back to the hotspots.
+- `objexport` (ShipD): File > Export holds the stock Export... and Map to OBJ...; an export of the whole map writes an OBJ whose every face corner points at a vertex, texture coordinate and normal it wrote, an MTL that defines every material used and names only PNGs that exist; Selection only with three static mesh actors selected writes just those three objects; a scale that is no number is refused in the status line; the folder is offered again after the window is closed. With `shot = <file.bmp>` it saves the editor with the window over it (PrintWindow).

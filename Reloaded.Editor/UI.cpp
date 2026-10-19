@@ -19,6 +19,7 @@
 #include "FavoritesWindow.h"
 #include "MapPackageDialog.h"
 #include "MapOptimiseDialog.h"
+#include "ObjExportWindow.h"
 #include "EditorExtras.h"
 #include "PlacementTools.h"
 
@@ -245,6 +246,7 @@ static void InjectReloadedMenuItems(HWND frame)
                         MapRecovery::kOpenRecoveredCommandId,
                         "Convert &Legacy Recovered Map...");
         MapRecovery::InstallMenu(file);
+        ObjExportWindow::InstallMenu(file); // File > Export > Map..., Map to OBJ...
     }
 
     HMENU lightingBuild = SubMenuWithCommand(bar, 40038);
