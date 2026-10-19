@@ -277,6 +277,21 @@ inline std::vector<Probe> Probes(const Place::Box& box, const Vector& floor, con
     if (up > 1) probes.push_back({ { centre[0], centre[1], floor[2] + 4 }, { 0, 0, 1 }, up });
     return probes;
 }
+// Whether a prop at rest stands on something: of Drop to Floor's five rays
+// (DropStarts, the centre first) and how far each went before it hit, the
+// centre's and at least two others' must find the floor within a few units of
+// the prop's bottom. A prop perched on a rail or hanging over a ledge has
+// floor under one or two of them only. A prop turned to sit flat on a slope
+// is flush with it, so its rays all find the floor at or above its bottom.
+inline bool Supported(double bottom, const std::vector<Vector>& starts, const std::vector<std::optional<double>>& hits, double tolerance = 8)
+{
+    if (starts.empty() || starts.size() != hits.size()) return false;
+    auto under = [&](size_t i) { return hits[i] && std::isfinite(*hits[i]) && *hits[i] > 0.5 && starts[i][2] - *hits[i] >= bottom - tolerance; };
+    if (!under(0)) return false;
+    int count = 0;
+    for (size_t i = 0; i < starts.size(); ++i) count += under(i) ? 1 : 0;
+    return count >= std::min<int>(3, static_cast<int>(starts.size()));
+}
 // Whether a probe hit something before the end of its reach.
 inline bool Blocked(const Probe& probe, const std::optional<double>& hit)
 {
@@ -292,7 +307,9 @@ struct Result
 {
     std::vector<Prop> props;
     int target = 0, tried = 0;
-    int noFloor = 0, walls = 0, outside = 0, crowded = 0;
+    // Left out: no floor, in a wall, over the area's edge, too close to a
+    // prop placed before it, on a mesh already in the map.
+    int noFloor = 0, walls = 0, outside = 0, crowded = 0, blocked = 0;
 };
 // Candidates until the target is reached or the tries run out. A candidate
 // whose footprint already clashes is turned away before its drop; after it,
@@ -318,9 +335,10 @@ inline Result Run(const Settings& s, const std::vector<Item>& items, const Area&
         if (landing.miss == Miss::Wall) { ++result.walls; continue; }
         const auto& box = landing.prop.box;
         if (!Fits(area, box)) { ++result.outside; continue; }
-        bool clash = Crowded(box, result.props, s.spacing);
+        if (Crowded(box, result.props, s.spacing)) { ++result.crowded; continue; }
+        bool clash = false;
         for (size_t i = 0; i < obstacles.size() && !clash; ++i) clash = Overlaps(box, obstacles[i]);
-        if (clash) { ++result.crowded; continue; }
+        if (clash) { ++result.blocked; continue; }
         result.props.push_back(landing.prop);
     }
     return result;

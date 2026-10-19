@@ -42,6 +42,28 @@ namespace
         return {{box[0],box[1],box[2]},{box[3],box[4],box[5]}};
     }
     Json ScatterBoxJson(const Place::Box& box){return {{"lo",box.lo},{"hi",box.hi}};}
+    // The editor hides every actor whose Group is not in LevelInfo.VisibleGroups
+    // (a comma-separated list), so a new group is added there, in the same Undo
+    // step, before any prop joins it.
+    void ScatterShowGroup()
+    {
+        const auto live=LiveActors();
+        if(live.empty() || !IsA(live[0],"LevelInfo"))return;
+        const auto info=live[0];
+        const auto p=Property(info,"VisibleGroups");
+        if(!p || !IsA(p,"StrProperty"))return;
+        const auto at=info+Read<int>(p+0x3c);
+        const auto data=Read<Address>(at);const int count=Read<int>(at+4);
+        const std::string groups=data && count>0 && count<1000000?String(data,static_cast<size_t>(count)):std::string();
+        // An empty list is a map that never used groups: left as it is.
+        if(groups.empty())return;
+        std::stringstream list(groups);
+        for(std::string group;std::getline(list,group,',');)if(Fold(group)==Fold(kScatterGroup))return;
+        Modify(info);
+        const auto next=ConvertText(groups+","+kScatterGroup,CP_UTF8,CP_ACP);
+        // FString::operator=(const TCHAR*), as MagicImport assigns a string.
+        reinterpret_cast<void*(__thiscall*)(void*,const char*)>(0x10e03770)(reinterpret_cast<void*>(at),next.c_str());
+    }
 }
 
 std::string ScatterBrowserMesh()
@@ -61,7 +83,9 @@ Json ScatterMesh(const std::string& path)
 }
 // The area as ScatterModel.h's Area wants it, plus how high a drop starts
 // ("top") and how far down a floor may be ("bottom"): the builder brush's
-// top and bottom, or for the circle a little above the click and well below.
+// top and bottom, or for the circle 128 units above and below the click, so
+// props stay on the clicked floor and do not fall through a grating or a
+// stairwell to the floor below.
 Json ScatterArea(bool circle,double radius)
 {
     Engine();
@@ -70,7 +94,7 @@ Json ScatterArea(bool circle,double radius)
         auto unrealEd=Read<Address>(0x117a59b0);if(!unrealEd)throw std::runtime_error("The editor is unavailable.");
         const auto click=Read<std::array<float,3>>(unrealEd+0x1bc);
         auto area=Scatter::CircleArea({click[0],click[1]},radius);
-        return {{"circle",true},{"centre",area.centre},{"radius",radius},{"z",click[2]},{"top",click[2]+64.0},{"bottom",click[2]-512.0}};
+        return {{"circle",true},{"centre",area.centre},{"radius",radius},{"z",click[2]},{"top",click[2]+128.0},{"bottom",click[2]-128.0}};
     }
     const auto builder=ScatterBuilder();
     auto model=Read<Address>(builder+0x238),polys=model?Read<Address>(model+0x50):0;
@@ -144,7 +168,7 @@ namespace
 // request: {items:[{path,weight,lo,hi}], area (ScatterArea's), count, byDensity,
 // density, randomYaw, randomTilt, align, scaleMin, scaleMax, spacing, seed}.
 // Returns {props:[{item,path,location,rotation,scale,lo,hi}], target, tried,
-// noFloor, walls, outside, crowded, obstacles, ms}.
+// noFloor, walls, outside, crowded, blocked, obstacles, rays, ms}.
 Json ScatterPlan(const Json& request)
 {
     const auto started=std::chrono::steady_clock::now();
@@ -196,11 +220,10 @@ Json ScatterPlan(const Json& request)
         }
         const auto move=Place::DropDistance(box,down,hits);
         if(!move){landing.miss=Scatter::Miss::NoFloor;return landing;}
-        const double centreFloor=hits[0] && *hits[0]>0.5?starts[0][2]-*hits[0]:-1e30;
         location[2]-=*move;box=Place::Moved(box,{0,0,-*move});
-        // Hanging off an edge: nothing under its middle.
-        if(centreFloor<box.lo[2]-8){landing.miss=Scatter::Miss::NoFloor;return landing;}
-        const Vector floorPoint{starts[0][0],starts[0][1],centreFloor};
+        // Perched on a rail or hanging off an edge.
+        if(!Scatter::Supported(box.lo[2],starts,hits)){landing.miss=Scatter::Miss::NoFloor;return landing;}
+        const Vector floorPoint{starts[0][0],starts[0][1],starts[0][2]-*hits[0]};
         for(const auto& probe:Scatter::Probes(box,floorPoint,centreNormal))
         {
             ++rays;
@@ -215,7 +238,7 @@ Json ScatterPlan(const Json& request)
         props.push_back({{"item",p.item},{"path",paths[p.item]},{"location",p.location},{"rotation",p.rotation},{"scale",p.scale},{"lo",p.box.lo},{"hi",p.box.hi}});
     const auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
     return {{"props",props},{"target",result.target},{"tried",result.tried},{"noFloor",result.noFloor},{"walls",result.walls},
-            {"outside",result.outside},{"crowded",result.crowded},{"obstacles",obstacles.size()},{"rays",rays},{"ms",ms}};
+            {"outside",result.outside},{"crowded",result.crowded},{"blocked",result.blocked},{"obstacles",obstacles.size()},{"rays",rays},{"ms",ms}};
 }
 // props: ScatterPlan's. Pastes them as StaticMeshActors in one Undo step, in
 // the Scatter group, and selects them. Returns their identities.
@@ -279,6 +302,7 @@ Json ScatterPlace(const Json& props)
         std::map<std::string,Address> pasted;
         for(auto actor:LiveActors())if(Read<unsigned>(actor+0x2f4)&0x40)pasted[Fold(NameOf(actor))]=actor;
         if(pasted.size()!=planned.size())throw std::runtime_error("The editor pasted "+std::to_string(pasted.size())+" props instead of "+std::to_string(planned.size())+"; nothing was placed.");
+        ScatterShowGroup();
         for(const auto& item:planned)
         {
             auto found=pasted.find(Fold(item.name));
@@ -291,6 +315,8 @@ Json ScatterPlace(const Json& props)
             Write(Field(actor,"DrawScale"),item.scale);
             if(Property(actor,"Group"))DesignSetGroup(actor,kScatterGroup);
             Call(actor,0x44);
+            // Shown, whatever the editor made of the new group.
+            if(Read<unsigned>(actor+0x2f4)&0x10u){Logger::log("Scatter Props: "+item.name+" came in hidden; shown");Write(actor+0x2f4,Read<unsigned>(actor+0x2f4)&~0x10u);}
             created.push_back(Identity(actor));
         }
         transaction.Commit();

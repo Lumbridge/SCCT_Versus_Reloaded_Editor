@@ -166,7 +166,7 @@ int main()
         Place::Box crate{{-200,-200,0},{200,200,64}};
         auto r=Run(few,items,room,{crate},FlatFloor(items,0));
         for(const auto& p:r.props)Check(!Overlaps(p.box,crate),"props kept off an existing mesh");
-        Check(r.crowded>0,"the obstacle turned candidates away");
+        Check(r.blocked>0,"the obstacle turned candidates away");
         auto onTop=Run(few,items,room,{crate},FlatFloor(items,64));
         Check(onTop.props.size()==200,"props resting on top of a mesh are not overlapping it");
     }
@@ -208,6 +208,20 @@ int main()
         auto flat=Probes({{-20,-20,0},{20,20,4}},{0,0,0},{0,0,1});
         for(const auto& p:flat)Check(Near(p.start[2],2),"a flat prop's rays");
         Check(Blocked(level[0],5.0) && !Blocked(level[0],18.5) && !Blocked(level[0],std::nullopt),"a probe is blocked by a hit before its reach");
+    }
+    // Support: Drop to Floor's five rays from a prop resting with its bottom at 100.
+    {
+        Place::Box prop{{-20,-20,100},{20,20,140}};
+        const auto starts=Place::DropStarts(prop,{0,0,-1});
+        Check(starts.size()==5 && Near(starts[0][2],120),"five rays from the centre's height");
+        using Hits=std::vector<std::optional<double>>;
+        Check(Supported(100,starts,Hits(5,20.0)),"level floor under every ray");
+        Check(Supported(100,starts,Hits{20.0,20.0,20.0,std::nullopt,300.0}),"hanging over an edge a little");
+        Check(!Supported(100,starts,Hits{20.0,20.0,300.0,std::nullopt,300.0}),"hanging off an edge");
+        Check(!Supported(100,starts,Hits{20.0,200.0,200.0,200.0,200.0}),"perched on a rail");
+        Check(!Supported(100,starts,Hits{std::nullopt,20.0,20.0,20.0,20.0}),"nothing under the middle");
+        Check(Supported(100,starts,Hits{14.0,10.0,20.0,26.0,20.0}),"flush on a slope: the floor at or above the bottom");
+        Check(!Supported(100,starts,Hits{0.2,20.0,20.0,20.0,20.0}),"a ray that started inside something says nothing");
     }
     std::cout<<"ScatterModelTests passed\n";
     return 0;

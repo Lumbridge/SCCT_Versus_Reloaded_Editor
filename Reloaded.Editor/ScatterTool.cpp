@@ -198,20 +198,21 @@ namespace
         auto result = Editor::ScatterPlan(request);
         plan = { key, request, area, result };
         Logger::log("Scatter Props: " + std::to_string(result.at("props").size()) + " of " + std::to_string(result.at("target").get<int>()) + " props, "
-                    + std::to_string(result.at("tried").get<int>()) + " tried, " + std::to_string(result.at("rays").get<size_t>()) + " rays, "
+                    + std::to_string(result.at("tried").get<int>()) + " tried, " + std::to_string(result.at("obstacles").get<size_t>()) + " small meshes near, " + std::to_string(result.at("rays").get<size_t>()) + " rays, "
                     + std::to_string(result.at("ms").get<long long>()) + " ms");
         return true;
     }
     std::string Summary(const Json& result)
     {
         const auto placed = result.at("props").size();
-        const int target = result.at("target"), noFloor = result.at("noFloor"), walls = result.at("walls"), crowded = result.at("crowded"), outside = result.at("outside");
+        const int target = result.at("target"), noFloor = result.at("noFloor"), walls = result.at("walls"), crowded = result.at("crowded"), blocked = result.at("blocked"), outside = result.at("outside");
         std::string text = placed == static_cast<size_t>(target) ? Count(placed, "prop fits.", "props fit.")
                          : std::to_string(placed) + " of " + std::to_string(target) + " props fit: the room is full at this spacing or has little free floor.";
         std::vector<std::string> left;
         if (crowded) left.push_back(std::to_string(crowded) + " too close to another prop");
+        if (blocked) left.push_back(std::to_string(blocked) + " on a mesh already there");
         if (walls) left.push_back(std::to_string(walls) + " in a wall");
-        if (noFloor) left.push_back(std::to_string(noFloor) + " with no floor under them");
+        if (noFloor) left.push_back(std::to_string(noFloor) + " not resting on a floor");
         if (outside) left.push_back(std::to_string(outside) + " over the edge of the area");
         if (!left.empty())
         {

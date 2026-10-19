@@ -28,6 +28,7 @@ constexpr UINT kRun = WM_APP + 0x319;
 constexpr uintptr_t kEditor = 0x1165DFA0;
 constexpr uintptr_t kWarn = 0x115BEFB0;
 int failures = 0;
+DWORD finishAfter = 0; // ms the editor keeps running after the report is written (0: ends at once)
 
 void Line(const char* kind, const std::string& name, const std::string& detail = "")
 {
@@ -289,6 +290,13 @@ void RunAll()
     Line("DONE", "failures", std::to_string(failures));
     if (report) fclose(report);
     report = nullptr;
+    // A suite that asked for it leaves the editor running that long first: its viewports only draw from the
+    // editor's own loop, which this one keeps waiting, so a picture of them is taken then.
+    if (finishAfter)
+    {
+        SetTimer(nullptr, 0, finishAfter, [](HWND, UINT, UINT_PTR, DWORD) { TerminateProcess(GetCurrentProcess(), failures ? 3 : 0); });
+        return;
+    }
     TerminateProcess(GetCurrentProcess(), failures ? 3 : 0);
 }
 
@@ -336,7 +344,13 @@ DWORD WINAPI WaitUntilReady(void*)
             Sleep(5000);
             hook = SetWindowsHookExA(WH_CALLWNDPROC, OnMessage, nullptr, uiThread);
             DWORD_PTR result = 0;
-            if (hook && SendMessageTimeoutA(frameWindow, kRun, 0, 0, SMTO_ABORTIFHUNG, 1800000, &result)) return 0;
+            // A frame still busy starting up counts as hung for a while: try again rather than give up.
+            for (int retry = 0; hook && retry < 20; ++retry)
+            {
+                if (SendMessageTimeoutA(frameWindow, kRun, 0, 0, SMTO_ABORTIFHUNG, 1800000, &result)) return 0;
+                if (!hook) return 0; // the run started, and unhooked itself
+                Sleep(2000);
+            }
             Fail("startup", "could not run on the UI thread");
             return 1;
         }
