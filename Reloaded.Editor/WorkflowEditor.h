@@ -455,6 +455,26 @@ namespace Workflow::Editor
     Json OptimiseRelease(const Json& options);
     // Where a map's release copy goes by default: <game>/Releases/<Map>.
     std::filesystem::path ReleaseFolder(const std::string& map);
+    // Mover Workbench (MoverModel.h). SelectedMover: the one selected actor when it
+    // is a mover (an identity), else null; cheap enough for a context menu. State:
+    // {actor, name, class, revision, level, path (Movers::PathJson), location, rotation,
+    // values:{MoveTime, StayOpenTime, ..., sounds}, choices:{enum and InitialState names},
+    // triggeredBy:[{actor, property}], triggers:[{actor, property, resolved}]}.
+    // SetMoverPath writes a key list and puts the mover on its key, SetMoverSettings
+    // the other settings (by name, as text), WireMoverTrigger points a trigger's
+    // Event at the mover's Tag: each one Undo step, returning the new state.
+    // MoverPreviewPose moves the mover for drawing only (no Undo step, nothing
+    // marked changed) until MoverRestorePose puts the bytes back.
+    Json SelectedMover();
+    Json MoverState(const Json& identity);
+    Json SetMoverPath(const Json& identity, const Json& path, const std::string& label);
+    Json SetMoverSettings(const Json& identity, const Json& changes);
+    Json MoverOutline(const Json& identity);
+    void MoverPreviewPose(const Json& identity, const Pose& pose);
+    bool MoverPreviewing();
+    void MoverRestorePose();
+    Json MoverTriggerCandidates(const Json& identity);
+    Json WireMoverTrigger(const Json& identity, const Json& trigger);
     Json StairSmoothState(bool surfaces);
     Json SmoothStairs(bool surfaces);
     size_t RemoveStairSmoothing(bool surfaces);

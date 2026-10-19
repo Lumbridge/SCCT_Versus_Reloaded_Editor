@@ -17,6 +17,7 @@
 #include "MapCheck.h"
 #include "RenderBudget.h"
 #include "MapOutliner.h"
+#include "MoverWorkbench.h"
 #include "MinimapWindow.h"
 #include "WorkflowEditor.h"
 #include "EmitterLibraryModel.h"
@@ -1528,6 +1529,8 @@ namespace
                     }
                 }
                 catch(const std::exception&) { /* Only with one conveyor belt selected. */ }
+                try {if(!Editor::SelectedMover().is_null())AppendMenuA(sub,MF_STRING,MoverWorkbench::kOpen,"M&over Workbench...");}
+                catch(const std::exception&) { /* Only with one mover selected. */ }
                 try {ObjectiveMenu(sub,ObjectiveOwner());}catch(const std::exception&){}
                 try
                 {
@@ -1674,6 +1677,7 @@ bool HandleCommand(UINT command)
     if(MapCheck::HandleCommand(command))return true;
     if(RenderBudget::HandleCommand(command))return true;
     if(MapOutliner::HandleCommand(command))return true;
+    if(MoverWorkbench::HandleCommand(command))return true;
     if(MinimapWindow::HandleCommand(command))return true;
     if(ObjExportWindow::HandleCommand(command))return true;
     if(MapRecovery::HandleCommand(command))return true;
@@ -1942,6 +1946,15 @@ static Workflow::Json MoreWorkflowRequests(const std::string& op,const Workflow:
     if(op=="objectiveplayers.set") return Editor::SetObjectivePlayers(q.at("objective"),q.value("min",0),q.value("max",0),q.value("open",false));
     if(op=="objectiveplayers.playlevel") return Editor::SetObjectivePlayLevelPlayers(q.value("players",0));
     if(op=="objectiveplayers.targets") return Editor::SetMissionTargets(q.at("mission"),q.at("sizes"));
+    if(op=="mover.selected") return Editor::SelectedMover();
+    if(op=="mover.state") return Editor::MoverState(q.at("actor"));
+    if(op=="mover.path") return Editor::SetMoverPath(q.at("actor"),q.at("path"),q.value("label",std::string("edit keys")));
+    if(op=="mover.settings") return Editor::SetMoverSettings(q.at("actor"),q.at("changes"));
+    if(op=="mover.outline") return Editor::MoverOutline(q.at("actor"));
+    if(op=="mover.candidates") return Editor::MoverTriggerCandidates(q.at("actor"));
+    if(op=="mover.wire") return Editor::WireMoverTrigger(q.at("actor"),q.at("trigger"));
+    if(op=="mover.preview") {Editor::MoverPreviewPose(q.at("actor"),{q.at("position").get<Vector>(),q.value("rotation",Rotation{})});return true;}
+    if(op=="mover.restore") {Editor::MoverRestorePose();return true;}
     throw std::runtime_error("Unknown workflow request.");
 }
 

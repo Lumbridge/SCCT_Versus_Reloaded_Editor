@@ -195,6 +195,9 @@
     <ClInclude Include="CommandPaletteModel.h" />
     <ClInclude Include="MapOutliner.h" />
     <ClInclude Include="MapOutlinerModel.h" />
+    <ClInclude Include="MoverWorkbench.h" />
+    <ClInclude Include="MoverModel.h" />
+    <ClInclude Include="MoverNative.inl" />
     <ClInclude Include="RenderBudgetModel.h" />
     <ClInclude Include="LevelSnapshot.h" />
     <ClInclude Include="PlayLevelPlayers.h" />
@@ -362,6 +365,7 @@
     <ClCompile Include="RenderBudget.cpp" />
     <ClCompile Include="CommandPalette.cpp" />
     <ClCompile Include="MapOutliner.cpp" />
+    <ClCompile Include="MoverWorkbench.cpp" />
     <ClCompile Include="MinimapWindow.cpp" />
     <ClCompile Include="LevelSnapshot.cpp" />
     <ClCompile Include="PlayLevelPlayers.cpp" />

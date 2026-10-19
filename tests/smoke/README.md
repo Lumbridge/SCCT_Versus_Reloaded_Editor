@@ -156,3 +156,13 @@ starting up when the probe asks to run is asked again.
   selects every actor using its mesh and only those, a double-click frames
   them. Run it on a map with heavy meshes (AeroD, MoonD). `sweep = '<folder>'`
   then opens every other map there in turn (`sweepfrom = '<name>'` resumes).
+- `mover` (on ShipD, or any map with a two-key mover): the actor menu offers Mover
+  Workbench for a selected mover; the window lists its keys; Add Key Here after the mover
+  was moved off its key and after a move at key 0 that took its base along (the path stays,
+  the new key is the move), Go to Key, Update Key, Move Up and Delete Key, each one Undo step,
+  and six Undos give the mover back; MoveTime and InitialState (picked by its plain name)
+  applied in one step and a bad time refused; Wire to This Mover points a trigger's Event at
+  the mover's Tag in one step; Preview moves it and puts it back with no Undo step. With
+  `picture = '1'` it also leaves a three-key path with a turn and the window open, and saves
+  `mover_editor.bmp` and `mover_window.bmp` once the editor has repainted its viewports
+  (PrintWindow shows stale viewports while a suite holds the UI thread).

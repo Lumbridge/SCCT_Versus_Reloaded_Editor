@@ -17,6 +17,7 @@
 #include <vector>
 #include <cmath>
 #include <dlgs.h>
+#include <set>
 #include <share.h>
 #include <nlohmann/json.hpp>
 
@@ -269,6 +270,20 @@ std::string Fixed(double v, int decimals = 1)
     return o.str();
 }
 
+// A suite that needs the editor's own loop to run (the viewports only repaint there) sets this: the
+// run then ends a few seconds after the suites return, with this called first.
+std::function<void()> afterRun;
+void CALLBACK FinishAfterRun(HWND, UINT, UINT_PTR timer, DWORD)
+{
+    KillTimer(nullptr, timer);
+    try { if (afterRun) afterRun(); }
+    catch (const std::exception& e) { Fail("after-run", e.what()); }
+    Line("DONE", "failures", std::to_string(failures));
+    if (report) fclose(report);
+    report = nullptr;
+    TerminateProcess(GetCurrentProcess(), failures ? 3 : 0);
+}
+
 // ---- steps --------------------------------------------------------------------------------------
 #include "SmokeSteps.inl"
 #include "SmokeSuites.inl"
@@ -288,6 +303,7 @@ void RunAll()
     try { const auto suite = Ini("suite"); if (suite.empty()) RunSteps(); else RunSuites(suite); }
     catch (const std::exception& e) { Fail("exception", e.what()); }
     catch (...) { Fail("exception", "unknown"); }
+    if (afterRun) { SetTimer(nullptr, 0, 4000, FinishAfterRun); return; }
     Line("DONE", "failures", std::to_string(failures));
     if (report) fclose(report);
     report = nullptr;

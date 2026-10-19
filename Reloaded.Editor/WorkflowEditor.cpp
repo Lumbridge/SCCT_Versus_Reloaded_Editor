@@ -22,6 +22,7 @@
 #include "LevelSnapshot.h"
 #include "CharacterSkinsModel.h"
 #include "ConveyorModel.h"
+#include "MoverModel.h"
 #include "ObjectivePlayersModel.h"
 #include "CharacterSkinsImage.h"
 #include "PlacementModel.h"
@@ -1580,4 +1581,5 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "ReachabilityNative.inl"
 #include "MapOutlinerNative.inl"
 #include "CompareBackupNative.inl"
+#include "MoverNative.inl"
 }

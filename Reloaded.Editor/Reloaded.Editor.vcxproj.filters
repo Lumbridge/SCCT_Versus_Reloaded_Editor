@@ -50,6 +50,9 @@
     <ClInclude Include="CommandPaletteModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapOutliner.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapOutlinerModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MoverWorkbench.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MoverModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MoverNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="RenderBudgetModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="LevelSnapshot.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="PlayLevelPlayers.h"><Filter>Header Files</Filter></ClInclude>
@@ -526,6 +529,7 @@
     <ClCompile Include="RenderBudget.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="CommandPalette.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MapOutliner.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="MoverWorkbench.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MinimapWindow.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="LevelSnapshot.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="PlayLevelPlayers.cpp"><Filter>Source Files</Filter></ClCompile>
