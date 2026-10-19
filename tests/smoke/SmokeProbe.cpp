@@ -336,7 +336,13 @@ DWORD WINAPI WaitUntilReady(void*)
             Sleep(5000);
             hook = SetWindowsHookExA(WH_CALLWNDPROC, OnMessage, nullptr, uiThread);
             DWORD_PTR result = 0;
-            if (hook && SendMessageTimeoutA(frameWindow, kRun, 0, 0, SMTO_ABORTIFHUNG, 1800000, &result)) return 0;
+            // A UI thread still busy starting up counts as hung for a moment; try again.
+            for (int tries = 0; hook && tries < 12; ++tries)
+            {
+                if (SendMessageTimeoutA(frameWindow, kRun, 0, 0, SMTO_ABORTIFHUNG, 1800000, &result)) return 0;
+                Info("startup-retry", "error " + std::to_string(GetLastError()));
+                Sleep(5000);
+            }
             Fail("startup", "could not run on the UI thread");
             return 1;
         }
