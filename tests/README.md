@@ -780,6 +780,20 @@ game-specific array/structure actor links,
 Save As/map switching, GE selections, and external-binding changes during assembly edits.
 Use disposable source maps and include stale/deleted instance members and missing packages.
 
+## Mover Workbench
+
+`MoverModelTests.cpp` covers the key list behind RE+ Tools > Mover Workbench: where the
+mover stands on a key (BasePos + KeyPos, BaseRot + KeyRot), a place as a key, Add Key
+Here (a new last key, the mover not moving, at most 8 keys), Update Key, Delete Key (the
+mover staying on its key or the one taking its place, never the last key), Move Up and
+Down (the mover following its key), Go to Key, telling a move in the viewport (off its
+key, or the stock move that takes the base along at key 0 or rewrites a later key) from
+another edit, and measuring a new key against the path at rest after such a move; the
+preview's poses (legs of MoveTime, eased or not, a pause capped at 3 s, the way back,
+the short way round), ghost outlines carried and turned about the pivot and boxed past
+the cap, the plain names of InitialState and the other settings, and the key arrays as
+the editor reads and writes them. The editor side runs in the `mover` smoke suite.
+
 ## Map recovery
 
 ClarD soft-body regression (2026-09-13): one native simulation step before
