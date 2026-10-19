@@ -49,7 +49,11 @@ Settings LoadSettings()
         {"ShowZonesWithoutZoneInfo", defaults.zonesWithoutZoneInfo ? "1" : "0"},
         {"StockChecks", defaults.stockChecks ? "1" : "0"},
         {"FloatingMinGap", Units(defaults.floatMinGap)},
-        {"FloatingMaxGap", Units(defaults.floatMaxGap)}};
+        {"FloatingMaxGap", Units(defaults.floatMaxGap)},
+        {"CollisionTriangleLimit", std::to_string(defaults.collisionTriangleLimit)},
+        {"CollisionBspNodeLimit", std::to_string(defaults.collisionNodeLimit)},
+        {"PerPolygonTriangleCap", std::to_string(defaults.polyTriangleCap)},
+        {"MalformedHulls", defaults.malformedHulls ? "1" : "0"}};
     for (const auto& key : keys)
     {
         char value[32] = {};
@@ -74,6 +78,11 @@ Settings LoadSettings()
     // FloatingMaxGap 0 turns the floating mesh check off.
     s.floatMinGap = number("FloatingMinGap", defaults.floatMinGap);
     s.floatMaxGap = number("FloatingMaxGap", defaults.floatMaxGap);
+    // Static mesh collision limits; 0 turns a check off.
+    s.collisionTriangleLimit = static_cast<int>(number("CollisionTriangleLimit", defaults.collisionTriangleLimit));
+    s.collisionNodeLimit = static_cast<int>(number("CollisionBspNodeLimit", defaults.collisionNodeLimit));
+    s.polyTriangleCap = static_cast<int>(number("PerPolygonTriangleCap", defaults.polyTriangleCap));
+    s.malformedHulls = GetPrivateProfileIntA(kSection, "MalformedHulls", 1, ini.c_str()) != 0;
     return ClampSettings(s);
 }
 
@@ -110,7 +119,7 @@ Snapshot Measure()
     Logger::log("MapCheck: " + std::to_string(report.problems.size()) + " problem(s) (" + std::to_string(report.Count(Severity::Error)) + " errors, "
                 + std::to_string(report.Count(Severity::Warning)) + " warnings) in " + std::to_string(scene.actors.size()) + " actors, "
                 + std::to_string(scene.bsp.nodes.size()) + " nodes, " + std::to_string(report.zones) + " zones, " + std::to_string(scene.portals.size())
-                + " portal surfaces; stock entries " + std::to_string(scene.stock.size()));
+                + " portal surfaces, " + std::to_string(scene.meshes.size()) + " static meshes; stock entries " + std::to_string(scene.stock.size()));
     for (const auto& p : report.problems)
         Logger::log(std::string("MapCheck: ") + SeverityName(p.severity) + " [" + p.check + "] " + p.message);
     return snapshot;
@@ -144,8 +153,9 @@ void Row(HWND list, int row, LPARAM data, const std::vector<std::string>& cells)
 const char kIntroText[] =
     "Checks the map as last built: actors in the void (solid space, outside every zone), far outside the geometry or with their "
     "collision cut into BSP or a static mesh; zones that leak into each other or to the outside; zone portals that seal nothing; "
-    "static meshes floating a little above the floor; objectives and pickups a team cannot walk to (Build > Reachability Map); "
-    "and the editor's own Check Map for Errors. Build geometry first. "
+    "static meshes floating a little above the floor; static meshes whose collision crashes the game or does not work in it; "
+    "objectives and pickups a team cannot walk to (Build > Reachability Map); and the editor's own Check Map for Errors. "
+    "Build geometry first. "
     "Click a row to select what it is about, double-click to frame it; a leak path is drawn in the viewports. "
     "Settings: Reloaded_Editor.ini [MapCheck].";
 
@@ -176,11 +186,15 @@ std::string ReportStatus()
 std::string Selects(const Problem& p)
 {
     std::string text;
-    for (const auto& path : p.actors)
+    // A mesh used hundreds of times would make the cell unreadable.
+    constexpr size_t kNamed = 6;
+    for (size_t i = 0; i < p.actors.size() && i < kNamed; ++i)
     {
+        const auto& path = p.actors[i];
         const auto dot = path.find_last_of('.');
         text += (text.empty() ? "" : ", ") + (dot == std::string::npos ? path : path.substr(dot + 1));
     }
+    if (p.actors.size() > kNamed) text += " and " + std::to_string(p.actors.size() - kNamed) + " more";
     for (int surface : p.surfaces) text += (text.empty() ? "" : ", ") + std::string("surface ") + std::to_string(surface);
     if (!p.path.empty()) text += (text.empty() ? "" : "; ") + std::string("leak path");
     return text.empty() ? "-" : text;

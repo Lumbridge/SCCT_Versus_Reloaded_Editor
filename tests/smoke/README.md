@@ -150,3 +150,9 @@ starting up when the probe asks to run is asked again.
   emitter is deleted and a mesh duplicated, Tick All brings everything back (the emitter with
   its particle components, the copy deleted) and a second comparison finds nothing. With
   `shot = '<file>.bmp'` it saves a picture of the editor with the comparison over it (ShipD).
+- `collision`: Map Check's Collision rows match the counts the probe reads from
+  the map's static meshes (over 5512 collision triangles, a full per-polygon
+  or hull BSP, per-polygon collision at 15000); a click on the first row
+  selects every actor using its mesh and only those, a double-click frames
+  them. Run it on a map with heavy meshes (AeroD, MoonD). `sweep = '<folder>'`
+  then opens every other map there in turn (`sweepfrom = '<name>'` resumes).

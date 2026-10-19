@@ -2369,6 +2369,130 @@ void CompareSuite()
     Exec("TRANSACTION UNDO");
     Pump(500);
     Check(ActorNamed(lightName) && std::fabs(ReadFloat(ActorNamed(lightName), "LightBrightness") - (brightness + 7)) < 0.01f, "compare-undo-all", "undo '" + Undo().current + "'");
+// ---- Map Check, static mesh collision: the rows match the meshes' own counts read here, and a row
+// selects every actor using its mesh (a double-click frames them). Run it on a map with heavy meshes.
+struct MeshCounts { int poly = 0, polyNodes = 0, hull = 0, hullNodes = 0; std::vector<unsigned char*> users; };
+std::map<std::string, MeshCounts> MapMeshes()
+{
+    std::map<std::string, MeshCounts> meshes;
+    for (auto a : Actors())
+    {
+        auto p = FindProperty(a, "StaticMesh");
+        auto mesh = p ? *reinterpret_cast<unsigned char**>(a + *reinterpret_cast<unsigned*>(p + 0x3C)) : nullptr;
+        if (!mesh || ClassName(mesh) != "StaticMesh") continue;
+        auto& m = meshes[ObjectName(mesh)];
+        m.poly = *reinterpret_cast<int*>(mesh + 0x108);
+        m.polyNodes = *reinterpret_cast<int*>(mesh + 0x118);
+        m.hull = *reinterpret_cast<int*>(mesh + 0x14C);
+        m.hullNodes = *reinterpret_cast<int*>(mesh + 0x154);
+        m.users.push_back(a);
+    }
+    return meshes;
+}
+
+// Counts the open map's meshes over each limit, runs Map Check and compares its Collision rows with them.
+// Returns the Map Check window (left open) and its rows.
+HWND CollisionRows(const std::string& label, const std::map<std::string, MeshCounts>& meshes, std::vector<std::string>& rows, std::vector<int>& collisionRows)
+{
+    size_t crashes = 0, polyFull = 0, hullFull = 0, capped = 0;
+    for (const auto& [name, m] : meshes)
+    {
+        crashes += m.poly > 5512 || m.hull > 5512;
+        polyFull += m.polyNodes >= 32767;
+        hullFull += m.hullNodes >= 32767;
+        capped += m.poly >= 15000;
+    }
+    Info("collision-meshes", label + ": " + std::to_string(meshes.size()) + " meshes used; over 5512: " + std::to_string(crashes) + ", per-polygon BSP full: " + std::to_string(polyFull)
+         + ", hull BSP full: " + std::to_string(hullFull) + ", at 15000: " + std::to_string(capped));
+    Exec("SELECT NONE");
+    const double ms = Command(41220);
+    HWND check = OpenedWindow("Map Check");
+    if (!check) { Fail("collision-open", label + ": Map Check did not open; boxes=" + std::to_string(boxes.size())); return nullptr; }
+    rows = ListRows(GetDlgItem(check, 100));
+    std::map<std::string, size_t> byCheck;
+    collisionRows.clear();
+    for (size_t i = 0; i < rows.size(); ++i)
+    {
+        const auto cells = Cells(rows[i]);
+        if (cells.size() < 4 || cells[1] != "Collision") continue;
+        ++byCheck[cells[2]];
+        collisionRows.push_back(static_cast<int>(i));
+    }
+    std::string summary;
+    for (const auto& [name, n] : byCheck) summary += (summary.empty() ? "" : ", ") + name + " " + std::to_string(n);
+    Info("collision-rows", label + ": " + std::to_string(collisionRows.size()) + " of " + std::to_string(rows.size()) + " rows in " + Fixed(ms) + " ms: " + summary);
+    Check(byCheck["Crashes the game"] == crashes && byCheck["Collision BSP full"] == polyFull && byCheck["Hull BSP full"] == hullFull
+          && byCheck["Per-polygon collision cut short"] == capped, "collision-counts-match",
+          label + ": rows crash/bsp/hull/cap " + std::to_string(byCheck["Crashes the game"]) + "/" + std::to_string(byCheck["Collision BSP full"]) + "/"
+          + std::to_string(byCheck["Hull BSP full"]) + "/" + std::to_string(byCheck["Per-polygon collision cut short"]) + " vs meshes "
+          + std::to_string(crashes) + "/" + std::to_string(polyFull) + "/" + std::to_string(hullFull) + "/" + std::to_string(capped));
+    for (size_t i = 0; i < collisionRows.size() && i < 60; ++i) Info("collision-row", rows[static_cast<size_t>(collisionRows[i])]);
+    return check;
+}
+
+void CollisionSuite()
+{
+    const auto meshes = MapMeshes();
+    std::vector<std::string> rows;
+    std::vector<int> collisionRows;
+    HWND check = CollisionRows(std::filesystem::path(Ini("map")).stem().string(), meshes, rows, collisionRows);
+    if (!check) return;
+
+    // The first row selects every actor using its mesh, and only those.
+    if (!collisionRows.empty())
+    {
+        const int row = collisionRows.front();
+        const auto message = Cells(rows[static_cast<size_t>(row)])[3];
+        const MeshCounts* mesh = nullptr;
+        std::string meshName;
+        for (const auto& [name, m] : meshes)
+            if (message.rfind(name + " ", 0) == 0 || message.rfind(name + "'s ", 0) == 0)
+                if (name.size() > meshName.size()) { meshName = name; mesh = &m; }
+        if (!mesh) { Fail("collision-row-mesh", message.substr(0, 80)); }
+        else
+        {
+            Exec("SELECT NONE");
+            ClickRow(check, 100, row, false);
+            size_t selected = 0, right = 0;
+            for (auto a : Actors())
+                if (Flags(a) & 0x40)
+                {
+                    ++selected;
+                    right += std::find(mesh->users.begin(), mesh->users.end(), a) != mesh->users.end();
+                }
+            Check(selected == mesh->users.size() && right == selected, "collision-click-selects-users",
+                  meshName + ": selected " + std::to_string(selected) + " of " + std::to_string(mesh->users.size()) + " status '" + WindowText(GetDlgItem(check, 101)) + "'");
+            ClickRow(check, 100, row, true);
+            Check(WindowText(GetDlgItem(check, 101)).find("framed") != std::string::npos, "collision-double-click-frames", WindowText(GetDlgItem(check, 101)));
+        }
+    }
+    // sweep=<folder>: every other map there (not the stock autosaves), opened in turn.
+    const auto sweep = Ini("sweep");
+    if (!sweep.empty())
+    {
+        std::vector<std::filesystem::path> maps;
+        for (const auto& entry : std::filesystem::directory_iterator(sweep))
+            if (entry.path().extension() == ".sdc" && entry.path().stem().string().rfind("Auto", 0) != 0 && entry.path() != std::filesystem::path(Ini("map")))
+                maps.push_back(entry.path());
+        std::sort(maps.begin(), maps.end());
+        const auto from = Ini("sweepfrom");   // resume a sweep at this map name
+        for (const auto& map : maps)
+        {
+            if (map.stem().string() < from) continue;
+            if (check) CloseWindowAndWait(check);
+            // Message boxes a load shows (missing packages) are answered, as Command does.
+            const UINT_PTR timer = SetTimer(nullptr, 0, 100, AnswerBoxes);
+            bool loaded = false;
+            try { loaded = Exec("MAP LOAD FILE=\"" + map.string() + "\"") != 0; }
+            catch (...) { Info("collision-sweep-load", "the editor threw loading " + map.string()); }
+            KillTimer(nullptr, timer);
+            if (!loaded || Actors().size() < 2) { Fail("collision-sweep-load", map.string()); check = nullptr; continue; }
+            Pump(300);
+            check = CollisionRows(map.stem().string(), MapMeshes(), rows, collisionRows);
+            if (!check) return;
+        }
+    }
+    if (check && Ini("keepopen") != "1") CloseWindowAndWait(check);
 }
 
 void RunSuites(const std::string& list)
@@ -2390,6 +2514,7 @@ void RunSuites(const std::string& list)
         else if (name == "outliner") OutlinerSuite();
         else if (name == "scatter") ScatterSuite();
         else if (name == "compare") CompareSuite();
+        else if (name == "collision") CollisionSuite();
         else Fail("suite", "no suite called " + name);
     }
 }
