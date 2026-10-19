@@ -29,6 +29,7 @@ constexpr UINT kRun = WM_APP + 0x319;
 constexpr uintptr_t kEditor = 0x1165DFA0;
 constexpr uintptr_t kWarn = 0x115BEFB0;
 int failures = 0;
+DWORD finishAfter = 0; // ms the editor keeps running after the report is written (0: ends at once)
 
 void Line(const char* kind, const std::string& name, const std::string& detail = "")
 {

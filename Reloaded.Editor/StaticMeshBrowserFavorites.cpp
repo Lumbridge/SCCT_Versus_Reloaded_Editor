@@ -1903,6 +1903,31 @@ bool StaticMeshBrowserFavorites::ShowFavorite(const std::string& path)
     return true;
 }
 
+std::vector<std::string> StaticMeshBrowserFavorites::FavoritePaths()
+{
+    // Read straight from the ini, so the browser's own list is left alone.
+    const std::string ini = SM_GetIniPath();
+    std::vector<std::string> paths;
+    int count = GetPrivateProfileIntA(kFavoritesIniSection, "Count", 0, ini.c_str());
+    count = (std::max)(0, (std::min)(count, kMaxFavorites));
+    for (int i = 0; i < count; ++i)
+    {
+        char key[32] = {};
+        char value[1024] = {};
+        snprintf(key, sizeof(key), "Favorite%d", i);
+        GetPrivateProfileStringA(kFavoritesIniSection, key, "", value, static_cast<DWORD>(std::size(value)), ini.c_str());
+        if (!value[0])
+            continue;
+        const std::string path = SM_NormalizeLegacyPath(value);
+        bool seen = false;
+        for (const auto& p : paths)
+            seen = seen || SM_ToLower(p) == SM_ToLower(path);
+        if (!seen)
+            paths.push_back(path);
+    }
+    return paths;
+}
+
 bool StaticMeshBrowserFavorites::UseMesh(void* mesh)
 {
     if (!SM_IsStaticMesh(mesh))

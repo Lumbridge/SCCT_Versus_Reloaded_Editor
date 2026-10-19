@@ -134,6 +134,9 @@
     <ClInclude Include="StairSmoothNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="PrefabModel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="PrefabNative.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="ScatterModel.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="ScatterNative.inl"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="ScatterTool.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="PlacementTools.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapDesignNative.inl"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MapDesignPanel.inl"><Filter>Header Files</Filter></ClInclude>
@@ -516,6 +519,7 @@
     <ClCompile Include="LightShadowMap.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="Reachability.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="WindowPlacement.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="ScatterTool.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="RenderBudget.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="CommandPalette.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MapOutliner.cpp"><Filter>Source Files</Filter></ClCompile>

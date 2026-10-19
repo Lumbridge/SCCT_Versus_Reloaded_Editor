@@ -451,4 +451,16 @@ namespace Workflow::Editor
     Json StairSmoothState(bool surfaces);
     Json SmoothStairs(bool surfaces);
     size_t RemoveStairSmoothing(bool surfaces);
+    // Scatter Props (ScatterModel.h). ScatterBrowserMesh: the Static Mesh
+    // Browser's current mesh, or empty. ScatterMesh: {path, lo, hi} of a mesh,
+    // loading its package when needed. ScatterArea: the builder brush seen from
+    // above {circle:false, polygons, top, bottom}, or a circle of the radius
+    // round the last viewport click {circle:true, centre, radius, z, top,
+    // bottom}. ScatterPlan: where the props would rest (see ScatterNative.inl);
+    // ScatterPlace pastes them in one Undo step, in the Scatter group, selected.
+    std::string ScatterBrowserMesh();
+    Json ScatterMesh(const std::string& path);
+    Json ScatterArea(bool circle, double radius);
+    Json ScatterPlan(const Json& request);
+    Json ScatterPlace(const Json& props);
 }

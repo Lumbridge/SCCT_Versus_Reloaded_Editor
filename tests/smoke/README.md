@@ -133,3 +133,13 @@ starting up when the probe asks to run is asked again.
   step that Edit > Undo brings back, and refuses the level info; reading the
   map again takes milliseconds; the window reopens where it was left. With
   `shot = '1'` it stays open for 15 seconds at the end, for a picture.
+- `scatter`: Scatter Props takes a small mesh from the map as the Static Mesh
+  Browser's current one (once only), Re-roll changes the seed, and props are
+  placed in a circle round a player start (also aligned to the slope) and in
+  the builder brush's footprint (the default cube moved over the start): each
+  time inside the area, in the Scatter group, not hidden, selected, as one
+  Undo step that Undo removes, Redo brings back and Undo removes again. A count
+  over 500 is refused; the window comes back where it was closed.
+  `hold = '<ms>'` also points the viewport cameras at the busiest player start
+  and leaves the editor running that long after the report with the preview
+  up, then places the props, for a picture.

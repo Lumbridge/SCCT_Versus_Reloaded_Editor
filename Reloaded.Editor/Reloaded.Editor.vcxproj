@@ -246,6 +246,9 @@
     <ClInclude Include="StairSmoothNative.inl" />
     <ClInclude Include="PrefabModel.h" />
     <ClInclude Include="PrefabNative.inl" />
+    <ClInclude Include="ScatterModel.h" />
+    <ClInclude Include="ScatterNative.inl" />
+    <ClInclude Include="ScatterTool.h" />
     <ClInclude Include="PlacementTools.h" />
     <ClInclude Include="SecurityModel.h" />
     <ClInclude Include="SecurityNative.inl" />
@@ -408,6 +411,7 @@
     <ClCompile Include="MapUnlock.cpp" />
     <ClCompile Include="MeasureTool.cpp" />
     <ClCompile Include="PlacementTools.cpp" />
+    <ClCompile Include="ScatterTool.cpp" />
     <ClCompile Include="MapRecovery.cpp" />
     <ClCompile Include="MapRecoveryUi.cpp" />
     <ClCompile Include="RecoveredBspLighting.cpp" />

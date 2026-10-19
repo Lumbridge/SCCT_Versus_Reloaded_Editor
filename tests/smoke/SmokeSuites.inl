@@ -1923,6 +1923,227 @@ void OutlinerSuite()
         Pump(15000);
     }
     if (again) CloseWindowAndWait(again);
+// ---- Scatter Props: a circle round a player start and the builder brush's footprint are filled with a small
+// mesh from the map, placed as one Undo step in the Scatter group, and one Undo takes them all away again.
+namespace scatter
+{
+constexpr int kList = 100, kAddBrowser = 101, kWeight = 105, kCount = 111, kArea = 120, kRadius = 121, kAlign = 132,
+              kScaleMin = 140, kScaleMax = 141, kSpacing = 142, kSeed = 150, kReroll = 151, kStatus = 160, kPlace = 170;
+unsigned char* MeshOf(unsigned char* actor)
+{
+    auto p = FindProperty(actor, "StaticMesh");
+    return p ? *reinterpret_cast<unsigned char**>(actor + *reinterpret_cast<unsigned*>(p + 0x3C)) : nullptr;
+}
+float Extent(unsigned char* mesh)
+{
+    auto b = reinterpret_cast<float*>(mesh + 0x28);
+    return (std::max)({b[3] - b[0], b[4] - b[1], b[5] - b[2]});
+}
+std::string GroupOf(unsigned char* actor)
+{
+    auto p = FindProperty(actor, "Group");
+    return p ? NameText(*reinterpret_cast<int*>(actor + *reinterpret_cast<unsigned*>(p + 0x3C))) : "";
+}
+void Click(HWND w, int id) { SendMessageA(w, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED), reinterpret_cast<LPARAM>(GetDlgItem(w, id))); Pump(200); }
+void Type(HWND w, int id, const std::string& text) { SetWindowTextA(GetDlgItem(w, id), text.c_str()); Pump(50); }
+void Choose(HWND w, int id, int index)
+{
+    SendMessageA(GetDlgItem(w, id), CB_SETCURSEL, index, 0);
+    SendMessageA(w, WM_COMMAND, MAKEWPARAM(id, CBN_SELCHANGE), reinterpret_cast<LPARAM>(GetDlgItem(w, id)));
+    Pump(50);
+}
+std::vector<unsigned char*> Props()
+{
+    std::vector<unsigned char*> result;
+    for (auto a : Actors()) if (ClassName(a) == "StaticMeshActor" && Name(a).rfind("ScatterProp", 0) == 0) result.push_back(a);
+    return result;
+}
+// Place, then check the new props and that one Undo removes them (and Redo brings them back, Undo again).
+void PlaceAndUndo(HWND w, const std::string& label, const std::function<bool(Vec)>& inside, unsigned char* mesh)
+{
+    Pump(1500);
+    const auto status = WindowText(GetDlgItem(w, kStatus));
+    Info(label + "-preview", status);
+    const auto before = Props().size();
+    const int actors = static_cast<int>(Actors().size());
+    const auto undo = Undo();
+    Click(w, kPlace);
+    Pump(500);
+    const auto after = Props();
+    const auto placed = after.size() - before;
+    const auto now = Undo();
+    bool grouped = true, within = true, meshes = true, shown = true;
+    std::string where;
+    for (size_t i = before; i < after.size(); ++i)
+    {
+        grouped = grouped && GroupOf(after[i]) == "Scatter";
+        const auto at = ReadVector(after[i], "Location");
+        within = within && inside(at);
+        meshes = meshes && MeshOf(after[i]) == mesh;
+        shown = shown && !(Flags(after[i]) & 0x10);
+        if (i < before + 3) where += VecText(at) + " ";
+    }
+    Check(placed > 0 && static_cast<int>(Actors().size()) == actors + static_cast<int>(placed) && Selected() == static_cast<int>(placed), label + "-placed",
+          std::to_string(placed) + " props, selected " + std::to_string(Selected()) + " at " + where + "status '" + WindowText(GetDlgItem(w, kStatus)) + "'");
+    Check(grouped && meshes, label + "-group-and-mesh", "grouped=" + std::to_string(grouped) + " mesh=" + std::to_string(meshes));
+    Check(within, label + "-inside-area");
+    Check(shown, label + "-not-hidden");
+    Check(now.current == "Scatter props" && now.count - now.undone == undo.count - undo.undone + 1, label + "-one-undo-step",
+          "'" + now.current + "' steps " + std::to_string(undo.count - undo.undone) + "->" + std::to_string(now.count - now.undone));
+    Exec("TRANSACTION UNDO");
+    Pump(300);
+    Check(Props().size() == before && static_cast<int>(Actors().size()) == actors, label + "-undo-removes-all",
+          std::to_string(Props().size()) + " props left, actors " + std::to_string(Actors().size()) + " (was " + std::to_string(actors) + ")");
+    Exec("TRANSACTION REDO");
+    Pump(300);
+    Check(Props().size() == before + placed, label + "-redo-brings-back", std::to_string(Props().size()));
+    Exec("TRANSACTION UNDO");
+    Pump(300);
+    Check(Props().size() == before, label + "-undo-again", std::to_string(Props().size()));
+}
+}
+
+void ScatterSuite()
+{
+    using namespace scatter;
+    // A small mesh from the map becomes the Static Mesh Browser's current one.
+    unsigned char* mesh = nullptr;
+    for (auto a : OfClass("StaticMeshActor"))
+        if (auto m = MeshOf(a); m && Extent(m) >= 16 && Extent(m) <= 96) { mesh = m; break; }
+    if (!mesh) { Fail("scatter-mesh", "no small static mesh in the map"); return; }
+    auto editor = *reinterpret_cast<unsigned char**>(kEditor);
+    *reinterpret_cast<unsigned char**>(editor + 0x13C) = mesh;
+    // A player start's spot is open floor: the last click goes there.
+    unsigned char* start = nullptr;
+    for (auto a : Actors()) if (ClassName(a).find("PlayerStart") != std::string::npos) { start = a; break; }
+    if (!start) { Fail("scatter-start", "no player start in the map"); return; }
+    auto spot = ReadVector(start, "Location");
+    auto unrealEd = *reinterpret_cast<unsigned char**>(0x117a59b0);
+    *reinterpret_cast<Vec*>(unrealEd + 0x1bc) = spot;
+    Info("scatter-setup", ObjectName(mesh) + std::string(" extent ") + Fixed(Extent(mesh)) + " at " + ClassName(start) + " " + VecText(spot));
+
+    Exec("SELECT NONE");
+    Command(41500);
+    Pump(500);
+    HWND w = OpenedWindow("Scatter Props");
+    if (!w) { Fail("scatter-open", "the window did not open; boxes=" + std::to_string(boxes.size())); return; }
+    Pass("scatter-open");
+    // An empty list explains itself.
+    Pump(600);
+    const int rowsAtStart = static_cast<int>(SendMessageA(GetDlgItem(w, kList), LVM_GETITEMCOUNT, 0, 0));
+    Info("scatter-empty-status", WindowText(GetDlgItem(w, kStatus)));
+    Click(w, kAddBrowser);
+    const int rows = static_cast<int>(SendMessageA(GetDlgItem(w, kList), LVM_GETITEMCOUNT, 0, 0));
+    Check(rowsAtStart == 0 && rows == 1, "scatter-add-browser-mesh", std::to_string(rowsAtStart) + "->" + std::to_string(rows));
+    // The same mesh again is refused.
+    Click(w, kAddBrowser);
+    Check(SendMessageA(GetDlgItem(w, kList), LVM_GETITEMCOUNT, 0, 0) == 1 && WindowText(GetDlgItem(w, kStatus)).find("already") != std::string::npos,
+          "scatter-no-duplicate", WindowText(GetDlgItem(w, kStatus)));
+
+    // Re-roll changes the seed.
+    Type(w, kSeed, "12345");
+    Click(w, kReroll);
+    Check(WindowText(GetDlgItem(w, kSeed)) != "12345", "scatter-reroll", WindowText(GetDlgItem(w, kSeed)));
+
+    // A circle of 384 round the start, 12 props, scaled 0.8 to 1.2, 8 apart.
+    Choose(w, kArea, 1);
+    Type(w, kRadius, "384");
+    Type(w, kCount, "12");
+    Type(w, kScaleMin, "0.8");
+    Type(w, kScaleMax, "1.2");
+    Type(w, kSpacing, "8");
+    Type(w, kSeed, "777");
+    PlaceAndUndo(w, "scatter-circle", [&](Vec v) { return std::hypot(v.x - spot.x, v.y - spot.y) <= 384 + 1; }, mesh);
+
+    // The same with align to slope.
+    SendMessageA(GetDlgItem(w, kAlign), BM_SETCHECK, BST_CHECKED, 0);
+    Click(w, kAlign);
+    SendMessageA(GetDlgItem(w, kAlign), BM_SETCHECK, BST_CHECKED, 0);
+    PlaceAndUndo(w, "scatter-align", [&](Vec v) { return std::hypot(v.x - spot.x, v.y - spot.y) <= 384 + 1; }, mesh);
+    SendMessageA(GetDlgItem(w, kAlign), BM_SETCHECK, BST_UNCHECKED, 0);
+    Click(w, kAlign);
+
+    // The builder brush's footprint: the default cube, moved over the start.
+    auto builder = Actors().size() > 1 ? Actors()[1] : nullptr;
+    if (builder && ClassName(builder) == "Brush")
+    {
+        Command(40911);
+        WriteVector(builder, "Location", spot);
+        Pump(200);
+        Choose(w, kArea, 0);
+        Type(w, kCount, "6");
+        Type(w, kSpacing, "4");
+        Info("scatter-builder", VecText(ReadVector(builder, "Location")));
+        PlaceAndUndo(w, "scatter-builder", [&](Vec v) { return std::fabs(v.x - spot.x) <= 300 && std::fabs(v.y - spot.y) <= 300; }, mesh);
+    }
+    else Fail("scatter-builder", "no builder brush");
+
+    // A count past the limit says so and places nothing.
+    Type(w, kCount, "5000");
+    Pump(800);
+    const auto before = Props().size();
+    Click(w, kPlace);
+    Check(Props().size() == before && WindowText(GetDlgItem(w, kStatus)).find("between 1 and 500") != std::string::npos, "scatter-count-limit", WindowText(GetDlgItem(w, kStatus)));
+    Type(w, kCount, "12");
+    Choose(w, kArea, 1);
+    Pump(1500);
+    // hold=<ms> in -Extra: the viewport cameras look down on the start and the editor keeps running that long
+    // after the report with the window open, for a picture (a new seed a second later redraws the preview).
+    const auto hold = Ini("hold");
+    if (!hold.empty())
+    {
+        // The player start with the most free floor round it.
+        Type(w, kRadius, "448");
+        Type(w, kCount, "24");
+        int best = -1;
+        Vec chosen = spot;
+        for (auto a : Actors())
+        {
+            if (ClassName(a).find("PlayerStart") == std::string::npos) continue;
+            const auto at = ReadVector(a, "Location");
+            *reinterpret_cast<Vec*>(unrealEd + 0x1bc) = at;
+            Type(w, kSeed, std::to_string(500 + best));
+            Pump(900);
+            const int fit = static_cast<int>(Number(WindowText(GetDlgItem(w, kStatus)).substr(0, 3)));
+            if (fit > best) { best = fit; chosen = at; }
+        }
+        *reinterpret_cast<Vec*>(unrealEd + 0x1bc) = chosen;
+        spot = chosen;
+        for (auto a : Actors())
+            if (ClassName(a) == "Camera")
+            {
+                WriteVector(a, "Location", {spot.x - 450, spot.y, spot.z + 380});
+                if (auto p = FindProperty(a, "Rotation")) *reinterpret_cast<Rot*>(a + *reinterpret_cast<unsigned*>(p + 0x3C)) = {-7000, 0, 0};
+            }
+        Type(w, kRadius, "448");
+        Type(w, kCount, "24");
+        Pump(1500);
+        Info("scatter-hold", hold + " " + WindowText(GetDlgItem(w, kStatus)));
+        static HWND held;
+        held = w;
+        SetTimer(nullptr, 0, 1000, [](HWND, UINT, UINT_PTR id, DWORD) { KillTimer(nullptr, id); SetWindowTextA(GetDlgItem(held, kSeed), "778"); });
+        // Then Place, for a picture of the meshes themselves.
+        SetTimer(nullptr, 0, 9000, [](HWND, UINT, UINT_PTR id, DWORD) { KillTimer(nullptr, id); SendMessageA(held, WM_COMMAND, MAKEWPARAM(kPlace, BN_CLICKED), 0); });
+        finishAfter = static_cast<DWORD>(std::stoul(hold));
+        return;
+    }
+    // Closed and opened again: where it was left, with its mesh list, and no preview left behind.
+    SetWindowPos(w, nullptr, 180, 140, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+    RECT was{};
+    GetWindowRect(w, &was);
+    CloseWindowAndWait(w);
+    Check(!IsWindow(w), "scatter-close");
+    Command(41500);
+    Pump(500);
+    if (HWND again = OpenedWindow("Scatter Props"))
+    {
+        RECT now{};
+        GetWindowRect(again, &now);
+        Check(now.left == was.left && now.top == was.top && SendMessageA(GetDlgItem(again, kList), LVM_GETITEMCOUNT, 0, 0) == 1, "scatter-reopen",
+              std::to_string(now.left) + "," + std::to_string(now.top) + " was " + std::to_string(was.left) + "," + std::to_string(was.top));
+        CloseWindowAndWait(again);
+    }
+    else Fail("scatter-reopen", "did not open again");
 }
 
 void RunSuites(const std::string& list)
@@ -1942,6 +2163,7 @@ void RunSuites(const std::string& list)
         else if (name == "objimport") ObjImportSuite();
         else if (name == "reach") ReachSuite();
         else if (name == "outliner") OutlinerSuite();
+        else if (name == "scatter") ScatterSuite();
         else Fail("suite", "no suite called " + name);
     }
 }
