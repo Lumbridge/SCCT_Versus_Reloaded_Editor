@@ -173,7 +173,7 @@ namespace
             const auto* row = FindCheck(report, "Malformed collision hull");
             assert(row && row->severity == Severity::Error && row->group == "Collision" && row->actors == bad.actors);
             assert(row->message.find("Kit has a malformed collision hull: 14 triangles over 8 corners, where a convex hull has at most 12") == 0);
-            assert(row->message.find("players fall through") != std::string::npos && row->message.find("(0, 0, 0) to (10, 10, 10)") != std::string::npos);
+            assert(row->message.find("players fall or walk through it") != std::string::npos && row->message.find("(0, 0, 0) to (10, 10, 10)") != std::string::npos);
             Settings off;
             off.malformedHulls = false;
             assert(!FindCheck(Analyse(scene, off), "Malformed collision hull"));

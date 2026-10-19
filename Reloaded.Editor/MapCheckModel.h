@@ -1145,7 +1145,7 @@ namespace MapCheck
                         add(Severity::Error, "Malformed collision hull",
                             mesh.name + (bad.size() == 1 ? " has a malformed collision hull: " : " has " + std::to_string(bad.size()) + " malformed collision hulls. The first: ")
                             + std::to_string(h.count) + " triangles over " + std::to_string(h.corners) + " corners, where a convex hull has at most "
-                            + std::to_string(std::max(0, 2 * h.corners - 4)) + " (2 x corners - 4), so its faces overlap and the game ignores it: players fall through. "
+                            + std::to_string(std::max(0, 2 * h.corners - 4)) + " (2 x corners - 4), so its faces overlap and the game ignores it: players fall or walk through it. "
                             "It spans " + Point(h.lo) + " to " + Point(h.hi) + " in the mesh's own space. Export it again with flat faces, one per set of corners.");
                     }
                 }
