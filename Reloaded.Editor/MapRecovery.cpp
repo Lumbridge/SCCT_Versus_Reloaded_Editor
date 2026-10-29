@@ -515,19 +515,36 @@ namespace
                 // the cooked splitter within that band (Sub18: 0.074219).
                 // Preserve the outline rather than projecting its vertices.
                 constexpr double portalPlaneTolerance = 0.25;
+                // Authored portal sheets need not be exactly planar: PyroD's
+                // surface 3089 has one corner 0.415 units off the plane the
+                // BSP was split on. A corner within one unit of that plane is
+                // moved onto it along the plane normal (the opening it gates
+                // is unchanged to well under a unit); anything further off is
+                // still refused as a broken outline.
+                constexpr double portalPlaneRepair = 1.0;
                 face.vertices.clear();
                 for (unsigned i = 0; i < count; ++i)
                 {
-                    const Vec3 point = ReadRaw<Vec3>(poly, 0x18 + i * sizeof(Vec3));
+                    Vec3 point = ReadRaw<Vec3>(poly, 0x18 + i * sizeof(Vec3));
                     const double distance = (static_cast<double>(planeNormal.x) * point.x
                         + static_cast<double>(planeNormal.y) * point.y
                         + static_cast<double>(planeNormal.z) * point.z - planeDistance)
                         / planeNormalLength;
                     if (!IsFinite(point) || !std::isfinite(distance)
-                        || std::fabs(distance) > portalPlaneTolerance)
+                        || std::fabs(distance) > portalPlaneRepair)
                     { error = "A retained portal outline has invalid vertices (surface "
                         + std::to_string(surfIndex) + ", vertex " + std::to_string(i)
                         + ", plane distance " + std::to_string(distance) + ")."; return false; }
+                    if (std::fabs(distance) > portalPlaneTolerance)
+                    {
+                        const double shift = distance / planeNormalLength;
+                        point = {static_cast<float>(point.x - shift * planeNormal.x),
+                                 static_cast<float>(point.y - shift * planeNormal.y),
+                                 static_cast<float>(point.z - shift * planeNormal.z)};
+                        Logger::log("MapRecovery: moved retained portal outline vertex " + std::to_string(i)
+                            + " of surface " + std::to_string(surfIndex) + " onto its BSP plane ("
+                            + std::to_string(distance) + " units off)");
+                    }
                     face.vertices.push_back(point);
                 }
                 face.normal = normal;
@@ -2909,8 +2926,22 @@ namespace
         const bool patch = _stricmp(typePath, "SoftBody.ESBPatchActor") == 0;
         const auto* body = ReadRaw<unsigned char*>(actor, 0x2F8);
         if (!body) return fail("simulation missing");
-        if (ReadRaw<void*>(body, kObjectOuterOffset) != level || ReadRaw<void*>(body, 0x54) != actor)
-            return fail("simulation ownership differs from its actor");
+        if (ReadRaw<void*>(body, kObjectOuterOffset) != level)
+            return fail("simulation is not owned by the level");
+        // A patch copied in the editor can keep pointing at the simulation
+        // its source actor owns (PyroD's ESBPatchActor14426). The recovered
+        // actor regenerates its own simulation from its own settings, and
+        // the import check below still requires that regenerated shape to
+        // equal this one point for point, so the shared owner loses nothing.
+        if (ReadRaw<void*>(body, 0x54) != actor)
+        {
+            char owner[512]{};
+            const auto* other = ReadRaw<void*>(body, 0x54);
+            if (!other || !FormatExternalObjectPath(const_cast<void*>(other), owner, sizeof(owner), "MyLevel"))
+                return fail("simulation ownership differs from its actor");
+            Logger::log("MapRecovery: " + actorName + " shares the soft-body simulation owned by "
+                + std::string(owner) + "; its own is regenerated and checked against it");
+        }
         if (!FormatExternalObjectPath(ReadRaw<void*>(body, kObjectClassOffset), typePath, sizeof(typePath))
             || _stricmp(typePath, patch ? "SoftBody.ESBPatch" : "SoftBody.ESBStripDoor") != 0) return fail("unexpected simulation class " + std::string(typePath));
         const auto points = ReadRawArray(body, 0x70), springs = ReadRawArray(body, 0x7C);
@@ -3118,6 +3149,19 @@ namespace
                     error = "The original BSP tree failed a solid/empty space probe.";
                     return false;
                 }
+                // A probe half a unit off a face lands exactly on the far face
+                // of a half-unit sliver (ClarD's 0.5-unit floor slab at Z -408).
+                // On a plane the answer is only the tree's tie-break, which a
+                // rebuild may order differently. Such a probe checks nothing:
+                // keep only probes whose space is the same just either side.
+                bool nearer = false, further = false;
+                if (!IsOutside(model, Add(centre, Scale(face.normal, side * 0.9f)), nearer)
+                    || !IsOutside(model, Add(centre, Scale(face.normal, side * 1.1f)), further))
+                {
+                    error = "The original BSP tree failed a solid/empty space probe.";
+                    return false;
+                }
+                if (nearer != probe.outside || further != probe.outside) continue;
                 probes.push_back(probe);
             }
         }
