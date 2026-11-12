@@ -890,7 +890,8 @@ namespace RecoveredSurfacePartition
                 error = "A material source polygon has an invalid normal or vertex count.";
                 return false;
             }
-            if (std::fabs(Dot(candidateNormal,frame.normal)) < 1-limits.normalTolerance)
+            if (std::fabs(Dot(candidateNormal,frame.normal))
+                    < (limits.candidatesPreselected ? 0.5 : 1-limits.normalTolerance))
                 continue;
             bool coplanar = true;
             Polygon boundary;
@@ -901,7 +902,8 @@ namespace RecoveredSurfacePartition
                     error = "A material source polygon contains a non-finite vertex.";
                     return false;
                 }
-                if (std::fabs(Dot(frame.normal,Sub(vertex,frame.origin))) > limits.planeTolerance)
+                if (!limits.candidatesPreselected
+                    && std::fabs(Dot(frame.normal,Sub(vertex,frame.origin))) > limits.planeTolerance)
                     coplanar = false;
                 Append(boundary,frame.Project(vertex));
             }
