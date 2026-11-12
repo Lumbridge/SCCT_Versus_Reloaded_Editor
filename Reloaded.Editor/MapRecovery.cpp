@@ -3385,6 +3385,69 @@ namespace
         }
     };
 
+    // What one slot of a level's actor list holds: 0 a live actor, 1 one
+    // marked deleted (name receives its name when that reads), 2 a pointer
+    // whose object or class cannot be read. POD-only, so SEH can contain it.
+    int ProbeActorSlot(void* actor, char* name, size_t nameSize)
+    {
+        if (name && nameSize) name[0] = '\0';
+        __try
+        {
+            const auto* bytes = static_cast<const unsigned char*>(actor);
+            const uint32_t flags = *reinterpret_cast<const uint32_t*>(bytes + 0x2E8);
+            const auto* type = *reinterpret_cast<const unsigned char* const*>(bytes + kObjectClassOffset);
+            const auto* outer = *reinterpret_cast<const unsigned char* const*>(bytes + kObjectOuterOffset);
+            if (!type || !outer) return 2;
+            volatile unsigned char touched = static_cast<unsigned char>(type[kObjectNameOffset] ^ outer[kObjectNameOffset]);
+            (void)touched;
+            if (!(flags & 0x8000u)) return 0;
+            CopyObjectName(actor, name, nameSize);
+            return 1;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return 2;
+        }
+    }
+
+    // The editor's save compacts the level's actor lists and names every
+    // deleted actor it drops (ULevel::CompactActors, 0x110BB4C0: the main list
+    // at +0x2C from its first dynamic actor, and the side lists at +0x5C to
+    // +0xDC whose bit is set at +0x138; 0x110BB3F0 calls GetFullName on each
+    // entry with bDeleteMe). The level object is reused from map to map, and
+    // an entry whose actor is gone crashes the save there. Deleted and
+    // unreadable entries of every list are cleared first, which is all the
+    // compaction would have done with them, and each is logged. The LevelInfo
+    // and the builder brush at the head of the main list are left alone.
+    size_t ClearDestroyedActors(void* level)
+    {
+        if (!level) return 0;
+        size_t cleared = 0;
+        for (size_t offset = kLevelActorsDataOffset; offset <= 0xDC; offset += 0x10)
+        {
+            const RawArray actors = ReadRawArray(level, offset);
+            if (!actors.data || actors.count <= 0 || actors.count > kMaxCookedArrayElements) continue;
+            void** data = reinterpret_cast<void**>(const_cast<unsigned char*>(actors.data));
+            for (int index = offset == kLevelActorsDataOffset ? 2 : 0; index < actors.count; ++index)
+            {
+                if (!data[index]) continue;
+                char name[256]{};
+                const int state = ProbeActorSlot(data[index], name, sizeof(name));
+                if (!state) continue;
+                char where[32];
+                snprintf(where, sizeof(where), "+0x%X", static_cast<unsigned>(offset));
+                Logger::log(std::string("MapRecovery: actor list ") + where + " slot " + std::to_string(index) + " of "
+                    + std::to_string(actors.count)
+                    + (state == 1 ? std::string(" holds a deleted actor (") + (name[0] ? name : "name unreadable") + ")"
+                                  : std::string(" holds a pointer that cannot be read"))
+                    + "; cleared before saving");
+                data[index] = nullptr;
+                ++cleared;
+            }
+        }
+        return cleared;
+    }
+
     void* FindEmbeddedAssetClass(const std::string& externalPath, const std::string& alias)
     {
         void** objects = *reinterpret_cast<void***>(0x11697B70);
@@ -5132,6 +5195,10 @@ namespace
         // From here the recovery writes its outputs and runs to the end.
         step(Stage::Saving, 0);
         using SaveFn = int(__thiscall*)(void*, const char*);
+        if (const size_t clearedActors = ClearDestroyedActors(builtLevel))
+            outcome.rows.push_back({"Actor slots cleared", std::to_string(clearedActors) + " slots",
+                "The built level's actor list held deleted or unreadable entries, which the editor's save cannot get past. "
+                "They were cleared before saving; Reloaded.Editor.dll.log names them.", MapRecoveryModel::Target::None});
         Logger::log("MapRecovery: saving normal source " + destination.string());
         const std::string outputName = destination.string();
         if (!reinterpret_cast<SaveFn>(0x10E0416B)(editor, outputName.c_str()))
