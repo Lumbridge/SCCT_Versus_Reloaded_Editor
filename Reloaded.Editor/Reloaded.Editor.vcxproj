@@ -306,6 +306,10 @@
     <ClInclude Include="RecoveredSoftBodySettings.h" />
     <ClInclude Include="SoftBodyStepModel.h" />
     <ClInclude Include="RecoveredBspGeometry.h" />
+    <ClInclude Include="RecoveredLightModel.h" />
+    <ClInclude Include="RecoveredLightTwin.h" />
+    <ClInclude Include="RecoveredLightsNative.h" />
+    <ClInclude Include="RecoveredSurfaceMatch.h" />
     <ClInclude Include="RecoveredSurfacePartition.h" />
     <ClInclude Include="RecoveredPolygonImport.h" />
     <ClInclude Include="RecoveredActorImport.h" />

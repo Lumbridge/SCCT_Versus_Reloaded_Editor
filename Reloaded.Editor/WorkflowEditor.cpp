@@ -18,6 +18,7 @@
 #include "MapCheckModel.h"
 #include "MapCheckLog.h"
 #include "LightShadowModel.h"
+#include "RecoveredLightsNative.h"
 #include "ReachabilityModel.h"
 #include "LevelSnapshot.h"
 #include "CharacterSkinsModel.h"
@@ -1567,6 +1568,7 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "LightingBudgetNative.inl"
 #include "MapCheckNative.inl"
 #include "LightShadowNative.inl"
+#include "RecoveredLightsNative.inl"
 #include "RenderBudgetNative.inl"
 #include "CharacterSkinsNative.inl"
 #include "ObjectivePlayersNative.inl"
@@ -1585,4 +1587,14 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 #include "MapOutlinerNative.inl"
 #include "CompareBackupNative.inl"
 #include "MoverNative.inl"
+}
+
+// Declared in RecoveredLightsNative.h; the reads are in RecoveredLightsNative.inl.
+bool RecoveredLightsNative::ReadLights(void* level,std::vector<LevelLight>& lights,std::vector<std::string>& actorNames,std::string& error)
+{
+    return Workflow::Editor::RecoveredLightsReadLights(level,lights,actorNames,error);
+}
+std::shared_ptr<RecoveredLights::Scene> RecoveredLightsNative::Capture(void* level,double thin,std::string& error)
+{
+    return Workflow::Editor::RecoveredLightsCapture(level,thin,error);
 }

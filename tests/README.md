@@ -18,6 +18,22 @@ The native recovery harness with `-SourceMap <HELI02.sdc>` additionally checks
 the map's duplicate portal outlines (cooked surfaces 1165 and 1168), recovery,
 save, normal reopen and rebuild in a disposable installation.
 
+`RecoveredSurfaceMatchTests.cpp` (built by the same script) covers the rules recovery shares with the OpenSCCT
+Editor for choosing a brush face's materials: cooked polygons that fold back on themselves are unfolded, a
+polygon covers a face only when it faces into the face's room (not the far side of a thin wall), "on the plane"
+is measured at the face in tiers (0.02 units, the 0.25-unit coplanar band, then a unit and 2.5 degrees for a
+bare wall), and the compiled node tree says whether a face is a wall. `RecoveredBspGeometryTests.cpp` also
+covers leaving out cells that are open to the outside or thinner than the sliver limit when asked to.
+
+`RecoveredLightModelTests.cpp` covers the light recovery's pure parts (`RecoveredLightModel.h`, `RecoveredLightTwin.h`),
+ported from the OpenSCCT Editor: the lightmap term of each light effect and the FGetHSV colour, which lights the cook
+drops, lightmap texels as world samples, a rebake of the kept lights and the residual, a light's support in the
+residual, and the fitter on a small room (a hidden light is found within 64 units and a rebake with the stand-in comes
+close to the lightmaps; a map with all its lights gets none). It also covers finding lightmap atlases in a package's
+bytes, exact and other-bake editor copies, the fingerprint cache and Light actors in a map's text export. The native
+parts (reading the compiled level's lightmaps, BSP and shadow-casting meshes, loading the editor copy) have no test
+here: they need the editor.
+
 The same script builds `SdcBlockModelTests.cpp` and
 `RecoveredAssetPackageTests.cpp`, which cover reading a compressed package
 (a saved `.sdc` map): a run of blocks, each two sizes and a zlib stream. The
