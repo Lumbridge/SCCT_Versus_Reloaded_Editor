@@ -127,6 +127,7 @@ namespace MapRecoveryModel
         std::size_t spaceProbes = 0;       // solid/empty samples compared after the rebuild
         std::size_t spaceMisses = 0;       // samples the rebuild left different
         // Lights the cook stripped, brought back (all listed in the report).
+        std::size_t lightsKeptInFile = 0;       // still in the compiled file, outside the level
         std::size_t lightsFromEditorCopy = 0;   // from the editor copy with this map's lightmaps
         std::size_t lightsFromOlderCopy = 0;    // from an editor copy of another bake, checked against this one
         std::size_t lightsFitted = 0;           // stand-ins fitted to the lightmaps
@@ -189,7 +190,7 @@ namespace MapRecoveryModel
             add(counts.undividedSurfaces, " faces given one material");
             text += ".";
         }
-        if (counts.lightsFromEditorCopy || counts.lightsFromOlderCopy || counts.lightsFitted)
+        if (counts.lightsKeptInFile || counts.lightsFromEditorCopy || counts.lightsFromOlderCopy || counts.lightsFitted)
         {
             text += "\r\nLights the cook stripped:";
             const char* separator = " ";
@@ -199,6 +200,7 @@ namespace MapRecoveryModel
                 text += separator + Thousands(count) + what;
                 separator = ", ";
             };
+            add(counts.lightsKeptInFile, " still in the compiled file");
             add(counts.lightsFromEditorCopy, " from the map's editor copy");
             add(counts.lightsFromOlderCopy, " from an editor copy of another bake");
             add(counts.lightsFitted, " stand-ins fitted to the lightmaps");

@@ -1590,9 +1590,10 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
 }
 
 // Declared in RecoveredLightsNative.h; the reads are in RecoveredLightsNative.inl.
-bool RecoveredLightsNative::ReadLights(void* level,std::vector<LevelLight>& lights,std::vector<std::string>& actorNames,std::string& error)
+bool RecoveredLightsNative::ReadLights(void* level,std::vector<LevelLight>& lights,std::vector<std::string>& actorNames,std::string& error,
+    const std::vector<void*>& outsideLevel)
 {
-    return Workflow::Editor::RecoveredLightsReadLights(level,lights,actorNames,error);
+    return Workflow::Editor::RecoveredLightsReadLights(level,lights,actorNames,error,outsideLevel);
 }
 std::shared_ptr<RecoveredLights::Scene> RecoveredLightsNative::Capture(void* level,double thin,std::string& error)
 {

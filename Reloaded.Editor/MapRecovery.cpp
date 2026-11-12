@@ -3295,6 +3295,96 @@ namespace
         return true;
     }
 
+    // Lights the cook took out of the level's actor lists but still wrote to
+    // the file, because a kept object refers to them (an IgnoredEchelonLights
+    // or ObjectLights list). They are the author's lights, whole: loaded with
+    // the map, of its package and its LevelInfo, with a light type, not
+    // deleted, in none of the level's lists.
+    std::vector<void*> FindLightsOutsideLevel(void* level)
+    {
+        std::vector<void*> lights;
+        if (!level) return lights;
+        std::unordered_set<void*> listedActors;
+        void* levelInfo = nullptr;
+        for (size_t offset : {size_t(0x2C), size_t(0x3C), size_t(0x4C)})
+        {
+            const RawArray actors = ReadRawArray(level, offset);
+            if (actors.count < 0 || actors.count > kMaxCookedArrayElements || (actors.count && !actors.data)) return lights;
+            void* const* data = reinterpret_cast<void* const*>(actors.data);
+            if (offset == 0x2C && actors.count) levelInfo = data[0];
+            for (int index = 0; index < actors.count; ++index)
+                if (data[index]) listedActors.insert(data[index]);
+        }
+        void** objects = *reinterpret_cast<void***>(0x11697B70);
+        const int count = *reinterpret_cast<int*>(0x11697B74);
+        if (!objects || count < 0 || count > 10000000 || !levelInfo) return lights;
+        std::unordered_map<void*, bool> lightClasses;
+        for (int index = 0; index < count; ++index)
+        {
+            void* object = objects[index];
+            if (!object || listedActors.count(object)) continue;
+            void* type = *reinterpret_cast<void**>(static_cast<char*>(object) + kObjectClassOffset);
+            auto found = lightClasses.find(type);
+            if (found == lightClasses.end())
+            {
+                bool light = false;
+                void* parent = type;
+                for (int depth = 0; parent && depth < 64; ++depth)
+                {
+                    char name[128]{};
+                    if (CopyObjectName(parent, name, sizeof(name)) && _stricmp(name, "Light") == 0)
+                    {
+                        light = true;
+                        break;
+                    }
+                    parent = *reinterpret_cast<void**>(static_cast<char*>(parent) + kClassSuperOffset);
+                }
+                found = lightClasses.emplace(type, light).first;
+            }
+            if (!found->second) continue;
+            const auto* actor = static_cast<const char*>(object);
+            // bDeleteMe is bit 0x8000 at +0x2E8, Level at +0x1A0 and
+            // LightType at +0x2D1 in this editor.
+            if ((*reinterpret_cast<const uint32_t*>(actor + 0x2E8) & 0x8000u)
+                || *reinterpret_cast<void* const*>(actor + 0x1A0) != levelInfo
+                || !*reinterpret_cast<const unsigned char*>(actor + 0x2D1)) continue;
+            char path[512]{};
+            if (FormatExternalObjectPath(object, path, sizeof(path), "MyLevel") && _strnicmp(path, "MyLevel.", 8) == 0)
+                lights.push_back(object);
+        }
+        return lights;
+    }
+
+    // Puts actors at the end of the level's actor list for as long as it
+    // lives, so the map's text export writes them with the level's own. The
+    // list goes back to its length afterwards: these actors were never
+    // registered with the level, and nothing else may walk over them.
+    struct ListedForExport
+    {
+        void* level;
+        int original = -1;
+        ListedForExport(void* owner, const std::vector<void*>& actors) : level(owner)
+        {
+            if (!level || actors.empty()) return;
+            auto* list = static_cast<unsigned char*>(level) + kLevelActorsDataOffset;
+            const int count = ReadRaw<int>(list, sizeof(void*));
+            using AddFn = int(__thiscall*)(void*, int, int);
+            const int first = reinterpret_cast<AddFn>(kFArrayAdd)(list, static_cast<int>(actors.size()), sizeof(void*));
+            void** data = ReadRaw<void**>(list, 0);
+            if (first != count || !data) { *reinterpret_cast<int*>(list + sizeof(void*)) = count; return; }
+            for (size_t index = 0; index < actors.size(); ++index) data[count + static_cast<int>(index)] = actors[index];
+            original = count;
+        }
+        ListedForExport(const ListedForExport&) = delete;
+        ListedForExport& operator=(const ListedForExport&) = delete;
+        bool Listed() const { return original >= 0; }
+        ~ListedForExport()
+        {
+            if (original >= 0)
+                *reinterpret_cast<int*>(static_cast<unsigned char*>(level) + kLevelActorsDataOffset + sizeof(void*)) = original;
+        }
+    };
+
     void* FindEmbeddedAssetClass(const std::string& externalPath, const std::string& alias)
     {
         void** objects = *reinterpret_cast<void***>(0x11697B70);
@@ -3904,6 +3994,7 @@ namespace
     // The lights are added to the prepared actors. Nothing here stops the
     // recovery except Cancel: a failure leaves the map as it was, with a row.
     bool RecoverLostLights(void* level, RecoveredActorImport::PreparedMap& actors, const std::vector<TwinMap>& twins,
+                           const std::vector<void*>& lightsOutsideLevel,
                            size_t twinsSearched, MapRecoveryModel::Counts& counts,
                            std::vector<MapRecoveryModel::ReportRow>& rows, std::string& reportText,
                            const StepFunction& step, std::string& error)
@@ -3931,7 +4022,7 @@ namespace
         std::string fault;
         std::vector<RecoveredLightsNative::LevelLight> cookedLights;
         std::vector<std::string> cookedActorNames;
-        if (!RecoveredLightsNative::ReadLights(level, cookedLights, cookedActorNames, fault))
+        if (!RecoveredLightsNative::ReadLights(level, cookedLights, cookedActorNames, fault, lightsOutsideLevel))
         {
             rows.push_back({"Lights not recovered", "The compiled map", "Its lights could not be read: " + fault, Target::None});
             return true;
@@ -3964,7 +4055,21 @@ namespace
             light.levelBrightness = levelBrightness;
             const auto found = preparedByName.find(Twin::Lower(light.name));
             light.storesRadius = found == preparedByName.end() || Twin::SetsProperty(prepared[found->second], "LightRadius");
+            if (entry.outsideLevel)
+            {
+                // Never registered with the level: its zone is where it stands.
+                if (scene && scene->zoneAt) light.zone = scene->zoneAt(light.location);
+                if (found != preparedByName.end()) ++counts.lightsKeptInFile;
+            }
             known.push_back(std::move(light));
+        }
+        if (counts.lightsKeptInFile)
+        {
+            note(std::to_string(counts.lightsKeptInFile) + " lights the cook took out of the level are still in the file (another "
+                "object refers to them): they are the author's and bake as they did");
+            rows.push_back({"Lights kept in the file", std::to_string(counts.lightsKeptInFile) + " lights",
+                "The cook took them out of the level but still wrote them, because another object refers to them. They are "
+                "back in the map as the author made them.", Target::None});
         }
 
         // A copy's lights the cook dropped that the compiled map does not hold.
@@ -4205,7 +4310,8 @@ namespace
         }
 
         // The report.
-        const size_t stripped = counts.lightsFromEditorCopy + counts.lightsFromOlderCopy + counts.lightsFitted;
+        const size_t stripped = counts.lightsKeptInFile + counts.lightsFromEditorCopy + counts.lightsFromOlderCopy
+            + counts.lightsFitted;
         if (exact)
         {
             note(std::to_string(chosen.size()) + " lights the cook dropped came back from the editor copy " + exact->entry.path
@@ -4462,7 +4568,19 @@ namespace
         // Validate transferable objects before the more expensive brush and
         // material reconstruction. Keep this export even if geometry fails.
         std::string actorText;
-        if (!exportMap(actorsPath, actorText)) return false;
+        // Lights the cook took out of the level but still wrote to the file
+        // are exported with the level's actors, so they come back as the
+        // author made them and what refers to them still finds them.
+        std::vector<void*> lightsOutsideLevel;
+        if (options.recoverLights) lightsOutsideLevel = FindLightsOutsideLevel(g_recoveredLevel);
+        {
+            const ListedForExport listed(g_recoveredLevel, lightsOutsideLevel);
+            if (!listed.Listed()) lightsOutsideLevel.clear();
+            if (!exportMap(actorsPath, actorText)) return false;
+        }
+        if (!lightsOutsideLevel.empty())
+            Logger::log("MapRecovery: " + std::to_string(lightsOutsideLevel.size())
+                + " lights are in the compiled file outside the level; they were exported with its actors");
         if (!step(Stage::Reading, 0.5)) return cancel();
         RecoveredLighting originalLighting;
         if (!CaptureMeshLighting(g_recoveredLevel, assetPackageName.c_str(), originalLighting, error)) return false;
@@ -4567,7 +4685,7 @@ namespace
             Logger::log("MapRecovery: recovering the lights the cook stripped");
             try
             {
-                if (!RecoverLostLights(g_recoveredLevel, actors, twins, twinsSearched, counts, outcome.rows, lightReport,
+                if (!RecoverLostLights(g_recoveredLevel, actors, twins, lightsOutsideLevel, twinsSearched, counts, outcome.rows, lightReport,
                                        stepRef, error))
                     return step.cancelled ? cancel() : false;
             }

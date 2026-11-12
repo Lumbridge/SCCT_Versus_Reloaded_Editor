@@ -184,7 +184,8 @@ namespace
     };
 }
 
-bool RecoveredLightsReadLights(void* levelPointer,std::vector<RecoveredLightsNative::LevelLight>& lights,std::vector<std::string>& actorNames,std::string& error)
+bool RecoveredLightsReadLights(void* levelPointer,std::vector<RecoveredLightsNative::LevelLight>& lights,std::vector<std::string>& actorNames,std::string& error,
+    const std::vector<void*>& outsideLevel)
 {
     lights.clear();actorNames.clear();
     try
@@ -195,12 +196,16 @@ bool RecoveredLightsReadLights(void* levelPointer,std::vector<RecoveredLightsNat
         if(actors.empty())return true;
         const auto fields=ResolveRecoveredLightFields(actors[0]);
         actors=RecoveredActors(level,&fields);
+        const size_t inLevel=actors.size();
+        for(void* extra:outsideLevel)if(extra)actors.push_back(reinterpret_cast<Address>(extra));
         std::map<Address,bool> lightClasses;
-        for(auto actor:actors)
+        for(size_t index=0;index<actors.size();++index)
         {
+            const auto actor=actors[index];
             actorNames.push_back(NameOf(actor));
             if(!Read<unsigned char>(actor+kLightType))continue;
             RecoveredLightsNative::LevelLight entry;
+            entry.outsideLevel=index>=inLevel;
             RecoveredLightOf(actor,fields,entry.light);
             const auto type=Read<Address>(actor+0x24);
             auto known=lightClasses.find(type);
