@@ -1462,7 +1462,10 @@ Json CaptureAssembly(const Json& members,const Pose& frame)
         Address a=found->second;
         auto position=TransformPoint(Position(a),frame,true); auto rotation=TransformRotation(RotationOf(a),frame.rotation,true);
         auto text=Workflow::SetProperty(Workflow::SetProperty(actor.text,"Location",VectorText(position)),"Rotation",RotationText(rotation));
-        for(const auto& field:{"Level","Region","XLevel","Name","bSelected","bLightChanged","bMustInitNetChannels"}) text=RemoveProperty(text,field);
+        // StaticMeshInstance is the actor's baked lighting (one MyLevel.StaticMeshInstanceN per mesh actor, made by
+        // Build Lighting). It is not an asset: it belongs to this actor in this map, and a copy placed anywhere gets
+        // its own at the next lighting build. Kept, it made every lit mesh a "map-local asset".
+        for(const auto& field:{"Level","Region","XLevel","Name","bSelected","bLightChanged","bMustInitNetChannels","StaticMeshInstance"}) text=RemoveProperty(text,field);
         auto tag=NameField(a,"Tag"),event=NameField(a,"Event");
         auto actorClass=Path(Read<Address>(a+0x24));
         result["actors"].push_back({{"name",actor.name},{"class",actorClass},{"path",Path(a)},{"text",text},{"position",position},{"rotation",rotation},{"tag",tag},{"event",event}});

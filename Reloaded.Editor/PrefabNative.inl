@@ -79,9 +79,36 @@ namespace
     }
     std::string PlacementPrefix() { return "RE_"+Id().substr(0,12)+"_"; }
 }
-Json PlaceAssembly(const Json& definition,const Pose& frame,const std::map<std::string,std::string>& bindings,const std::string& group)
+// An assembly saved before captures left baked lighting out names each mesh actor's StaticMeshInstance (its
+// baked lighting in the map it was saved from) as a dependency, and placed only in that map. The reference
+// and the dependency are dropped here, so such an assembly places anywhere; the copies are lit by the next
+// lighting build, as any new mesh actor is.
+Json WithoutBakedLighting(Json definition)
+{
+    if(!definition.contains("actors") || !definition.at("actors").is_array()) return definition;
+    std::set<std::string> dropped;
+    const std::regex reference(R"(^\s*StaticMeshInstance\s*=\s*[A-Za-z0-9_]+'([^']+)')",std::regex::icase);
+    for(auto& actor:definition["actors"])
+    {
+        if(!actor.contains("text") || !actor.at("text").is_string()) continue;
+        const auto text=actor.at("text").get<std::string>();
+        std::istringstream lines(text);std::string line;
+        while(std::getline(lines,line)) { std::smatch match; if(std::regex_search(line,match,reference)) dropped.insert(Fold(match[1].str())); }
+        actor["text"]=Workflow::RemoveProperty(text,"StaticMeshInstance");
+    }
+    if(!dropped.empty() && definition.contains("dependencies") && definition.at("dependencies").is_array())
+    {
+        Json kept=Json::array();
+        for(const auto& dependency:definition.at("dependencies"))
+            if(!dependency.is_string() || !dropped.count(Fold(dependency.get<std::string>()))) kept.push_back(dependency);
+        definition["dependencies"]=std::move(kept);
+    }
+    return definition;
+}
+Json PlaceAssembly(const Json& saved,const Pose& frame,const std::map<std::string,std::string>& bindings,const std::string& group)
 {
     if(!group.empty() && !Prefabs::IsInstanceGroup(group)) throw std::runtime_error("Invalid linked prefab group.");
+    const Json definition=WithoutBakedLighting(saved);
     const auto resolved=PlacementBindings(definition,bindings);
     const auto prefix=PlacementPrefix();
     auto prepared=PreparePlacement(group.empty()?definition:Prefabs::WithoutInstanceGroupsInText(definition),frame,prefix,LevelPath(),resolved);
