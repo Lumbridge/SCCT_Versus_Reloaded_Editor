@@ -48,6 +48,8 @@
 #include "resource.h"
 #include "Version.h"
 #include <zlib.h>
+#include <bcrypt.h>
+#pragma comment(lib,"bcrypt.lib")
 #include <algorithm>
 #include <chrono>
 #include <deque>
@@ -1527,15 +1529,17 @@ Json CaptureAssembly(const Json& members,const Pose& frame)
 Json PlaceAssembly(const Json& definition,const Pose& frame,const std::map<std::string,std::string>& bindings) { return PlaceAssembly(definition,frame,bindings,{}); }
 #include "MagicEventNative.inl"
 #include "MapAuthoringNative.inl"
+#include "PS2ObjectiveNative.inl"
 Json AddObjectiveActor(const Json& owner,const std::string& type)
 {
     MagicCheck(owner);
     auto parent=ResolveIdentity(owner.at("actor"));
-    const bool objective=type=="SBase.SObjective",flag=type=="SBase.SFlag";
-    if(!objective && !flag && type!="SBase.SComputerObjectiveTrigger" && type!="SBase.SBombTargetObjectiveTrigger")
+    const bool objective=type=="SBase.SObjective",flag=type=="SBase.SFlag",ps2Vial=type=="P2_PS2Objectives.PS2Computer";
+    if(!objective && !flag && !ps2Vial && type!="SBase.SComputerObjectiveTrigger" && type!="SBase.SBombTargetObjectiveTrigger")
         throw std::runtime_error("Unsupported objective actor type.");
     if(!parent || (objective?!IsA(parent,"SBase.SMission"):(!IsA(parent,"SBase.SObjective") || IsA(parent,"SBase.SMission"))))
         throw std::runtime_error(objective?"Select one SMission to add an SObjective.":"Select one SObjective to add a trigger.");
+    if(ps2Vial)EnsurePS2ObjectiveResources();
     const char* property=objective?"Objectives":"Triggers";
     auto links=owner.at("values").at(property);
     if(!links.is_array())throw std::runtime_error("Objective links are unavailable.");
@@ -1550,6 +1554,11 @@ Json AddObjectiveActor(const Json& owner,const std::string& type)
     auto position=Position(parent);position[0]+=32;
     auto location=[&](const Vector& p)->Json{return {{"X",std::to_string(p[0])},{"Y",std::to_string(p[1])},{"Z",std::to_string(p[2])}};};
     Json properties={{"Location",location(position)}};
+    if(ps2Vial)
+    {
+        properties["UseRelativeLocation"]=location(Vector{90,0,0});
+        properties["DominationCaptureTime"]="10";
+    }
     Json operations=Json::array();
     if(flag)
     {

@@ -210,6 +210,7 @@ namespace
         else if(Editor::Compatible(path,"SBase.SObjective"))
         {
             AppendMenuA(menu,MF_STRING,kAddComputerObjective,"Add SComputerObjectiveTrigger");
+            AppendMenuA(menu,MF_STRING,kAddPS2VialObjective,"Add PS2 Vial Case (Neutralization)");
             AppendMenuA(menu,MF_STRING,kAddBombObjective,"Add SBombTargetObjectiveTrigger");
             AppendMenuA(menu,MF_STRING,kAddFlagObjective,"Add SFlag && SFlagDropZone");
         }
@@ -226,7 +227,7 @@ namespace
     void AddObjective(UINT command,const Json& snapshot)
     {
         const char* types[]={"SBase.SObjective","SBase.SComputerObjectiveTrigger","SBase.SBombTargetObjectiveTrigger","SBase.SFlag"};
-        Editor::AddObjectiveActor(snapshot,types[command-kAddObjective]);
+        Editor::AddObjectiveActor(snapshot,command==kAddPS2VialObjective?"P2_PS2Objectives.PS2Computer":types[command-kAddObjective]);
     }
     // documentRevision lets panels cache their slice of the library instead of
     // copying the whole document on every repaint.
@@ -1440,6 +1441,7 @@ namespace
     {
         bool objective=false;for(UINT id=kAddObjective;id<=kAddFlagObjective;++id)
             if(GetMenuState(menu,id,MF_BYCOMMAND)!=UINT(-1))objective=true;
+        if(GetMenuState(menu,kAddPS2VialObjective,MF_BYCOMMAND)!=UINT(-1))objective=true;
         for(UINT id=kObjectivePlayersFirst;id<=kObjectivePlayersLast;++id)
             if(GetMenuState(menu,id,MF_BYCOMMAND)!=UINT(-1))objective=true;
         if(!objective)return previousTrackMenu(menu,flags,x,y,reserved,window,rect);
@@ -1451,7 +1453,7 @@ namespace
             // frame dispatcher. Consume our choices directly after the modal
             // loop, and retain native notification semantics for stock items.
             auto result=previousTrackMenu(menu,flags|TPM_RETURNCMD|TPM_NONOTIFY,x,y,reserved,window,rect);
-            if(result>=kAddObjective && result<=kAddFlagObjective)
+            if(IsObjectiveAddCommand(result))
             {
                 AddObjective(result,snapshot);return (flags&TPM_RETURNCMD)?0:TRUE;
             }
@@ -1614,7 +1616,7 @@ void RunObjectiveCommand(UINT command,const Json& snapshot)
         RunObjectivePlayers(command,snapshot.at("actor"),GetActiveWindow());
         return;
     }
-    if(command<kAddObjective || command>kAddFlagObjective)throw std::runtime_error("Invalid objective command.");
+    if(!IsObjectiveAddCommand(command))throw std::runtime_error("Invalid objective command.");
     AddObjective(command,snapshot);
 }
 void CameraBookmark(int slot,bool store,bool fromMenu)
@@ -1719,7 +1721,7 @@ bool HandleCommand(UINT command)
         CameraBookmark(Bookmarks::kFirst+static_cast<int>(command-(store?kBookmarkSetFirst:kBookmarkGoFirst)),store,true);
         return true;
     }
-    if(command>=kAddObjective && command<=kAddFlagObjective)
+    if(IsObjectiveAddCommand(command))
     {
         try
         {

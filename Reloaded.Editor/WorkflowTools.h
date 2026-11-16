@@ -6,6 +6,9 @@ namespace WorkflowTools
 {
     constexpr UINT kConnections = 40920;
     constexpr UINT kAddObjective = 40949, kAddComputerObjective = 40950, kAddBombObjective = 40951, kAddFlagObjective = 40952;
+    constexpr UINT kAddPS2VialObjective = 41412;
+    inline bool IsObjectiveAddCommand(UINT command)
+    { return (command>=kAddObjective && command<=kAddFlagObjective) || command==kAddPS2VialObjective; }
     // Players in Match on an objective's, zone mission's or mover's right-click menus
     // (ObjectivePlayersModel.h): every match, the presets, Custom..., and for a mover
     // Open at the start when in range, and on a mission Objectives to Win by Match
