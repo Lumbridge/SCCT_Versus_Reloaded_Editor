@@ -1465,7 +1465,8 @@ Json CaptureAssembly(const Json& members,const Pose& frame)
         // StaticMeshInstance is the actor's baked lighting (one MyLevel.StaticMeshInstanceN per mesh actor, made by
         // Build Lighting). It is not an asset: it belongs to this actor in this map, and a copy placed anywhere gets
         // its own at the next lighting build. Kept, it made every lit mesh a "map-local asset".
-        for(const auto& field:{"Level","Region","XLevel","Name","bSelected","bLightChanged","bMustInitNetChannels","StaticMeshInstance"}) text=RemoveProperty(text,field);
+        for(const auto& field:{"Level","Region","XLevel","Name","bSelected","bLightChanged","bMustInitNetChannels"}) text=RemoveProperty(text,field);
+        text=RemoveBakedLighting(text);
         auto tag=NameField(a,"Tag"),event=NameField(a,"Event");
         auto actorClass=Path(Read<Address>(a+0x24));
         result["actors"].push_back({{"name",actor.name},{"class",actorClass},{"path",Path(a)},{"text",text},{"position",position},{"rotation",rotation},{"tag",tag},{"event",event}});
@@ -1486,6 +1487,8 @@ Json CaptureAssembly(const Json& members,const Pose& frame)
         {
             auto target=Find(ref.path);
             if(!target) throw std::runtime_error("Unresolved exported dependency: "+ref.path);
+            // Baked lighting that is named inside a struct or list, where its line could not simply be left out.
+            if(IsA(target,"StaticMeshInstance")) continue;
             if(IsA(a,"Brush") && target==Read<Address>(a+0x238)) continue;
             if(auto outer=Read<Address>(target+0x18);inlineNames.count(Fold(NameOf(target))) && (outer==package || IsA(outer,"Actor"))) continue;
             Address root=target;

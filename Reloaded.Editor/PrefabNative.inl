@@ -87,14 +87,12 @@ Json WithoutBakedLighting(Json definition)
 {
     if(!definition.contains("actors") || !definition.at("actors").is_array()) return definition;
     std::set<std::string> dropped;
-    const std::regex reference(R"(^\s*StaticMeshInstance\s*=\s*[A-Za-z0-9_]+'([^']+)')",std::regex::icase);
     for(auto& actor:definition["actors"])
     {
         if(!actor.contains("text") || !actor.at("text").is_string()) continue;
-        const auto text=actor.at("text").get<std::string>();
-        std::istringstream lines(text);std::string line;
-        while(std::getline(lines,line)) { std::smatch match; if(std::regex_search(line,match,reference)) dropped.insert(Fold(match[1].str())); }
-        actor["text"]=Workflow::RemoveProperty(text,"StaticMeshInstance");
+        std::vector<std::string> paths;
+        actor["text"]=Workflow::RemoveBakedLighting(actor.at("text").get<std::string>(),&paths);
+        for(const auto& path:paths) dropped.insert(Fold(path));
     }
     if(!dropped.empty() && definition.contains("dependencies") && definition.at("dependencies").is_array())
     {
