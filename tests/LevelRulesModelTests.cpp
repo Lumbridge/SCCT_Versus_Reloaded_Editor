@@ -655,6 +655,9 @@ int main()
         {
             auto s=good;s["schema"]["classes"]["SBase.SMission"]["schema"]["GameMode"]["choices"]={"GM_Undefined","GM_Multi"};
             Fails("authoring.unwritable",s);
+            auto bytes=good;
+            bytes["schema"]["classes"]["SBase.SAlarm"]["schema"]["MessagePriority"]={{"kind","ByteProperty"},{"choices",Json::array()}};
+            Passes("authoring.unwritable",bytes);
             auto t=good;t["schema"]["classes"]["SBase.SMission"]["schema"]["bChained"]={{"writable",false},{"reason","Map JSON does not write this property."}};
             Fails("authoring.unwritable",t);
             auto u=t;u["live"]=true; // the live map's values are read, not written

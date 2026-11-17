@@ -2481,7 +2481,7 @@
           "anyOf": [
             {
               "additionalProperties": false,
-              "description": "Starts on a 128-unit lattice at floor+48 in one or more rooms.",
+              "description": "Starts on a 128-unit lattice at floor+88 in one or more rooms.",
               "properties": {
                 "count": {
                   "maximum": 32.0,
@@ -2548,7 +2548,7 @@
           "anyOf": [
             {
               "additionalProperties": false,
-              "description": "Starts on a 128-unit lattice at floor+48 in one or more rooms.",
+              "description": "Starts on a 128-unit lattice at floor+88 in one or more rooms.",
               "properties": {
                 "count": {
                   "maximum": 32.0,

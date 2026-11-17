@@ -1392,7 +1392,7 @@ namespace Mcp::Spec
             }
 
             // --- Spawns ----------------------------------------------------------
-            // Starts on a lattice centred in each room, floor+48, clear of the walls.
+            // Starts on a lattice centred in each room, floor+88, clear of the walls.
             std::vector<Vector> Lattice(const Piece& room, int count, double spacing, double above)
             {
                 std::vector<Vector> out;
@@ -1430,7 +1430,7 @@ namespace Mcp::Spec
                         for (size_t i = 0; i < group.size(); ++i)
                         {
                             const auto where = Child(pointer, i);
-                            const auto at = Locate(group[i].at("at"), Child(where, "at"), Floor(48)).at;
+                            const auto at = Locate(group[i].at("at"), Child(where, "at"), Floor(88)).at;
                             int fallback = 0;
                             try { fallback = Workflow::Security::YawTowards(at, Centre()); } catch (const std::exception&) {}
                             make(group[i].at("id").get<std::string>(), at, YawOf(group[i], at, where, fallback), where);
@@ -1448,7 +1448,7 @@ namespace Mcp::Spec
                         if (index < 0 || !low.pieces[static_cast<size_t>(index)].space) { Diag("error", "spawns.room", Child(pointer, "in"), "\"" + rooms[r] + "\" is not a room, corridor or vent of the spec.", "spawn-points"); continue; }
                         const auto& room = low.pieces[static_cast<size_t>(index)];
                         const int here = count / static_cast<int>(rooms.size()) + (static_cast<int>(r) < count % static_cast<int>(rooms.size()) ? 1 : 0);
-                        for (const auto& at : Lattice(room, here, spacing, 48))
+                        for (const auto& at : Lattice(room, here, spacing, 88))
                         {
                             int fallback = 0;
                             try { fallback = Workflow::Security::YawTowards(room.pose.position, centre); } catch (const std::exception&) {}
@@ -1571,6 +1571,8 @@ namespace Mcp::Spec
                         const auto zone = objective.at("visibilityZone").get<std::string>();
                         auto* info = FindActor(zone);
                         if (!info || info->cls.find("ZoneInfo") == std::string::npos) Diag("error", "story.visibility-zone", Child(pointer, "visibilityZone"), "\"" + zone + "\" is not a zone of the spec (TriggersERVisibilityZone takes a ZoneInfo).", "game-modes");
+                        else if (PropertySchema(actor.cls, "TriggersERVisibilityZones"))
+                            actor.properties["TriggersERVisibilityZones"] = Json::array({Ref(zone)});
                         else actor.properties["TriggersERVisibilityZone"] = Ref(zone);
                     }
                     Props(actor, objective);
@@ -1773,12 +1775,19 @@ namespace Mcp::Spec
                 const auto& disks = hunt.value("disks", Json());
                 Json triggers = Json::array();
                 const double reset = hunt.value("resetTime", 30.0);
+                const auto* groupField = PropertySchema("SBase.SDisk", "Group");
+                const bool inheritedGroup = groupField && groupField->value("kind", std::string()) == "NameProperty";
+                if (inheritedGroup)
+                    Diag("error", "diskhunt.group-field", "/gameplay/diskhunt/disks", "This editor exposes Actor.Group instead of the numeric SDisk.Group. Update the editor DLL before placing disks; saving the inherited group prevents the map from reopening.", "game-modes");
+                const bool canSetReset = !ClassKnown("SBase.SDisk") || PropertySchema("SBase.SDisk", "ResetTime");
+                if (!canSetReset && hunt.contains("resetTime"))
+                    Diag("warning", "diskhunt.reset-time", "/gameplay/diskhunt/resetTime", "The loaded SDisk class has no editable ResetTime. Disks use the game's reset behavior.", "game-modes");
                 int made = 0;
                 auto disk = [&](const std::string& id, const Vector& at, int group, const std::string& pointer)
                 {
                     auto& actor = Add(id, "SBase.SDisk", "disk", pointer, at, 0);
-                    actor.properties["Group"] = std::to_string(group);
-                    actor.properties["ResetTime"] = Num(reset);
+                    if (!inheritedGroup) actor.properties["Group"] = std::to_string(group);
+                    if (canSetReset) actor.properties["ResetTime"] = Num(reset);
                     actor.label = "disk " + std::to_string(group);
                     triggers.push_back(Ref(id));
                     ++made;

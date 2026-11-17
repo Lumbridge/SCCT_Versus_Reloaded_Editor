@@ -247,7 +247,7 @@ namespace Mcp::Rules
     inline std::vector<std::string> RuleFields()
     {
         return {"TeamNumber", "GameMode", "Objectives", "Triggers", "bChained", "MinimumObjectives", "AtResetEvent", "ObjectiveName",
-                "TriggersERVisibilityZone", "DropZone", "Group", "CaptureTime", "DominationCaptureTime", "ResetTime",
+                "TriggersERVisibilityZone", "TriggersERVisibilityZones", "DropZone", "Group", "CaptureTime", "DominationCaptureTime", "ResetTime",
                 "NextCam", "PrevCam", "bFirstCam", "CamName", "bBlockActors", "bBlockPlayers",
                 "Events", "MessagePriority", "MoversToLock", "ObjectiveTriggersToLock", "Duration", "Volumes", "DetectedClass",
                 "LightEffect", "EchelonNormalInfluence", "bPickable", "bCanBeChaffed", "LocationName", "bDetectIntruders",
@@ -1123,13 +1123,15 @@ namespace Mcp::Rules
                     for (const auto* t : listed)
                         if (!ObjectiveTrigger(KindOf(t->cls)))
                             Add("story.trigger-kind", Name(*o) + "'s Triggers lists " + Name(*t) + " (" + Last(t->cls) + "), which is not an SComputerObjectiveTrigger, SFlag or SBombTargetObjectiveTrigger.", {o->path, t->path});
-                    for (const auto& r : Refs(Field(*o, "TriggersERVisibilityZone")))
+                    const bool hasZoneList = Field(*o, "TriggersERVisibilityZones") != nullptr;
+                    const std::string zoneField = hasZoneList ? "TriggersERVisibilityZones" : "TriggersERVisibilityZone";
+                    for (const auto& r : Refs(Field(*o, zoneField)))
                     {
                         const auto* zone = index.Resolve(r);
                         if (!zone && !index.Definite(r)) continue;
                         if (!zone || (KindOf(zone->cls) != Kind::Zone && KindOf(zone->cls) != Kind::AlarmZone))
-                            Add("story.visibility-zone", Name(*o) + "'s TriggersERVisibilityZone names " + (zone ? Name(*zone) + " (" + Last(zone->cls) + ")" : Shown(r) + ", which is not in the map") + "; it must be a ZoneInfo.",
-                                {o->path}, SetFix(*o, {{"TriggersERVisibilityZone", "None"}}));
+                            Add("story.visibility-zone", Name(*o) + "'s " + zoneField + " names " + (zone ? Name(*zone) + " (" + Last(zone->cls) + ")" : Shown(r) + ", which is not in the map") + "; it must be a ZoneInfo.",
+                                {o->path}, hasZoneList ? Json() : SetFix(*o, {{zoneField, "None"}}));
                     }
                 }
             }
@@ -1528,7 +1530,8 @@ namespace Mcp::Rules
                             if (const auto influence = NumberOf(a, "EchelonNormalInfluence"); influence && std::abs(*influence - .9) > .05)
                                 Add("lighting.echelon-normal", Name(a) + " is an Echelon light with EchelonNormalInfluence " + Round(*influence, 2) + "; 0.9 is the usual setting.", {a.path});
                     }
-                    if (Truth(Field(a, "bPickable")))
+                    // SDisk ships with bPickable set for Disk Hunt.
+                    if (kind != Kind::Disk && Truth(Field(a, "bPickable")))
                         Add("objects.pickable", Name(a) + " has bPickable True: picking objects up is unfinished in the game and never shipped.", {a.path}, SetFix(a, {{"bPickable", "False"}}));
                     if (Truth(Field(a, "bCanBeChaffed")))
                         Add("objects.chaff", Name(a) + " has bCanBeChaffed True; keep it off, as the game turns chaffing on where STriggerLights need it.", {a.path}, SetFix(a, {{"bCanBeChaffed", "False"}}));
@@ -1672,7 +1675,7 @@ namespace Mcp::Rules
                         if (!field || !field->is_object()) continue;
                         if (field->contains("writable") && field->at("writable") == false && !(field->contains("create") && field->at("create") == true))
                             Add("authoring.unwritable", a.path + " sets " + it.key() + ", which Map JSON cannot write: " + field->value("reason", std::string("the property is not writable")) + ".", {a.path});
-                        else if (field->contains("choices") && field->at("choices").is_array() && it.value().is_string())
+                        else if (field->contains("choices") && field->at("choices").is_array() && !field->at("choices").empty() && it.value().is_string())
                         {
                             const auto value = Lower(it.value().get<std::string>());
                             bool listed = false;

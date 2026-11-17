@@ -10,6 +10,7 @@
 #include "WorkflowEditor.h"
 #include "WorkflowTools.h"
 #include "EditorExtras.h"
+#include "UndoHistory.h"
 #include "Version.h"
 #include "logger.h"
 #include <algorithm>
@@ -385,6 +386,7 @@ namespace
         {
             const bool writes=std::any_of(plan.steps.begin(),plan.steps.end(),[](const Plan::Step& s){return Bridge::Mutates(PolicyOf(s.op));});
             std::optional<Editor::JoinScope> scope;
+            const auto stamp = Editor::UndoMark();
             if(writes)
             {
                 try{scope.emplace(label);}
@@ -411,7 +413,12 @@ namespace
                     Fail(step,Plan::Section::Steps,e,writes,ran>0,results,errors,done,wrote,built);
                 }
             }
-            if(scope){scope->Commit();undoSteps=1;}
+            if(scope)
+            {
+                scope->Commit();
+                undoSteps=1;
+                if(kept) UndoHistory::TrackMapDesign(stamp,library,WorkflowTools::LibraryEntry());
+            }
         }
         // post: builds, texturing, checks, saves and screenshots, each on its
         // own; a failure here leaves the steps' changes in place.

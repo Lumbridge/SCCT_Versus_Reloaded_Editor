@@ -1,5 +1,6 @@
 #pragma once
 #include <windows.h>
+#include "WorkflowModel.h"
 
 // Edit > Undo History: every step in the editor's undo buffer, oldest first,
 // with the steps waiting for Redo greyed below the current point.
@@ -14,6 +15,7 @@ namespace UndoHistory
     constexpr UINT kAddCheckpoint = 41360;
 
     void Open();
+    void TrackMapDesign(unsigned stamp, const Workflow::Json& before, const Workflow::Json& after);
     // From the frame's command dispatcher. True when the command was ours.
     bool HandleCommand(UINT command);
     // Puts Undo History and Add Undo Checkpoint after the stock Edit > Redo

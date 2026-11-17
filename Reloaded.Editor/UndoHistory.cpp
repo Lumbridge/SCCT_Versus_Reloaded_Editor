@@ -6,6 +6,11 @@
 #include "Appearance.h"
 #include "UndoHistoryModel.h"
 #include "MemoryWriter.h"
+#include "WorkflowTools.h"
+#include "logger.h"
+#include <map>
+#include <optional>
+#include <set>
 #include <algorithm>
 #include <stdexcept>
 #include <string>
@@ -145,11 +150,56 @@ namespace
         return r;
     }
     void __fastcall HookEnd(void* self, void*) { reinterpret_cast<void(__thiscall*)(void*)>(previousEnd)(self); Recheck(self); Changed(); }
-    int __fastcall HookUndo(void* self, void*) { const int r = reinterpret_cast<int(__thiscall*)(void*)>(previousUndo)(self); Recheck(self); Changed(); return r; }
-    int __fastcall HookRedo(void* self, void*) { const int r = reinterpret_cast<int(__thiscall*)(void*)>(previousRedo)(self); Recheck(self); Changed(); return r; }
+    using Json = Workflow::Json;
+    struct LibraryChange { Json before, after; };
+    std::map<unsigned, LibraryChange> libraryChanges;
+    int MoveHistory(void* self, bool redo)
+    {
+        const auto move = reinterpret_cast<int(__thiscall*)(void*)>(redo ? previousRedo : previousUndo);
+        if (libraryChanges.empty())
+        {
+            const int result = move(self);
+            Recheck(self);
+            Changed();
+            return result;
+        }
+        const Address trans = reinterpret_cast<Address>(self);
+        const int before = Read<int>(trans + 0x34);
+        const int count = Read<int>(trans + 0x2c);
+        const int index = count - before - (redo ? 0 : 1);
+        auto change = libraryChanges.end();
+        if (index >= 0 && index < count)
+            change = libraryChanges.find(Read<unsigned>(Read<Address>(trans + 0x28) + index * kTransactionSize + 4));
+        std::optional<LibraryChange> snapshot;
+        if (change != libraryChanges.end()) snapshot = change->second;
+        const int result = move(self);
+        if (snapshot && Read<int>(trans + 0x34) == before + (redo ? -1 : 1))
+        {
+            try
+            {
+                auto entry = WorkflowTools::LibraryEntry();
+                const auto& from = redo ? snapshot->before : snapshot->after;
+                const auto& to = redo ? snapshot->after : snapshot->before;
+                for (const auto* field : {"design", "mcp"})
+                    if (entry.value(field, Json()) == from.value(field, Json()))
+                    {
+                        if (to.contains(field)) entry[field] = to.at(field);
+                        else entry.erase(field);
+                    }
+                WorkflowTools::RestoreLibraryEntry(entry);
+            }
+            catch (const std::exception& e) { Logger::log(std::string("Undo History: could not restore Map Design: ") + e.what()); }
+        }
+        Recheck(self);
+        Changed();
+        return result;
+    }
+    int __fastcall HookUndo(void* self, void*) { return MoveHistory(self, false); }
+    int __fastcall HookRedo(void* self, void*) { return MoveHistory(self, true); }
     void __fastcall HookReset(void* self, void*, const char* reason)
     {
         reinterpret_cast<void(__thiscall*)(void*, const char*)>(previousReset)(self, reason);
+        libraryChanges.clear();
         if (const size_t gone = checkpoints.Reset())
         {
             checkpointNote = gone == 1 ? "The checkpoint went with the history." : std::to_string(gone) + " checkpoints went with the history.";
@@ -805,6 +855,25 @@ bool HandleCommand(UINT command)
     return false;
 }
 
+void TrackMapDesign(unsigned stamp, const Workflow::Json& before, const Workflow::Json& after)
+{
+    Observe();
+    const auto trans = Buffer();
+    if (!trans) return;
+    const auto count = Read<int>(trans + 0x2c);
+    const auto data = Read<Address>(trans + 0x28);
+    std::set<unsigned> live;
+    for (int i = 0; i < count; ++i) live.insert(Read<unsigned>(data + i * kTransactionSize + 4));
+    std::erase_if(libraryChanges, [&](const auto& item) { return !live.count(item.first); });
+    if (!live.count(stamp)) return;
+    LibraryChange change{Json::object(), Json::object()};
+    for (const auto* field : {"design", "mcp"})
+    {
+        if (before.contains(field)) change.before[field] = before.at(field);
+        if (after.contains(field)) change.after[field] = after.at(field);
+    }
+    if (change.before != change.after) libraryChanges[stamp] = std::move(change);
+}
 void InstallMenu(HMENU bar)
 {
     if (!bar) return;

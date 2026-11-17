@@ -171,7 +171,7 @@ namespace Mcp::Spec
 
             const auto start = Obj({{"id", Ref("id")}, {"at", Ref("position")}, {"yaw", Num()}, {"facing", Ref("facing")}}, {"id", "at"});
             const auto team = Any({Obj({{"in", Any({Ref("id"), Arr(Ref("id"), 1)})}, {"count", Range(Int(), 1, 32)}, {"facing", Ref("facing")}, {"spacing", Num()}}, {"in"},
-                                       "Starts on a 128-unit lattice at floor+48 in one or more rooms."),
+                                       "Starts on a 128-unit lattice at floor+88 in one or more rooms."),
                                    Arr(start, 1, 32, "Starts placed one by one.")});
             const auto toggle = Obj({{"id", Ref("id")}, {"team", Enum({"spy", "merc"})}, {"in", Ref("id")}, {"at", Ref("position")}, {"yaw", Num()},
                                      {"facing", Ref("facing")}, {"enabledBy", Str("The event Tag that toggles it.")}},

@@ -831,13 +831,15 @@ Get-ChildItem -LiteralPath $installedSystem -File | Where-Object {
 foreach ($name in 'EditorRes', '_PC_') {
     if (Test-Path -LiteralPath (Join-Path $installedSystem $name)) { Copy-Item -LiteralPath (Join-Path $installedSystem $name) -Destination $testSystem -Recurse }
 }
-foreach ($name in 'Animations', 'Sounds', 'Textures') {
+foreach ($name in 'Animations', 'Sounds') {
     $assetSource = Join-Path (Join-Path $installedRoot 'Packages') $name
     if (Test-Path -LiteralPath $assetSource) { $null = New-Item -ItemType Junction -Path (Join-Path $testPackages $name) -Target $assetSource }
 }
-# A build may write the map's own mesh package: the copy gets its own folder.
-$meshSource = Join-Path (Join-Path $installedRoot 'Packages') 'StaticMeshes'
-if (Test-Path -LiteralPath $meshSource) { Copy-Item -LiteralPath $meshSource -Destination $testPackages -Recurse }
+# Save As can write the map's interface package in Textures as well as meshes.
+foreach ($name in 'Textures', 'StaticMeshes') {
+    $source = Join-Path (Join-Path $installedRoot 'Packages') $name
+    if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination $testPackages -Recurse }
+}
 if (Test-Path -LiteralPath (Join-Path $installedRoot 'Menus')) { $null = New-Item -ItemType Junction -Path (Join-Path $testRoot 'Menus') -Target (Join-Path $installedRoot 'Menus') }
 $testMapsEd = Join-Path $testPackages 'MapsEd'
 $null = New-Item -ItemType Directory -Path (Join-Path $testPackages 'Maps'), $testMapsEd

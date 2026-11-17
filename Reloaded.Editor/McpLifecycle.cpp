@@ -728,10 +728,9 @@ void RegisterLifecycle()
     Write("build.all", BuildAll);
     Write("editor.quit", [](const Json& q) -> Json
     {
-        RefuseUnsaved(q, "quit");
-        const HWND frame = Editor::MainWindow();
-        if (!frame) throw std::runtime_error("The editor's main window is not available.");
-        PostMessage(frame, WM_CLOSE, 0, 0);
+        if (!q.value("discard", false) && EditorExtras::HasUnsavedChanges())
+            Refuse("Save the current map or explicitly discard its changes before closing the editor.", "unsaved_changes");
+        McpBridge::QueueEditorClose();
         return true;
     });
     Write("play.level", [](const Json&) -> Json

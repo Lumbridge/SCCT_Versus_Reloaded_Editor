@@ -20,7 +20,7 @@ The compiler turns a `scct.level-spec` into one `mcp.plan` that the editor runs 
 It returns `created`, `changed` and `removed` by spec id (with the actor path the editor gave each), `validation` (the compiler's and the rules' findings with JSON pointers and wiki pages), `mapCheck`, `mapSettings` (SMapSettings cannot always be written over the bridge: when not, its checklist and manual steps), the step results, `undo` (`editor_undo` with that call reverts the whole build) and `next`: a new map is saved (`map_file save_as`), the editor restarted (`editor_restart`) and only then given Map Settings (`map_settings`), as `scct://wiki/map-settings` requires.
 
 The wiki defaults the compiler applies:
-- PlayerStart `TeamNumber` 0 spy / 1 merc, 4 per team at floor+48 (spawn-points).
+- PlayerStart `TeamNumber` 0 spy / 1 merc, 4 per team at floor+88 (spawn-points).
 - SMission `GM_Multi` with objectives and triggers by exact name; terminals at floor+78 using `DominationCaptureTime`; SFlag with 1-5 drop zones; sector missions chained (game-modes).
 - SDisk groups cycling 1/2/3; deathmatch `AtResetEvent` switching security off.
 - Detectors' `Event` set to their SAlarm's `Tag` (alarms); a closed CamNet loop with one `bFirstCam` (level-ingredients).
@@ -47,7 +47,7 @@ The Map Design checks run on the result (`validation`): steps at most 35 high, s
 
 Who spawns where and what each mode plays (`scct://wiki/spawn-points`, `scct://wiki/game-modes`).
 
-- `spawns {spy, merc: {in: roomId | [roomIds], count (default defaults.startsPerTeam, 4), facing: {toward: id | position}, spacing} | [{id, at, yaw | facing}], toggles: [{id, team: spy|merc, in | at, enabledBy (an event Tag)}]}`: PlayerStarts with `TeamNumber` 0 (spy) and 1 (merc) on a 128-unit lattice at floor+48; the wiki wants at least 3 per team (an error in release). `toggles` are STriggerPlayerStarts whose Tag is the toggling event.
+- `spawns {spy, merc: {in: roomId | [roomIds], count (default defaults.startsPerTeam, 4), facing: {toward: id | position}, spacing} | [{id, at, yaw | facing}], toggles: [{id, team: spy|merc, in | at, enabledBy (an event Tag)}]}`: PlayerStarts with `TeamNumber` 0 (spy) and 1 (merc) on a 128-unit lattice at floor+88; the wiki wants at least 3 per team (an error in release). `toggles` are STriggerPlayerStarts whose Tag is the toggling event.
 - `modes [story, diskhunt, deathmatch]` add to the modes the level plays (giving a mode's section adds it too); `removeModes` drops modes together with their sections.
 - `story {mission, objectives, sectors}`:
   - `mission {id, name, description (the Spy text), descriptionDef (the Merc text), minimumObjectives, chained, atResetEvent}`: an SMission with GameMode `GM_Multi` listing its SObjectives by exact name.

@@ -195,7 +195,7 @@ void Starter()
         const Rotation turn=expected[i].at("rotation");
         Check(Design::Definition(items[i].at("spec"),turn)==Design::Definition(expected[i].at("spec"),turn),"the same brushes");
     }
-    // The wiki's gaps filled: four starts a team at floor+48 on a 128 lattice.
+    // The wiki's gaps filled: four starts a team at floor+88 on a 128 lattice.
     for(const char* team:{"Spy","Merc"})
     {
         std::vector<Vector> starts;
@@ -206,7 +206,7 @@ void Starter()
             starts.push_back({std::stod(p.at("Location").at("X").get<std::string>()),std::stod(p.at("Location").at("Y").get<std::string>()),std::stod(p.at("Location").at("Z").get<std::string>())});
         }
         Check(!Find(Operations(c),std::string(team)+"Start5"),"four a team");
-        for(const auto& s:starts)Check(s[2]==48 && std::fmod(std::abs(s[0]-starts[0][0]),128)==0 && std::fmod(std::abs(s[1]-starts[0][1]),128)==0,"floor+48 on a 128-unit lattice");
+        for(const auto& s:starts)Check(s[2]==88 && std::fmod(std::abs(s[0]-starts[0][0]),128)==0 && std::fmod(std::abs(s[1]-starts[0][1]),128)==0,"floor+88 on a 128-unit lattice");
     }
     Check(Props(c,"SpyStart1").at("Rotation").at("Yaw")!="0" || true,"starts face the objective");
     const auto& terminal=Props(c,"ServerTerminal");
@@ -324,6 +324,21 @@ void Schema()
     const auto d=Diagnostic(b.diagnostics,"schema.enum");
     Check(d && d->severity=="error" && d->pointer=="/mechanisms/doors/0" && d->message.find("TriggerToggle")!=std::string::npos,"an enum value the loaded class lacks is an error naming the choices");
     Check(c.scene.contains("schema"),"the rules see the schema");
+    Spec::CompileOptions beta;
+    beta.schema["classes"]["SBase.SObjective"]["schema"]["TriggersERVisibilityZones"] =
+        {{"kind","ArrayProperty"},{"inner",{{"kind","ObjectProperty"}}}};
+    beta.schema["classes"]["SBase.SDisk"]["schema"]["Group"] = {{"kind","IntProperty"}};
+    const auto starter=Spec::Compile(Example("versus-starter"),beta);
+    Check(Props(starter,"ServerObjective").at("TriggersERVisibilityZones")==Json::array({{{"$ref","ServerRoom"}}}),"Beta 5 stores objective visibility zones in an array");
+    Check(!Props(starter,"Disk1").contains("ResetTime") && Diagnostic(starter.diagnostics,"diskhunt.reset-time"),"report the unavailable disk reset setting and keep the disks");
+    auto& diskSchema=beta.schema["classes"]["SBase.SDisk"]["schema"];
+    diskSchema["Group"]={{"kind","NameProperty"}};
+    const auto inherited=Spec::Compile(Example("versus-starter"),beta);
+    Check(!Props(inherited,"Disk1").contains("Group") && Diagnostic(inherited.diagnostics,"diskhunt.group-field"),"never write the inherited actor group into a disk");
+    diskSchema["Group"]={{"kind","ByteProperty"},{"choices",Json::array()}};
+    diskSchema["ResetTime"]={{"kind","IntProperty"}};
+    const auto reflected=Spec::Compile(Example("versus-starter"),beta);
+    Check(Props(reflected,"Disk2").at("Group")=="2" && Props(reflected,"Disk2").at("ResetTime")=="30","use the disk class's own group and timer");
     // authoring.schema lists what Import Map from JSON writes, and the editor
     // refuses any other property, so one the loaded class lacks is an error.
     const auto property=Diagnostic(c.diagnostics,"schema.property");
@@ -473,7 +488,7 @@ void Spawns()
     bool few=false;
     for(const auto& d:c.diagnostics)few=few || (d.severity=="error" && d.wikiPage=="spawn-points" && d.message.find("spy")!=std::string::npos);
     Check(few,"fewer than 3 starts a team is an error in release");
-    Check(Props(c,"M1").at("Location").at("Z")=="48" && Props(c,"M3").at("Rotation").at("Yaw")=="32768" && Props(c,"M1").at("TeamNumber")=="1","listed starts at floor+48 with their yaw");
+    Check(Props(c,"M1").at("Location").at("Z")=="88" && Props(c,"M3").at("Rotation").at("Yaw")=="32768" && Props(c,"M1").at("TeamNumber")=="1","listed starts at floor+88 with their yaw");
     Check(Props(c,"M1").at("Rotation").at("Yaw")=="32768","starts face the middle of the map by default");
     auto draft=spec;draft["profile"]="draft";
     for(const auto& d:Spec::Compile(draft).diagnostics)Check(!(d.severity=="error" && d.wikiPage=="spawn-points"),"only a warning in draft");

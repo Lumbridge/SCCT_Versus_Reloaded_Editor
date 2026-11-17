@@ -176,7 +176,10 @@ Map JSON updates do, so an actor you changed is never overwritten blind.
 
 **One Undo step per call.** Every change a tool makes is one Undo step, named
 `MCP <n>: <label>` in **Edit > Undo History** (`label` defaults to the tool's
-name). A whole level from `level_build` is one step. If a part of that step
+name). To keep the whole layout available for Undo, apply it with
+`build: "none"`. You can then undo the placement or run `map_build` to
+build the geometry. The Beta 5 editor clears its Undo history when it rebuilds BSP.
+If a part of the placement step
 fails, every map change of the call is rolled back and no Undo step is left; a
 failure after it (the build, Map Check, a save, or a dialog after a file was
 written) keeps the map changes and says so with `rolledBack: false`.

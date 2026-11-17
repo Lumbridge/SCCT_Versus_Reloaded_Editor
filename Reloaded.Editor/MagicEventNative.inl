@@ -30,6 +30,30 @@ namespace
         }
         return out;
     }
+    // Map JSON and the inspector address fields by name. Walk class declarations
+    // from derived to base. The linked property list can omit script fields
+    // (including SDisk.ResetTime) and expose Actor.Group in place of SDisk.Group.
+    std::vector<Address> NamedProperties(Address type)
+    {
+        std::vector<Address> fields;
+        std::set<int> names;
+        auto add = [&](Address field)
+        {
+            if (names.insert(Read<int>(field + 0x20)).second) fields.push_back(field);
+        };
+        std::set<Address> classes;
+        for (auto owner = type; owner && classes.insert(owner).second; owner = Read<Address>(owner + 0x28))
+            for (auto field : MagicFields(owner)) add(field);
+        for (auto field : Properties(type)) add(field);
+        return fields;
+    }
+    Address NamedProperty(Address object, const std::string& name)
+    {
+        const auto wanted = Fold(name);
+        for (auto field : NamedProperties(Read<Address>(object + 0x24)))
+            if (Fold(NameOf(field)) == wanted) return field;
+        return 0;
+    }
     Json MagicSchema(Address p,int depth=0,bool dimension=true)
     {
         if(depth>12)throw std::runtime_error("Property nesting is too deep.");
@@ -153,7 +177,7 @@ namespace
     }
     void MagicSet(Address actor,const std::string& key,const Json& value)
     {
-        auto p=Property(actor,key);if(!p || !MagicEditable(p,actor))throw std::runtime_error("Property is not editable: "+key);
+        auto p=NamedProperty(actor,key);if(!p || !MagicEditable(p,actor))throw std::runtime_error("Property is not editable: "+key);
         Magic::Validate(MagicSchema(p),value);
         try{MagicImport(p,actor+Read<int>(p+0x3c),value);}catch(const std::exception& e){throw std::runtime_error(key+": "+e.what());}
     }
@@ -272,7 +296,7 @@ namespace
     Json InspectResolved(Address actor)
     {
         Json result={{"actor",Identity(actor)},{"level",LevelIdentity()},{"generation",MapGeneration()},{"values",Json::object()},{"schema",Json::object()},{"unavailable",Json::object()}};
-        for(auto p:Properties(Read<Address>(actor+0x24)))
+        for(auto p:NamedProperties(Read<Address>(actor+0x24)))
         {
             if(!MagicEditable(p,actor))continue;auto name=NameOf(p);
             try
@@ -343,7 +367,7 @@ Json CopyActorProperties(const Json& identity)
 {
     auto actor=MagicResolve(identity);if(!actor)throw std::runtime_error("Actor or owned component is no longer available.");
     Json properties=Json::array();
-    for(auto p:Properties(Read<Address>(actor+0x24)))
+    for(auto p:NamedProperties(Read<Address>(actor+0x24)))
     {
         if(!PasteWritable(p,actor))continue;
         try
@@ -395,7 +419,7 @@ Json PasteActorProperties(const Json& targets,const Json& properties)
         auto type=Read<Address>(a+0x24);auto found=takes.find(type);
         if(found==takes.end())
         {
-            std::map<std::string,Address> named;for(auto p:Properties(type))named.emplace(Fold(NameOf(p)),p);
+            std::map<std::string,Address> named;for(auto p:NamedProperties(type))named.emplace(Fold(NameOf(p)),p);
             std::vector<std::pair<Address,size_t>> list;
             for(size_t i=0;i<properties.size();++i)
             {

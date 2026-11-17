@@ -53,6 +53,7 @@ namespace McpBridge
     // Whether the dialog watchdog answered a question it did not know during
     // the call running now: mcp.plan runs no further step once it has.
     bool DialogBlocked();
+    void QueueEditorClose();
 
     // The bridge calls that changed the map, newest last: undo.call checks a
     // call's transactions are still the newest undoable ones before undoing.

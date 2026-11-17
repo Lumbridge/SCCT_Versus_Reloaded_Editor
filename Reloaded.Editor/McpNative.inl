@@ -80,7 +80,7 @@ namespace
             c.wanted=false;
             for(const auto& name:classes)if(IsA(actor,name)){c.wanted=true;break;}
         }
-        for(auto p:Properties(type))c.fields.emplace(Fold(NameOf(p)),p);
+        for(auto p:NamedProperties(type))c.fields.emplace(Fold(NameOf(p)),p);
         auto offset=[&](const char* name,const char* kind)
         {
             const auto found=c.fields.find(Fold(name));
@@ -209,7 +209,7 @@ Json AuthoringClasses(const Json& names)
         Json entry={{"class",Path(type)},{"abstract",(Read<unsigned>(type+0x8c)&1)!=0}};
         if(actor){entry["category"]=Magic::Category(Path(type));entry["brush"]=AuthoringSubclass(type,"Brush");}
         if(component)entry["component"]=true;
-        std::map<std::string,Address> properties;for(auto p:Properties(type))properties.emplace(NameOf(p),p);
+        std::map<std::string,Address> properties;for(auto p:NamedProperties(type))properties.emplace(NameOf(p),p);
         auto schema=AuthoringSchema(type);
         for(auto it=schema.begin();it!=schema.end();++it)
         {
@@ -296,7 +296,7 @@ Json LevelSettings()
 {
     const auto info=McpLevelInfo();
     auto result=InspectSettingsActor(Identity(info));
-    for(auto p:Properties(Read<Address>(info+0x24)))
+    for(auto p:NamedProperties(Read<Address>(info+0x24)))
     {
         const auto name=NameOf(p);
         if(!McpSettingsExtra(name) || MagicEditable(p,info) || result["values"].contains(name))continue;
@@ -324,7 +324,7 @@ Json EditSettings(const Json& snapshot,const Json& changes)
     std::vector<std::pair<Address,const Json*>> writes;
     for(auto it=changes.begin();it!=changes.end();++it)
     {
-        const auto p=Property(info,it.key());
+        const auto p=NamedProperty(info,it.key());
         if(!p)throw std::runtime_error("The LevelInfo has no property "+it.key()+".");
         if(!MagicEditable(p,info) && !McpSettingsExtra(it.key()))throw std::runtime_error(it.key()+" is not a level setting RE+ writes.");
         try

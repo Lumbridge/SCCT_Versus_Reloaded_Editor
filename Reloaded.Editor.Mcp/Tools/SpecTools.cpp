@@ -876,6 +876,8 @@ Json Tools::LevelBuild(ToolContext& c, const Json& context, const Json& spec, co
     const auto result = RunPlan(c, compiled.plan, label, false, build == "all" ? kBuildAllTimeout : kBuildTimeout, Expected(state));
     // Read the undo record now: a later call would replace it.
     report["undo"] = Undo(c);
+    if (options.build && report["undo"].is_null() && TouchesGeometry(compiled.plan))
+        warnings.push_back("The editor has no Undo step for this placement after rebuilding geometry. To review and undo a layout before rebuilding, apply it with build: none.");
     for (const auto& w : BridgeWarnings(c)) warnings.push_back(w);
     c.progress(3, 4, "Reading the results");
     std::map<std::string, Json> results;

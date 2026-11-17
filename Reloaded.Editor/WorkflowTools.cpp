@@ -1592,9 +1592,10 @@ Json LibraryEntry()
 void RestoreLibraryEntry(const Json& entry)
 {
     Sync();
+    const bool updateWorkspace=entry.contains("design") || document.at("maps").at(mapKey).contains("design");
     Json next=document;next["maps"][mapKey]=entry;Save(next);
-    if(entry.is_object() && entry.contains("design"))
-        try{DesignWriteWorkspace(NormalizeDesign(entry.at("design")));}catch(const std::exception&){ /* The library is saved; the copy is best effort. */ }
+    if(updateWorkspace)
+        try{DesignWriteWorkspace(NormalizeDesign(entry.value("design",Json::object())));}catch(const std::exception&){ /* The library is saved; the copy is best effort. */ }
 }
 namespace
 {

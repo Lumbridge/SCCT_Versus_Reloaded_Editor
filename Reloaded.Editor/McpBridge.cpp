@@ -58,6 +58,9 @@ namespace
     constexpr UINT kRun = WM_APP + 0x3C0;           // a call waits in the slot
     constexpr UINT kCancelReview = WM_APP + 0x3C1;  // the approval window closes as Cancel
     constexpr UINT kClientChanged = WM_APP + 0x3C2; // a client came or went
+    constexpr UINT kCloseEditor = WM_APP + 0x3C3;
+    std::optional<std::wstring> closeMap;
+    unsigned closeGeneration = 0, closeRevision = 0;
     constexpr DWORD kPickupMs = 10000;   // a call the frame's thread has not taken by then is answered busy
     constexpr DWORD kWriteMs = 60000;    // a client that reads nothing for this long is dropped
     constexpr DWORD kInstances = 8;      // the client, the listener, and ones closing
@@ -902,7 +905,7 @@ namespace
     };
     static_assert(IDOK == Safety::Id::Ok && IDCANCEL == Safety::Id::Cancel && IDABORT == Safety::Id::Abort && IDNO == Safety::Id::No && IDCLOSE == Safety::Id::Close,
                   "McpSafetyModel.h's dialog ids are winuser.h's");
-    struct Watch { Json dialogs = Json::array(); bool blocked = false; std::set<HWND> created, seen; };
+    struct Watch { Json dialogs = Json::array(); bool blocked = false, closingEditor = false; std::set<HWND> created, seen; };
     Watch* watch = nullptr;
     HHOOK cbtHook = nullptr;
     struct Control { HWND window = nullptr; int id = 0; std::wstring label; };
@@ -944,6 +947,12 @@ namespace
         if (controls.progress) return;
         const Control* chosen = nullptr;
         bool known = false;
+        // The native frame asks again even after map.save. Only answer the
+        // exact map prompt during a checked editor.quit on this UI thread.
+        if (watch->closingEditor && closeMap && !closeMap->empty() && GetWindow(dialog, GW_OWNER) == Frame()
+            && controls.text == L"Save changes to " + *closeMap + L"?" + Wide(verbose_save_message))
+            for (const auto& b : controls.buttons)
+                if (b.id == IDNO) { chosen = &b; known = true; }
         for (const auto& entry : kKnownDialogs)
             if (!chosen && controls.text.find(entry.text) != std::wstring::npos)
                 for (const auto& b : controls.buttons)
@@ -1145,7 +1154,14 @@ namespace
             return failure;
         }
         catch (const std::exception& e) { failure.message = Utf8(e.what()); }
-        catch (...) { failure.message = op + " failed with an error the editor could not describe."; return failure; }
+        catch (...)
+        {
+            const char* history = reinterpret_cast<const char*>(0x11691d88); // GErrorHist in the supported editor
+            failure.message = op + " failed in the native editor.";
+            const size_t length = strnlen(history, 0x1000);
+            if (length) failure.message += " " + Utf8(std::string(history, length));
+            return failure;
+        }
         static const std::pair<const char*, const char*> prefixes[] = {
             {"Stale:", Bridge::Code::Stale}, {"Invalid:", Bridge::Code::Invalid}, {"Refused:", Bridge::Code::Refused},
             {"Denied:", Bridge::Code::Denied}, {"Busy:", Bridge::Code::Busy}, {"Timeout:", Bridge::Code::Timeout}};
@@ -1621,6 +1637,19 @@ namespace
         if (message == kRun) { RunQueued(std::exchange(callLoop, -1)); return 0; }
         if (message == kCancelReview) { if (reviewing) MapAuthoringDialog::CancelReview(); return 0; }
         if (message == kClientChanged) { ClientChanged(); return 0; }
+        if (message == kCloseEditor && closeMap)
+        {
+            if (Editor::MapGeneration() == closeGeneration && Editor::ContentRevision() == closeRevision
+                && Wide(Editor::MapFile()) == *closeMap)
+            {
+                Watch closing;
+                closing.closingEditor = true;
+                Watchdog dog(closing);
+                SendMessageW(Frame(), WM_CLOSE, 0, 0);
+            }
+            closeMap.reset();
+            return 0;
+        }
         return DefWindowProcW(window, message, w, l);
     }
 
@@ -1821,6 +1850,18 @@ std::vector<std::filesystem::path> McpBridge::WriteRoots()
 }
 
 bool McpBridge::DialogBlocked() { return watch && watch->blocked; }
+void McpBridge::QueueEditorClose()
+{
+    if (!Frame() || !bridgeWindow.load()) throw std::runtime_error("The editor window is unavailable.");
+    closeGeneration = Editor::MapGeneration();
+    closeRevision = Editor::ContentRevision();
+    closeMap = Wide(Editor::MapFile());
+    if (!PostMessageW(bridgeWindow.load(), kCloseEditor, 0, 0))
+    {
+        closeMap.reset();
+        throw std::runtime_error("Could not queue the editor close request.");
+    }
+}
 
 std::vector<McpBridge::CallRecord> McpBridge::Records()
 {

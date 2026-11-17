@@ -39,7 +39,7 @@ namespace
     Json AuthoringSchema(Address type)
     {
         Json result=Json::object();
-        for(auto p:Properties(type))
+        for(auto p:NamedProperties(type))
         {
             const auto name=NameOf(p);
             // A particle emitter's MaxParticles is const in this build, yet it is what a pasted emitter sets; a new
@@ -224,7 +224,7 @@ namespace
                 const auto full=AuthoringSchema(plan.types[path]);
                 for(const char* name:{"StaticMesh","DrawType","DrawScale","DrawScale3D"})
                     if(!plan.schemas[path].contains(name) && full.contains(name))
-                        if(const auto p=Property(actor,name))
+                        if(const auto p=NamedProperty(actor,name))
                         {
                             plan.schemas[path][name]=full.at(name);
                             plan.before[path][name]=MagicValue(p,actor+Read<int>(p+0x3c));
@@ -506,12 +506,12 @@ Json ApplyMapAuthoring(const Json& given,const char* label)
         auto direct=[&](const std::string& name){return AuthoringAppearance(name) || (newComponent && name=="MaxParticles");};
         for(auto it=changes.begin();it!=changes.end();++it)if(direct(it.key()))
         {
-            auto p=Property(actor,it.key());if(!p || (!IsA(actor,"Actor") && !(newComponent && it.key()=="MaxParticles")))throw std::runtime_error("Appearance needs an actor property.");
+            auto p=NamedProperty(actor,it.key());if(!p || (!IsA(actor,"Actor") && !(newComponent && it.key()=="MaxParticles")))throw std::runtime_error("Appearance needs an actor property.");
             Magic::Validate(MagicSchema(p),it.value());MagicReferences(MagicSchema(p),it.value());ordinary.erase(it.key());
         }
         ValidateActorChanges(snapshot,ordinary);
         for(auto it=changes.begin();it!=changes.end();++it)
-            if(direct(it.key())){auto p=Property(actor,it.key());MagicImport(p,actor+Read<int>(p+0x3c),it.value());}
+            if(direct(it.key())){auto p=NamedProperty(actor,it.key());MagicImport(p,actor+Read<int>(p+0x3c),it.value());}
             else MagicSet(actor,it.key(),it.value());
         if(!IsA(actor,"Actor")){auto owner=Read<Address>(actor+0x18);Modify(owner);Call(owner,0x44);}
         Call(actor,0x44);
