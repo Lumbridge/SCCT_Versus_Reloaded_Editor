@@ -4,7 +4,11 @@ RE+ is an unofficial patch for the **Splinter Cell: Chaos Theory Versus** map ed
 
 ## Install
 
-1. Download the ZIP from [Releases](https://github.com/Lumbridge/SCCT_Versus_Reloaded_Editor/releases).
+RE+ edits maps for the **original PC Versus** game. See the [OpenSCCT project directory](https://github.com/OpenSCCT/OpenSCCT)
+for the PS2 disc, PC/Steam and modern Unreal editions. For an SVMap project with a **Play in Unreal**
+workflow, use [OpenSCCT Editor](https://github.com/OpenSCCT/OpenSCCT-Editor).
+
+1. Download the ZIP from [Releases](https://github.com/OpenSCCT/SCCT_Versus_Reloaded_Editor/releases).
 2. Extract it into the folder that contains `SCCT_Versus.exe`.
 3. Run `Reloaded_Editor.exe`.
 
@@ -22,7 +26,7 @@ RE+ releases are numbered `MAJOR.MINOR.PATCH`, starting at **RE+ 2.0.0** (1.x wa
 
 A release that needs testing first goes out as a release candidate (`2.1.0-rc.1`), marked as a pre-release on GitHub. The updater offers release candidates only to editors already running one, so everyone else gets the release.
 
-Looking for maps to open? Recovered, enhanced and community maps are in [SCCT-Maps](https://github.com/Lumbridge/SCCT-Maps), and [SCCT Map Manager](https://github.com/Lumbridge/SCCT-Map-Manager) installs them for you.
+Looking for maps to open? Recovered, enhanced and community maps are in [SCCT-Maps](https://github.com/OpenSCCT/SCCT-Maps), and [SCCT Map Manager](https://github.com/OpenSCCT/SCCT-Map-Manager) installs them for you.
 
 ## What it adds
 
